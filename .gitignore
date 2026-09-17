@@ -1,0 +1,16 @@
+node_modules/
+dist/
+coverage/
+.latex-editor/
+.latex-editor-data/
+*.tsbuildinfo
+*.log
+*.aux
+*.fdb_latexmk
+*.fls
+*.out
+*.pdf
+*.synctex.gz
+*.toc
+.env*
+!*.env.example

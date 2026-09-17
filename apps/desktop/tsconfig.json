@@ -1,0 +1,12 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "noEmit": true,
+    "jsx": "react-jsx",
+    "lib": ["ES2022", "DOM"],
+    "resolveJsonModule": true,
+    "verbatimModuleSyntax": false,
+    "types": ["node", "vite/client"]
+  },
+  "include": ["src/main/**/*.ts", "src/renderer/**/*.ts", "src/renderer/**/*.tsx"]
+}

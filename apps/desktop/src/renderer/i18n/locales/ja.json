@@ -1,0 +1,18 @@
+{
+  "menu.file": "ファイル", "menu.edit": "編集", "menu.view": "表示", "menu.history": "履歴",
+  "activity.settings": "設定", "activity.files": "ファイル", "activity.search": "検索", "activity.help": "ヘルプ",
+  "settings.language": "表示言語", "settings.theme": "テーマ", "settings.light": "ライト",
+  "settings.general": "一般", "settings.appearance": "外観", "settings.editor": "エディター", "settings.shortcuts": "ショートカット", "settings.compiler": "コンパイラー",
+  "settings.global": "全体設定", "settings.project": "プロジェクト設定", "settings.reset": "リセット", "settings.inherited": "全体設定を継承",
+  "settings.autoSave": "自動保存", "settings.off": "オフ", "settings.afterDelay": "入力停止後", "settings.fontSize": "文字サイズ", "settings.wordWrap": "折り返し", "settings.tabSize": "タブ幅",
+  "settings.dark": "ダーク", "settings.restore": "前回のプロジェクトを開く", "settings.maximize": "起動時に最大化（次回起動時）",
+  "settings.engine": "既定のエンジン", "settings.detect": "再検出", "settings.locate": "フォルダーを指定", "settings.executable": "実行ファイルを指定", "settings.found": "検出済み", "settings.notFound": "未検出",
+  "settings.missingToolchain": "LaTeX ツールが見つかりません。設定から再検出または場所を指定してください。", "settings.openCompiler": "コンパイラー設定を開く",
+  "settings.hideBuildArtifacts": "ビルド生成物を非表示", "settings.saved": "設定は自動的に保存されます。", "settings.unavailable": "v0.2.3 では利用できません",
+  "shortcut.capture": "新しいキーの組み合わせを入力…", "shortcut.conflict": "このキーは既に使用されています。", "shortcut.invalid": "Ctrl/Cmd または Alt とキーを組み合わせてください。", "shortcut.replace": "置き換える",
+  "build.compile": "コンパイル", "build.compiling": "コンパイル中…", "save.saved": "保存済み", "save.unsaved": "未保存", "save.saving": "保存中…",
+  "environment.manager": "環境ブロック", "environment.theorem": "定理", "environment.proof": "証明", "environment.equation": "数式", "environment.section": "節", "environment.definition": "定義", "environment.lemma": "補題", "environment.remark": "注記",
+  "project.directory": "プロジェクト一覧", "project.new": "新規プロジェクト", "project.search": "プロジェクトを検索…", "project.name": "プロジェクト名", "project.location": "場所", "project.updated": "更新日時", "project.cancel": "キャンセル",
+  "menu.save": "保存", "menu.saveAll": "すべて保存", "menu.find": "検索", "menu.replace": "置換", "common.close": "閉じる",
+  "editor.quick.environment": "環境", "preview.apply": "ソースを適用", "preview.cancel": "キャンセル"
+}

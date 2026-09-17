@@ -1,0 +1,34 @@
+\documentclass{article}
+\usepackage{amsmath,amsthm}
+\newtheorem{theorem}{Theorem}
+\begin{document}
+\section{Introduction}
+
+First paragraph with inline math $x_t$.
+
+\begin{equation}
+x_t = \alpha x_{t-1} + \varepsilon_t
+\end{equation}
+
+Second paragraph.
+
+\begin{theorem}
+Suppose $X$ is compact.
+
+\begin{equation}
+f(x) = x^2
+\end{equation}
+
+Then the conclusion holds.
+\end{theorem}
+
+\begin{proof}
+First proof paragraph.
+
+Second proof paragraph.
+\end{proof}
+
+% tw:block-begin type=intuition title="Main intuition"
+The compactness assumption prevents escape to infinity.
+% tw:block-end
+\end{document}

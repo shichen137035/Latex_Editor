@@ -1,0 +1,8 @@
+{
+  "$schema": "../schemas/resource.schema.json",
+  "schemaVersion": 1,
+  "commands": [
+    { "id": "latex.section", "name": "section", "insertText": "\\section{${1:title}}", "detail": "Section heading", "category": "structure" },
+    { "id": "latex.textbf", "name": "textbf", "insertText": "\\textbf{${1:text}}", "detail": "Bold text", "category": "formatting" }
+  ]
+}

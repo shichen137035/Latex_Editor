@@ -1,0 +1,12 @@
+{
+  "$schema": "../schemas/resource.schema.json",
+  "schemaVersion": 1,
+  "id": "minimal",
+  "name": "Minimal article",
+  "files": [
+    {
+      "relativePath": "main.tex",
+      "content": "\\documentclass{article}\n\\begin{document}\nHello, LaTeX!\n\\end{document}\n"
+    }
+  ]
+}

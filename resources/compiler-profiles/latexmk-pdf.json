@@ -1,0 +1,8 @@
+{
+  "$schema": "../schemas/resource.schema.json",
+  "schemaVersion": 1,
+  "id": "latexmk-pdf",
+  "executable": "latexmk",
+  "arguments": ["-pdf", "-file-line-error", "-interaction=nonstopmode", "-synctex=1"],
+  "timeoutMs": 120000
+}

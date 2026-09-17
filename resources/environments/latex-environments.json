@@ -1,0 +1,8 @@
+{
+  "$schema": "../schemas/resource.schema.json",
+  "schemaVersion": 1,
+  "environments": [
+    { "id": "latex.environment.document", "name": "document", "begin": "\\begin{document}", "body": "${1}", "end": "\\end{document}", "category": "document" },
+    { "id": "latex.environment.itemize", "name": "itemize", "begin": "\\begin{itemize}", "body": "  \\item ${1}", "end": "\\end{itemize}", "category": "list" }
+  ]
+}

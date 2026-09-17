@@ -1,0 +1,20 @@
+/* Shared surfaces bridge the older directory/Preview CSS into the token system. */
+:root { color-scheme: light; --color-text-disabled: var(--color-text-muted); --color-border-active: var(--color-primary); }
+:root[data-theme="dark"] { color-scheme: dark; }
+body, .app-shell { background: var(--color-bg-app); color: var(--color-text-primary); }
+.topbar,.project-card,.project-row,.modal-card,.settings-panel,.new-menu,.environment-dialog,.environment-editor,.environment-manager-header,.environment-dialog-bar,.preview-local-editor { background: var(--color-bg-panel); color: var(--color-text-primary); border-color: var(--color-border); }
+.welcome-row { background: linear-gradient(110deg,var(--color-bg-hover),var(--color-bg-panel)); border-color: var(--color-border); }
+.brand-name,.welcome-row h1,.workspace-orbit,.project-name-cell strong,.modal-heading h2,.setting-item strong,.environment-manager-header h1,.environment-editor-title h2,.environment-catalog button,.preview-block-header > strong { color: var(--color-text-primary); }
+.lead,.brand-caption,.connection-pill,.project-name-cell small,.location-cell,.updated-cell,.dashboard-footer,.settings-placeholder,.environment-manager-header span,.environment-form-grid label > span,.environment-toggle em { color: var(--color-text-secondary); }
+.search-box,.search-box input,.field-label > input,.path-input,.path-input input,.environment-form-grid input,.environment-form-grid select,.environment-xml textarea { background: var(--color-bg-panel); color: var(--color-text-primary); border-color: var(--color-border); }
+.table-head,.project-row,.setting-item,.environment-form-section,.environment-catalog,.environment-editor,.environment-dialog-bar { border-color: var(--color-border); }
+.project-row:hover,.new-menu button:hover,.environment-catalog button:hover,.environment-catalog button.active { background: var(--color-bg-hover); color: var(--color-text-primary); }
+.environment-catalog,.environment-manager-page,.environment-manager-header > div:last-child,.behavior-grid .environment-toggle,.environment-actions button,.environment-xml,.preview-code,.preview-table pre,.preview-media,.connection-pill,.secondary-button { background: var(--color-bg-subtle); color: var(--color-text-primary); border-color: var(--color-border); }
+.environment-catalog button strong,.environment-actions button,.environment-manager-header button { color: var(--color-text-primary); }
+.structured-preview { background: var(--color-bg-panel); }.structured-preview > article,.preview-display-math,.preview-inline-math { color: var(--color-text-primary); }
+.preview-reference { color: var(--color-primary); background: var(--color-bg-subtle); }.preview-content-region:hover { background: var(--color-bg-hover); }
+.environment-xml-error,.inline-error { color: var(--color-error); background: var(--color-bg-panel); border-color: var(--color-error); }
+:root[data-theme="dark"] .preview-block { --block-fill: var(--color-bg-hover) !important; --block-label-bg: var(--color-bg-subtle) !important; --block-label-text: var(--block-accent) !important; }
+:root[data-theme="dark"] .pane-placeholder { background: var(--color-bg-panel); }
+.latex-toolbar { position: relative; }.latex-toolbar .view-switch { flex-shrink: 0; margin-left: auto; }
+@media (max-width: 1450px) { .latex-toolbar > button > span { display: none; } }

@@ -1,0 +1,41 @@
+import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { describe, it, expect } from "vitest";
+import { SettingsRepository } from "../../apps/desktop/src/main/settings.js";
+import { sanitizePreferences } from "../../packages/contracts/src/settings.js";
+import { setLocale, t } from "../../apps/desktop/src/renderer/i18n/index.js";
+
+describe("v0.2.3 foundations", () => {
+  it("falls back to English and then the key without changing semantic identities", () => {
+    setLocale("ja");
+    expect(t("environment.theorem")).toBe("定理");
+    expect(t("environment.corollary")).toBe("Corollary");
+    expect(t("future.missing")).toBe("future.missing");
+    setLocale("en");
+    expect(t("environment.theorem")).toBe("Theorem");
+  });
+  it("rejects invalid preferences and global-only project overrides", () => {
+    expect(sanitizePreferences({ fontSize: -3, theme: "broken", locale: "ja", wordWrap: true })).toEqual({ locale: "ja", wordWrap: true });
+    expect(sanitizePreferences({ theme: "dark", keybindings: {}, toolchain: { latexmk: "C:/tool.exe" }, fontSize: 20 }, true)).toEqual({ fontSize: 20 });
+  });
+  it("persists concurrent updates atomically, isolates projects and resets overrides", async () => {
+    const root = await mkdtemp(join(tmpdir(), "texweave-settings-"));
+    try {
+      const projectPath = async (id: string) => join(root, id, ".texweave", "settings.json");
+      const repository = new SettingsRepository(join(root, "user"), projectPath);
+      await repository.initialize();
+      await Promise.all([repository.set("fontSize", 18), repository.set("theme", "dark"), repository.set("locale", "ja")]);
+      await repository.set("fontSize", 24, "a");
+      expect((await repository.snapshot("a")).project.fontSize).toBe(24);
+      expect((await repository.snapshot("b")).project).toEqual({});
+      await expect(repository.set("locale", "ja", "a")).rejects.toThrow();
+      await repository.set("fontSize", undefined, "a");
+      expect((await repository.snapshot("a")).project.fontSize).toBeUndefined();
+      const restarted = new SettingsRepository(join(root, "user"), projectPath);
+      await restarted.initialize();
+      expect((await restarted.snapshot()).global).toMatchObject({ fontSize: 18, theme: "dark", locale: "ja" });
+      expect(JSON.parse(await readFile(join(root, "user", "settings.json"), "utf8")).version).toBe(1);
+    } finally { await rm(root, { recursive: true, force: true }); }
+  });
+});

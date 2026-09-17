@@ -1,0 +1,17 @@
+{
+  "files": [],
+  "references": [
+    { "path": "./packages/contracts" },
+    { "path": "./packages/domain" },
+    { "path": "./packages/application" },
+    { "path": "./packages/diagnostics" },
+    { "path": "./packages/editor-core" },
+    { "path": "./packages/filesystem-node" },
+    { "path": "./packages/compiler-latexmk" },
+    { "path": "./packages/registry-sqlite" },
+    { "path": "./packages/resource-catalog" },
+    { "path": "./packages/test-support" },
+    { "path": "./apps/cli" },
+    { "path": "./apps/desktop/tsconfig.main.json" }
+  ]
+}

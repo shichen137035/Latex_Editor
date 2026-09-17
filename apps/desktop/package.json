@@ -1,0 +1,6 @@
+{
+  "name": "@latex-editor/desktop",
+  "private": true,
+  "type": "commonjs",
+  "main": "dist/main/index.js"
+}

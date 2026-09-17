@@ -1,0 +1,10 @@
+[
+  { "id": "section", "titleKey": "editor.quick.section", "glyph": "§", "insertText": "\\section{Title}" },
+  { "id": "environment", "titleKey": "editor.quick.environment", "glyph": "{}", "insertText": "\\begin{environment}\n  \n\\end{environment}" },
+  { "id": "bold", "titleKey": "editor.quick.bold", "glyph": "B", "insertText": "\\textbf{text}" },
+  { "id": "math", "titleKey": "editor.quick.math", "glyph": "Ω", "insertText": "\\[\n  \n\\]" },
+  { "id": "figure", "titleKey": "editor.quick.figure", "glyph": "▧", "insertText": "\\begin{figure}\n  \\centering\n  \\caption{Caption}\n\\end{figure}" },
+  { "id": "table", "titleKey": "editor.quick.table", "glyph": "▦", "insertText": "\\begin{table}\n  \\centering\n\\end{table}" },
+  { "id": "reference", "titleKey": "editor.quick.reference", "glyph": "↗", "insertText": "\\ref{label}" },
+  { "id": "citation", "titleKey": "editor.quick.citation", "glyph": "¶", "insertText": "\\cite{key}" }
+]
