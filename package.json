@@ -24,21 +24,24 @@
     "desktop:dev": "npm run desktop:build && node apps/desktop/scripts/launch.cjs",
     "desktop:test-ui": "npm run desktop:build && node apps/desktop/scripts/run-file-menu-check.mjs",
     "desktop:test-preview": "npm run desktop:build && node apps/desktop/scripts/run-preview-check.mjs",
+    "desktop:test-preview-large": "npm run desktop:build && node apps/desktop/scripts/run-preview-large-check.mjs",
     "desktop:test-compiler-path": "npm run desktop:build && node apps/desktop/scripts/run-compile-path-check.mjs",
+    "desktop:test-foundations": "npm run desktop:build && node apps/desktop/scripts/run-foundations-check.mjs",
+    "desktop:test-spellcheck": "npm run desktop:build && node apps/desktop/scripts/run-spellcheck-check-launch.cjs",
     "verify": "npm run typecheck && npm run desktop:typecheck && npm run lint && npm run resources:validate && npm run test"
   },
   "devDependencies": {
     "@eslint/js": "^9.35.0",
     "@monaco-editor/react": "^4.7.0",
-    "@vitejs/plugin-react": "^5.0.2",
     "@types/node": "^24.3.0",
     "@types/react": "^19.1.12",
     "@types/react-dom": "^19.1.9",
+    "@vitejs/plugin-react": "^5.0.2",
     "electron": "^38.1.0",
     "eslint": "^9.35.0",
+    "monaco-editor": "^0.52.2",
     "react": "^19.1.1",
     "react-dom": "^19.1.1",
-    "monaco-editor": "^0.52.2",
     "tsx": "^4.20.5",
     "typescript": "^5.9.2",
     "typescript-eslint": "^8.42.0",
@@ -47,5 +50,11 @@
   },
   "engines": {
     "node": ">=22"
+  },
+  "dependencies": {
+    "dictionary-en": "^4.0.0",
+    "dictionary-en-gb": "^3.0.0",
+    "katex": "^0.18.7",
+    "nspell": "^2.1.5"
   }
 }

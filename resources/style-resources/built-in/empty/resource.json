@@ -1,0 +1,8 @@
+{
+  "id": "empty",
+  "name": "Empty",
+  "description": "A clean article starter without additional style dependencies.",
+  "version": 1,
+  "source": "built-in",
+  "files": []
+}

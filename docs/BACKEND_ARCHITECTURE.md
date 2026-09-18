@@ -1,6 +1,6 @@
 # v0.1 后端技术说明
 
-本文说明当前没有前端时，项目后端各类别的作用、依赖边界和调试方式。规范中的接口和验收要求仍以 [V0.1 技术要求与测试规格](../V0.1_TECHNICAL_REQUIREMENTS_AND_TEST_SPEC.md) 为准。
+本文说明项目后端各类别的作用、依赖边界和调试方式。规范中的接口和验收要求仍以 [V0.1 技术要求与测试规格](../V0.1_TECHNICAL_REQUIREMENTS_AND_TEST_SPEC.md) 及对应 v0.2.x 更新手册为准。
 
 ## 1. 运行边界
 
@@ -36,6 +36,7 @@ Ports / contracts
 | Filesystem Adapter | `packages/filesystem-node` | canonical path、UTF-8 文件读写、原子保存、路径安全和目录操作 | 不决定项目业务状态 |
 | Registry Adapter | `packages/registry-sqlite` | SQLite migration、项目元数据查询和持久化 | 不保存源文件正文 |
 | Resource Catalog | `packages/resource-catalog` | 校验并加载命令、环境、模板和编译器 profile | 不执行资源中的代码或 shell |
+| Style Resource Repository | `apps/desktop/src/main/style-resources.ts` + `resources/style-resources` | 管理内置/用户 `.sty`、`.cls`、`.bst`、`.bib`、`.tex` 等资源，并在项目创建时提供可复制的内容快照 | 不让项目运行时引用 userData 或安装目录 |
 | Diagnostics | `packages/diagnostics` | 将 TeX/latexmk 日志转成统一诊断 | 不启动编译进程 |
 | Compiler Adapter | `packages/compiler-latexmk` | 检测工具链、启动/取消/超时、日志和 PDF 结果 | 不提供 UI |
 | CLI | `apps/cli` | 非交互调试入口、退出码和 JSON stdout 合同 | 不复制 application 业务逻辑 |
@@ -48,6 +49,24 @@ Ports / contracts
 2. `SQLiteProjectRegistry` 保存项目 ID、名称、canonical path、主文件和时间字段。
 3. `NodeProjectFileService` 只接受项目相对路径。
 4. 写文件时先写同目录临时文件，再 rename；项目源文件不进入 SQLite。
+
+### 样式资源与项目 bootstrap
+
+1. `StyleResourceRepository` 从应用资源目录读取只读的 `built-in/empty` 和 `built-in/default`，从 Electron `userData/style-resources/user` 读取用户资源。
+2. 导入文件/文件夹时复制内容并写入 `resource.json`，不保存原始路径作为运行时依赖；manifest 的 `targetPath` 决定资源进入项目后的相对位置。
+3. `ProjectService.createProject` 先写模板，再检测资源目标路径冲突，读取资源内容写入项目；资源复制失败会回滚新目录。
+4. 资源的 `mainStyle` 只在元数据明确声明时用于在 `main.tex` 中插入 `\\usepackage{...}`。单个导入 `.sty` 会安全推断其包名，多文件资源不会猜测任意导入。
+5. `reference.bib` 是新建项目的标准文件；资源内附带的其他 `.bib` 只作为独立文件复制，不会合并或静默覆盖它。
+
+核心不变量：
+
+```text
+TeXWeave style library --copy snapshot--> Project/texweave.sty
+                                           Project/main.tex
+                                           Project/reference.bib
+```
+
+项目编译只读取项目目录中的副本。删除或修改资源库条目不会回写已存在项目。
 
 ### 源代码编辑
 
@@ -72,7 +91,7 @@ Ports / contracts
 - `resolveSafeProjectPath` 对现有目标和最近存在父目录执行 `realpath`，阻止 symlink/junction 逃逸。
 - 本地目录删除需要 `--delete-local` 和完全匹配的 `--confirm-path`，根目录和用户目录会被拒绝。
 - 编译器不使用 shell，不从资源文件读取任意命令字符串。
-- renderer 尚未存在；未来只能通过白名单 preload API 调用这些服务。
+- renderer 只能通过白名单 preload API 调用这些服务；资源库和编译器路径不会暴露给 renderer。
 
 ## 5. 测试分类
 
@@ -92,4 +111,4 @@ npm test
 
 ## 6. 当前未接入的类别
 
-版本快照、Electron IPC/preload、Monaco adapter 和 renderer UI 仍是后续模块。它们应复用当前 contracts/application 服务，不应把文件读写或 `latexmk` 调用移入前端。
+版本快照、在线资源目录和复杂模板向导仍是后续模块。Electron renderer 只能通过白名单 preload API 管理资源，不能直接读写 userData、资源安装目录或调用 `latexmk`。

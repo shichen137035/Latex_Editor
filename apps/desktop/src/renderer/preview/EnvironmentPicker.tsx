@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { t } from "../i18n/index.js";
+import { t, type MessageKey } from "../i18n/index.js";
 import type { EnvironmentDefinition } from "./types.js";
 import "./environment-picker.css";
 
@@ -23,12 +23,25 @@ export function environmentInsertion(definition: EnvironmentDefinition, selected
   return undefined;
 }
 
+/** Returns the offset where the cursor should land after an environment insert. */
+export function environmentCursorOffset(snippet: string, selectedText: string): number {
+  const closingMarker = snippet.includes("\\end{") ? "\n\\end{" : snippet.includes("\\]") ? "\n\\]" : "\n% tw:block-end";
+  const closingOffset = snippet.lastIndexOf(closingMarker);
+  if (selectedText && closingOffset >= 0) return closingOffset;
+  const firstLineEnd = snippet.indexOf("\n");
+  return firstLineEnd >= 0 ? firstLineEnd + 3 : snippet.length;
+}
+
 function sourceHint(definition: EnvironmentDefinition): string {
   const match = definition.match;
   if (match.kind === "latex-environment") return `\\begin{${match.name}}`;
   if (match.kind === "display-math") return "\\[ … \\]";
   if (match.kind === "virtual-block") return `% tw:block-begin type=${match.type}`;
-  return match.kind;
+  return t(`environment.match.${match.kind}` as MessageKey);
+}
+
+function familyLabel(definition: EnvironmentDefinition): string {
+  return t(`environment.family.${definition.family}` as MessageKey);
 }
 
 export function EnvironmentQuickAction({ definitions, onInsert }: { definitions: EnvironmentDefinition[]; onInsert(definition: EnvironmentDefinition): void }) {
@@ -47,11 +60,11 @@ export function EnvironmentQuickAction({ definitions, onInsert }: { definitions:
   }, [open]);
 
   return <div className="environment-quick-action" ref={rootRef}>
-    <button className={open ? "active" : ""} title={t("editor.quick.environment")} onClick={() => { setOpen((value) => !value); setQuery(""); }}><b>{"{}"}</b><span>{t("editor.quick.environment")}</span></button>
+    <button className={open ? "active" : ""} title={t("editor.quick.environment")} onClick={() => { setOpen((value) => !value); setQuery(""); }}><b>{"{}"}</b><span>{t("editor.quick.environmentShort")}</span></button>
     {open && <section className="environment-picker" role="dialog" aria-label={t("editor.environmentPicker.title")}>
       <header><div><strong>{t("editor.environmentPicker.title")}</strong><small>{t("editor.environmentPicker.hint")}</small></div><button onClick={() => setOpen(false)} aria-label={t("common.close")}>×</button></header>
       <input autoFocus value={query} onChange={(event) => setQuery(event.target.value)} placeholder={t("editor.environmentPicker.search")}/>
-      <div className="environment-picker-list">{available.length ? available.map((definition) => <button data-environment-id={definition.id} key={definition.id} onClick={() => { onInsert(definition); setOpen(false); }}><i style={{ background: definition.style.accentToken.startsWith("--") ? `var(${definition.style.accentToken})` : definition.style.accentToken }}/><span><strong>{displayName(definition)}</strong><small>{sourceHint(definition)}</small></span><em>{definition.family}</em></button>) : <p>{t("editor.environmentPicker.empty")}</p>}</div>
+      <div className="environment-picker-list">{available.length ? available.map((definition) => <button data-environment-id={definition.id} key={definition.id} onClick={() => { onInsert(definition); setOpen(false); }}><i style={{ background: definition.style.accentToken.startsWith("--") ? `var(${definition.style.accentToken})` : definition.style.accentToken }}/><span><strong>{displayName(definition)}</strong><small>{sourceHint(definition)}</small></span><em>{familyLabel(definition)}</em></button>) : <p>{t("editor.environmentPicker.empty")}</p>}</div>
       <footer>{available.length} {t("editor.environmentPicker.available")}</footer>
     </section>}
   </div>;

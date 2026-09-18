@@ -244,7 +244,7 @@ export class LatexmkCompilerService {
     let pdfExists = true;
     try { await access(pdfPath); } catch { pdfExists = false; }
     const status = active.requestedState ?? (exitCode === 0 && pdfExists ? "succeeded" : "failed");
-    const diagnostics = parseLatexDiagnostics(`${stdoutTail}\n${stderrTail}`, project.canonicalPath);
+    const diagnostics = parseLatexDiagnostics(`${stdoutTail}\n${stderrTail}`, project.canonicalPath, mainFile);
     if (status === "failed" && diagnostics.every((item) => item.severity !== "error")) {
       diagnostics.push({
         severity: "error", source: "latexmk", code: "COMPILATION_FAILED",

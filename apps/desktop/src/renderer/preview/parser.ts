@@ -20,20 +20,26 @@ interface OpenBlock {
   title?: string;
 }
 
-const headingLevel: Record<string, number> = { section: 1, subsection: 2, subsubsection: 3 };
+const headingLevel: Record<string, number> = { chapter: 1, section: 2, subsection: 3, subsubsection: 4, paragraph: 5 };
 
-function positionAt(source: string, offset: number): { line: number; column: number } {
-  let line = 1;
-  let lineStart = 0;
-  for (let index = 0; index < offset; index += 1) {
-    if (source.charCodeAt(index) === 10) { line += 1; lineStart = index + 1; }
-  }
-  return { line, column: offset - lineStart + 1 };
+function positionResolver(source: string): (offset: number) => { line: number; column: number } {
+  const lineStarts = [0];
+  for (let index = 0; index < source.length; index += 1) if (source.charCodeAt(index) === 10) lineStarts.push(index + 1);
+  return (offset) => {
+    let low = 0;
+    let high = lineStarts.length;
+    while (low + 1 < high) {
+      const middle = (low + high) >> 1;
+      if ((lineStarts[middle] ?? 0) <= offset) low = middle;
+      else high = middle;
+    }
+    return { line: low + 1, column: offset - (lineStarts[low] ?? 0) + 1 };
+  };
 }
 
-function span(source: string, filePath: string, startOffset: number, endOffset: number): SourceSpan {
-  const start = positionAt(source, startOffset);
-  const end = positionAt(source, endOffset);
+function span(source: string, filePath: string, startOffset: number, endOffset: number, positionAt: (offset: number) => { line: number; column: number }): SourceSpan {
+  const start = positionAt(startOffset);
+  const end = positionAt(endOffset);
   return { filePath, startOffset, endOffset, startLine: start.line, startColumn: start.column, endLine: end.line, endColumn: end.column };
 }
 
@@ -108,6 +114,7 @@ export function parsePreview(source: string, filePath: string, definitions: Envi
   const rawBlocks: RawBlock[] = [];
   const open: OpenBlock[] = [];
   const environmentByName = environmentLookup(definitions);
+  const positionAt = positionResolver(source);
   let documentStart = 0;
   let documentEnd = source.length;
 
@@ -163,7 +170,7 @@ export function parsePreview(source: string, filePath: string, definitions: Envi
   for (const entry of open) diagnostics.push(`Unclosed ${entry.marker} ${entry.name} at offset ${entry.start}.`);
 
   const headings: Array<{ start: number; bodyStart: number; command: string; title: string; level: number }> = [];
-  const headingPattern = /\\(section|subsection|subsubsection)\*?\{([^{}]*)\}/g;
+  const headingPattern = /\\(chapter|section|subsection|subsubsection|paragraph)\*?\{([^{}]*)\}/g;
   for (const match of source.matchAll(headingPattern)) {
     const start = match.index ?? 0;
     if (start < documentStart || start >= documentEnd || commentedAt(source, start)) continue;
@@ -173,13 +180,15 @@ export function parsePreview(source: string, filePath: string, definitions: Envi
     if (definition?.enabled === false) continue;
     headings.push({ start, bodyStart: start + match[0].length, command: definition?.id ?? commandName, title: match[2] ?? "", level: headingLevel[commandName] ?? 3 });
   }
-  headings.forEach((heading, index) => {
+  const nearestHeadingAtLevel: Array<number | undefined> = [];
+  headings.slice().reverse().forEach((heading) => {
     let end = documentEnd;
-    for (let next = index + 1; next < headings.length; next += 1) {
-      const candidate = headings[next];
-      if (candidate && candidate.level <= heading.level) { end = candidate.start; break; }
+    for (let level = 1; level <= heading.level; level += 1) {
+      const candidate = nearestHeadingAtLevel[level];
+      if (candidate !== undefined) end = Math.min(end, candidate);
     }
     rawBlocks.push({ start: heading.start, end, bodyStart: heading.bodyStart, bodyEnd: end, environmentId: heading.command, origin: "latex", title: heading.title });
+    nearestHeadingAtLevel[heading.level] = heading.start;
   });
 
   // Custom patterns are intentionally local and guarded: an invalid regular
@@ -212,13 +221,20 @@ export function parsePreview(source: string, filePath: string, definitions: Envi
     stack.push(block);
   }
 
+  const childrenByParent = new Map<RawBlock | undefined, RawBlock[]>();
+  for (const block of valid) {
+    const children = childrenByParent.get(block.parent) ?? [];
+    children.push(block);
+    childrenByParent.set(block.parent, children);
+  }
+
   const buildChildren = (parent: RawBlock | undefined, rangeStart: number, rangeEnd: number, parentId?: string): PreviewNode[] => {
-    const direct = valid.filter((block) => block.parent === parent);
+    const direct = childrenByParent.get(parent) ?? [];
     const nodes: PreviewNode[] = [];
     let cursor = rangeStart;
     const addContent = (from: number, to: number) => {
       for (const [start, end] of paragraphRanges(source, from, to)) {
-        const node: ContentRegion = { id: `content:${filePath}:${start}:${end}`, kind: "content", contentType: "paragraph", source: span(source, filePath, start, end), raw: source.slice(start, end), ...(parentId ? { parentId } : {}) };
+        const node: ContentRegion = { id: `content:${filePath}:${start}:${end}`, kind: "content", contentType: "paragraph", source: span(source, filePath, start, end, positionAt), raw: source.slice(start, end), ...(parentId ? { parentId } : {}) };
         nodes.push(node);
       }
     };
@@ -227,7 +243,7 @@ export function parsePreview(source: string, filePath: string, definitions: Envi
       const id = `block:${filePath}:${block.start}:${block.end}:${block.environmentId}`;
       const node: StructuralBlock = {
         id, kind: "block", origin: block.origin, environmentId: block.environmentId,
-        source: span(source, filePath, block.start, block.end),
+        source: span(source, filePath, block.start, block.end, positionAt),
         children: buildChildren(block, block.bodyStart, block.bodyEnd, id),
         ...(parentId ? { parentId } : {}), ...(block.title ? { title: block.title } : {}), ...(block.latexLabel ? { latexLabel: block.latexLabel } : {})
       };

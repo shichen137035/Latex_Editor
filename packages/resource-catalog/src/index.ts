@@ -115,7 +115,8 @@ export class FileResourceCatalog {
         id: stringField(value, "id", source), name: stringField(value, "name", source),
         files: value.files.map((item) => {
           const entry = record(item, source);
-          return { relativePath: stringField(entry, "relativePath", source), content: stringField(entry, "content", source) };
+          if (typeof entry.content !== "string") throw new AppError("RESOURCE_SCHEMA_INVALID", `Missing or invalid content in ${source}`);
+          return { relativePath: stringField(entry, "relativePath", source), content: entry.content };
         })
       };
       templates.set(template.id, template);

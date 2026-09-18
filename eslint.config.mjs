@@ -8,7 +8,7 @@ export default tseslint.config(
   eslint.configs.recommended,
   ...tseslint.configs.recommended,
   {
-    files: ["apps/desktop/scripts/check-file-menu.cjs", "apps/desktop/scripts/check-preview.cjs", "apps/desktop/scripts/check-compile-path.cjs"],
+    files: ["apps/desktop/scripts/check-file-menu.cjs", "apps/desktop/scripts/check-preview.cjs", "apps/desktop/scripts/check-preview-large.cjs", "apps/desktop/scripts/check-preview-project.cjs", "apps/desktop/scripts/check-compile-path.cjs", "apps/desktop/scripts/check-foundations.cjs"],
     languageOptions: { sourceType: "commonjs", globals: { console: "readonly", process: "readonly", setTimeout: "readonly" } },
     rules: { "@typescript-eslint/no-require-imports": "off" }
   },

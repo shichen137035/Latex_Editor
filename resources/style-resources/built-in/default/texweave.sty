@@ -1,0 +1,33 @@
+\NeedsTeXFormat{LaTeX2e}
+\ProvidesPackage{texweave}[2026/09/18 TeXWeave conservative academic defaults]
+
+\RequirePackage{amsmath}
+\RequirePackage{amssymb}
+\RequirePackage{amsthm}
+\RequirePackage{graphicx}
+\RequirePackage{array}
+% These packages are useful but are not present in every minimal local
+% installation. Keep the shipped starter compilable when they are absent.
+\IfFileExists{mathtools.sty}{\RequirePackage{mathtools}}{}
+\IfFileExists{bm.sty}{\RequirePackage{bm}}{}
+\IfFileExists{booktabs.sty}{\RequirePackage{booktabs}}{}
+\IfFileExists{xcolor.sty}{\RequirePackage{xcolor}}{}
+\IfFileExists{hyperref.sty}{\RequirePackage{hyperref}}{}
+
+% Guard theorem declarations so a project can combine this snapshot with
+% another package that already owns one of these environments.
+\makeatletter
+\@ifundefined{theorem}{\newtheorem{theorem}{Theorem}}{}
+\@ifundefined{lemma}{\newtheorem{lemma}[theorem]{Lemma}}{}
+\@ifundefined{proposition}{\newtheorem{proposition}[theorem]{Proposition}}{}
+\@ifundefined{corollary}{\newtheorem{corollary}[theorem]{Corollary}}{}
+\@ifundefined{definition}{\theoremstyle{definition}\newtheorem{definition}[theorem]{Definition}}{}
+\@ifundefined{assumption}{\theoremstyle{definition}\newtheorem{assumption}[theorem]{Assumption}}{}
+\@ifundefined{example}{\theoremstyle{definition}\newtheorem{example}[theorem]{Example}}{}
+\@ifundefined{remark}{\theoremstyle{remark}\newtheorem{remark}[theorem]{Remark}}{}
+\makeatother
+
+\providecommand{\R}{\mathbb{R}}
+\providecommand{\N}{\mathbb{N}}
+\providecommand{\E}{\mathbb{E}}
+\providecommand{\Var}{\operatorname{Var}}

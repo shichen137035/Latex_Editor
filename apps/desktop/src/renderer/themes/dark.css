@@ -5,6 +5,7 @@
   --color-text-primary: #e0eaf3; --color-text-secondary: #afc2d4; --color-text-muted: #829db4;
   --color-border: #30475c; --color-border-strong: #526e86;
   --color-success: #61d6a5; --color-warning: #efbd68; --color-error: #ff8590;
+  --color-status-bg: #294a63; --color-status-text: #e7f5ff;
   --env-border-default: #a8c4da22; --env-border-hover: #a8c4da55; --env-border-selected: #68b5f5;
   --env-section-accent: #7db9ff; --env-theorem-accent: #b5a5fa; --env-definition-accent: #67d7db; --env-proof-accent: #82d9a6;
   --env-equation-accent: #b6cddd; --env-remark-accent: #e5bd7e; --env-example-accent: #7bcee8; --env-figure-accent: #7bcee8; --env-table-accent: #84cbd5;

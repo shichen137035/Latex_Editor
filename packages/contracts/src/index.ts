@@ -1,5 +1,6 @@
 /** 稳定的机器可读错误码；CLI/未来 IPC 不应依赖本地化 message。 */
 export * from "./settings.js";
+export * from "./spellcheck.js";
 export const errorCodes = [
   "PROJECT_NOT_FOUND", "PROJECT_PATH_MISSING", "PROJECT_ALREADY_REGISTERED", "PROJECT_NOT_WRITABLE",
   "PATH_OUTSIDE_PROJECT", "INVALID_RELATIVE_PATH", "FILE_NOT_FOUND", "FILE_ALREADY_EXISTS",
@@ -141,6 +142,27 @@ export interface ToolchainStatus { available: boolean; executable: string; versi
 
 export interface CommandMetadata { id: string; name: string; insertText: string; detail: string; category: string }
 export interface EnvironmentMetadata { id: string; name: string; begin: string; body: string; end: string; category: string }
+export type ResourceFileKind = "style" | "class" | "bibliography-style" | "bibliography" | "tex" | "other";
+
+/** A reusable, local-first LaTeX resource. Files are copied into projects as snapshots. */
+export interface StyleResourceFile {
+  sourcePath: string;
+  targetPath: string;
+  kind: ResourceFileKind;
+  /** Present only when the resource is read by the project bootstrapper. */
+  content?: string;
+}
+
+export interface StyleResource {
+  id: string;
+  name: string;
+  description?: string;
+  version: number;
+  source: "built-in" | "user" | "online";
+  files: StyleResourceFile[];
+  mainStyle?: { kind: "package"; name: string };
+}
+
 export interface ProjectTemplate { id: string; name: string; files: Array<{ relativePath: string; content: string }> }
 /** 来自 resources 的编译器配置，arguments 由 catalog 做 allowlist 校验。 */
 export interface CompilerProfile { id: string; executable: string; arguments: string[]; timeoutMs: number }

@@ -19,6 +19,10 @@ export interface PreferenceValues {
   wordWrap: boolean;
   autoSave: "off" | "afterDelay";
   hideBuildArtifacts: boolean;
+  documentWordCompletion: boolean;
+  referenceLinkModifier: "ctrl" | "alt" | "shift" | "meta";
+  spellCheckMode: "auto" | "manual" | "disabled";
+  spellCheckLanguage: string;
   maximize: boolean;
   restoreProject: boolean;
   lastProject: string;
@@ -30,7 +34,7 @@ export interface PreferenceValues {
 export type PreferenceKey = keyof PreferenceValues;
 export const preferenceDefaults: PreferenceValues = {
   locale: "en", theme: "light", fontSize: 15, tabSize: 2, wordWrap: true,
-  autoSave: "off", hideBuildArtifacts: true, maximize: true, restoreProject: false,
+  autoSave: "off", hideBuildArtifacts: true, documentWordCompletion: true, referenceLinkModifier: "ctrl", spellCheckMode: "auto", spellCheckLanguage: "en-US", maximize: true, restoreProject: false,
   lastProject: "", engine: "pdflatex", keybindings: {}, environments: [], layout: {}
 };
 export const projectPreferenceKeys: PreferenceKey[] = ["fontSize", "tabSize", "wordWrap", "autoSave", "hideBuildArtifacts", "engine", "environments", "layout"];
@@ -40,10 +44,13 @@ export function validPreference(key: string, value: unknown): boolean {
     case "locale": return value === "en" || value === "ja";
     case "theme": return value === "light" || value === "dark";
     case "engine": return ["pdflatex", "xelatex", "lualatex"].includes(String(value));
+    case "spellCheckMode": return value === "auto" || value === "manual" || value === "disabled";
+    case "spellCheckLanguage": return typeof value === "string" && /^[A-Za-z]{2,3}(?:[-_][A-Za-z0-9]{2,8})?$/.test(value);
     case "fontSize": return typeof value === "number" && Number.isInteger(value) && value >= 10 && value <= 32;
     case "tabSize": return typeof value === "number" && [2, 4, 8].includes(value);
     case "autoSave": return value === "off" || value === "afterDelay";
-    case "wordWrap": case "hideBuildArtifacts": case "maximize": case "restoreProject": return typeof value === "boolean";
+    case "wordWrap": case "hideBuildArtifacts": case "documentWordCompletion": case "maximize": case "restoreProject": return typeof value === "boolean";
+    case "referenceLinkModifier": return value === "ctrl" || value === "alt" || value === "shift" || value === "meta";
     case "lastProject": return typeof value === "string";
     case "keybindings": return !!value && typeof value === "object" && !Array.isArray(value) && Object.values(value).every((v) => typeof v === "string");
     case "environments": return Array.isArray(value) && value.every((entry) => {

@@ -36,7 +36,10 @@ const source = String.raw`\documentclass{article}
 First paragraph with inline math $x_t$.
 
 \begin{equation}
-x_t = \alpha x_{t-1}
+\begin{aligned}
+x_t &= \alpha x_{t-1} \\
+y_t &= \beta y_{t-1}
+\end{aligned}
 \end{equation}
 
 \begin{theorem}
@@ -73,8 +76,8 @@ async function run() {
   await page.webContents.reload();
   await until('!!document.querySelector(".project-row")', "project list");
   await click('.topbar .icon-button[title="Settings"]');
-  await until('!!document.querySelector(".settings-navigation")', "workspace settings");
-  await click(".settings-navigation");
+  await until('!!document.querySelector(".preferences-dialog")', "workspace settings");
+  await click('[data-section="environments"]');
   await until('!!document.querySelector(".environment-manager-page")', "workspace environment manager");
   await click(".environment-manager-header .primary");
   await until('document.querySelectorAll(".environment-catalog section:last-child button").length === 1', "custom environment creation");
@@ -84,14 +87,15 @@ async function run() {
   await page.webContents.insertText("Review note");
   await until('document.querySelector(".environment-catalog section:last-child").textContent.includes("Review note")', "custom environment editing");
   console.log("PASS dashboard Settings opens the full manager and edits a custom environment");
-  await click(".environment-dialog-bar button");
-  await click(".settings-panel .close-button");
+  await click(".preferences-dialog > header > button");
   await click(".project-row");
   await until('!!document.querySelector(".workbench")', "workbench");
   await click(".environment-quick-action > button");
   await until('!!document.querySelector(".environment-picker")', "environment picker");
   assert.ok(await evaluate('!!document.querySelector(\'.environment-picker [data-environment-id="theorem"]\')'));
-  await click(".editor-tabs");
+  // The fixed split toolbar can place the picker above the editor tabs;
+  // use an unoccluded workbench area to verify outside-click dismissal.
+  await click(".sidebar-heading");
   await until('!document.querySelector(".environment-picker")', "environment picker outside dismissal");
   await click(".environment-quick-action > button");
   await click('.environment-picker [data-environment-id="remark"]');
@@ -112,6 +116,10 @@ async function run() {
   assert.equal(await evaluate('document.querySelectorAll(\'[data-environment="equation"]\').length'), 2);
   assert.equal(await evaluate('document.querySelectorAll(\'[data-environment="virtual:intuition"]\').length'), 1);
   assert.equal(await evaluate('document.querySelectorAll(\'[data-environment="custom:mystery"]\').length'), 1);
+  assert.ok(await evaluate('document.querySelectorAll(".katex").length >= 3'), "inline and display formulas are rendered by KaTeX");
+  assert.equal(await evaluate('document.querySelectorAll(".katex-error").length'), 0, "nested aligned math is accepted by KaTeX");
+  assert.equal(await evaluate('document.querySelectorAll(".preview-math-fallback").length'), 0);
+  console.log("PASS inline and display math render through KaTeX");
   console.log("PASS Preview renders nested, virtual, and unknown blocks");
 
   await click('[data-environment="theorem"] > .preview-block-header');
@@ -136,8 +144,8 @@ async function run() {
   console.log("PASS paragraph click edits only its source span and saves through IPC");
 
   await click('.activity-bar button[title="Settings"]');
-  await until('!!document.querySelector(".settings-submenu")', "settings submenu");
-  await click(".settings-submenu");
+  await until('!!document.querySelector(".preferences-dialog")', "settings dialog");
+  await click('[data-section="environments"]');
   await until('!!document.querySelector(".environment-manager-page")', "environment manager");
   await click('.environment-catalog [data-environment-id="theorem"]');
   await click('.environment-editor-title .environment-toggle');

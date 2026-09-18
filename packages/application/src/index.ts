@@ -1,4 +1,4 @@
-import { AppError, type Project, type ProjectTemplate } from "@latex-editor/contracts";
+import { AppError, type Project, type ProjectTemplate, type StyleResource } from "@latex-editor/contracts";
 import { isoNow, type Clock, type IdGenerator } from "@latex-editor/domain";
 
 export interface ProjectRegistryPort {
@@ -34,7 +34,11 @@ export interface TemplateCatalogPort {
   getTemplate(templateId: string): Promise<ProjectTemplate>;
 }
 
-export interface CreateProjectInput { name: string; parentPath: string; templateId?: string }
+export interface StyleResourcePort {
+  getResource(resourceId: string): Promise<StyleResource | undefined>;
+}
+
+export interface CreateProjectInput { name: string; parentPath: string; templateId?: string; styleResourceIds?: string[] }
 export type RemoveProjectRequest =
   | { projectId: string; mode: "registryOnly" }
   | { projectId: string; mode: "deleteLocalFolder"; confirmedCanonicalPath: string };
@@ -47,6 +51,7 @@ export class ProjectService {
   readonly #registry: ProjectRegistryPort;
   readonly #environment: ProjectEnvironmentPort;
   readonly #templates: TemplateCatalogPort;
+  readonly #styleResources: StyleResourcePort | undefined;
   readonly #clock: Clock;
   readonly #ids: IdGenerator;
 
@@ -54,12 +59,14 @@ export class ProjectService {
     registry: ProjectRegistryPort;
     environment: ProjectEnvironmentPort;
     templates: TemplateCatalogPort;
+    styleResources?: StyleResourcePort;
     clock: Clock;
     ids: IdGenerator;
   }) {
     this.#registry = dependencies.registry;
     this.#environment = dependencies.environment;
     this.#templates = dependencies.templates;
+    this.#styleResources = dependencies.styleResources;
     this.#clock = dependencies.clock;
     this.#ids = dependencies.ids;
   }
@@ -99,9 +106,34 @@ export class ProjectService {
     const canonicalPath = await this.#environment.createProjectDirectory(input.parentPath, directoryName);
     const template = await this.#templates.getTemplate(input.templateId ?? "minimal");
     try {
-      for (const file of template.files) {
-        await this.#environment.writeProjectText(canonicalPath, file.relativePath, file.content);
+      const fileKey = (path: string) => path.replaceAll("\\", "/").toLocaleLowerCase();
+      const files = new Map(template.files.map((file) => [fileKey(file.relativePath), { relativePath: file.relativePath.replaceAll("\\", "/"), content: file.content }]));
+      const resourceTargets = new Set<string>();
+      const imports: string[] = [];
+      for (const resourceId of input.styleResourceIds ?? []) {
+        const resource = await this.#styleResources?.getResource(resourceId);
+        if (resource === undefined) throw new AppError("RESOURCE_SCHEMA_INVALID", `Unknown style resource: ${resourceId}`);
+        for (const file of resource.files) {
+          const target = file.targetPath.replaceAll("\\", "/");
+          if (files.has(fileKey(target)) || resourceTargets.has(fileKey(target))) throw new AppError("FILE_ALREADY_EXISTS", `Style resource target already exists: ${target}`);
+          if (file.content === undefined) throw new AppError("RESOURCE_SCHEMA_INVALID", `Style resource file is unreadable: ${file.sourcePath}`);
+          resourceTargets.add(fileKey(target));
+          files.set(fileKey(target), { relativePath: target, content: file.content });
+        }
+        if (resource.mainStyle?.kind === "package") imports.push(resource.mainStyle.name);
       }
+      const mainPath = "main.tex";
+      if (imports.length > 0 && files.has(fileKey(mainPath))) {
+        let main = files.get(fileKey(mainPath))!.content;
+        const missingImports = imports.filter((name) => !main.includes(`\\usepackage{${name}}`));
+        if (missingImports.length > 0) {
+          const importText = missingImports.map((name) => `\\usepackage{${name}}`).join("\n");
+          const documentClassEnd = main.indexOf("\n", main.indexOf("\\documentclass"));
+          main = documentClassEnd < 0 ? `${main}\n${importText}\n` : `${main.slice(0, documentClassEnd + 1)}${importText}\n${main.slice(documentClassEnd + 1)}`;
+          files.get(fileKey(mainPath))!.content = main;
+        }
+      }
+      for (const file of files.values()) await this.#environment.writeProjectText(canonicalPath, file.relativePath, file.content);
       const project = await this.registerExistingFolder(canonicalPath);
       const mainFile = template.files.find((file) => file.relativePath === "main.tex")?.relativePath;
       if (mainFile !== undefined) {

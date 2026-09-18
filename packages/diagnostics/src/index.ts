@@ -9,9 +9,14 @@ function projectRelative(file: string, projectRoot?: string): string {
 }
 
 /** 解析常见 TeX/latexmk 日志；未知行被保留在编译日志中但不会阻塞解析。 */
-export function parseLatexDiagnostics(output: string, projectRoot?: string): Diagnostic[] {
+export function parseLatexDiagnostics(output: string, projectRoot?: string, defaultFile?: string): Diagnostic[] {
   const diagnostics: Diagnostic[] = [];
   const lines = output.split(/\r?\n/);
+  const defaultLocation = defaultFile === undefined ? {} : { file: projectRelative(defaultFile, projectRoot) };
+  const inputLine = (value: string): number | undefined => {
+    const match = /(?:on input line|at lines?)\s+(\d+)/i.exec(value);
+    return match?.[1] === undefined ? undefined : Number(match[1]);
+  };
   let pendingTexError: { message: string; rawExcerpt: string } | undefined;
 
   for (let index = 0; index < lines.length; index += 1) {
@@ -41,7 +46,7 @@ export function parseLatexDiagnostics(output: string, projectRoot?: string): Dia
     if (texLine !== null && pendingTexError !== undefined) {
       diagnostics.push({
         severity: "error", source: "latex", message: pendingTexError.message,
-        line: Number(texLine[1]), rawExcerpt: `${pendingTexError.rawExcerpt}\n${line}`
+        ...defaultLocation, line: Number(texLine[1]), rawExcerpt: `${pendingTexError.rawExcerpt}\n${line}`
       });
       pendingTexError = undefined;
       continue;
@@ -53,15 +58,18 @@ export function parseLatexDiagnostics(output: string, projectRoot?: string): Dia
       continue;
     }
     if (/undefined references?|Reference .* undefined/i.test(line)) {
-      diagnostics.push({ severity: "warning", source: "latex", code: "UNDEFINED_REFERENCE", message: line.trim(), rawExcerpt: line });
+      const lineNumber = inputLine(line);
+      diagnostics.push({ severity: "warning", source: "latex", code: "UNDEFINED_REFERENCE", message: line.trim(), ...defaultLocation, ...(lineNumber === undefined ? {} : { line: lineNumber }), rawExcerpt: line });
       continue;
     }
     if (/undefined citations?|Citation .* undefined/i.test(line)) {
-      diagnostics.push({ severity: "warning", source: "latex", code: "UNDEFINED_CITATION", message: line.trim(), rawExcerpt: line });
+      const lineNumber = inputLine(line);
+      diagnostics.push({ severity: "warning", source: "latex", code: "UNDEFINED_CITATION", message: line.trim(), ...defaultLocation, ...(lineNumber === undefined ? {} : { line: lineNumber }), rawExcerpt: line });
       continue;
     }
     if (/^(Over|Under)full \\[hv]box/.test(line)) {
-      diagnostics.push({ severity: "warning", source: "latex", code: "BOX_WARNING", message: line.trim(), rawExcerpt: line });
+      const lineNumber = inputLine(line);
+      diagnostics.push({ severity: "warning", source: "latex", code: "BOX_WARNING", message: line.trim(), ...defaultLocation, ...(lineNumber === undefined ? {} : { line: lineNumber }), rawExcerpt: line });
       continue;
     }
     if (/^Latexmk:.*(?:error|failure)/i.test(line)) {
@@ -70,7 +78,7 @@ export function parseLatexDiagnostics(output: string, projectRoot?: string): Dia
   }
 
   if (pendingTexError !== undefined) {
-    diagnostics.push({ severity: "error", source: "latex", message: pendingTexError.message, rawExcerpt: pendingTexError.rawExcerpt });
+    diagnostics.push({ severity: "error", source: "latex", message: pendingTexError.message, ...defaultLocation, rawExcerpt: pendingTexError.rawExcerpt });
   }
 
   const seen = new Set<string>();

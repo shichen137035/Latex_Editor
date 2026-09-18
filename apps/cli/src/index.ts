@@ -68,6 +68,14 @@ async function createContext(): Promise<ApplicationContext> {
   return { registry, projects, files, compiler, resources };
 }
 
+async function validateResourcesCommand(): Promise<number> {
+  const resourcesPath = resolve(root, "resources");
+  const valid = await validateResourceDirectory(resourcesPath);
+  const entries = await readdir(resourcesPath, { withFileTypes: true });
+  output({ valid, resourceGroups: entries.filter((entry) => entry.isDirectory()).map((entry) => entry.name).sort() });
+  return valid ? 0 : 2;
+}
+
 async function run(context: ApplicationContext): Promise<number> {
   const args = process.argv.slice(2).filter((argument) => argument !== "--json");
   const [command, subcommand, third, fourth] = args;
@@ -77,11 +85,7 @@ async function run(context: ApplicationContext): Promise<number> {
     return toolchain.available ? 0 : 4;
   }
   if (command === "resources" && subcommand === "validate") {
-    const resourcesPath = resolve(root, "resources");
-    const valid = await validateResourceDirectory(resourcesPath);
-    const entries = await readdir(resourcesPath, { withFileTypes: true });
-    output({ valid, resourceGroups: entries.filter((entry) => entry.isDirectory()).map((entry) => entry.name).sort() });
-    return valid ? 0 : 2;
+    return validateResourcesCommand();
   }
   if (command === "resources" && subcommand === "search") {
     const query = third ?? "";
@@ -153,10 +157,7 @@ async function run(context: ApplicationContext): Promise<number> {
   return 2;
 }
 
-createContext().then(async (context) => {
-  try { process.exitCode = await run(context); }
-  finally { context.registry.close(); }
-}).catch((error: unknown) => {
+function handleError(error: unknown): void {
   if (error instanceof AppError) {
     if (jsonOutput) printJson({ error: error.toPayload() });
     else process.stderr.write(`${error.code}: ${error.message}\n`);
@@ -166,4 +167,14 @@ createContext().then(async (context) => {
     process.stderr.write(`${error instanceof Error ? error.message : String(error)}\n`);
     process.exitCode = 1;
   }
-});
+}
+
+const commandArgs = process.argv.slice(2).filter((argument) => argument !== "--json");
+if (commandArgs[0] === "resources" && commandArgs[1] === "validate") {
+  validateResourcesCommand().then((exitCode) => { process.exitCode = exitCode; }).catch(handleError);
+} else {
+  createContext().then(async (context) => {
+    try { process.exitCode = await run(context); }
+    finally { context.registry.close(); }
+  }).catch(handleError);
+}

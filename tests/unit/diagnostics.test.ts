@@ -15,10 +15,16 @@ describe("Diagnostic parser", () => {
       "unknown custom output",
       "LaTeX Warning: There were undefined references.",
       "LaTeX Error: File `missing-package.sty' not found.",
-      "Overfull \\hbox (1.0pt too wide)"
+      "Overfull \\hbox (1.0pt too wide) in paragraph at lines 6--7"
     ].join("\n"));
     expect(diagnostics.some((item) => item.code === "UNDEFINED_REFERENCE")).toBe(true);
     expect(diagnostics.some((item) => item.code === "MISSING_FILE")).toBe(true);
     expect(diagnostics.some((item) => item.code === "BOX_WARNING")).toBe(true);
+    expect(diagnostics).toContainEqual(expect.objectContaining({ code: "BOX_WARNING", line: 6 }));
+  });
+
+  it("attaches contextual warning locations to the compilation main file", () => {
+    const diagnostics = parseLatexDiagnostics("LaTeX Warning: Reference `sec:intro' on input line 12 undefined.", "D:/paper", "main.tex");
+    expect(diagnostics).toContainEqual(expect.objectContaining({ code: "UNDEFINED_REFERENCE", file: "main.tex", line: 12 }));
   });
 });

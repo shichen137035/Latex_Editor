@@ -35,9 +35,11 @@
     "addToOutline": false
   },
   "previewEnvironments": [
+    { "id": "chapter", "family": "section", "match": { "kind": "command", "command": "chapter" }, "behavior": { "addToOutline": true } },
     { "id": "section", "family": "section", "match": { "kind": "command", "command": "section" }, "behavior": { "addToOutline": true } },
     { "id": "subsection", "family": "section", "match": { "kind": "command", "command": "subsection" }, "behavior": { "addToOutline": true } },
     { "id": "subsubsection", "family": "section", "match": { "kind": "command", "command": "subsubsection" }, "behavior": { "addToOutline": true } },
+    { "id": "paragraph", "family": "section", "match": { "kind": "command", "command": "paragraph" }, "behavior": { "addToOutline": true } },
     { "id": "abstract", "family": "section", "match": { "kind": "latex-environment", "name": "abstract" } },
     { "id": "theorem", "family": "theorem", "match": { "kind": "latex-environment", "name": "theorem" }, "behavior": { "addToOutline": true } },
     { "id": "lemma", "family": "theorem", "match": { "kind": "latex-environment", "name": "lemma" }, "behavior": { "addToOutline": true } },

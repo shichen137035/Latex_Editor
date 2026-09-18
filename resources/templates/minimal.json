@@ -7,6 +7,10 @@
     {
       "relativePath": "main.tex",
       "content": "\\documentclass{article}\n\\begin{document}\nHello, LaTeX!\n\\end{document}\n"
+    },
+    {
+      "relativePath": "reference.bib",
+      "content": ""
     }
   ]
 }

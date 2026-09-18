@@ -18,3 +18,24 @@ body, .app-shell { background: var(--color-bg-app); color: var(--color-text-prim
 :root[data-theme="dark"] .pane-placeholder { background: var(--color-bg-panel); }
 .latex-toolbar { position: relative; }.latex-toolbar .view-switch { flex-shrink: 0; margin-left: auto; }
 @media (max-width: 1450px) { .latex-toolbar > button > span { display: none; } }
+
+/* Workbench surfaces used to retain the directory page's light colors. Keep
+   every editor-side surface on the same semantic tokens as the active theme. */
+.workbench-topbar { background: var(--color-bg-toolbar); box-shadow: 0 2px 12px color-mix(in srgb, var(--color-text-primary) 10%, transparent); }
+.activity-bar { background: var(--color-bg-toolbar); }
+.activity-bar button.active { background: var(--color-bg-hover); }
+.activity-bar button span { color: var(--color-text-primary); background: var(--color-bg-panel); border: 1px solid var(--color-border); box-shadow: var(--shadow-panel); }
+.sidebar { background: var(--color-bg-panel); }
+.sidebar-input,.entry-name-form input { background: var(--color-bg-panel); color: var(--color-text-primary); border-color: var(--color-border); }
+.tree-row.active { background: var(--color-bg-hover); }
+.work-pane { background: var(--color-bg-panel); }
+.editor-tabs > button.active { background: var(--color-bg-panel); }
+.pane-placeholder { background: radial-gradient(circle at 50% 45%, color-mix(in srgb, var(--color-accent) 12%, transparent), transparent 35%), var(--color-bg-panel); }
+.view-switch { background: var(--color-bg-subtle); }
+.view-switch button.active { color: var(--color-primary-strong); background: var(--color-bg-panel); box-shadow: 0 1px 4px color-mix(in srgb, var(--color-text-primary) 18%, transparent); }
+.bottom-panel { background: var(--color-bg-panel); }
+.pdf-viewer { background: var(--color-bg-subtle); }
+.settings-float { background: var(--color-bg-panel); }
+.entry-name-form { background: var(--color-bg-panel); }
+.status-bar { color: var(--color-status-text); background: var(--color-status-bg); }
+.preview-diagnostics { color: var(--color-warning); background: color-mix(in srgb, var(--color-warning) 12%, var(--color-bg-panel)); border-color: color-mix(in srgb, var(--color-warning) 55%, var(--color-border)); }

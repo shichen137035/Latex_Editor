@@ -1,6 +1,6 @@
 # Local LaTeX Editor
 
-本项目以 `V0.1_TECHNICAL_REQUIREMENTS_AND_TEST_SPEC.md` 的本地核心为基础，并按 v0.2 Workbench 与 v0.2.2 Preview 技术手册实现 Electron、React、Monaco 和结构化可视化预览。项目、文件、编译服务仍可通过 CLI 和自动化测试独立验证。
+本项目以 `V0.1_TECHNICAL_REQUIREMENTS_AND_TEST_SPEC.md` 的本地核心为基础，并按 v0.2 Workbench、v0.2.2 Preview、v0.2.3 Foundation 和 v0.2.4 Style Resources 技术手册实现 Electron、React、Monaco、设置/主题/i18n、可视化预览和本地样式资源库。项目、文件、编译服务仍可通过 CLI 和自动化测试独立验证。
 
 ## 本地开发
 
@@ -11,6 +11,14 @@ npm install
 npm run doctor
 npm run verify
 npm run desktop:dev
+```
+
+Windows 用户也可以直接双击项目根目录下的 `启动_TeXWeave.bat`。脚本会自动定位项目目录、检查 Node.js/npm、补齐缺失依赖并启动桌面端。
+
+v0.2.4 资源与项目 bootstrap 的 Electron 验收：
+
+```powershell
+npm run desktop:test-foundations
 ```
 
 分层测试：
@@ -57,6 +65,9 @@ SQLite 注册表默认位于 `%LOCALAPPDATA%\latex-editor\registry.sqlite`。测
 - 点击编辑器工具栏的 `Visual` 可进入结构化 Preview；块标题用于选择，正文用于局部源码编辑。
 - 项目目录主设置和工作区项目设置均可进入环境管理器，支持启停、新建、编辑、复制、重置、删除自定义定义及高级 XML。
 - 内置 Preview 环境来自 `resources/environments/preview-environments.json`，不再由 React/TypeScript 写死；编辑工具栏的 Environment 按钮会列出当前项目启用的定义并插入相应源码。
+- Settings → Style Resources 管理内置 Empty/Default、用户资源导入、文件夹导入、复制、重命名和删除；自定义资源保存在 Electron userData 中。
+- 新建空白项目会创建 `main.tex` 和空的 `reference.bib`；选择 Default 或自定义 `.sty` 后，资源文件会在创建时复制到项目根目录，并按安全元数据自动插入 `\\usepackage{...}`。
+- 项目只依赖本地快照，不依赖 TeXWeave 安装目录；资源库后续变化不会修改已创建项目。Online Resources 目前仅保留诚实的占位区域。
 
 目录按分层架构组织：`apps/` 放 CLI，`packages/` 放 contracts、domain、application 和基础设施适配器，`resources/` 放可编辑数据资源，`tests/` 放分层测试。
 

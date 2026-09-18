@@ -1,0 +1,39 @@
+.spell-error {
+  text-decoration-line: underline;
+  text-decoration-style: wavy;
+  text-decoration-color: var(--color-error);
+  text-decoration-thickness: 1px;
+}
+
+.spell-context-menu {
+  position: fixed;
+  z-index: 120;
+  min-width: 190px;
+  padding: 5px;
+  border: 1px solid var(--color-border-strong);
+  border-radius: 8px;
+  background: var(--color-bg-panel);
+  box-shadow: var(--shadow-panel);
+}
+
+.spell-context-menu button {
+  width: 100%;
+  min-height: 29px;
+  display: block;
+  padding: 0 9px;
+  border-radius: 5px;
+  color: var(--color-text-primary);
+  text-align: left;
+  background: transparent;
+  font-size: 11px;
+}
+
+.spell-context-menu button:hover { background: var(--color-bg-hover); }
+.spell-context-empty { display: block; padding: 7px 9px; color: var(--color-text-muted); font-size: 10px; }
+
+.spell-status-control { position: relative; height: 100%; display: flex; align-items: center; }
+.spell-status-control > button { height: 100%; padding: 0 8px; color: inherit; font-size: 9px; }
+.spell-status-control > button:hover { background: rgba(255,255,255,.13); }
+.spell-status-menu { position: absolute; z-index: 120; right: 0; bottom: calc(100% + 5px); min-width: 190px; padding: 5px; border: 1px solid var(--color-border-strong); border-radius: 8px; color: var(--color-text-primary); background: var(--color-bg-panel); box-shadow: var(--shadow-panel); }
+.spell-status-menu button { width: 100%; min-height: 29px; padding: 0 9px; border-radius: 5px; color: var(--color-text-primary); text-align: left; background: transparent; font-size: 11px; }
+.spell-status-menu button:hover { background: var(--color-bg-hover); }

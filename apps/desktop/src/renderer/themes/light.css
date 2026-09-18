@@ -15,6 +15,8 @@
   --color-success: #28a976;
   --color-warning: #c68b26;
   --color-error: #d44c55;
+  --color-status-bg: #0e629e;
+  --color-status-text: #eaf6ff;
   --radius-small: 6px;
   --radius-medium: 10px;
   --radius-large: 16px;

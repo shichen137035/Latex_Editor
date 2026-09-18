@@ -1,4 +1,4 @@
-import type { CompileResult, FileWriteResult, Project, ProjectTreeNode, TextFileContent, SettingsSnapshot, PreferenceKey, LatexToolchain } from "@latex-editor/contracts";
+import type { CommandMetadata, CompileResult, FileWriteResult, Project, ProjectTreeNode, TextFileContent, SettingsSnapshot, PreferenceKey, LatexToolchain, StyleResource, SpellCheckMode, SpellCheckStatus } from "@latex-editor/contracts";
 
 declare global {
   interface Window {
@@ -8,9 +8,30 @@ declare global {
         set(key: PreferenceKey, value: unknown, projectId?: string): Promise<SettingsSnapshot>;
         detectToolchain(manual?: "directory" | "executable"): Promise<LatexToolchain | undefined>;
       };
+      resources: {
+        searchCommands(query: string): Promise<CommandMetadata[]>;
+      };
+      spellcheck: {
+        status(): Promise<SpellCheckStatus | undefined>;
+        configure(mode: SpellCheckMode, language: string): Promise<SpellCheckStatus | undefined>;
+        checkWords(words: string[], language: string): Promise<string[]>;
+        suggestions(word: string, language: string): Promise<string[]>;
+        addToDictionary(word: string): Promise<boolean>;
+        dictionaryWords(): Promise<string[]>;
+      };
+      styleResources: {
+        list(): Promise<StyleResource[]>;
+        create(name: string): Promise<StyleResource>;
+        importFiles(paths: string[], name?: string): Promise<StyleResource>;
+        importFolder(folderPath: string): Promise<StyleResource>;
+        addFiles(id: string, paths: string[]): Promise<StyleResource>;
+        duplicate(id: string): Promise<StyleResource>;
+        rename(id: string, name: string): Promise<StyleResource>;
+        remove(id: string): Promise<void>;
+      };
       projects: {
         list(): Promise<Project[]>;
-        create(input: { name: string; parentPath: string }): Promise<Project>;
+        create(input: { name: string; parentPath: string; styleResourceIds?: string[] }): Promise<Project>;
         register(folderPath: string): Promise<Project>;
         open(projectId: string): Promise<Project>;
         setMainFile(projectId: string, relativePath: string): Promise<Project>;
@@ -33,6 +54,7 @@ declare global {
       };
       dialogs: {
         pickFolder(): Promise<string | undefined>;
+        pickFiles(): Promise<string[]>;
       };
     };
   }

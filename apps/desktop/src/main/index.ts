@@ -2,14 +2,16 @@ import { app, BrowserWindow, dialog, ipcMain, Menu } from "electron";
 import { randomUUID } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import { resolve } from "node:path";
-import type { CompileResult, CompileInput, PreferenceKey } from "@latex-editor/contracts" with { "resolution-mode": "import" };
+import type { CommandMetadata, CompileResult, CompileInput, PreferenceKey } from "@latex-editor/contracts" with { "resolution-mode": "import" };
 import { SettingsRepository } from "./settings.js";
+import { StyleResourceRepository } from "./style-resources.js";
+import { OfflineSpellCheckService } from "./spellcheck.js";
 
 interface DesktopContext {
   registry: { initialize(): void; close(): void };
   projects: {
     listProjects(): Promise<unknown>;
-    createProject(input: { name: string; parentPath: string }): Promise<unknown>;
+    createProject(input: { name: string; parentPath: string; styleResourceIds?: string[] }): Promise<unknown>;
     registerExistingFolder(folderPath: string): Promise<unknown>;
     openProject(projectId: string): Promise<unknown>;
     setMainFile(projectId: string, relativePath: string): Promise<unknown>;
@@ -27,10 +29,14 @@ interface DesktopContext {
     removeEntry(projectId: string, relativePath: string): Promise<void>;
   };
   compiler: { compile(input: CompileInput): Promise<CompileResult> };
+  resources: { searchCommands(query: string): CommandMetadata[] };
+  styleResources: StyleResourceRepository;
+  spellcheck: OfflineSpellCheckService;
 }
 
 let context: DesktopContext | undefined;
 let settings: SettingsRepository;
+
 
 async function createContext(): Promise<DesktopContext> {
   // Backend packages are ESM; dynamic import keeps this Electron entry CommonJS-compatible.
@@ -46,10 +52,13 @@ async function createContext(): Promise<DesktopContext> {
   registry.initialize();
   // Development build lives under apps/desktop/dist/main; packaged builds can later override this path.
   const resources = new FileResourceCatalog(resolve(__dirname, "../../../..", "resources"));
+  const styleResources = new StyleResourceRepository(resolve(__dirname, "../../../..", "resources"), app.getPath("userData"));
+  await styleResources.initialize();
   const projects = new ProjectService({
     registry,
     environment: new NodeProjectEnvironment(),
     templates: resources,
+    styleResources,
     clock: systemClock,
     ids: { next: randomUUID }
   });
@@ -64,12 +73,57 @@ async function createContext(): Promise<DesktopContext> {
   await settings.saveToolchain(detected);
   const profiles = { getCompilerProfile: () => ({ ...resources.getCompilerProfile(), ...(settings.toolchain?.latexmk ? { executable: settings.toolchain.latexmk } : {}) }) };
   const compiler = new LatexmkCompilerService({ projects, files, profiles, clock: systemClock });
-  return { registry, projects, files, compiler };
+  const spellcheck = new OfflineSpellCheckService();
+  await spellcheck.initialize();
+  spellcheck.configure(settings.global.spellCheckMode ?? "auto", settings.global.spellCheckLanguage ?? "en-US");
+  return { registry, projects, files, compiler, resources, styleResources, spellcheck };
 }
 
 function registerIpcHandlers(): void {
   ipcMain.handle("settings:get", (_event, projectId?: string) => settings.snapshot(projectId));
   ipcMain.handle("settings:set", (_event, key: PreferenceKey, value: unknown, projectId?: string) => settings.set(key, value, projectId));
+  ipcMain.handle("resources:commands", (_event, query: string) => context?.resources.searchCommands(query) ?? []);
+  ipcMain.handle("spellcheck:status", () => context?.spellcheck.status());
+  ipcMain.handle("spellcheck:check-words", (_event, words: string[], language: string) => context?.spellcheck.checkWords(words, language) ?? []);
+  ipcMain.handle("spellcheck:suggestions", (_event, word: string, language: string) => context?.spellcheck.suggestions(word, language) ?? []);
+  ipcMain.handle("spellcheck:configure", (_event, mode: "auto" | "manual" | "disabled", language: string) => {
+    if (context === undefined) throw new Error("Application context is not ready");
+    return context.spellcheck.configure(mode, language);
+  });
+  ipcMain.handle("spellcheck:add-word", (_event, word: string) => {
+    if (context === undefined) throw new Error("Application context is not ready");
+    return context.spellcheck.addToDictionary(word);
+  });
+  ipcMain.handle("spellcheck:dictionary-words", () => context?.spellcheck.dictionaryWords() ?? []);
+  ipcMain.handle("style-resources:list", () => context?.styleResources.list() ?? []);
+  ipcMain.handle("style-resources:create", (_event, name: string) => {
+    if (context === undefined) throw new Error("Application context is not ready");
+    return context.styleResources.createResource(name);
+  });
+  ipcMain.handle("style-resources:import-files", (_event, paths: string[], name?: string) => {
+    if (context === undefined) throw new Error("Application context is not ready");
+    return context.styleResources.importFiles(paths, name);
+  });
+  ipcMain.handle("style-resources:import-folder", (_event, folderPath: string) => {
+    if (context === undefined) throw new Error("Application context is not ready");
+    return context.styleResources.importFolder(folderPath);
+  });
+  ipcMain.handle("style-resources:duplicate", (_event, id: string) => {
+    if (context === undefined) throw new Error("Application context is not ready");
+    return context.styleResources.duplicate(id);
+  });
+  ipcMain.handle("style-resources:add-files", (_event, id: string, paths: string[]) => {
+    if (context === undefined) throw new Error("Application context is not ready");
+    return context.styleResources.addFiles(id, paths);
+  });
+  ipcMain.handle("style-resources:rename", (_event, id: string, name: string) => {
+    if (context === undefined) throw new Error("Application context is not ready");
+    return context.styleResources.renameResource(id, name);
+  });
+  ipcMain.handle("style-resources:remove", (_event, id: string) => {
+    if (context === undefined) throw new Error("Application context is not ready");
+    return context.styleResources.remove(id);
+  });
   ipcMain.handle("toolchain:detect", async (_event, manual?: "directory" | "executable") => {
     let path: string | undefined;
     if (manual) {
@@ -165,6 +219,10 @@ function registerIpcHandlers(): void {
   ipcMain.handle("dialogs:pick-folder", async () => {
     const result = await dialog.showOpenDialog({ properties: ["openDirectory", "createDirectory"] });
     return result.canceled ? undefined : result.filePaths[0];
+  });
+  ipcMain.handle("dialogs:pick-files", async () => {
+    const result = await dialog.showOpenDialog({ properties: ["openFile", "multiSelections"], filters: [{ name: "TeX resources", extensions: ["sty", "cls", "bst", "bib", "tex", "cfg", "def", "ltx"] }] });
+    return result.canceled ? [] : result.filePaths;
   });
 }
 

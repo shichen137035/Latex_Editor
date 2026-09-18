@@ -3,20 +3,28 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, it, expect } from "vitest";
 import { SettingsRepository } from "../../apps/desktop/src/main/settings.js";
-import { sanitizePreferences } from "../../packages/contracts/src/settings.js";
+import { preferenceDefaults, sanitizePreferences } from "../../packages/contracts/src/settings.js";
 import { setLocale, t } from "../../apps/desktop/src/renderer/i18n/index.js";
 
 describe("v0.2.3 foundations", () => {
   it("falls back to English and then the key without changing semantic identities", () => {
     setLocale("ja");
     expect(t("environment.theorem")).toBe("定理");
-    expect(t("environment.corollary")).toBe("Corollary");
+    expect(t("environment.corollary")).toBe("系");
     expect(t("future.missing")).toBe("future.missing");
     setLocale("en");
     expect(t("environment.theorem")).toBe("Theorem");
   });
   it("rejects invalid preferences and global-only project overrides", () => {
-    expect(sanitizePreferences({ fontSize: -3, theme: "broken", locale: "ja", wordWrap: true })).toEqual({ locale: "ja", wordWrap: true });
+    expect(preferenceDefaults.documentWordCompletion).toBe(true);
+    expect(preferenceDefaults.referenceLinkModifier).toBe("ctrl");
+    expect(preferenceDefaults.spellCheckMode).toBe("auto");
+    expect(preferenceDefaults.spellCheckLanguage).toBe("en-US");
+    expect(sanitizePreferences({ fontSize: -3, theme: "broken", locale: "ja", wordWrap: true, documentWordCompletion: false })).toEqual({ locale: "ja", wordWrap: true, documentWordCompletion: false });
+    expect(sanitizePreferences({ spellCheckMode: "manual", spellCheckLanguage: "ja-JP" })).toEqual({ spellCheckMode: "manual", spellCheckLanguage: "ja-JP" });
+    expect(sanitizePreferences({ referenceLinkModifier: "alt" })).toEqual({ referenceLinkModifier: "alt" });
+    expect(sanitizePreferences({ referenceLinkModifier: "mouse" })).toEqual({});
+    expect(sanitizePreferences({ spellCheckMode: "manual", spellCheckLanguage: "not a language" }, true)).toEqual({});
     expect(sanitizePreferences({ theme: "dark", keybindings: {}, toolchain: { latexmk: "C:/tool.exe" }, fontSize: 20 }, true)).toEqual({ fontSize: 20 });
   });
   it("persists concurrent updates atomically, isolates projects and resets overrides", async () => {

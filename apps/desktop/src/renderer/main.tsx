@@ -20,16 +20,64 @@ self.MonacoEnvironment = {
     return label === "json" ? new JsonWorker() : new EditorWorker();
   }
 };
+monaco.editor.defineTheme("texweave-light", {
+  base: "vs",
+  inherit: true,
+  rules: [
+    { token: "delimiter.math", foreground: "087EBA", fontStyle: "bold" },
+    { token: "keyword.math", foreground: "7A4FB0" },
+    { token: "number.math", foreground: "A05A00" },
+    { token: "string.math", foreground: "245A78" }
+  ],
+  colors: { "editor.background": "#ffffff" }
+});
+monaco.editor.defineTheme("texweave-dark", {
+  base: "vs-dark",
+  inherit: true,
+  rules: [
+    { token: "delimiter.math", foreground: "65D6F2", fontStyle: "bold" },
+    { token: "keyword.math", foreground: "D0A8FF" },
+    { token: "number.math", foreground: "F3C477" },
+    { token: "string.math", foreground: "B9DFF0" }
+  ],
+  colors: { "editor.background": "#182432" }
+});
 monaco.languages.register({ id: "latex" });
 monaco.languages.setMonarchTokensProvider("latex", {
   tokenizer: {
     root: [
       [/%.*$/, "comment"],
+      [/\\\(/, { token: "delimiter.math", next: "@mathParen" }],
+      [/\\\[/, { token: "delimiter.math", next: "@mathBracket" }],
       [/\\[A-Za-z@]+/, "keyword"],
       [/\\./, "keyword"],
       [/[{}[\]]/, "delimiter"],
-      [/\$\$?/, "delimiter"],
+      [/\$\$?/, { token: "delimiter.math", next: "@mathDollar" }],
       [/\d+(?:\.\d+)?/, "number"]
+    ],
+    mathDollar: [
+      [/\$\$?/, { token: "delimiter.math", next: "@pop" }],
+      [/\\[A-Za-z@]+/, "keyword.math"],
+      [/\\./, "keyword.math"],
+      [/[{}[\]]/, "delimiter.math"],
+      [/\d+(?:\.\d+)?/, "number.math"],
+      [/[^\\$\n{}[\]]+/, "string.math"]
+    ],
+    mathParen: [
+      [/\\\)/, { token: "delimiter.math", next: "@pop" }],
+      [/\\[A-Za-z@]+/, "keyword.math"],
+      [/\\./, "keyword.math"],
+      [/[{}[\]]/, "delimiter.math"],
+      [/\d+(?:\.\d+)?/, "number.math"],
+      [/[^\\\n{}[\]]+/, "string.math"]
+    ],
+    mathBracket: [
+      [/\\\]/, { token: "delimiter.math", next: "@pop" }],
+      [/\\[A-Za-z@]+/, "keyword.math"],
+      [/\\./, "keyword.math"],
+      [/[{}[\]]/, "delimiter.math"],
+      [/\d+(?:\.\d+)?/, "number.math"],
+      [/[^\\\n{}[\]]+/, "string.math"]
     ]
   }
 });
