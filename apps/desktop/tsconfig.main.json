@@ -12,6 +12,7 @@
   "include": ["src/main/**/*.ts"],
   "references": [
     { "path": "../../packages/application" },
+    { "path": "../../packages/editor-core" },
     { "path": "../../packages/domain" },
     { "path": "../../packages/filesystem-node" },
     { "path": "../../packages/registry-sqlite" },

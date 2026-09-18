@@ -68,6 +68,7 @@ SQLite 注册表默认位于 `%LOCALAPPDATA%\latex-editor\registry.sqlite`。测
 - Settings → Style Resources 管理内置 Empty/Default、用户资源导入、文件夹导入、复制、重命名和删除；自定义资源保存在 Electron userData 中。
 - 新建空白项目会创建 `main.tex` 和空的 `reference.bib`；选择 Default 或自定义 `.sty` 后，资源文件会在创建时复制到项目根目录，并按安全元数据自动插入 `\\usepackage{...}`。
 - 项目只依赖本地快照，不依赖 TeXWeave 安装目录；资源库后续变化不会修改已创建项目。Online Resources 目前仅保留诚实的占位区域。
+- v0.3 块关系后端：稳定块 ID、结构从属、前提/结果有向图、深度遍历、Tarjan SCC、重叠/环路诊断和块删除清理；关系快照保存在项目 `.texweave/block-graph.json`，并通过 preload/IPC 提供给后续 Relations UI。
 
 目录按分层架构组织：`apps/` 放 CLI，`packages/` 放 contracts、domain、application 和基础设施适配器，`resources/` 放可编辑数据资源，`tests/` 放分层测试。
 
@@ -81,4 +82,4 @@ SQLite 注册表默认位于 `%LOCALAPPDATA%\latex-editor\registry.sqlite`。测
 
 ## 当前边界
 
-Relations、AI Editor 和版本快照后端尚未实现。v0.2.2 已提供结构化 Preview 和内嵌 PDF 查看；Preview 是面向阅读与局部编辑的语义层，不追求与最终 PDF 完全相同的排版。源文件读取、保存与 `latexmk` 编译通过 preload/IPC 调用既有核心服务，renderer 不直接访问文件系统。
+Relations 的 v0.3 图数据、查询、诊断、持久化和 IPC 后端已经实现，图形化编辑与可视化仍待后续版本接入。AI Editor 和版本快照后端尚未实现。v0.2.2 已提供结构化 Preview 和内嵌 PDF 查看；Preview 是面向阅读与局部编辑的语义层，不追求与最终 PDF 完全相同的排版。源文件读取、保存与 `latexmk` 编译通过 preload/IPC 调用既有核心服务，renderer 不直接访问文件系统。

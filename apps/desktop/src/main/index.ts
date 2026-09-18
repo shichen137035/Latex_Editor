@@ -2,7 +2,8 @@ import { app, BrowserWindow, dialog, ipcMain, Menu } from "electron";
 import { randomUUID } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import { resolve } from "node:path";
-import type { CommandMetadata, CompileResult, CompileInput, PreferenceKey } from "@latex-editor/contracts" with { "resolution-mode": "import" };
+import type { CommandMetadata, CompileResult, CompileInput, GraphTraversalOptions, PreferenceKey, SemanticBlock, CreateSemanticBlockInput, UpdateSemanticBlockInput } from "@latex-editor/contracts" with { "resolution-mode": "import" };
+import type { ProjectBlockGraphService } from "@latex-editor/application" with { "resolution-mode": "import" };
 import { SettingsRepository } from "./settings.js";
 import { StyleResourceRepository } from "./style-resources.js";
 import { OfflineSpellCheckService } from "./spellcheck.js";
@@ -30,6 +31,7 @@ interface DesktopContext {
   };
   compiler: { compile(input: CompileInput): Promise<CompileResult> };
   resources: { searchCommands(query: string): CommandMetadata[] };
+  blockGraph: ProjectBlockGraphService;
   styleResources: StyleResourceRepository;
   spellcheck: OfflineSpellCheckService;
 }
@@ -40,7 +42,7 @@ let settings: SettingsRepository;
 
 async function createContext(): Promise<DesktopContext> {
   // Backend packages are ESM; dynamic import keeps this Electron entry CommonJS-compatible.
-  const [{ ProjectService }, { systemClock }, { NodeProjectEnvironment, NodeProjectFileService }, { SQLiteProjectRegistry }, { FileResourceCatalog }, { LatexmkCompilerService }] = await Promise.all([
+  const [{ ProjectService, ProjectBlockGraphService }, { systemClock }, { NodeProjectEnvironment, NodeProjectFileService }, { SQLiteProjectRegistry }, { FileResourceCatalog }, { LatexmkCompilerService }] = await Promise.all([
     import("@latex-editor/application"),
     import("@latex-editor/domain"),
     import("@latex-editor/filesystem-node"),
@@ -65,6 +67,7 @@ async function createContext(): Promise<DesktopContext> {
   // Resource loading is completed before the first project action is accepted.
   await resources.reload();
   const files = new NodeProjectFileService(projects);
+  const blockGraph = new ProjectBlockGraphService(files, { next: randomUUID });
   settings = new SettingsRepository(app.getPath("userData"), async (id) => files.resolveFilePath(id, ".texweave/settings.json", false));
   await settings.initialize();
   const { discoverToolchain } = await import("@latex-editor/compiler-latexmk");
@@ -76,13 +79,39 @@ async function createContext(): Promise<DesktopContext> {
   const spellcheck = new OfflineSpellCheckService();
   await spellcheck.initialize();
   spellcheck.configure(settings.global.spellCheckMode ?? "auto", settings.global.spellCheckLanguage ?? "en-US");
-  return { registry, projects, files, compiler, resources, styleResources, spellcheck };
+  return { registry, projects, files, compiler, resources, blockGraph, styleResources, spellcheck };
 }
 
 function registerIpcHandlers(): void {
   ipcMain.handle("settings:get", (_event, projectId?: string) => settings.snapshot(projectId));
   ipcMain.handle("settings:set", (_event, key: PreferenceKey, value: unknown, projectId?: string) => settings.set(key, value, projectId));
   ipcMain.handle("resources:commands", (_event, query: string) => context?.resources.searchCommands(query) ?? []);
+  ipcMain.handle("block-graph:snapshot", (_event, projectId: string) => context?.blockGraph.snapshot(projectId));
+  ipcMain.handle("block-graph:create-block", (_event, projectId: string, input: CreateSemanticBlockInput) => context?.blockGraph.createBlock(projectId, input));
+  ipcMain.handle("block-graph:add-block", (_event, projectId: string, block: SemanticBlock) => context?.blockGraph.addBlock(projectId, block));
+  ipcMain.handle("block-graph:update-block", (_event, projectId: string, blockId: string, patch: UpdateSemanticBlockInput) => context?.blockGraph.updateBlock(projectId, blockId, patch));
+  ipcMain.handle("block-graph:remove-block", (_event, projectId: string, blockId: string) => context?.blockGraph.removeBlock(projectId, blockId));
+  ipcMain.handle("block-graph:add-dependency", (_event, projectId: string, prerequisite: string, consequence: string) => context?.blockGraph.addDependency(projectId, prerequisite, consequence));
+  ipcMain.handle("block-graph:remove-dependency", (_event, projectId: string, prerequisite: string, consequence: string) => context?.blockGraph.removeDependency(projectId, prerequisite, consequence));
+  ipcMain.handle("block-graph:has-direct-dependency", (_event, projectId: string, prerequisite: string, consequence: string) => context?.blockGraph.hasDirectDependency(projectId, prerequisite, consequence));
+  ipcMain.handle("block-graph:set-structural-parent", (_event, projectId: string, child: string, parent: string | null) => context?.blockGraph.setStructuralParent(projectId, child, parent));
+  ipcMain.handle("block-graph:direct-prerequisites", (_event, projectId: string, blockId: string) => context?.blockGraph.getDirectPrerequisites(projectId, blockId));
+  ipcMain.handle("block-graph:direct-consequences", (_event, projectId: string, blockId: string) => context?.blockGraph.getDirectConsequences(projectId, blockId));
+  ipcMain.handle("block-graph:prerequisite-closure", (_event, projectId: string, blockId: string, options?: GraphTraversalOptions) => context?.blockGraph.getPrerequisiteClosure(projectId, blockId, options));
+  ipcMain.handle("block-graph:consequence-closure", (_event, projectId: string, blockId: string, options?: GraphTraversalOptions) => context?.blockGraph.getConsequenceClosure(projectId, blockId, options));
+  ipcMain.handle("block-graph:is-prerequisite-of", (_event, projectId: string, prerequisite: string, consequence: string) => context?.blockGraph.isPrerequisiteOf(projectId, prerequisite, consequence));
+  ipcMain.handle("block-graph:structural-parent", (_event, projectId: string, blockId: string) => context?.blockGraph.getStructuralParent(projectId, blockId));
+  ipcMain.handle("block-graph:structural-children", (_event, projectId: string, blockId: string) => context?.blockGraph.getStructuralChildren(projectId, blockId));
+  ipcMain.handle("block-graph:structural-ancestors", (_event, projectId: string, blockId: string) => context?.blockGraph.getStructuralAncestors(projectId, blockId));
+  ipcMain.handle("block-graph:structural-descendants", (_event, projectId: string, blockId: string) => context?.blockGraph.getStructuralDescendants(projectId, blockId));
+  ipcMain.handle("block-graph:is-structural-ancestor", (_event, projectId: string, ancestor: string, descendant: string) => context?.blockGraph.isStructuralAncestor(projectId, ancestor, descendant));
+  ipcMain.handle("block-graph:scc", (_event, projectId: string) => context?.blockGraph.getStronglyConnectedComponents(projectId));
+  ipcMain.handle("block-graph:cycles", (_event, projectId: string) => context?.blockGraph.detectDependencyCycles(projectId));
+  ipcMain.handle("block-graph:prerequisite-overlaps", (_event, projectId: string, blockId: string) => context?.blockGraph.findStructuralOverlapsInPrerequisites(projectId, blockId));
+  ipcMain.handle("block-graph:consequence-overlaps", (_event, projectId: string, blockId: string) => context?.blockGraph.findStructuralOverlapsInConsequences(projectId, blockId));
+  ipcMain.handle("block-graph:prerequisite-relations", (_event, projectId: string, blockId: string) => context?.blockGraph.findLogicalRelationsWithinPrerequisites(projectId, blockId));
+  ipcMain.handle("block-graph:between", (_event, projectId: string, start: string, end: string) => context?.blockGraph.getBlocksBetween(projectId, start, end));
+  ipcMain.handle("block-graph:validate", (_event, projectId: string) => context?.blockGraph.validate(projectId));
   ipcMain.handle("spellcheck:status", () => context?.spellcheck.status());
   ipcMain.handle("spellcheck:check-words", (_event, words: string[], language: string) => context?.spellcheck.checkWords(words, language) ?? []);
   ipcMain.handle("spellcheck:suggestions", (_event, word: string, language: string) => context?.spellcheck.suggestions(word, language) ?? []);

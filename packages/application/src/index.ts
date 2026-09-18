@@ -1,6 +1,8 @@
 import { AppError, type Project, type ProjectTemplate, type StyleResource } from "@latex-editor/contracts";
 import { isoNow, type Clock, type IdGenerator } from "@latex-editor/domain";
 
+export * from "./block-graph-service.js";
+
 export interface ProjectRegistryPort {
   insert(project: Project): void;
   get(id: string): Project | undefined;

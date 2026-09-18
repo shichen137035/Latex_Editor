@@ -33,6 +33,8 @@ Ports / contracts
 | Domain | `packages/domain` | 时钟、ID、时间和路径比较等可替换的纯规则 | 不直接依赖 Node fs、Electron 或 SQLite |
 | Application | `packages/application` | 编排项目创建、注册、打开、主文件和删除用例 | 不实现具体存储 |
 | Editor Core | `packages/editor-core` | 文档状态机、revision、外部修改检测、LaTeX 轻量扫描、补全转换 | 不依赖 Monaco 或 DOM |
+| Block Graph | `packages/editor-core/src/block-graph.ts` | 稳定块 ID、结构从属树、逻辑前提图、遍历、SCC 与关系诊断 | 不解析 React 状态，不自动推断或删减语义边 |
+| Block Graph Application Service | `packages/application/src/block-graph-service.ts` | 按项目串行化图修改并读写 `.texweave/block-graph.json` | 不把关系写进 LaTeX 源文档 |
 | Filesystem Adapter | `packages/filesystem-node` | canonical path、UTF-8 文件读写、原子保存、路径安全和目录操作 | 不决定项目业务状态 |
 | Registry Adapter | `packages/registry-sqlite` | SQLite migration、项目元数据查询和持久化 | 不保存源文件正文 |
 | Resource Catalog | `packages/resource-catalog` | 校验并加载命令、环境、模板和编译器 profile | 不执行资源中的代码或 shell |
@@ -85,6 +87,17 @@ TeXWeave style library --copy snapshot--> Project/texweave.sty
 4. stdout/stderr 的有限 tail 返回给调用方，完整输出写入 `.latex-editor/build/<compilation-id>.log`。
 5. 退出码、PDF 是否存在、超时/取消状态和诊断共同决定最终结果。
 
+### v0.3 块关系图
+
+1. `SemanticBlock.id` 是独立于行号和字符偏移的稳定 ID；源码位置只作为可更新的附加信息。
+2. 结构从属关系是至多一个父节点的树/森林，写入结构环会返回 `STRUCTURAL_CYCLE`。
+3. 逻辑边统一解释为 `from（前提）→ to（结论）`。逻辑环可以保存，Tarjan SCC 会将其作为 warning 报告。
+4. `ProjectBlockGraphService` 把图快照保存到项目的 `.texweave/block-graph.json`，同一项目的并发修改按顺序提交。
+5. 删除块会移除所有入边、出边和结构关系，但不会自动生成跨过该块的新依赖。
+6. Electron renderer 只能通过 `window.latexEditor.blockGraph` 的 preload 白名单调用图接口；算法不在前端重复实现。
+
+主要查询接口包括直接/完整前提与结果、最短距离与深度限制、结构祖先/后代、SCC/环检测、前提集合内的结构重叠与逻辑分层、两块之间的路径候选集合，以及统一 `validate` 诊断。
+
 ## 4. 安全约束
 
 - `validateRelativePath` 拒绝绝对路径、空路径、`.` 和 `..`。
@@ -95,7 +108,7 @@ TeXWeave style library --copy snapshot--> Project/texweave.sty
 
 ## 5. 测试分类
 
-- `tests/unit`：文档状态机、扫描器、资源接口和诊断 parser。
+- `tests/unit`：文档状态机、扫描器、资源接口、诊断 parser，以及块关系图和项目级图持久化。
 - `tests/integration`：临时目录、真实 UTF-8 文件、SQLite、外部修改和路径安全。
 - `tests/compiler`：真实 `latexmk`，覆盖 PDF 成功、语法错误、引用警告和缺失 package。
 - `tests/e2e-cli`：验证 CLI 的创建、写入、JSON 输出和真实编译闭环。

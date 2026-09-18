@@ -1,4 +1,4 @@
-import type { CommandMetadata, CompileResult, FileWriteResult, Project, ProjectTreeNode, TextFileContent, SettingsSnapshot, PreferenceKey, LatexToolchain, StyleResource, SpellCheckMode, SpellCheckStatus } from "@latex-editor/contracts";
+import type { BlockGraphSnapshot, BlockId, CommandMetadata, CompileResult, CreateSemanticBlockInput, DependencyCycle, FileWriteResult, GraphDiagnostic, GraphTraversalOptions, GraphTraversalResult, LogicalRelation, Project, ProjectTreeNode, SemanticBlock, SettingsSnapshot, PreferenceKey, LatexToolchain, StyleResource, SpellCheckMode, SpellCheckStatus, StructuralDependencyOverlap, TextFileContent, UpdateSemanticBlockInput } from "@latex-editor/contracts";
 
 declare global {
   interface Window {
@@ -10,6 +10,34 @@ declare global {
       };
       resources: {
         searchCommands(query: string): Promise<CommandMetadata[]>;
+      };
+      blockGraph: {
+        snapshot(projectId: string): Promise<BlockGraphSnapshot>;
+        createBlock(projectId: string, input: CreateSemanticBlockInput): Promise<SemanticBlock>;
+        addBlock(projectId: string, block: SemanticBlock): Promise<void>;
+        updateBlock(projectId: string, blockId: BlockId, patch: UpdateSemanticBlockInput): Promise<SemanticBlock>;
+        removeBlock(projectId: string, blockId: BlockId): Promise<void>;
+        addDependency(projectId: string, prerequisite: BlockId, consequence: BlockId): Promise<void>;
+        removeDependency(projectId: string, prerequisite: BlockId, consequence: BlockId): Promise<void>;
+        hasDirectDependency(projectId: string, prerequisite: BlockId, consequence: BlockId): Promise<boolean>;
+        setStructuralParent(projectId: string, child: BlockId, parent: BlockId | null): Promise<void>;
+        getDirectPrerequisites(projectId: string, blockId: BlockId): Promise<BlockId[]>;
+        getDirectConsequences(projectId: string, blockId: BlockId): Promise<BlockId[]>;
+        getPrerequisiteClosure(projectId: string, blockId: BlockId, options?: GraphTraversalOptions): Promise<GraphTraversalResult>;
+        getConsequenceClosure(projectId: string, blockId: BlockId, options?: GraphTraversalOptions): Promise<GraphTraversalResult>;
+        isPrerequisiteOf(projectId: string, prerequisite: BlockId, consequence: BlockId): Promise<boolean>;
+        getStructuralParent(projectId: string, blockId: BlockId): Promise<BlockId | null>;
+        getStructuralChildren(projectId: string, blockId: BlockId): Promise<BlockId[]>;
+        getStructuralAncestors(projectId: string, blockId: BlockId): Promise<BlockId[]>;
+        getStructuralDescendants(projectId: string, blockId: BlockId): Promise<BlockId[]>;
+        isStructuralAncestor(projectId: string, ancestor: BlockId, descendant: BlockId): Promise<boolean>;
+        getStronglyConnectedComponents(projectId: string): Promise<BlockId[][]>;
+        detectDependencyCycles(projectId: string): Promise<DependencyCycle[]>;
+        findStructuralOverlapsInPrerequisites(projectId: string, blockId: BlockId): Promise<StructuralDependencyOverlap[]>;
+        findStructuralOverlapsInConsequences(projectId: string, blockId: BlockId): Promise<StructuralDependencyOverlap[]>;
+        findLogicalRelationsWithinPrerequisites(projectId: string, blockId: BlockId): Promise<LogicalRelation[]>;
+        getBlocksBetween(projectId: string, start: BlockId, end: BlockId): Promise<BlockId[]>;
+        validate(projectId: string): Promise<GraphDiagnostic[]>;
       };
       spellcheck: {
         status(): Promise<SpellCheckStatus | undefined>;
