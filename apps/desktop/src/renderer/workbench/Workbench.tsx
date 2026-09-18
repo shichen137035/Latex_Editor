@@ -13,6 +13,10 @@ import type { EnvironmentDefinition } from "../preview/types.js";
 import { CompletionController } from "../completion/CompletionController.js";
 import { SpellCheckController, type SpellContextRequest } from "../spellcheck/SpellCheckController.js";
 import { toolbarInsertion } from "./toolbarInsertion.js";
+import { MathMacroRegistry, type ProjectMathSource } from "../math/MathMacroRegistry.js";
+import { MathNodeIndex } from "../math/MathNodeLocator.js";
+import { extractMathExpression } from "../math/MathRenderService.js";
+import { MathPreviewPopover } from "../math/MathPreviewPopover.js";
 
 type SidebarMode = "files" | "search" | "ai" | "settings" | "help";
 type PaneType = "source" | "preview" | "pdf";
@@ -20,6 +24,7 @@ type BottomTab = "problems" | "output" | "compileLog" | "versions";
 type MenuName = "file" | "edit" | "view" | "history" | "projects";
 
 interface EditorTab { path: string; content: string; dirty: boolean }
+interface SourceMathPreview { source: string; displayMode: boolean; anchor: DOMRect; kind: "source-cursor" | "source-hover" }
 interface PersistedLayout { sidebarWidth: number; fileTreeHeight: number; splitRatio: number; bottomPanelHeight: number; sidebarVisible: boolean; mode: "single" | "split"; singlePane: PaneType; leftPane: "source" | "preview"; rightPane: "preview" | "pdf" }
 
 const defaultLayout: PersistedLayout = { sidebarWidth: 280, fileTreeHeight: 330, splitRatio: 52, bottomPanelHeight: 220, sidebarVisible: true, mode: "split", singlePane: "source", leftPane: "source", rightPane: "pdf" };
@@ -71,6 +76,10 @@ function isBuildArtifact(node: ProjectTreeNode): boolean {
   // normal tree when the user enables the build-artifact filter.
   if (node.name === ".latex-editor" || node.name === ".texweave") return true;
   return /\.(aux|bbl|blg|fdb_latexmk|fls|log|out|pdf|synctex\.gz|toc|lof|lot|nav|snm|vrb)$/i.test(node.name);
+}
+
+function projectFilePaths(nodes: ProjectTreeNode[]): string[] {
+  return nodes.flatMap((node) => node.kind === "file" ? [node.relativePath] : node.children ? projectFilePaths(node.children) : []);
 }
 
 type FileContext = { x: number; y: number; path?: string; kind?: ProjectTreeNode["kind"] };
@@ -154,6 +163,8 @@ export function Workbench({ project, projects, environments, onHome, onSwitch }:
   const [detectedSpellLanguage, setDetectedSpellLanguage] = useState("en-US");
   const [spellContextMenu, setSpellContextMenu] = useState<SpellContextRequest>();
   const [spellMenuOpen, setSpellMenuOpen] = useState(false);
+  const [projectMathSources, setProjectMathSources] = useState<ProjectMathSource[]>([]);
+  const [sourceMathPreview, setSourceMathPreview] = useState<SourceMathPreview>();
   const editorRef = useRef<Parameters<OnMount>[0] | null>(null);
   const workbenchRef = useRef<HTMLDivElement | null>(null);
   const completionController = useRef<CompletionController | null>(null);
@@ -162,20 +173,31 @@ export function Workbench({ project, projects, environments, onHome, onSwitch }:
   const treeRef = useRef<ProjectTreeNode[]>([]);
   const activePathRef = useRef<string | undefined>(undefined);
   const environmentsRef = useRef<EnvironmentDefinition[]>([]);
+  const mathRegistryRef = useRef(new MathMacroRegistry());
   const resizeCleanup = useRef<(() => void) | undefined>(undefined);
   useEffect(() => () => resizeCleanup.current?.(), []);
 
   const activeTab = tabs.find((tab) => tab.path === activePath);
+  const sourceEditorVisible = layout.mode === "single" ? layout.singlePane === "source" : layout.leftPane === "source";
   const diagnostics = compileResult?.diagnostics ?? [];
   const errors = diagnostics.filter((item) => item.severity === "error").length;
   const warnings = diagnostics.filter((item) => item.severity === "warning").length;
   const configuredEnvironments = store.get("environments") as EnvironmentDefinition[];
   const previewEnvironments = configuredEnvironments.length ? configuredEnvironments : environments;
+  const mathContext = useMemo(() => {
+    const sources = new Map(projectMathSources.map((source) => [source.path.replaceAll("\\", "/").toLocaleLowerCase(), source]));
+    for (const tab of tabs) if (/\.(?:tex|sty)$/i.test(tab.path)) sources.set(tab.path.replaceAll("\\", "/").toLocaleLowerCase(), { path: tab.path, content: tab.content });
+    return mathRegistryRef.current.rebuild([...sources.values()], project.mainFile ?? activePath);
+  }, [projectMathSources, tabs, project.mainFile, activePath]);
   const spellMode = store.get("spellCheckMode");
   const spellManualLanguage = store.get("spellCheckLanguage");
   treeRef.current = tree;
   activePathRef.current = activePath;
   environmentsRef.current = previewEnvironments;
+
+  useEffect(() => {
+    setSourceMathPreview(undefined);
+  }, [sourceEditorVisible, activePath]);
 
   useEffect(() => {
     const timer = setTimeout(() => { void settings.set("layout", { ...layout }, "project"); }, 300);
@@ -185,6 +207,15 @@ export function Workbench({ project, projects, environments, onHome, onSwitch }:
     if (!api) return;
     void api.spellcheck.status().then((status) => { if (status) setSpellStatus(status); });
   }, [api]);
+  useEffect(() => {
+    if (!api) return;
+    let cancelled = false;
+    const paths = projectFilePaths(tree).filter((path) => /\.(?:tex|sty)$/i.test(path));
+    void Promise.all(paths.map(async (path): Promise<ProjectMathSource | undefined> => {
+      try { return { path, content: (await api.files.read(project.id, path)).content }; } catch { return undefined; }
+    })).then((sources) => { if (!cancelled) setProjectMathSources(sources.filter((source): source is ProjectMathSource => !!source)); });
+    return () => { cancelled = true; };
+  }, [api, project.id, tree]);
   useEffect(() => {
     spellCheckController.current?.refresh();
   }, [spellMode, spellManualLanguage]);
@@ -427,10 +458,80 @@ export function Workbench({ project, projects, environments, onHome, onSwitch }:
   };
   const onEditorMount: OnMount = (editor, monaco) => {
     editorRef.current = editor;
-    editor.onDidChangeCursorPosition((event) => setCursor({ line: event.position.lineNumber, column: event.position.column }));
     completionController.current?.dispose();
     spellCheckController.current?.dispose();
     referenceMouseListener.current?.dispose();
+    let indexedVersion = -1;
+    let mathIndex = new MathNodeIndex([]);
+    let cursorMathActive = false;
+    let mathTimer: number | undefined;
+    let activeMath: { source: string; displayMode: boolean; kind: SourceMathPreview["kind"]; start: number; end: number } | undefined;
+    const currentMathIndex = () => {
+      const model = editor.getModel();
+      if (model && model.getVersionId() !== indexedVersion) {
+        indexedVersion = model.getVersionId();
+        mathIndex = MathNodeIndex.fromSource(model.getValue());
+      }
+      return mathIndex;
+    };
+    const mathAnchor = (start: number, end: number): DOMRect | undefined => {
+      const model = editor.getModel();
+      const bounds = editor.getDomNode()?.getBoundingClientRect();
+      if (!model || !bounds) return undefined;
+      const startVisible = editor.getScrolledVisiblePosition(model.getPositionAt(start));
+      const endVisible = editor.getScrolledVisiblePosition(model.getPositionAt(end));
+      if (!startVisible && !endVisible) return undefined;
+      const rawTop = startVisible ? bounds.top + startVisible.top : bounds.top;
+      const rawBottom = endVisible ? bounds.top + endVisible.top + endVisible.height : bounds.bottom;
+      const top = Math.max(bounds.top, rawTop);
+      const bottom = Math.min(bounds.bottom, Math.max(rawBottom, top + 1));
+      if (bottom <= bounds.top || top >= bounds.bottom) return undefined;
+      const left = bounds.left + (startVisible?.left ?? endVisible?.left ?? 12);
+      return new DOMRect(left, top, 1, Math.max(1, bottom - top));
+    };
+    const refreshMathPreview = () => {
+      if (!activeMath) return;
+      const anchor = mathAnchor(activeMath.start, activeMath.end);
+      setSourceMathPreview(anchor ? { source: activeMath.source, displayMode: activeMath.displayMode, anchor, kind: activeMath.kind } : undefined);
+    };
+    const scheduleMathPreview = (position: { lineNumber: number; column: number }, kind: SourceMathPreview["kind"]): boolean => {
+      const model = editor.getModel();
+      if (!model || !/\.tex$/i.test(activePathRef.current ?? "")) return false;
+      const offset = model.getOffsetAt(position);
+      const mathNode = currentMathIndex().findMathNodeAtOffset(offset);
+      if (!mathNode || !mathAnchor(mathNode.start, mathNode.end)) return false;
+      const extracted = extractMathExpression(model.getValue().slice(mathNode.start, mathNode.end));
+      if (mathTimer !== undefined) window.clearTimeout(mathTimer);
+      mathTimer = window.setTimeout(() => {
+        activeMath = { source: extracted.expression, displayMode: extracted.displayMode, kind, start: mathNode.start, end: mathNode.end };
+        refreshMathPreview();
+      }, 75);
+      return true;
+    };
+    const updateCursorMath = (position: { lineNumber: number; column: number }) => {
+      cursorMathActive = scheduleMathPreview(position, "source-cursor");
+      if (!cursorMathActive) {
+        if (activeMath?.kind === "source-cursor") activeMath = undefined;
+        setSourceMathPreview((current) => current?.kind === "source-cursor" ? undefined : current);
+      }
+    };
+    const cursorListener = editor.onDidChangeCursorPosition((event) => {
+      setCursor({ line: event.position.lineNumber, column: event.position.column });
+      updateCursorMath(event.position);
+    });
+    const contentListener = editor.onDidChangeModelContent(() => {
+      indexedVersion = -1;
+      activeMath = undefined;
+      const position = editor.getPosition();
+      if (position) updateCursorMath(position);
+    });
+    const scrollListener = editor.onDidScrollChange(refreshMathPreview);
+    const layoutListener = editor.onDidLayoutChange(refreshMathPreview);
+    const blurListener = editor.onDidBlurEditorWidget(() => {
+      cursorMathActive = false;
+      if (activeMath?.kind === "source-cursor") activeMath = undefined;
+      setSourceMathPreview((current) => current?.kind === "source-cursor" ? undefined : current);
+    });
     const modifierPressed = (event: { ctrlKey: boolean; altKey: boolean; shiftKey: boolean; metaKey: boolean }) => {
       const modifier = store.get("referenceLinkModifier");
       return modifier === "ctrl" ? event.ctrlKey : modifier === "alt" ? event.altKey : modifier === "shift" ? event.shiftKey : event.metaKey;
@@ -486,12 +587,18 @@ export function Workbench({ project, projects, environments, onHome, onSwitch }:
     const mouseMove = editor.onMouseMove((event) => {
       hoverPosition = event.target.position ?? undefined;
       setReferenceCursor(Boolean(hoverPosition && modifierPressed(event.event) && referenceAtPosition(hoverPosition)));
+      if (!cursorMathActive && hoverPosition && !scheduleMathPreview(hoverPosition, "source-hover")) {
+        if (activeMath?.kind === "source-hover") activeMath = undefined;
+        setSourceMathPreview((current) => current?.kind === "source-hover" ? undefined : current);
+      }
     });
-    const mouseLeave = editor.onMouseLeave(() => { hoverPosition = undefined; setReferenceCursor(false); });
+    const mouseLeave = editor.onMouseLeave(() => { hoverPosition = undefined; setReferenceCursor(false); if (!cursorMathActive) { if (activeMath?.kind === "source-hover") activeMath = undefined; setSourceMathPreview(undefined); } });
     const modifierChange = (event: KeyboardEvent) => { if (hoverPosition) setReferenceCursor(Boolean(modifierPressed(event) && referenceAtPosition(hoverPosition))); };
     window.addEventListener("keydown", modifierChange);
     window.addEventListener("keyup", modifierChange);
-    referenceMouseListener.current = { dispose: () => { mouseDown.dispose(); mouseMove.dispose(); mouseLeave.dispose(); window.removeEventListener("keydown", modifierChange); window.removeEventListener("keyup", modifierChange); setReferenceCursor(false); } };
+    const initialPosition = editor.getPosition();
+    if (initialPosition) updateCursorMath(initialPosition);
+    referenceMouseListener.current = { dispose: () => { if (mathTimer !== undefined) window.clearTimeout(mathTimer); activeMath = undefined; cursorListener.dispose(); contentListener.dispose(); scrollListener.dispose(); layoutListener.dispose(); blurListener.dispose(); mouseDown.dispose(); mouseMove.dispose(); mouseLeave.dispose(); window.removeEventListener("keydown", modifierChange); window.removeEventListener("keyup", modifierChange); setReferenceCursor(false); setSourceMathPreview(undefined); } };
     if (api) {
       completionController.current = new CompletionController({ monaco, api, projectId: project.id, getTree: () => treeRef.current, getCurrentPath: () => activePathRef.current, getEnvironments: () => environmentsRef.current, isDocumentWordCompletionEnabled: () => store.get("documentWordCompletion") });
       spellCheckController.current = new SpellCheckController({ editor, api, getCurrentPath: () => activePathRef.current, getMode: () => store.get("spellCheckMode"), getManualLanguage: () => store.get("spellCheckLanguage"), onDetectedLanguage: setDetectedSpellLanguage, onContextMenu: setSpellContextMenu });
@@ -654,8 +761,8 @@ export function Workbench({ project, projects, environments, onHome, onSwitch }:
   const outputToolbar = <div className="output-toolbar"><button className="compile-button" onClick={() => { commands.execute("latex.compile"); }} disabled={compileState === "running"}><Icon name="play"/><span>{t(compileState === "running" ? "build.compiling" : "build.compile")}</span></button><button onClick={() => { setBottomTab("compileLog"); setBottomVisible(true); }}>{t("build.log")}</button><div className="toolbar-spacer"/><button className={layout.rightPane === "pdf" ? "active" : ""} onClick={() => setLayout((value) => ({ ...value, rightPane: value.rightPane === "pdf" ? "preview" : "pdf" }))}>{layout.rightPane === "pdf" ? t("menu.preview") : t("menu.pdf")}</button></div>;
   const sourcePaneContent = <section className="work-pane source-pane">{sourceTabs}{sourceEditor}</section>;
   const sourcePane = <section className="work-pane source-pane">{sourceTabs}{sourceToolbar}{sourceEditor}</section>;
-  const previewContent = <section className="work-pane"><PreviewPane filePath={activeTab?.path} source={activeTab?.content} definitions={previewEnvironments} onSourceChange={setEditorContent} api={api} projectId={project.id} tree={tree} onSpellContextMenu={setSpellContextMenu} onDetectedLanguage={setDetectedSpellLanguage}/></section>;
-  const previewPane = <section className="work-pane">{previewToolbar}<PreviewPane filePath={activeTab?.path} source={activeTab?.content} definitions={previewEnvironments} onSourceChange={setEditorContent} api={api} projectId={project.id} tree={tree} onSpellContextMenu={setSpellContextMenu} onDetectedLanguage={setDetectedSpellLanguage}/></section>;
+  const previewContent = <section className="work-pane"><PreviewPane filePath={activeTab?.path} source={activeTab?.content} definitions={previewEnvironments} mathContext={mathContext} onSourceChange={setEditorContent} api={api} projectId={project.id} tree={tree} onSpellContextMenu={setSpellContextMenu} onDetectedLanguage={setDetectedSpellLanguage}/></section>;
+  const previewPane = <section className="work-pane">{previewToolbar}<PreviewPane filePath={activeTab?.path} source={activeTab?.content} definitions={previewEnvironments} mathContext={mathContext} onSourceChange={setEditorContent} api={api} projectId={project.id} tree={tree} onSpellContextMenu={setSpellContextMenu} onDetectedLanguage={setDetectedSpellLanguage}/></section>;
   const secondaryContent = <section className="work-pane output-pane"><Placeholder type={layout.rightPane} pdfDataUrl={pdfDataUrl}/></section>;
   const singlePane = layout.singlePane === "source" ? sourcePane : layout.singlePane === "preview" ? previewPane : <section className="work-pane single-output"><div className="output-toolbar"><div className="view-switch"><button onClick={() => setLayout((value) => ({ ...value, singlePane: "source" }))}>{t("menu.code")}</button><button onClick={() => setLayout((value) => ({ ...value, singlePane: "preview" }))}>{t("menu.visual")}</button><button className="active">{t("menu.pdf")}</button></div><div className="toolbar-spacer"/><button className="compile-button" onClick={() => { commands.execute("latex.compile"); }}><Icon name="play"/>{t("build.compile")}</button></div><Placeholder type="pdf" pdfDataUrl={pdfDataUrl}/></section>;
   const splitLeftContent = layout.leftPane === "preview" ? previewContent : sourcePaneContent;
@@ -673,7 +780,7 @@ export function Workbench({ project, projects, environments, onHome, onSwitch }:
       {layout.sidebarVisible && <><aside className="sidebar" style={{ width: layout.sidebarWidth }}>{sidebarMode === "files" && <><div className="sidebar-heading"><strong>{t("sidebar.files")}</strong><div><button onClick={() => void createEntry(false, "")} title={t("files.newFile")}><Icon name="plus"/></button><button onClick={() => void refreshTree()} title={t("sidebar.refresh")}><Icon name="refresh"/></button><button onClick={() => setLayout((value) => ({ ...value, sidebarVisible: false }))} title={t("sidebar.collapse")}>‹</button></div></div><div className="tree-section" style={{ height: layout.fileTreeHeight }}><input className="sidebar-input" value={treeFilter} onChange={(event) => setTreeFilter(event.target.value)} placeholder={t("sidebar.fileSearch")}/><Tree nodes={tree} activePath={activePath} mainFile={project.mainFile} filter={treeFilter} hideBuildArtifacts={store.get("hideBuildArtifacts")} onOpen={(path) => void openFile(path)}/></div><div className="horizontal-resizer" onPointerDown={(event) => startResize("tree", event)}/><div className="outline-section"><div className="segment-tabs"><button className={outlineMode === "outline" ? "active" : ""} onClick={() => setOutlineMode("outline")}>{t("sidebar.outline")}</button><button className={outlineMode === "relations" ? "active" : ""} onClick={() => setOutlineMode("relations")}>{t("sidebar.relations")}</button></div>{outlineMode === "outline" ? <div className="outline-list">{outline.map((item, index) => <button key={`${item.title}-${index}`} style={{ paddingLeft: 14 + item.level * 15 }} onClick={() => navigateToOutline(item.line)}>{item.title}</button>)}</div> : <div className="sidebar-placeholder"><strong>{t("placeholder.relationsTitle")}</strong><p>{t("placeholder.relations")}</p></div>}</div></>}{sidebarMode === "search" && <div className="generic-sidebar"><h2>{t("sidebar.search")}</h2><input className="sidebar-input" placeholder={t("sidebar.projectSearch")}/><p>{t("sidebar.searchPlaceholder")}</p></div>}{sidebarMode === "ai" && <div className="generic-sidebar"><h2>{t("placeholder.aiTitle")}</h2><p>{t("placeholder.ai")}</p></div>}{sidebarMode === "settings" && <div className="generic-sidebar"><h2>{t("activity.settings")}</h2><p>{t("placeholder.settings")}</p><dl><div><dt>{t("settings.language")}</dt><dd>{t("settings.english")}</dd></div><div><dt>{t("settings.theme")}</dt><dd>{t("settings.light")}</dd></div></dl></div>}{sidebarMode === "help" && <div className="generic-sidebar"><h2>{t("activity.help")}</h2><p>{t("placeholder.help")}</p></div>}</aside><div className="vertical-resizer" onPointerDown={(event) => startResize("sidebar", event)}/></>}
       <main className="workspace"><div className="workspace-main">{layout.mode === "single" ? singlePane : <><div className="split-toolbar-row">{splitToolbar}</div><div className="split-layout"><div style={{ width: `${layout.splitRatio}%` }}>{splitLeftContent}</div><div className="split-resizer" onPointerDown={(event) => startResize("split", event)}/><div style={{ width: `${100 - layout.splitRatio}%` }}>{secondaryContent}</div></div></>}</div>{bottomVisible && <><div className="bottom-resizer" onPointerDown={(event) => startResize("bottom", event)}/><section className="bottom-panel" style={{ height: layout.bottomPanelHeight }}><div className="bottom-tabs">{(["problems", "output", "compileLog", "versions"] as const).map((tab) => <button className={bottomTab === tab ? "active" : ""} key={tab} onClick={() => setBottomTab(tab)}>{t(`panel.${tab}` as MessageKey)}{tab === "problems" && diagnostics.length > 0 && <span>{diagnostics.length}</span>}</button>)}<button className="panel-close" onClick={() => setBottomVisible(false)} title={t("common.close")}><Icon name="close"/></button></div><div className="panel-content">{bottomTab === "problems" && (diagnostics.length ? diagnostics.map((diagnostic, index) => <DiagnosticRow diagnostic={diagnostic} onOpen={() => void openDiagnostic(diagnostic)} key={`${diagnostic.message}-${index}`}/>) : <p>{t("panel.noProblems")}</p>)}{bottomTab === "compileLog" && <pre>{compileResult ? `${compileResult.stdoutTail}\n${compileResult.stderrTail}` : t("panel.noOutput")}</pre>}{bottomTab === "output" && <p>{t("panel.noOutput")}</p>}{bottomTab === "versions" && <p>{t("panel.versionsPlaceholder")}</p>}</div></section></>}</main>
     </div><footer className="status-bar"><div><span>{activePath ?? project.mainFile ?? "—"}</span><span>{t("status.line", cursor)}</span><span>{t("status.encoding")}</span><span>{t("status.lineEnding")}</span></div><div><span>{t("status.engine")}</span><button onClick={() => { setBottomTab("problems"); setBottomVisible(true); }}>{compileResult?.status === "succeeded" ? `✓ ${t("build.succeeded")}` : compileResult ? `! ${t("build.failed")}` : t("build.notRun")}</button><button onClick={() => { setBottomTab("problems"); setBottomVisible(true); }}>{t("status.errors", { count: errors })}</button><button onClick={() => { setBottomTab("problems"); setBottomVisible(true); }}>{t("status.warnings", { count: warnings })}</button>{spellStatusControl}<button onClick={() => setBottomVisible((value) => !value)} title={t("panel.output")}><Icon name="panel"/></button></div></footer>
-  {settingsOpen && <SettingsDialog onClose={() => setSettingsOpen(false)}/>} {fileContext && <ContextMenu context={fileContext} items={fileContextItems()} onClose={() => setFileContext(undefined)}/>} {spellContextMenu && <SpellContextMenu request={spellContextMenu} onClose={() => setSpellContextMenu(undefined)}/>}</div>;
+  {sourceMathPreview && <MathPreviewPopover source={sourceMathPreview.source} displayMode={sourceMathPreview.displayMode} context={mathContext} anchor={sourceMathPreview.anchor}/>} {settingsOpen && <SettingsDialog onClose={() => setSettingsOpen(false)}/>} {fileContext && <ContextMenu context={fileContext} items={fileContextItems()} onClose={() => setFileContext(undefined)}/>} {spellContextMenu && <SpellContextMenu request={spellContextMenu} onClose={() => setSpellContextMenu(undefined)}/>}</div>;
 }
 
 function DiagnosticRow({ diagnostic, onOpen }: { diagnostic: Diagnostic; onOpen(): void }) {

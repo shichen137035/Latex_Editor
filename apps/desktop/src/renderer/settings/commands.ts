@@ -1,15 +1,50 @@
 import { settings } from "./service.js";
-export const defaultBindings = { "file.save": "Mod+S", "file.saveAll": "Mod+Shift+S", "edit.find": "Mod+F", "edit.replace": "Mod+H", "latex.compile": "Mod+B", "settings.open": "Mod+," };
+export const defaultBindings = {
+  "file.save": "Mod+S", "file.saveAll": "Mod+Shift+S", "edit.find": "Mod+F", "edit.replace": "Mod+H",
+  "latex.compile": "Mod+B", "settings.open": "Mod+,", "block.insertBefore": "Alt+ENTER",
+  "block.insertAfter": "Shift+ENTER", "preview.applyDraft": "Mod+ENTER", "preview.cancelDraft": "ESCAPE"
+};
 export type CommandId = keyof typeof defaultBindings;
-export const commandLabels: Record<CommandId, string> = { "file.save": "menu.save", "file.saveAll": "menu.saveAll", "edit.find": "menu.find", "edit.replace": "menu.replace", "latex.compile": "build.compile", "settings.open": "activity.settings" };
+export const commandLabels: Record<CommandId, string> = {
+  "file.save": "menu.save", "file.saveAll": "menu.saveAll", "edit.find": "menu.find", "edit.replace": "menu.replace",
+  "latex.compile": "build.compile", "settings.open": "activity.settings", "block.insertBefore": "command.blockInsertBefore",
+  "block.insertAfter": "command.blockInsertAfter", "preview.applyDraft": "command.previewApplyDraft", "preview.cancelDraft": "command.previewCancelDraft"
+};
+export const commandContexts: Record<CommandId, string> = {
+  "file.save": "command.context.global", "file.saveAll": "command.context.global", "edit.find": "command.context.source",
+  "edit.replace": "command.context.source", "latex.compile": "command.context.global", "settings.open": "command.context.global",
+  "block.insertBefore": "command.context.previewBlock", "block.insertAfter": "command.context.previewBlock",
+  "preview.applyDraft": "command.context.previewBlock", "preview.cancelDraft": "command.context.previewDraft"
+};
 type Command = { execute(): void | Promise<void>; when?: () => boolean };
-const registry = new Map<string, Command>();
+const registry = new Map<string, Command[]>();
+function activeCommand(id: string): Command | undefined {
+  const entries = registry.get(id);
+  if (!entries) return undefined;
+  for (let index = entries.length - 1; index >= 0; index -= 1) {
+    const command = entries[index];
+    if (command && (!command.when || command.when())) return command;
+  }
+  return undefined;
+}
 export const commands = {
-  register(id: string, command: Command) { registry.set(id, command); return () => { if (registry.get(id) === command) registry.delete(id); }; },
-  execute(id: string) { const command = registry.get(id); if (command && (!command.when || command.when())) { void command.execute(); return true; } return false; }
+  register(id: string, command: Command) {
+    const entries = registry.get(id) ?? [];
+    entries.push(command);
+    registry.set(id, entries);
+    return () => {
+      const current = registry.get(id);
+      if (!current) return;
+      const index = current.lastIndexOf(command);
+      if (index >= 0) current.splice(index, 1);
+      if (!current.length) registry.delete(id);
+    };
+  },
+  canExecute(id: string) { return !!activeCommand(id); },
+  execute(id: string) { const command = activeCommand(id); if (command) { void command.execute(); return true; } return false; }
 };
 export function bindings(): Record<string, string> { return { ...defaultBindings, ...settings.global("keybindings") }; }
-export function validBinding(value: string) { return value === "" || /^(?:Mod\+|Alt\+)(?:Shift\+)?(?:[A-Z0-9,.;/]|F(?:[1-9]|1[0-2]))$/.test(value); }
+export function validBinding(value: string) { return value === "" || /^(?:(?:Mod|Alt)(?:\+Shift)?\+(?:[A-Z0-9,.;/]|F(?:[1-9]|1[0-2])|ENTER)|Shift\+ENTER|ESCAPE)$/.test(value); }
 export function eventBinding(event: KeyboardEvent): string {
   const modifier = event.ctrlKey || event.metaKey ? "Mod+" : event.altKey ? "Alt+" : "";
   return `${modifier}${event.shiftKey ? "Shift+" : ""}${event.key.toUpperCase()}`;
@@ -19,7 +54,7 @@ export function installShortcuts() {
   const handler = (event: KeyboardEvent) => {
     if (event.isComposing || event.repeat || (event.target as Element)?.closest("[data-shortcut-capture], [role=dialog]")) return;
     const key = eventBinding(event);
-    const found = Object.entries(bindings()).find(([, value]) => value && validBinding(value) && value === key);
+    const found = Object.entries(bindings()).find(([id, value]) => value && validBinding(value) && value === key && commands.canExecute(id));
     if (found && commands.execute(found[0])) { event.preventDefault(); event.stopImmediatePropagation(); }
   };
   window.addEventListener("keydown", handler, true);
