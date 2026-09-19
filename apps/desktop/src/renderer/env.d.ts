@@ -1,4 +1,4 @@
-import type { BlockGraphSnapshot, BlockId, CommandMetadata, CompileResult, CreateSemanticBlockInput, DependencyCycle, FileWriteResult, GraphDiagnostic, GraphTraversalOptions, GraphTraversalResult, LogicalRelation, Project, ProjectTreeNode, SemanticBlock, SettingsSnapshot, PreferenceKey, LatexToolchain, StyleResource, SpellCheckMode, SpellCheckStatus, StructuralDependencyOverlap, TextFileContent, UpdateSemanticBlockInput } from "@latex-editor/contracts";
+import type { BlockGraphSnapshot, BlockId, CommandMetadata, CompileResult, CreateSemanticBlockInput, DependencyCycle, FileWriteResult, GraphDiagnostic, GraphTraversalOptions, GraphTraversalResult, LogicalRelation, Project, ProjectTreeNode, SemanticBlock, SettingsSnapshot, PreferenceKey, LatexToolchain, StyleResource, SpellCheckMode, SpellCheckStatus, StructuralDependencyOverlap, SyncTexPdfPosition, SyncTexSourcePosition, TextFileContent, UpdateSemanticBlockInput } from "@latex-editor/contracts";
 
 declare global {
   interface Window {
@@ -79,6 +79,10 @@ declare global {
       };
       compile: {
         run(projectId: string, mainFile?: string): Promise<CompileResult & { pdfDataUrl?: string }>;
+      };
+      synctex: {
+        forward(projectId: string, sourceFile: string, pdfFile: string, line: number, column: number): Promise<SyncTexPdfPosition>;
+        reverse(projectId: string, pdfFile: string, page: number, x: number, y: number): Promise<SyncTexSourcePosition>;
       };
       dialogs: {
         pickFolder(): Promise<string | undefined>;

@@ -7,6 +7,7 @@ import type { ProjectBlockGraphService } from "@latex-editor/application" with {
 import { SettingsRepository } from "./settings.js";
 import { StyleResourceRepository } from "./style-resources.js";
 import { OfflineSpellCheckService } from "./spellcheck.js";
+import { forwardSync, reverseSync } from "./synctex.js";
 
 interface DesktopContext {
   registry: { initialize(): void; close(): void };
@@ -244,6 +245,18 @@ function registerIpcHandlers(): void {
     if (result.pdfPath === undefined) return result;
     const pdfDataUrl = `data:application/pdf;base64,${(await readFile(result.pdfPath)).toString("base64")}`;
     return { ...result, pdfDataUrl };
+  });
+  ipcMain.handle("synctex:forward", async (_event, projectId: string, sourceFile: string, pdfFile: string, line: number, column: number) => {
+    if (context === undefined) throw new Error("Application context is not ready");
+    const project = await context.projects.openProject(projectId) as { canonicalPath: string };
+    const [sourcePath, pdfPath] = await Promise.all([context.files.resolveFilePath(projectId, sourceFile, true), context.files.resolveFilePath(projectId, pdfFile, true)]);
+    return forwardSync({ root: project.canonicalPath, sourcePath, pdfPath, line, column, ...(settings.toolchain?.binDirectory ? { binDirectory: settings.toolchain.binDirectory } : {}), ...(settings.toolchain?.latexmk ? { latexmk: settings.toolchain.latexmk } : {}) });
+  });
+  ipcMain.handle("synctex:reverse", async (_event, projectId: string, pdfFile: string, page: number, x: number, y: number) => {
+    if (context === undefined) throw new Error("Application context is not ready");
+    const project = await context.projects.openProject(projectId) as { canonicalPath: string };
+    const pdfPath = await context.files.resolveFilePath(projectId, pdfFile, true);
+    return reverseSync({ root: project.canonicalPath, pdfPath, page, x, y, ...(settings.toolchain?.binDirectory ? { binDirectory: settings.toolchain.binDirectory } : {}), ...(settings.toolchain?.latexmk ? { latexmk: settings.toolchain.latexmk } : {}) });
   });
   ipcMain.handle("dialogs:pick-folder", async () => {
     const result = await dialog.showOpenDialog({ properties: ["openDirectory", "createDirectory"] });

@@ -141,6 +141,10 @@ export interface CompileResult {
   stderrTail: string;
 }
 
+/** Coordinates returned by SyncTeX use PDF points measured from the page's top-left. */
+export interface SyncTexPdfPosition { page: number; x: number; y: number }
+export interface SyncTexSourcePosition { file: string; line: number; column: number }
+
 export interface ToolchainStatus { available: boolean; executable: string; version?: string; error?: string }
 
 export interface CommandMetadata { id: string; name: string; insertText: string; detail: string; category: string }

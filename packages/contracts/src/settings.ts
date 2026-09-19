@@ -21,6 +21,7 @@ export interface PreferenceValues {
   hideBuildArtifacts: boolean;
   documentWordCompletion: boolean;
   confirmPreviewEdits: boolean;
+  visibleFilterGroups: string[];
   referenceLinkModifier: "ctrl" | "alt" | "shift" | "meta";
   spellCheckMode: "auto" | "manual" | "disabled";
   spellCheckLanguage: string;
@@ -35,7 +36,7 @@ export interface PreferenceValues {
 export type PreferenceKey = keyof PreferenceValues;
 export const preferenceDefaults: PreferenceValues = {
   locale: "en", theme: "light", fontSize: 15, tabSize: 2, wordWrap: true,
-  autoSave: "off", hideBuildArtifacts: true, documentWordCompletion: true, confirmPreviewEdits: true, referenceLinkModifier: "ctrl", spellCheckMode: "auto", spellCheckLanguage: "en-US", maximize: true, restoreProject: false,
+  autoSave: "off", hideBuildArtifacts: true, documentWordCompletion: true, confirmPreviewEdits: true, visibleFilterGroups: ["blockType", "location", "file", "properties"], referenceLinkModifier: "ctrl", spellCheckMode: "auto", spellCheckLanguage: "en-US", maximize: true, restoreProject: false,
   lastProject: "", engine: "pdflatex", keybindings: {}, environments: [], layout: {}
 };
 export const projectPreferenceKeys: PreferenceKey[] = ["fontSize", "tabSize", "wordWrap", "autoSave", "hideBuildArtifacts", "confirmPreviewEdits", "engine", "environments", "layout"];
@@ -53,6 +54,7 @@ export function validPreference(key: string, value: unknown): boolean {
     case "wordWrap": case "hideBuildArtifacts": case "documentWordCompletion": case "confirmPreviewEdits": case "maximize": case "restoreProject": return typeof value === "boolean";
     case "referenceLinkModifier": return value === "ctrl" || value === "alt" || value === "shift" || value === "meta";
     case "lastProject": return typeof value === "string";
+    case "visibleFilterGroups": return Array.isArray(value) && value.every((item) => ["blockType", "location", "file", "properties"].includes(String(item)));
     case "keybindings": return !!value && typeof value === "object" && !Array.isArray(value) && Object.values(value).every((v) => typeof v === "string");
     case "environments": return Array.isArray(value) && value.every((entry) => {
       if (!entry || typeof entry !== "object") return false;

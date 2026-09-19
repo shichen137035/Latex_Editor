@@ -1,7 +1,7 @@
 import { Editor, type OnMount } from "@monaco-editor/react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import type { CompileResult, Diagnostic, Project, ProjectTreeNode, SpellCheckStatus } from "@latex-editor/contracts";
+import type { CompileResult, Diagnostic, Project, ProjectTreeNode, SpellCheckStatus, SyncTexPdfPosition } from "@latex-editor/contracts";
 import toolbarActions from "../resources/toolbar-actions.json" with { type: "json" };
 import { t, type MessageKey } from "../i18n/index.js";
 import { PreviewPane } from "../preview/PreviewPane.js";
@@ -17,6 +17,14 @@ import { MathMacroRegistry, type ProjectMathSource } from "../math/MathMacroRegi
 import { MathNodeIndex } from "../math/MathNodeLocator.js";
 import { extractMathExpression } from "../math/MathRenderService.js";
 import { MathPreviewPopover } from "../math/MathPreviewPopover.js";
+import { AdvancedSearchPanel } from "../search/AdvancedSearchPanel.js";
+import { SearchEngine, replaceRanges } from "../search/SearchEngine.js";
+import { defaultSearchQuery, type SearchDocument, type SearchQuery, type SearchResult } from "../search/types.js";
+import { FilterEngine } from "../filter/FilterEngine.js";
+import { defaultFilterQuery, type FilterGroupId, type FilterQuery } from "../filter/types.js";
+import { parsePreview } from "../preview/parser.js";
+import { PdfViewer } from "../pdf/PdfViewer.js";
+import { installEditorContextActions } from "./editorContextActions.js";
 
 type SidebarMode = "files" | "search" | "ai" | "settings" | "help";
 type PaneType = "source" | "preview" | "pdf";
@@ -68,6 +76,11 @@ function SpellContextMenu({ request, onClose }: { request: SpellContextRequest; 
     <div className="menu-divider" />
     <button onClick={() => { request.ignore(); onClose(); }}>{t("spell.ignore")}</button>
     <button onClick={() => { void request.addToDictionary(); onClose(); }}>{t("spell.addToDictionary")}</button>
+    <div className="menu-divider" />
+    <button disabled={!request.hasSelection} onClick={() => { request.cut(); onClose(); }}>{t("editor.context.cut")}</button>
+    <button disabled={!request.hasSelection} onClick={() => { request.copy(); onClose(); }}>{t("editor.context.copy")}</button>
+    <button onClick={() => { void request.pastePlain(); onClose(); }}>{t("editor.context.pastePlain")}</button>
+    <button disabled={!request.hasSelection} onClick={() => { request.deleteSelection(); onClose(); }}>{t("editor.context.delete")}</button>
   </div>;
 }
 
@@ -113,8 +126,8 @@ function Tree({ nodes, activePath, mainFile, filter, hideBuildArtifacts, onOpen,
   }}>{renderNodes(nodes, 0)}</div>;
 }
 
-function Placeholder({ type, pdfDataUrl }: { type: "preview" | "pdf"; pdfDataUrl?: string | undefined }) {
-  if (type === "pdf" && pdfDataUrl) return <div className="pdf-viewer"><iframe title={t("placeholder.pdfTitle")} src={pdfDataUrl}/></div>;
+function Placeholder({ type, pdfDataUrl, pdfTarget, onPdfDoubleClick, onPdfInteract }: { type: "preview" | "pdf"; pdfDataUrl?: string | undefined; pdfTarget?: SyncTexPdfPosition | undefined; onPdfDoubleClick?(page: number, x: number, y: number): void; onPdfInteract?(): void }) {
+  if (type === "pdf" && pdfDataUrl) return <PdfViewer dataUrl={pdfDataUrl} target={pdfTarget} onReverse={(page, x, y) => onPdfDoubleClick?.(page, x, y)} onInteract={() => onPdfInteract?.()}/>;
   return <div className="pane-placeholder"><div className="placeholder-orbit"><Logo /></div><h2>{t(type === "preview" ? "placeholder.previewTitle" : "placeholder.pdfTitle")}</h2><p>{t(type === "preview" ? "placeholder.preview" : "placeholder.pdf")}</p>{type === "preview" && <small>{t("placeholder.previewPlan")}</small>}</div>;
 }
 
@@ -156,6 +169,7 @@ export function Workbench({ project, projects, environments, onHome, onSwitch }:
   const [compileResult, setCompileResult] = useState<CompileResult>();
   const [pendingDiagnostic, setPendingDiagnostic] = useState<{ path: string; line: number; column?: number }>();
   const [pdfDataUrl, setPdfDataUrl] = useState<string>();
+  const [pdfTarget, setPdfTarget] = useState<(SyncTexPdfPosition & { requestId: number })>();
   const [bottomVisible, setBottomVisible] = useState(false);
   const [bottomTab, setBottomTab] = useState<BottomTab>("problems");
   const [cursor, setCursor] = useState({ line: 1, column: 1 });
@@ -164,7 +178,14 @@ export function Workbench({ project, projects, environments, onHome, onSwitch }:
   const [spellContextMenu, setSpellContextMenu] = useState<SpellContextRequest>();
   const [spellMenuOpen, setSpellMenuOpen] = useState(false);
   const [projectMathSources, setProjectMathSources] = useState<ProjectMathSource[]>([]);
+  const [projectSearchDocuments, setProjectSearchDocuments] = useState<SearchDocument[]>([]);
   const [sourceMathPreview, setSourceMathPreview] = useState<SourceMathPreview>();
+  const [searchQuery, setSearchQuery] = useState<SearchQuery>(defaultSearchQuery);
+  const [replacement, setReplacement] = useState("");
+  const [replaceOpen, setReplaceOpen] = useState(false);
+  const [filterQuery, setFilterQuery] = useState<FilterQuery>(defaultFilterQuery);
+  const [activeSearchResult, setActiveSearchResult] = useState<SearchResult>();
+  const [pendingSearchResult, setPendingSearchResult] = useState<SearchResult>();
   const editorRef = useRef<Parameters<OnMount>[0] | null>(null);
   const workbenchRef = useRef<HTMLDivElement | null>(null);
   const completionController = useRef<CompletionController | null>(null);
@@ -174,10 +195,15 @@ export function Workbench({ project, projects, environments, onHome, onSwitch }:
   const activePathRef = useRef<string | undefined>(undefined);
   const environmentsRef = useRef<EnvironmentDefinition[]>([]);
   const mathRegistryRef = useRef(new MathMacroRegistry());
+  const searchEngineRef = useRef(new SearchEngine());
+  const filterEngineRef = useRef(new FilterEngine());
+  const searchDecorationsRef = useRef<ReturnType<Parameters<OnMount>[0]["createDecorationsCollection"]> | null>(null);
   const resizeCleanup = useRef<(() => void) | undefined>(undefined);
+  const lastTextPane = useRef<"source" | "preview">("source");
   useEffect(() => () => resizeCleanup.current?.(), []);
 
   const activeTab = tabs.find((tab) => tab.path === activePath);
+  const pdfFile = project.mainFile?.replace(/\.tex$/i, ".pdf");
   const sourceEditorVisible = layout.mode === "single" ? layout.singlePane === "source" : layout.leftPane === "source";
   const diagnostics = compileResult?.diagnostics ?? [];
   const errors = diagnostics.filter((item) => item.severity === "error").length;
@@ -189,6 +215,28 @@ export function Workbench({ project, projects, environments, onHome, onSwitch }:
     for (const tab of tabs) if (/\.(?:tex|sty)$/i.test(tab.path)) sources.set(tab.path.replaceAll("\\", "/").toLocaleLowerCase(), { path: tab.path, content: tab.content });
     return mathRegistryRef.current.rebuild([...sources.values()], project.mainFile ?? activePath);
   }, [projectMathSources, tabs, project.mainFile, activePath]);
+  const searchDocuments = useMemo(() => {
+    const documents = new Map(projectSearchDocuments.map((document) => [document.fileId, document]));
+    for (const tab of tabs) documents.set(tab.path, { fileId: tab.path, content: tab.content });
+    return [...documents.values()];
+  }, [projectSearchDocuments, tabs]);
+  const filterDocuments = useMemo(() => searchDocuments.filter((item) => item.fileId.toLocaleLowerCase().endsWith(".tex")).map((item) => ({ ...item, preview: parsePreview(item.content, item.fileId, previewEnvironments) })), [searchDocuments, previewEnvironments]);
+  const filterEvaluations = useMemo(() => new Map(filterDocuments.map((item) => [item.fileId, filterEngineRef.current.evaluate(item.preview.nodes, item.content, item.fileId, filterQuery)])), [filterDocuments, filterQuery]);
+  const searchedDocuments = useMemo(() => searchQuery.scope === "current-file" ? searchDocuments.filter((item) => item.fileId === activePath) : searchDocuments, [searchDocuments, searchQuery.scope, activePath]);
+  const allowedSearchRanges = useMemo(() => {
+    if (!filterQuery.enabled) return undefined;
+    const ranges = new Map<string, Array<[number, number]>>();
+    for (const document of searchedDocuments) ranges.set(document.fileId, filterEvaluations.get(document.fileId)?.ranges ?? []);
+    return ranges;
+  }, [filterQuery.enabled, filterEvaluations, searchedDocuments]);
+  const searchResponse = useMemo(() => searchEngineRef.current.search(searchQuery, searchedDocuments, allowedSearchRanges), [searchQuery, searchedDocuments, allowedSearchRanges]);
+  const filterOptions = useMemo(() => {
+    const current = filterDocuments.find((item) => item.fileId === activePath) ?? filterDocuments[0];
+    const options = filterEngineRef.current.options(current?.preview.nodes ?? [], searchDocuments.map((item) => item.fileId));
+    for (const item of filterDocuments) for (const type of filterEngineRef.current.options(item.preview.nodes, []).blockTypes) if (!options.blockTypes.includes(type)) options.blockTypes.push(type);
+    options.blockTypes.sort();
+    return options;
+  }, [filterDocuments, searchDocuments, activePath]);
   const spellMode = store.get("spellCheckMode");
   const spellManualLanguage = store.get("spellCheckLanguage");
   treeRef.current = tree;
@@ -198,6 +246,10 @@ export function Workbench({ project, projects, environments, onHome, onSwitch }:
   useEffect(() => {
     setSourceMathPreview(undefined);
   }, [sourceEditorVisible, activePath]);
+  useEffect(() => {
+    const pane = layout.mode === "single" ? layout.singlePane : layout.leftPane;
+    if (pane === "source" || pane === "preview") lastTextPane.current = pane;
+  }, [layout.mode, layout.singlePane, layout.leftPane]);
 
   useEffect(() => {
     const timer = setTimeout(() => { void settings.set("layout", { ...layout }, "project"); }, 300);
@@ -214,6 +266,15 @@ export function Workbench({ project, projects, environments, onHome, onSwitch }:
     void Promise.all(paths.map(async (path): Promise<ProjectMathSource | undefined> => {
       try { return { path, content: (await api.files.read(project.id, path)).content }; } catch { return undefined; }
     })).then((sources) => { if (!cancelled) setProjectMathSources(sources.filter((source): source is ProjectMathSource => !!source)); });
+    return () => { cancelled = true; };
+  }, [api, project.id, tree]);
+  useEffect(() => {
+    if (!api) return;
+    let cancelled = false;
+    const paths = projectFilePaths(tree).filter((path) => /\.(?:tex|sty|cls|bib|txt|md)$/i.test(path));
+    void Promise.all(paths.map(async (path): Promise<SearchDocument | undefined> => {
+      try { return { fileId: path, content: (await api.files.read(project.id, path)).content }; } catch { return undefined; }
+    })).then((documents) => { if (!cancelled) setProjectSearchDocuments(documents.filter((item): item is SearchDocument => !!item)); });
     return () => { cancelled = true; };
   }, [api, project.id, tree]);
   useEffect(() => {
@@ -373,6 +434,26 @@ export function Workbench({ project, projects, environments, onHome, onSwitch }:
     catch { /* Binary and unsupported files stay unopened until dedicated viewers exist. */ }
   };
 
+  const forwardSyncToPdf = async (path: string, line: number, column = 1) => {
+    if (!api || !pdfFile || !path.toLocaleLowerCase().endsWith(".tex")) return;
+    try {
+      const target = await api.synctex.forward(project.id, path, pdfFile, line, column);
+      setPdfTarget({ ...target, requestId: Date.now() });
+      setLayout((value) => value.mode === "split" ? { ...value, rightPane: "pdf" } : { ...value, singlePane: "pdf" });
+    } catch (error) { window.alert(error instanceof Error ? error.message : String(error)); }
+  };
+
+  const reverseSyncFromPdf = async (page: number, x: number, y: number) => {
+    if (!api || !pdfFile) return;
+    try {
+      const target = await api.synctex.reverse(project.id, pdfFile, page, x, y);
+      const pane = lastTextPane.current;
+      setLayout((value) => value.mode === "split" ? { ...value, leftPane: pane } : { ...value, singlePane: pane });
+      setPendingDiagnostic({ path: target.file, line: target.line, column: target.column });
+      if (target.file !== activePath) await openFile(target.file);
+    } catch (error) { window.alert(error instanceof Error ? error.message : String(error)); }
+  };
+
   const saveTabs = async (all: boolean) => {
     if (!api) return;
     const pending = tabs.filter((tab) => tab.dirty && (all || tab.path === activePath));
@@ -458,6 +539,8 @@ export function Workbench({ project, projects, environments, onHome, onSwitch }:
   };
   const onEditorMount: OnMount = (editor, monaco) => {
     editorRef.current = editor;
+    searchDecorationsRef.current?.clear();
+    searchDecorationsRef.current = editor.createDecorationsCollection();
     completionController.current?.dispose();
     spellCheckController.current?.dispose();
     referenceMouseListener.current?.dispose();
@@ -574,6 +657,10 @@ export function Workbench({ project, projects, environments, onHome, onSwitch }:
     const setReferenceCursor = (enabled: boolean) => editor.getDomNode()?.classList.toggle("texweave-reference-cursor", enabled);
     let hoverPosition: { lineNumber: number; column: number } | undefined;
     const mouseDown = editor.onMouseDown((event) => {
+      if (event.event.detail === 2 && event.target.position && activePathRef.current) {
+        void forwardSyncToPdf(activePathRef.current, event.target.position.lineNumber, event.target.position.column);
+        return;
+      }
       if (!modifierPressed(event.event)) return;
       const position = event.target.position;
       const label = position ? referenceAtPosition(position) : undefined;
@@ -598,7 +685,8 @@ export function Workbench({ project, projects, environments, onHome, onSwitch }:
     window.addEventListener("keyup", modifierChange);
     const initialPosition = editor.getPosition();
     if (initialPosition) updateCursorMath(initialPosition);
-    referenceMouseListener.current = { dispose: () => { if (mathTimer !== undefined) window.clearTimeout(mathTimer); activeMath = undefined; cursorListener.dispose(); contentListener.dispose(); scrollListener.dispose(); layoutListener.dispose(); blurListener.dispose(); mouseDown.dispose(); mouseMove.dispose(); mouseLeave.dispose(); window.removeEventListener("keydown", modifierChange); window.removeEventListener("keyup", modifierChange); setReferenceCursor(false); setSourceMathPreview(undefined); } };
+    const contextActions = installEditorContextActions(editor, (line, column) => { if (activePathRef.current) void forwardSyncToPdf(activePathRef.current, line, column); });
+    referenceMouseListener.current = { dispose: () => { if (mathTimer !== undefined) window.clearTimeout(mathTimer); activeMath = undefined; contextActions.dispose(); cursorListener.dispose(); contentListener.dispose(); scrollListener.dispose(); layoutListener.dispose(); blurListener.dispose(); mouseDown.dispose(); mouseMove.dispose(); mouseLeave.dispose(); window.removeEventListener("keydown", modifierChange); window.removeEventListener("keyup", modifierChange); setReferenceCursor(false); setSourceMathPreview(undefined); } };
     if (api) {
       completionController.current = new CompletionController({ monaco, api, projectId: project.id, getTree: () => treeRef.current, getCurrentPath: () => activePathRef.current, getEnvironments: () => environmentsRef.current, isDocumentWordCompletionEnabled: () => store.get("documentWordCompletion") });
       spellCheckController.current = new SpellCheckController({ editor, api, getCurrentPath: () => activePathRef.current, getMode: () => store.get("spellCheckMode"), getManualLanguage: () => store.get("spellCheckLanguage"), onDetectedLanguage: setDetectedSpellLanguage, onContextMenu: setSpellContextMenu });
@@ -621,7 +709,12 @@ export function Workbench({ project, projects, environments, onHome, onSwitch }:
   const navigateToLocation = (line: number, column = 1) => {
     const previewVisible = layout.mode === "single" ? layout.singlePane === "preview" : layout.leftPane === "preview";
     if (previewVisible) {
-      const target = document.querySelector<HTMLElement>(`.structured-preview [data-source-line="${line}"]`);
+      const candidates = Array.from(document.querySelectorAll<HTMLElement>(`.structured-preview [data-source-line]`));
+      const target = candidates.reduce<HTMLElement | undefined>((best, item) => {
+        const itemLine = Number(item.dataset.sourceLine ?? 0);
+        const bestLine = Number(best?.dataset.sourceLine ?? -1);
+        return itemLine <= line && itemLine >= bestLine ? item : best;
+      }, undefined) ?? candidates.reduce<HTMLElement | undefined>((best, item) => Math.abs(Number(item.dataset.sourceLine) - line) < Math.abs(Number(best?.dataset.sourceLine ?? Infinity) - line) ? item : best, undefined);
       target?.scrollIntoView({ behavior: "smooth", block: "start" });
       return;
     }
@@ -635,6 +728,64 @@ export function Workbench({ project, projects, environments, onHome, onSwitch }:
   };
 
   const navigateToOutline = (line: number) => navigateToLocation(line);
+
+  useEffect(() => {
+    const editor = editorRef.current;
+    const model = editor?.getModel();
+    const decorations = searchDecorationsRef.current;
+    if (!editor || !model || !decorations) return;
+    decorations.set(searchResponse.results.filter((result) => result.fileId === activePath).map((result) => {
+      const start = model.getPositionAt(result.matchStart);
+      const end = model.getPositionAt(result.matchEnd);
+      return { range: { startLineNumber: start.lineNumber, startColumn: start.column, endLineNumber: end.lineNumber, endColumn: end.column }, options: { inlineClassName: result.id === activeSearchResult?.id ? "texweave-search-match-active" : "texweave-search-match" } };
+    }));
+  }, [searchResponse, activeSearchResult, activePath, activeTab?.content]);
+
+  const selectSearchResult = async (result: SearchResult) => {
+    setActiveSearchResult(result);
+    setPendingSearchResult(result);
+    if (result.fileId !== activePath) await openFile(result.fileId);
+  };
+
+  useEffect(() => {
+    if (!pendingSearchResult || pendingSearchResult.fileId !== activePath || !activeTab || !sourceEditorVisible) return;
+    const editor = editorRef.current;
+    const model = editor?.getModel();
+    if (!editor || !model) return;
+    const position = model.getPositionAt(Math.min(pendingSearchResult.matchStart, model.getValueLength()));
+    editor.revealPositionInCenter(position);
+    editor.setPosition(position);
+    editor.focus();
+    setPendingSearchResult(undefined);
+  }, [pendingSearchResult, activePath, activeTab?.content, sourceEditorVisible]);
+
+  const updateSearchDocument = async (path: string, content: string) => {
+    const open = tabs.some((tab) => tab.path === path);
+    if (open) {
+      setTabs((current) => current.map((tab) => tab.path === path ? { ...tab, content, dirty: true } : tab));
+      setSaveState("unsaved");
+    } else if (api) {
+      await api.files.write(project.id, path, content);
+    }
+    setProjectSearchDocuments((current) => current.map((document) => document.fileId === path ? { ...document, content } : document));
+    if (/\.(?:tex|sty)$/i.test(path)) setProjectMathSources((current) => current.map((document) => document.path === path ? { ...document, content } : document));
+  };
+  const replaceCurrentSearchResult = async () => {
+    const result = searchResponse.results.find((item) => item.id === activeSearchResult?.id);
+    const document = result && searchDocuments.find((item) => item.fileId === result.fileId);
+    if (!result || !document) return;
+    await updateSearchDocument(document.fileId, replaceRanges(document.content, [result], replacement));
+    setActiveSearchResult(undefined);
+  };
+  const replaceAllSearchResults = async () => {
+    const grouped = new Map<string, SearchResult[]>();
+    for (const result of searchResponse.results) grouped.set(result.fileId, [...(grouped.get(result.fileId) ?? []), result]);
+    await Promise.all([...grouped].map(async ([path, results]) => {
+      const document = searchDocuments.find((item) => item.fileId === path);
+      if (document) await updateSearchDocument(path, replaceRanges(document.content, results, replacement));
+    }));
+    setActiveSearchResult(undefined);
+  };
 
   useEffect(() => {
     if (!pendingDiagnostic || pendingDiagnostic.path !== activePath || !activeTab) return;
@@ -761,10 +912,11 @@ export function Workbench({ project, projects, environments, onHome, onSwitch }:
   const outputToolbar = <div className="output-toolbar"><button className="compile-button" onClick={() => { commands.execute("latex.compile"); }} disabled={compileState === "running"}><Icon name="play"/><span>{t(compileState === "running" ? "build.compiling" : "build.compile")}</span></button><button onClick={() => { setBottomTab("compileLog"); setBottomVisible(true); }}>{t("build.log")}</button><div className="toolbar-spacer"/><button className={layout.rightPane === "pdf" ? "active" : ""} onClick={() => setLayout((value) => ({ ...value, rightPane: value.rightPane === "pdf" ? "preview" : "pdf" }))}>{layout.rightPane === "pdf" ? t("menu.preview") : t("menu.pdf")}</button></div>;
   const sourcePaneContent = <section className="work-pane source-pane">{sourceTabs}{sourceEditor}</section>;
   const sourcePane = <section className="work-pane source-pane">{sourceTabs}{sourceToolbar}{sourceEditor}</section>;
-  const previewContent = <section className="work-pane"><PreviewPane filePath={activeTab?.path} source={activeTab?.content} definitions={previewEnvironments} mathContext={mathContext} onSourceChange={setEditorContent} api={api} projectId={project.id} tree={tree} onSpellContextMenu={setSpellContextMenu} onDetectedLanguage={setDetectedSpellLanguage}/></section>;
-  const previewPane = <section className="work-pane">{previewToolbar}<PreviewPane filePath={activeTab?.path} source={activeTab?.content} definitions={previewEnvironments} mathContext={mathContext} onSourceChange={setEditorContent} api={api} projectId={project.id} tree={tree} onSpellContextMenu={setSpellContextMenu} onDetectedLanguage={setDetectedSpellLanguage}/></section>;
-  const secondaryContent = <section className="work-pane output-pane"><Placeholder type={layout.rightPane} pdfDataUrl={pdfDataUrl}/></section>;
-  const singlePane = layout.singlePane === "source" ? sourcePane : layout.singlePane === "preview" ? previewPane : <section className="work-pane single-output"><div className="output-toolbar"><div className="view-switch"><button onClick={() => setLayout((value) => ({ ...value, singlePane: "source" }))}>{t("menu.code")}</button><button onClick={() => setLayout((value) => ({ ...value, singlePane: "preview" }))}>{t("menu.visual")}</button><button className="active">{t("menu.pdf")}</button></div><div className="toolbar-spacer"/><button className="compile-button" onClick={() => { commands.execute("latex.compile"); }}><Icon name="play"/>{t("build.compile")}</button></div><Placeholder type="pdf" pdfDataUrl={pdfDataUrl}/></section>;
+  const previewProps = { filePath: activeTab?.path, source: activeTab?.content, definitions: previewEnvironments, mathContext, filterQuery, searchQuery, activeSearchResult, onSourceChange: setEditorContent, api, projectId: project.id, tree, onSpellContextMenu: setSpellContextMenu, onDetectedLanguage: setDetectedSpellLanguage, onForwardSync: forwardSyncToPdf };
+  const previewContent = <section className="work-pane"><PreviewPane {...previewProps}/></section>;
+  const previewPane = <section className="work-pane">{previewToolbar}<PreviewPane {...previewProps}/></section>;
+  const secondaryContent = <section className="work-pane output-pane"><Placeholder type={layout.rightPane} pdfDataUrl={pdfDataUrl} pdfTarget={pdfTarget} onPdfInteract={() => setPdfTarget(undefined)} onPdfDoubleClick={(page, x, y) => void reverseSyncFromPdf(page, x, y)}/></section>;
+  const singlePane = layout.singlePane === "source" ? sourcePane : layout.singlePane === "preview" ? previewPane : <section className="work-pane single-output"><div className="output-toolbar"><div className="view-switch"><button onClick={() => setLayout((value) => ({ ...value, singlePane: "source" }))}>{t("menu.code")}</button><button onClick={() => setLayout((value) => ({ ...value, singlePane: "preview" }))}>{t("menu.visual")}</button><button className="active">{t("menu.pdf")}</button></div><div className="toolbar-spacer"/><button className="compile-button" onClick={() => { commands.execute("latex.compile"); }}><Icon name="play"/>{t("build.compile")}</button></div><Placeholder type="pdf" pdfDataUrl={pdfDataUrl} pdfTarget={pdfTarget} onPdfInteract={() => setPdfTarget(undefined)} onPdfDoubleClick={(page, x, y) => void reverseSyncFromPdf(page, x, y)}/></section>;
   const splitLeftContent = layout.leftPane === "preview" ? previewContent : sourcePaneContent;
   const splitToolbar = <div className="split-toolbar"><div className="split-toolbar-left latex-toolbar">{quickActions}<div className="toolbar-spacer"/>{viewSwitch(layout.leftPane)}</div><div className="split-toolbar-right">{outputToolbar}</div></div>;
 
@@ -777,7 +929,7 @@ export function Workbench({ project, projects, environments, onHome, onSwitch }:
     {nameRequest && createPortal(<EntryNameInput message={nameRequest.message} fallback={nameRequest.fallback} finish={(value) => { nameRequest.resolve(value); setNameRequest(undefined); }}/>, document.querySelector(".file-tree") ?? document.body)}
     <header className="workbench-topbar" ref={workbenchRef}><button className="logo-button" onClick={onHome} title={t("project.directory")}><Logo/><span>{t("app.name")}</span></button><nav className="app-menus">{(["file", "edit", "view", "history"] as const).map((menu) => <div className="menu-anchor" key={menu}><button onClick={() => setActiveMenu(activeMenu === menu ? undefined : menu)}>{t(`menu.${menu}` as MessageKey)}</button>{activeMenu === menu && <Menu items={menuItems(menu)} onClose={() => setActiveMenu(undefined)}/>}</div>)}</nav><div className="project-switcher menu-anchor"><button onClick={() => setActiveMenu(activeMenu === "projects" ? undefined : "projects")}><strong>{project.name}</strong><Icon name="chevron"/></button>{activeMenu === "projects" && <div className="menu-popover project-menu">{projects.map((item) => <button key={item.id} onClick={() => { setActiveMenu(undefined); onSwitch(item); }}><span>{item.name}</span>{item.id === project.id && <b>✓</b>}</button>)}<div className="menu-divider"/><button onClick={() => { setActiveMenu(undefined); onHome(); }}>{t("project.directory")}</button></div>}</div><button className={`save-status ${saveState}`} onClick={() => { commands.execute("file.save"); }}><Icon name="save"/>{t(`save.${saveState}` as MessageKey)}</button></header>
     <div className="workbench-body"><aside className="activity-bar"><div>{(["files", "search", "ai"] as const).map((mode) => <button key={mode} className={layout.sidebarVisible && sidebarMode === mode ? "active" : ""} title={t(`activity.${mode}` as MessageKey)} onClick={() => selectActivity(mode)}><Icon name={mode}/><span>{t(`activity.${mode}` as MessageKey)}</span></button>)}</div><div><button className={layout.sidebarVisible && sidebarMode === "settings" ? "active" : ""} title={t("activity.settings")} onClick={() => selectActivity("settings")}><Icon name="settings"/><span>{t("activity.settings")}</span></button><button className={layout.sidebarVisible && sidebarMode === "help" ? "active" : ""} title={t("activity.help")} onClick={() => selectActivity("help")}><Icon name="help"/><span>{t("activity.help")}</span></button></div></aside>
-      {layout.sidebarVisible && <><aside className="sidebar" style={{ width: layout.sidebarWidth }}>{sidebarMode === "files" && <><div className="sidebar-heading"><strong>{t("sidebar.files")}</strong><div><button onClick={() => void createEntry(false, "")} title={t("files.newFile")}><Icon name="plus"/></button><button onClick={() => void refreshTree()} title={t("sidebar.refresh")}><Icon name="refresh"/></button><button onClick={() => setLayout((value) => ({ ...value, sidebarVisible: false }))} title={t("sidebar.collapse")}>‹</button></div></div><div className="tree-section" style={{ height: layout.fileTreeHeight }}><input className="sidebar-input" value={treeFilter} onChange={(event) => setTreeFilter(event.target.value)} placeholder={t("sidebar.fileSearch")}/><Tree nodes={tree} activePath={activePath} mainFile={project.mainFile} filter={treeFilter} hideBuildArtifacts={store.get("hideBuildArtifacts")} onOpen={(path) => void openFile(path)}/></div><div className="horizontal-resizer" onPointerDown={(event) => startResize("tree", event)}/><div className="outline-section"><div className="segment-tabs"><button className={outlineMode === "outline" ? "active" : ""} onClick={() => setOutlineMode("outline")}>{t("sidebar.outline")}</button><button className={outlineMode === "relations" ? "active" : ""} onClick={() => setOutlineMode("relations")}>{t("sidebar.relations")}</button></div>{outlineMode === "outline" ? <div className="outline-list">{outline.map((item, index) => <button key={`${item.title}-${index}`} style={{ paddingLeft: 14 + item.level * 15 }} onClick={() => navigateToOutline(item.line)}>{item.title}</button>)}</div> : <div className="sidebar-placeholder"><strong>{t("placeholder.relationsTitle")}</strong><p>{t("placeholder.relations")}</p></div>}</div></>}{sidebarMode === "search" && <div className="generic-sidebar"><h2>{t("sidebar.search")}</h2><input className="sidebar-input" placeholder={t("sidebar.projectSearch")}/><p>{t("sidebar.searchPlaceholder")}</p></div>}{sidebarMode === "ai" && <div className="generic-sidebar"><h2>{t("placeholder.aiTitle")}</h2><p>{t("placeholder.ai")}</p></div>}{sidebarMode === "settings" && <div className="generic-sidebar"><h2>{t("activity.settings")}</h2><p>{t("placeholder.settings")}</p><dl><div><dt>{t("settings.language")}</dt><dd>{t("settings.english")}</dd></div><div><dt>{t("settings.theme")}</dt><dd>{t("settings.light")}</dd></div></dl></div>}{sidebarMode === "help" && <div className="generic-sidebar"><h2>{t("activity.help")}</h2><p>{t("placeholder.help")}</p></div>}</aside><div className="vertical-resizer" onPointerDown={(event) => startResize("sidebar", event)}/></>}
+      {layout.sidebarVisible && <><aside className="sidebar" style={{ width: layout.sidebarWidth }}>{sidebarMode === "files" && <><div className="sidebar-heading"><strong>{t("sidebar.files")}</strong><div><button onClick={() => void createEntry(false, "")} title={t("files.newFile")}><Icon name="plus"/></button><button onClick={() => void refreshTree()} title={t("sidebar.refresh")}><Icon name="refresh"/></button><button onClick={() => setLayout((value) => ({ ...value, sidebarVisible: false }))} title={t("sidebar.collapse")}>‹</button></div></div><div className="tree-section" style={{ height: layout.fileTreeHeight }}><input className="sidebar-input" value={treeFilter} onChange={(event) => setTreeFilter(event.target.value)} placeholder={t("sidebar.fileSearch")}/><Tree nodes={tree} activePath={activePath} mainFile={project.mainFile} filter={treeFilter} hideBuildArtifacts={store.get("hideBuildArtifacts")} onOpen={(path) => void openFile(path)}/></div><div className="horizontal-resizer" onPointerDown={(event) => startResize("tree", event)}/><div className="outline-section"><div className="segment-tabs"><button className={outlineMode === "outline" ? "active" : ""} onClick={() => setOutlineMode("outline")}>{t("sidebar.outline")}</button><button className={outlineMode === "relations" ? "active" : ""} onClick={() => setOutlineMode("relations")}>{t("sidebar.relations")}</button></div>{outlineMode === "outline" ? <div className="outline-list">{outline.map((item, index) => <button key={`${item.title}-${index}`} style={{ paddingLeft: 14 + item.level * 15 }} onClick={() => navigateToOutline(item.line)}>{item.title}</button>)}</div> : <div className="sidebar-placeholder"><strong>{t("placeholder.relationsTitle")}</strong><p>{t("placeholder.relations")}</p></div>}</div></>}{sidebarMode === "search" && <AdvancedSearchPanel query={searchQuery} response={searchResponse} activeResultId={activeSearchResult?.id} replacement={replacement} replaceOpen={replaceOpen} filter={filterQuery} options={filterOptions} visibleGroups={store.get("visibleFilterGroups") as FilterGroupId[]} setQuery={setSearchQuery} setReplacement={setReplacement} setReplaceOpen={setReplaceOpen} setFilter={setFilterQuery} selectResult={(result) => void selectSearchResult(result)} replaceCurrent={() => void replaceCurrentSearchResult()} replaceAll={() => void replaceAllSearchResults()}/>} {sidebarMode === "ai" && <div className="generic-sidebar"><h2>{t("placeholder.aiTitle")}</h2><p>{t("placeholder.ai")}</p></div>}{sidebarMode === "settings" && <div className="generic-sidebar"><h2>{t("activity.settings")}</h2><p>{t("placeholder.settings")}</p><dl><div><dt>{t("settings.language")}</dt><dd>{t("settings.english")}</dd></div><div><dt>{t("settings.theme")}</dt><dd>{t("settings.light")}</dd></div></dl></div>}{sidebarMode === "help" && <div className="generic-sidebar"><h2>{t("activity.help")}</h2><p>{t("placeholder.help")}</p></div>}</aside><div className="vertical-resizer" onPointerDown={(event) => startResize("sidebar", event)}/></>}
       <main className="workspace"><div className="workspace-main">{layout.mode === "single" ? singlePane : <><div className="split-toolbar-row">{splitToolbar}</div><div className="split-layout"><div style={{ width: `${layout.splitRatio}%` }}>{splitLeftContent}</div><div className="split-resizer" onPointerDown={(event) => startResize("split", event)}/><div style={{ width: `${100 - layout.splitRatio}%` }}>{secondaryContent}</div></div></>}</div>{bottomVisible && <><div className="bottom-resizer" onPointerDown={(event) => startResize("bottom", event)}/><section className="bottom-panel" style={{ height: layout.bottomPanelHeight }}><div className="bottom-tabs">{(["problems", "output", "compileLog", "versions"] as const).map((tab) => <button className={bottomTab === tab ? "active" : ""} key={tab} onClick={() => setBottomTab(tab)}>{t(`panel.${tab}` as MessageKey)}{tab === "problems" && diagnostics.length > 0 && <span>{diagnostics.length}</span>}</button>)}<button className="panel-close" onClick={() => setBottomVisible(false)} title={t("common.close")}><Icon name="close"/></button></div><div className="panel-content">{bottomTab === "problems" && (diagnostics.length ? diagnostics.map((diagnostic, index) => <DiagnosticRow diagnostic={diagnostic} onOpen={() => void openDiagnostic(diagnostic)} key={`${diagnostic.message}-${index}`}/>) : <p>{t("panel.noProblems")}</p>)}{bottomTab === "compileLog" && <pre>{compileResult ? `${compileResult.stdoutTail}\n${compileResult.stderrTail}` : t("panel.noOutput")}</pre>}{bottomTab === "output" && <p>{t("panel.noOutput")}</p>}{bottomTab === "versions" && <p>{t("panel.versionsPlaceholder")}</p>}</div></section></>}</main>
     </div><footer className="status-bar"><div><span>{activePath ?? project.mainFile ?? "—"}</span><span>{t("status.line", cursor)}</span><span>{t("status.encoding")}</span><span>{t("status.lineEnding")}</span></div><div><span>{t("status.engine")}</span><button onClick={() => { setBottomTab("problems"); setBottomVisible(true); }}>{compileResult?.status === "succeeded" ? `✓ ${t("build.succeeded")}` : compileResult ? `! ${t("build.failed")}` : t("build.notRun")}</button><button onClick={() => { setBottomTab("problems"); setBottomVisible(true); }}>{t("status.errors", { count: errors })}</button><button onClick={() => { setBottomTab("problems"); setBottomVisible(true); }}>{t("status.warnings", { count: warnings })}</button>{spellStatusControl}<button onClick={() => setBottomVisible((value) => !value)} title={t("panel.output")}><Icon name="panel"/></button></div></footer>
   {sourceMathPreview && <MathPreviewPopover source={sourceMathPreview.source} displayMode={sourceMathPreview.displayMode} context={mathContext} anchor={sourceMathPreview.anchor}/>} {settingsOpen && <SettingsDialog onClose={() => setSettingsOpen(false)}/>} {fileContext && <ContextMenu context={fileContext} items={fileContextItems()} onClose={() => setFileContext(undefined)}/>} {spellContextMenu && <SpellContextMenu request={spellContextMenu} onClose={() => setSpellContextMenu(undefined)}/>}</div>;

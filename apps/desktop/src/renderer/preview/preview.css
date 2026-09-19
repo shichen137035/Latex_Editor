@@ -6,6 +6,14 @@
 .preview-inline-math { display: inline-block; padding: 0 3px; vertical-align: middle; }
 .preview-reference, .preview-citation { padding: 1px 5px; border: 0; border-radius: 4px; color: var(--color-primary-strong); background: var(--color-bg-subtle); font: 500 12px/1.4 "Space Grotesk", sans-serif; }.preview-reference { cursor: pointer; text-decoration: underline; text-underline-offset: 2px; }.preview-reference:hover { background: var(--color-bg-hover); }.preview-citation { color: var(--color-accent); }
 .preview-block.reference-target, .preview-content-region.reference-target { animation: reference-target-pulse .7s ease-out; }
+.preview-search-match { padding: 0 1px; border-radius: 2px; color: inherit; background: #ffe58a; box-shadow: inset 0 -1px #dbad26; }
+.preview-search-match.active { background: #ffbd4a; box-shadow: 0 0 0 2px color-mix(in srgb, #e88a00 26%, transparent); }
+.preview-block.filter-match { border-color: color-mix(in srgb, var(--color-accent) 72%, var(--block-border)); box-shadow: 0 0 0 2px color-mix(in srgb, var(--color-accent) 13%, transparent); }
+.preview-content-region.filter-match { border-color: color-mix(in srgb, var(--color-accent) 58%, transparent); background: color-mix(in srgb, var(--color-accent) 7%, transparent); }
+.filter-view-dim.filter-unmatched { opacity: .3; filter: saturate(.45); }.filter-view-dim.filter-context { opacity: .68; }
+.search-result-active { outline: 2px solid color-mix(in srgb, #ed9b20 55%, transparent); outline-offset: 2px; }
+.preview-filter-collapsed { margin: 7px 4px; padding: 5px 10px; border: 1px dashed var(--color-border); border-radius: 5px; color: var(--color-text-muted); background: var(--color-bg-subtle); font: 500 11px "Space Grotesk", sans-serif; text-align: center; }
+.preview-filter-empty { position: sticky; bottom: 12px; z-index: 3; width: max-content; margin: 12px auto; padding: 7px 12px; border: 1px solid var(--color-border); border-radius: 7px; color: var(--color-text-secondary); background: var(--color-bg-panel); box-shadow: var(--shadow-panel); font: 500 11px "Space Grotesk", sans-serif; }
 @keyframes reference-target-pulse { 0% { box-shadow: 0 0 0 3px color-mix(in srgb, var(--color-accent) 48%, transparent); } 100% { box-shadow: 0 0 0 0 transparent; } }
 .preview-block { --block-accent: var(--env-generic-accent); --block-fill: transparent; --block-border: var(--env-border-default); --block-selected-border: var(--env-border-selected); --block-label-bg: transparent; --block-label-text: var(--block-accent); position: relative; margin: 14px 0 12px; padding: 0 0 1px 12px; border: 1px solid color-mix(in srgb, var(--block-border) 62%, transparent); border-radius: 8px; background: transparent; scroll-margin-top: 24px; transition: .16s ease; }
 .preview-block::before { content: ""; position: absolute; inset: -1px auto -1px -1px; width: 3px; border-radius: 8px 0 0 8px; background: var(--block-accent); opacity: .22; transition: .16s ease; }

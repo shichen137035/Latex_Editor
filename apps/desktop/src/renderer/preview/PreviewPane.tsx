@@ -10,17 +10,23 @@ import "./preview.css";
 import { useSettings } from "../settings/service.js";
 import { CompletionController } from "../completion/CompletionController.js";
 import { SpellCheckController, type SpellContextRequest } from "../spellcheck/SpellCheckController.js";
+import { installEditorContextActions } from "../workbench/editorContextActions.js";
 import { MathRenderer } from "./MathRenderer.js";
 import { commands } from "../settings/commands.js";
 import { MathPreviewPopover } from "../math/MathPreviewPopover.js";
 import { extractMathExpression } from "../math/MathRenderService.js";
 import { EMPTY_MATH_CONTEXT, type MathContext } from "../math/types.js";
+import { searchPattern } from "../search/SearchEngine.js";
+import type { SearchQuery, SearchResult } from "../search/types.js";
+import { FilterEngine } from "../filter/FilterEngine.js";
+import { defaultFilterQuery, type FilterQuery, type FilterState } from "../filter/types.js";
 
 type EditorApi = NonNullable<Window["latexEditor"]>;
-type PreviewEditorServices = { api: EditorApi | undefined; projectId: string; tree: ProjectTreeNode[]; currentPath: string; definitions: EnvironmentDefinition[]; mathContext: MathContext; onSpellContextMenu(request: SpellContextRequest): void; onDetectedLanguage(language: string): void };
+type PreviewEditorServices = { api: EditorApi | undefined; projectId: string; tree: ProjectTreeNode[]; currentPath: string; definitions: EnvironmentDefinition[]; mathContext: MathContext; searchQuery: SearchQuery; activeSearchResult?: SearchResult | undefined; filterQuery: FilterQuery; filterStates: Map<string, FilterState>; onSpellContextMenu(request: SpellContextRequest): void; onDetectedLanguage(language: string): void; onForwardSync(path: string, line: number, column?: number): void };
 interface BoundaryInsertion { targetId: string; position: number; side: "before" | "after" }
 interface PreviewRenderBudget { remaining: number; }
 const previewNodeLimit = 900;
+const previewFilterEngine = new FilterEngine();
 
 function countNodes(nodes: PreviewNode[]): number {
   let count = 0;
@@ -66,7 +72,25 @@ function plainLatex(value: string): string {
     .trim();
 }
 
-function inlineLatex(value: string | undefined, mathContext: MathContext): ReactNode[] {
+function highlightedText(value: string, query: SearchQuery, active: boolean, keyBase: number): ReactNode[] {
+  const pattern = searchPattern(query).expression;
+  if (!pattern || !value) return [<Fragment key={keyBase}>{value}</Fragment>];
+  const expression = new RegExp(pattern.source, pattern.flags);
+  const result: ReactNode[] = [];
+  let cursor = 0;
+  let index = 0;
+  for (const match of value.matchAll(expression)) {
+    const start = match.index ?? 0;
+    if (start > cursor) result.push(<Fragment key={`${keyBase}:t:${index++}`}>{value.slice(cursor, start)}</Fragment>);
+    if (!match[0]) continue;
+    result.push(<mark className={active ? "preview-search-match active" : "preview-search-match"} key={`${keyBase}:m:${index++}`}>{match[0]}</mark>);
+    cursor = start + match[0].length;
+  }
+  if (cursor < value.length) result.push(<Fragment key={`${keyBase}:t:${index}`}>{value.slice(cursor)}</Fragment>);
+  return result.length ? result : [<Fragment key={keyBase}>{value}</Fragment>];
+}
+
+function inlineLatex(value: string | undefined, mathContext: MathContext, searchQuery: SearchQuery = defaultInlineSearch, active = false): ReactNode[] {
   if (!value) return [];
   const clean = value.replace(/^\s*%.*$/gm, "").replace(/%[^\n]*/g, "").trim();
   const pattern = /\$\$([\s\S]*?)\$\$|\$(?!\$)([^$\n]+?)\$|\\\(([\s\S]*?)\\\)|\\(textbf|textit|emph|texttt)\{([^{}]*)\}|\\([A-Za-z]*cite[A-Za-z]*)\{([^{}]*)\}|\\([A-Za-z]*ref[A-Za-z]*)\{([^{}]*)\}/g;
@@ -75,20 +99,22 @@ function inlineLatex(value: string | undefined, mathContext: MathContext): React
   let index = 0;
   for (const match of clean.matchAll(pattern)) {
     const start = match.index ?? 0;
-    if (start > cursor) result.push(<Fragment key={index++}>{plainLatex(clean.slice(cursor, start))}</Fragment>);
+    if (start > cursor) result.push(...highlightedText(plainLatex(clean.slice(cursor, start)), searchQuery, active, index++));
     if (match[1] !== undefined) result.push(<MathRenderer key={index++} expression={match[1]} display context={mathContext}/>);
     else if (match[2] !== undefined) result.push(<MathRenderer key={index++} expression={match[2]} context={mathContext}/>);
     else if (match[3] !== undefined) result.push(<MathRenderer key={index++} expression={match[3]} context={mathContext}/>);
-    else if (match[4] === "textbf") result.push(<strong key={index++}>{match[5]}</strong>);
-    else if (match[4] === "texttt") result.push(<code key={index++}>{match[5]}</code>);
-    else if (match[4]) result.push(<em key={index++}>{match[5]}</em>);
+    else if (match[4] === "textbf") result.push(<strong key={index++}>{highlightedText(match[5] ?? "", searchQuery, active, index++)}</strong>);
+    else if (match[4] === "texttt") result.push(<code key={index++}>{highlightedText(match[5] ?? "", searchQuery, active, index++)}</code>);
+    else if (match[4]) result.push(<em key={index++}>{highlightedText(match[5] ?? "", searchQuery, active, index++)}</em>);
     else if (match[6]) result.push(<span className="preview-citation" key={index++} title={`\\${match[6]}`}>[{match[7]}]</span>);
     else result.push(<button type="button" className="preview-reference" data-reference={match[9]} key={index++} title={`\\${match[8]}`}>[{match[9]}]</button>);
     cursor = start + match[0].length;
   }
-  if (cursor < clean.length) result.push(<Fragment key={index}>{plainLatex(clean.slice(cursor))}</Fragment>);
+  if (cursor < clean.length) result.push(...highlightedText(plainLatex(clean.slice(cursor)), searchQuery, active, index));
   return result;
 }
+
+const defaultInlineSearch: SearchQuery = { text: "", caseSensitive: false, wholeWord: false, useRegex: false, scope: "current-file" };
 
 interface PreviewListItem {
   content: string;
@@ -205,7 +231,7 @@ function environmentLabel(definition: EnvironmentDefinition | undefined, id: str
   return id.replaceAll("-", " ").toLocaleUpperCase();
 }
 
-function SpecializedContent({ node, source, mathContext }: { node: StructuralBlock; source: string; mathContext: MathContext }) {
+function SpecializedContent({ node, source, mathContext, searchQuery, activeSearch }: { node: StructuralBlock; source: string; mathContext: MathContext; searchQuery: SearchQuery; activeSearch: boolean }) {
   const raw = bodySource(node, source);
   const definitionId = node.environmentId;
   if (/equation|align|gather|multline|display-math/.test(definitionId)) {
@@ -218,12 +244,12 @@ function SpecializedContent({ node, source, mathContext }: { node: StructuralBlo
   if (/itemize|enumerate|description/.test(definitionId)) {
     const items = previewListItems(raw);
     const Tag = definitionId === "enumerate" ? "ol" : "ul";
-    return <Tag className="preview-list">{items.map((item, index) => <li key={index}>{item.label && <strong>{inlineLatex(item.label, mathContext)} </strong>}{inlineLatex(item.content, mathContext)}</li>)}</Tag>;
+    return <Tag className="preview-list">{items.map((item, index) => <li key={index}>{item.label && <strong>{inlineLatex(item.label, mathContext, searchQuery, activeSearch)} </strong>}{inlineLatex(item.content, mathContext, searchQuery, activeSearch)}</li>)}</Tag>;
   }
   if (definitionId === "figure") {
     const image = /\\includegraphics(?:\[[^\]]*\])?\{([^}]+)\}/.exec(raw)?.[1];
     const caption = /\\caption\{([^}]*)\}/.exec(raw)?.[1];
-    return <figure className="preview-figure"><div className="preview-media">{image ? `Image · ${image}` : t("preview.figurePlaceholder")}</div>{caption && <figcaption>{inlineLatex(caption, mathContext)}</figcaption>}</figure>;
+    return <figure className="preview-figure"><div className="preview-media">{image ? `Image · ${image}` : t("preview.figurePlaceholder")}</div>{caption && <figcaption>{inlineLatex(caption, mathContext, searchQuery, activeSearch)}</figcaption>}</figure>;
   }
   if (definitionId === "table") {
     const tabular = /\\begin\{tabular\}\{[^}]*\}([\s\S]*?)\\end\{tabular\}/.exec(raw)?.[1] ?? raw;
@@ -232,7 +258,7 @@ function SpecializedContent({ node, source, mathContext }: { node: StructuralBlo
   return null;
 }
 
-function LocalEditor({ value, onApply, onCancel, onInsertBefore, onInsertAfter, mathDraft = false, api, projectId, tree, currentPath, definitions, mathContext, onSpellContextMenu, onDetectedLanguage }: { value: string; onApply(value: string): void; onCancel(): void; onInsertBefore?(draft: string): void; onInsertAfter?(draft: string): void; mathDraft?: boolean; api: EditorApi | undefined; projectId: string; tree: ProjectTreeNode[]; currentPath: string; definitions: EnvironmentDefinition[]; mathContext: MathContext; onSpellContextMenu(request: SpellContextRequest): void; onDetectedLanguage(language: string): void }) {
+function LocalEditor({ value, onApply, onCancel, onInsertBefore, onInsertAfter, mathDraft = false, sourceStartLine = 1, api, projectId, tree, currentPath, definitions, mathContext, onSpellContextMenu, onDetectedLanguage, onForwardSync }: { value: string; onApply(value: string): void; onCancel(): void; onInsertBefore?(draft: string): void; onInsertAfter?(draft: string): void; mathDraft?: boolean; sourceStartLine?: number; api: EditorApi | undefined; projectId: string; tree: ProjectTreeNode[]; currentPath: string; definitions: EnvironmentDefinition[]; mathContext: MathContext; onSpellContextMenu(request: SpellContextRequest): void; onDetectedLanguage(language: string): void; onForwardSync(path: string, line: number, column?: number): void }) {
   const preferences = useSettings();
   const [draft, setDraft] = useState(value);
   const [mathAnchor, setMathAnchor] = useState<DOMRect>();
@@ -243,12 +269,13 @@ function LocalEditor({ value, onApply, onCancel, onInsertBefore, onInsertAfter, 
   const cancelRef = useRef(onCancel);
   const completionController = useRef<CompletionController | null>(null);
   const spellCheckController = useRef<SpellCheckController | null>(null);
+  const contextActions = useRef<{ dispose(): void } | null>(null);
   const mode = preferences.get("spellCheckMode");
   const language = preferences.get("spellCheckLanguage");
   draftRef.current = draft;
   applyRef.current = onApply;
   cancelRef.current = onCancel;
-  useEffect(() => () => { completionController.current?.dispose(); spellCheckController.current?.dispose(); }, []);
+  useEffect(() => () => { completionController.current?.dispose(); spellCheckController.current?.dispose(); contextActions.current?.dispose(); }, []);
   useEffect(() => { spellCheckController.current?.refresh(); }, [mode, language]);
   useEffect(() => {
     const registrations = [
@@ -263,6 +290,14 @@ function LocalEditor({ value, onApply, onCancel, onInsertBefore, onInsertAfter, 
     editor.focus();
     completionController.current?.dispose();
     spellCheckController.current?.dispose();
+    contextActions.current?.dispose();
+    const globalPosition = (line: number, column: number) => ({ line: sourceStartLine + line - 1, column });
+    contextActions.current = installEditorContextActions(editor, (line, column) => { const position = globalPosition(line, column); onForwardSync(currentPath, position.line, position.column); });
+    editor.onMouseDown((event) => {
+      if (event.event.detail !== 2 || !event.target.position) return;
+      const position = globalPosition(event.target.position.lineNumber, event.target.position.column);
+      onForwardSync(currentPath, position.line, position.column);
+    });
     if (!api) return;
     completionController.current = new CompletionController({ monaco, api, projectId, getTree: () => tree, getCurrentPath: () => currentPath, getEnvironments: () => definitions, isDocumentWordCompletionEnabled: () => preferences.get("documentWordCompletion") });
     spellCheckController.current = new SpellCheckController({ editor, api, getCurrentPath: () => currentPath, getMode: () => preferences.get("spellCheckMode"), getManualLanguage: () => preferences.get("spellCheckLanguage"), onDetectedLanguage, onContextMenu: onSpellContextMenu });
@@ -320,9 +355,17 @@ function LocalEditor({ value, onApply, onCancel, onInsertBefore, onInsertAfter, 
 
 function ContentRenderer({ node, source, editing, boundary, beginEdit, applyEdit, applyBoundary, cancelEdit, requestBoundary, services }: { node: ContentRegion; source: string; editing: boolean; boundary?: BoundaryInsertion | undefined; beginEdit(): void; applyEdit(value: string): void; applyBoundary(insertion: BoundaryInsertion, value: string): void; cancelEdit(): void; requestBoundary(node: PreviewNode, side: "before" | "after", draft?: string): void; services: PreviewEditorServices }) {
   const insertion = boundary?.targetId === node.id ? boundary : undefined;
+  const filterState = services.filterStates.get(node.id) ?? "match";
+  if (services.filterQuery.enabled && filterState === "unmatched" && !editing && !insertion) {
+    if (services.filterQuery.viewMode === "remove") return null;
+    if (services.filterQuery.viewMode === "collapse") return <div className="preview-filter-collapsed">⋯ 1 {t("filter.blockCollapsed")}</div>;
+  }
+  const activeSearch = services.activeSearchResult ? services.activeSearchResult.matchStart >= node.source.startOffset && services.activeSearchResult.matchEnd <= node.source.endOffset : false;
+  const effectiveSearch = services.filterQuery.enabled && filterState !== "match" ? defaultInlineSearch : services.searchQuery;
+  const filterClass = services.filterQuery.enabled ? `filter-${filterState} filter-view-${services.filterQuery.viewMode}` : "";
   return <Fragment>
     {insertion?.side === "before" && <LocalEditor value="" onApply={(value) => applyBoundary(insertion, value)} onCancel={cancelEdit} {...services}/>}
-    {editing ? <LocalEditor value={nodeSource(node, source)} onApply={applyEdit} onCancel={cancelEdit} onInsertBefore={(draft) => requestBoundary(node, "before", draft)} onInsertAfter={(draft) => requestBoundary(node, "after", draft)} {...services}/> : <div className="preview-content-region" data-node-id={node.id} data-source-line={node.source.startLine} data-source-start-offset={node.source.startOffset} onClick={(event) => { event.stopPropagation(); beginEdit(); }}>{inlineLatex(node.raw, services.mathContext)}</div>}
+    {editing ? <LocalEditor value={nodeSource(node, source)} sourceStartLine={node.source.startLine} onApply={applyEdit} onCancel={cancelEdit} onInsertBefore={(draft) => requestBoundary(node, "before", draft)} onInsertAfter={(draft) => requestBoundary(node, "after", draft)} {...services}/> : <div className={`preview-content-region ${filterClass} ${activeSearch ? "search-result-active" : ""}`} data-node-id={node.id} data-source-line={node.source.startLine} data-source-start-offset={node.source.startOffset} onClick={(event) => { event.stopPropagation(); beginEdit(); }}>{inlineLatex(node.raw, services.mathContext, effectiveSearch, activeSearch)}</div>}
     {insertion?.side === "after" && <LocalEditor value="" onApply={(value) => applyBoundary(insertion, value)} onCancel={cancelEdit} {...services}/>}
   </Fragment>;
 }
@@ -334,19 +377,27 @@ function isMathBlock(node: StructuralBlock): boolean {
 function BlockRenderer({ node, source, definitions, selectedId, editingId, boundary, select, edit, applyEdit, applyBoundary, cancelEdit, requestBoundary, services, budget }: { node: StructuralBlock; source: string; definitions: EnvironmentDefinition[]; selectedId?: string | undefined; editingId?: string | undefined; boundary?: BoundaryInsertion | undefined; select(id: string): void; edit(id: string): void; applyEdit(node: PreviewNode, value: string): void; applyBoundary(insertion: BoundaryInsertion, value: string): void; cancelEdit(): void; requestBoundary(node: PreviewNode, side: "before" | "after", draft?: string): void; services: PreviewEditorServices; budget: PreviewRenderBudget }) {
   const definition = definitionForId(definitions, node.environmentId);
   const family = definition?.family ?? (node.origin === "virtual" ? "virtual" : "generic");
-  const specialized = SpecializedContent({ node, source, mathContext: services.mathContext });
   const editing = editingId === node.id;
   const selected = selectedId === node.id;
+  const filterState = services.filterStates.get(node.id) ?? "match";
+  const activeSearch = services.activeSearchResult ? services.activeSearchResult.matchStart >= node.source.startOffset && services.activeSearchResult.matchEnd <= node.source.endOffset : false;
+  const effectiveSearch = services.filterQuery.enabled && filterState !== "match" ? defaultInlineSearch : services.searchQuery;
+  const specialized = SpecializedContent({ node, source, mathContext: services.mathContext, searchQuery: effectiveSearch, activeSearch });
   const cssValue = (value: string | undefined, fallback: string) => value ? (value.startsWith("--") ? `var(${value})` : value) : `var(${fallback})`;
   const insertion = boundary?.targetId === node.id ? boundary : undefined;
+  if (services.filterQuery.enabled && filterState === "unmatched" && !editing && !insertion) {
+    if (services.filterQuery.viewMode === "remove") return null;
+    if (services.filterQuery.viewMode === "collapse") return <div className="preview-filter-collapsed">⋯ 1 {t("filter.blockCollapsed")}</div>;
+  }
+  const filterClass = services.filterQuery.enabled ? `filter-${filterState} filter-view-${services.filterQuery.viewMode}` : "";
   return <Fragment>
     {insertion?.side === "before" && <LocalEditor value="" onApply={(value) => applyBoundary(insertion, value)} onCancel={cancelEdit} {...services}/>}
-    <section className={`preview-block env-${family} ${selected ? "selected" : ""} ${editing ? "editing" : ""}`} data-environment={node.environmentId} data-source-line={node.source.startLine} data-source-start-offset={node.source.startOffset} style={{ "--block-accent": cssValue(definition?.style.accentToken, "--env-generic-accent"), "--block-fill": cssValue(definition?.style.fillToken, "--env-generic-fill"), "--block-border": cssValue(definition?.style.borderToken, "--env-border-default"), "--block-selected-border": cssValue(definition?.style.selectedBorderToken, "--env-border-selected"), "--block-label-bg": cssValue(definition?.style.labelBackgroundToken, "--env-generic-label-bg"), "--block-label-text": cssValue(definition?.style.labelTextToken, "--env-generic-label-text") } as CSSProperties}>
+    <section className={`preview-block env-${family} ${filterClass} ${activeSearch ? "search-result-active" : ""} ${selected ? "selected" : ""} ${editing ? "editing" : ""}`} data-environment={node.environmentId} data-source-line={node.source.startLine} data-source-start-offset={node.source.startOffset} onDoubleClickCapture={(event) => { const target = event.target as Element; if (target.closest(".preview-local-editor") || target.closest(".preview-block") !== event.currentTarget) return; event.preventDefault(); event.stopPropagation(); services.onForwardSync(services.currentPath, node.source.startLine, 1); }} style={{ "--block-accent": cssValue(definition?.style.accentToken, "--env-generic-accent"), "--block-fill": cssValue(definition?.style.fillToken, "--env-generic-fill"), "--block-border": cssValue(definition?.style.borderToken, "--env-border-default"), "--block-selected-border": cssValue(definition?.style.selectedBorderToken, "--env-border-selected"), "--block-label-bg": cssValue(definition?.style.labelBackgroundToken, "--env-generic-label-bg"), "--block-label-text": cssValue(definition?.style.labelTextToken, "--env-generic-label-text") } as CSSProperties}>
     {(definition?.behavior.showHeader ?? true) && <div className="preview-block-header"><button className="preview-block-header-main" onClick={(event) => { event.stopPropagation(); select(node.id); }}><span>{environmentLabel(definition, node.environmentId)}</span>{node.title && <strong>{node.title}</strong>}{node.latexLabel && <small>{node.latexLabel}</small>}</button>{selected && <div className="preview-block-header-actions"><button title={t("preview.insertBefore")} onClick={(event) => { event.stopPropagation(); requestBoundary(node, "before"); }}>↥＋</button><button title={t("preview.insertAfter")} onClick={(event) => { event.stopPropagation(); requestBoundary(node, "after"); }}>↧＋</button></div>}</div>}
     <div className="preview-block-body" onClick={(event) => {
       if (specialized && (definition?.behavior.inlineEditable ?? true)) { event.stopPropagation(); edit(node.id); }
     }}>
-      {editing ? <LocalEditor value={nodeSource(node, source)} mathDraft={isMathBlock(node)} onApply={(value) => applyEdit(node, value)} onCancel={cancelEdit} onInsertBefore={(draft) => requestBoundary(node, "before", draft)} onInsertAfter={(draft) => requestBoundary(node, "after", draft)} {...services}/> : specialized ?? node.children.map((child) => <PreviewNodeRenderer key={child.id} node={child} source={source} definitions={definitions} selectedId={selectedId} editingId={editingId} boundary={boundary} select={select} edit={edit} applyEdit={applyEdit} applyBoundary={applyBoundary} cancelEdit={cancelEdit} requestBoundary={requestBoundary} services={services} budget={budget}/>) }
+      {editing ? <LocalEditor value={nodeSource(node, source)} sourceStartLine={node.source.startLine} mathDraft={isMathBlock(node)} onApply={(value) => applyEdit(node, value)} onCancel={cancelEdit} onInsertBefore={(draft) => requestBoundary(node, "before", draft)} onInsertAfter={(draft) => requestBoundary(node, "after", draft)} {...services}/> : specialized ?? <PreviewNodeList nodes={node.children} source={source} definitions={definitions} selectedId={selectedId} editingId={editingId} boundary={boundary} select={select} edit={edit} applyEdit={applyEdit} applyBoundary={applyBoundary} cancelEdit={cancelEdit} requestBoundary={requestBoundary} services={services} budget={budget}/> }
     </div>
     <div className="preview-block-footer">
       <button className="preview-block-footer-main" title={environmentLabel(definition, node.environmentId)} onClick={(event) => { event.stopPropagation(); select(node.id); }}><span/></button>
@@ -364,7 +415,26 @@ function PreviewNodeRenderer(props: { node: PreviewNode; source: string; definit
   return <ContentRenderer node={props.node} source={props.source} editing={props.editingId === props.node.id} boundary={props.boundary} beginEdit={() => props.edit(props.node.id)} applyEdit={(value) => props.applyEdit(props.node, value)} applyBoundary={props.applyBoundary} cancelEdit={props.cancelEdit} requestBoundary={props.requestBoundary} services={props.services}/>;
 }
 
-export function PreviewPane({ filePath, source, definitions, mathContext = EMPTY_MATH_CONTEXT, onSourceChange, api, projectId, tree, onSpellContextMenu, onDetectedLanguage }: { filePath?: string | undefined; source?: string | undefined; definitions: EnvironmentDefinition[]; mathContext?: MathContext; onSourceChange(next: string): void; api: EditorApi | undefined; projectId: string; tree: ProjectTreeNode[]; onSpellContextMenu(request: SpellContextRequest): void; onDetectedLanguage(language: string): void }) {
+function PreviewNodeList({ nodes, ...props }: { nodes: PreviewNode[] } & Omit<Parameters<typeof PreviewNodeRenderer>[0], "node">) {
+  const rendered: ReactNode[] = [];
+  for (let index = 0; index < nodes.length;) {
+    const node = nodes[index];
+    if (!node) break;
+    const collapsible = props.services.filterQuery.enabled && props.services.filterQuery.viewMode === "collapse" && props.services.filterStates.get(node.id) === "unmatched" && props.editingId !== node.id && props.boundary?.targetId !== node.id;
+    if (!collapsible) { rendered.push(<PreviewNodeRenderer key={node.id} node={node} {...props}/>); index += 1; continue; }
+    let end = index + 1;
+    while (end < nodes.length) {
+      const next = nodes[end];
+      if (!next || props.services.filterStates.get(next.id) !== "unmatched" || props.editingId === next.id || props.boundary?.targetId === next.id) break;
+      end += 1;
+    }
+    rendered.push(<div className="preview-filter-collapsed" key={`collapsed:${node.id}`}>⋯ {end - index} {t("filter.blocksCollapsed")}</div>);
+    index = end;
+  }
+  return rendered;
+}
+
+export function PreviewPane({ filePath, source, definitions, mathContext = EMPTY_MATH_CONTEXT, searchQuery = defaultInlineSearch, filterQuery = defaultFilterQuery, activeSearchResult, onSourceChange, api, projectId, tree, onSpellContextMenu, onDetectedLanguage, onForwardSync }: { filePath?: string | undefined; source?: string | undefined; definitions: EnvironmentDefinition[]; mathContext?: MathContext; searchQuery?: SearchQuery; filterQuery?: FilterQuery; activeSearchResult?: SearchResult | undefined; onSourceChange(next: string): void; api: EditorApi | undefined; projectId: string; tree: ProjectTreeNode[]; onSpellContextMenu(request: SpellContextRequest): void; onDetectedLanguage(language: string): void; onForwardSync(path: string, line: number, column?: number): void }) {
   const [selectedId, setSelectedId] = useState<string>();
   const [editingId, setEditingId] = useState<string>();
   const [boundary, setBoundary] = useState<BoundaryInsertion>();
@@ -372,6 +442,7 @@ export function PreviewPane({ filePath, source, definitions, mathContext = EMPTY
   const [pendingReferenceOffset, setPendingReferenceOffset] = useState<number>();
   const pendingBoundaryRef = useRef<{ startOffset: number; position: number; side: "before" | "after"; kind: PreviewNode["kind"] } | undefined>(undefined);
   const document = useMemo(() => filePath && source !== undefined ? parsePreview(source, filePath, definitions) : undefined, [filePath, source, definitions]);
+  const filterEvaluation = useMemo(() => document && source !== undefined && filePath ? previewFilterEngine.evaluate(document.nodes, source, filePath, filterQuery) : undefined, [document, source, filePath, filterQuery]);
   useEffect(() => { pendingBoundaryRef.current = undefined; setRenderLimit(previewNodeLimit); setEditingId(undefined); setSelectedId(undefined); setBoundary(undefined); }, [filePath]);
   useEffect(() => {
     const pending = pendingBoundaryRef.current;
@@ -422,9 +493,16 @@ export function PreviewPane({ filePath, source, definitions, mathContext = EMPTY
     setPendingReferenceOffset(undefined);
     return () => window.clearTimeout(timer);
   }, [document, pendingReferenceOffset, renderLimit]);
+  useEffect(() => {
+    if (!activeSearchResult || activeSearchResult.fileId !== filePath || !document) return;
+    const node = nodeAtOffset(document.nodes, activeSearchResult.matchStart);
+    if (!node) return;
+    const target = globalThis.document.querySelector<HTMLElement>(`.structured-preview [data-source-start-offset="${node.source.startOffset}"]`);
+    target?.scrollIntoView({ behavior: "smooth", block: "center" });
+  }, [activeSearchResult, filePath, document, renderLimit]);
   if (!filePath || source === undefined) return <div className="preview-empty"><h2>{t("preview.noSourceTitle")}</h2><p>{t("preview.noSource")}</p></div>;
   if (!filePath.toLocaleLowerCase().endsWith(".tex")) return <div className="preview-empty"><h2>{t("preview.unsupportedFileTitle")}</h2><p>{t("preview.unsupportedFile")}</p></div>;
-  const services: PreviewEditorServices = { api, projectId, tree, currentPath: filePath, definitions, mathContext, onSpellContextMenu, onDetectedLanguage };
+  const services: PreviewEditorServices = { api, projectId, tree, currentPath: filePath, definitions, mathContext, searchQuery, activeSearchResult: activeSearchResult?.fileId === filePath ? activeSearchResult : undefined, filterQuery, filterStates: filterEvaluation?.states ?? new Map(), onSpellContextMenu, onDetectedLanguage, onForwardSync };
   const applyEdit = (node: PreviewNode, replacement: string) => {
     onSourceChange(source.slice(0, node.source.startOffset) + replacement + source.slice(node.source.endOffset));
     setEditingId(undefined);
@@ -457,8 +535,9 @@ export function PreviewPane({ filePath, source, definitions, mathContext = EMPTY
     setBoundary(undefined);
   };
   return <div className="structured-preview" onClickCapture={onPreviewClick}>
-    <article>{visibleNodes.map((node) => <PreviewNodeRenderer key={node.id} node={node} source={source} definitions={definitions} selectedId={selectedId} editingId={editingId} boundary={boundary} select={(id) => { setSelectedId(id); setEditingId(undefined); setBoundary(undefined); }} edit={(id) => { setEditingId(id); setSelectedId(undefined); setBoundary(undefined); }} applyEdit={applyEdit} applyBoundary={applyBoundary} cancelEdit={() => { setEditingId(undefined); setBoundary(undefined); }} requestBoundary={requestBoundary} services={services} budget={{ remaining: Number.MAX_SAFE_INTEGER }}/>)}</article>
+    <article><PreviewNodeList nodes={visibleNodes} source={source} definitions={definitions} selectedId={selectedId} editingId={editingId} boundary={boundary} select={(id) => { setSelectedId(id); setEditingId(undefined); setBoundary(undefined); }} edit={(id) => { setEditingId(id); setSelectedId(undefined); setBoundary(undefined); }} applyEdit={applyEdit} applyBoundary={applyBoundary} cancelEdit={() => { setEditingId(undefined); setBoundary(undefined); }} requestBoundary={requestBoundary} services={services} budget={{ remaining: Number.MAX_SAFE_INTEGER }}/></article>
     {totalNodes > shownNodes && <aside className="preview-limit-notice"><strong>{t("preview.largeDocumentTitle")}</strong><span>{t("preview.largeDocumentMessage", { shown: shownNodes, total: totalNodes })}</span><button onClick={(event) => { event.stopPropagation(); setRenderLimit((value) => value + previewNodeLimit); }}>{t("preview.loadMore")}</button></aside>}
+    {filterQuery.enabled && filterEvaluation && filterEvaluation.matches.size === 0 && <aside className="preview-filter-empty">{t("filter.noMatches")}</aside>}
     {document?.diagnostics.length ? <aside className="preview-diagnostics"><strong>{t("preview.recovered")}</strong>{document.diagnostics.map((message, index) => <p key={index}>{message}</p>)}</aside> : null}
   </div>;
 }

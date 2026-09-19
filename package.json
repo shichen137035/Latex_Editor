@@ -55,6 +55,7 @@
     "dictionary-en": "^4.0.0",
     "dictionary-en-gb": "^3.0.0",
     "katex": "^0.18.7",
-    "nspell": "^2.1.5"
+    "nspell": "^2.1.5",
+    "pdfjs-dist": "^5.7.284"
   }
 }

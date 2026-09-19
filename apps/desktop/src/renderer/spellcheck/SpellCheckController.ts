@@ -18,6 +18,11 @@ export interface SpellContextRequest {
   replace(value: string): void;
   ignore(): void;
   addToDictionary(): Promise<void>;
+  hasSelection: boolean;
+  copy(): void;
+  cut(): void;
+  pastePlain(): Promise<void>;
+  deleteSelection(): void;
 }
 
 interface SpellErrorRange {
@@ -78,7 +83,15 @@ export class SpellCheckController {
           y: Math.min(event.clientY, window.innerHeight - 280),
           replace: (value) => this.replace(error, value),
           ignore: () => this.ignore(error.word),
-          addToDictionary: () => this.addToDictionary(error.word)
+          addToDictionary: () => this.addToDictionary(error.word),
+          hasSelection: !options.editor.getSelection()?.isEmpty(),
+          copy: () => options.editor.trigger("spellcheck", "editor.action.clipboardCopyAction", null),
+          cut: () => options.editor.trigger("spellcheck", "editor.action.clipboardCutAction", null),
+          pastePlain: async () => {
+            const text = await navigator.clipboard.readText();
+            options.editor.executeEdits("spellcheck-paste-plain", (options.editor.getSelections() ?? []).map((range) => ({ range, text, forceMoveMarkers: true })));
+          },
+          deleteSelection: () => options.editor.executeEdits("spellcheck-delete", (options.editor.getSelections() ?? []).map((range) => ({ range, text: "", forceMoveMarkers: true })))
         });
       }).catch((error: unknown) => console.error("Spelling suggestions failed", error));
     };

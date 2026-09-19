@@ -1,5 +1,7 @@
 .workbench { height: 100vh; display: flex; flex-direction: column; color: var(--color-text-primary); background: var(--color-bg-app); overflow: hidden; font-size: 13px; font-weight: 500; -webkit-font-smoothing: auto; }
 .monaco-editor.texweave-reference-cursor, .monaco-editor.texweave-reference-cursor * { cursor: pointer !important; }
+.texweave-search-match { border-radius: 2px; background: rgba(255, 213, 74, .48); }
+.texweave-search-match-active { border-radius: 2px; background: rgba(255, 166, 32, .78); box-shadow: inset 0 -1px #b96b00; }
 .workbench button, .workbench input { font: inherit; }.workbench button { border: 0; color: inherit; background: transparent; }.workbench svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; }
 .workbench-topbar { height: var(--topbar-height); flex: 0 0 var(--topbar-height); display: flex; align-items: center; border-bottom: 1px solid var(--color-border); background: rgba(255,255,255,.92); box-shadow: 0 2px 12px rgba(25,70,105,.05); z-index: 20; }
 .logo-button { height: 100%; display: flex; align-items: center; gap: 8px; padding: 0 15px; font: 700 13px 'Space Grotesk', sans-serif !important; letter-spacing: .05em; }.logo-button:hover { background: var(--color-bg-hover); }.workbench-logo { width: 29px !important; height: 29px !important; color: var(--color-primary); stroke-width: 2.1 !important; }

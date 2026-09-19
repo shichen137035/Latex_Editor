@@ -78,6 +78,10 @@ contextBridge.exposeInMainWorld("latexEditor", {
   compile: {
     run: (projectId, mainFile) => ipcRenderer.invoke("compile:run", projectId, mainFile)
   },
+  synctex: {
+    forward: (projectId, sourceFile, pdfFile, line, column) => ipcRenderer.invoke("synctex:forward", projectId, sourceFile, pdfFile, line, column),
+    reverse: (projectId, pdfFile, page, x, y) => ipcRenderer.invoke("synctex:reverse", projectId, pdfFile, page, x, y)
+  },
   dialogs: {
     pickFolder: () => ipcRenderer.invoke("dialogs:pick-folder"),
     pickFiles: () => ipcRenderer.invoke("dialogs:pick-files")
