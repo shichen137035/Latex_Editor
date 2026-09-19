@@ -123,6 +123,7 @@ function registerIpcHandlers(): void {
   ipcMain.handle("block-graph:between", (_event, projectId: string, start: string, end: string) => context?.blockGraph.getBlocksBetween(projectId, start, end));
   ipcMain.handle("block-graph:validate", (_event, projectId: string) => context?.blockGraph.validate(projectId));
   ipcMain.handle("spellcheck:status", () => context?.spellcheck.status());
+  ipcMain.handle("spellcheck:check-text", (_event, text: string, language: string) => context?.spellcheck.checkText(text, language) ?? []);
   ipcMain.handle("spellcheck:check-words", (_event, words: string[], language: string) => context?.spellcheck.checkWords(words, language) ?? []);
   ipcMain.handle("spellcheck:suggestions", (_event, word: string, language: string) => context?.spellcheck.suggestions(word, language) ?? []);
   ipcMain.handle("spellcheck:configure", (_event, mode: "auto" | "manual" | "disabled", language: string) => {
@@ -134,6 +135,17 @@ function registerIpcHandlers(): void {
     return context.spellcheck.addToDictionary(word);
   });
   ipcMain.handle("spellcheck:dictionary-words", () => context?.spellcheck.dictionaryWords() ?? []);
+  ipcMain.handle("spellcheck:list-dictionaries", (_event, query = "") => context?.spellcheck.listDictionaries(query) ?? []);
+  ipcMain.handle("spellcheck:refresh-dictionaries", () => context?.spellcheck.refreshDictionaries() ?? []);
+  ipcMain.handle("spellcheck:install-dictionary", async (_event, id: string) => {
+    if (context === undefined) throw new Error("Application context is not ready");
+    return context.spellcheck.installDictionary(id);
+  });
+  ipcMain.handle("spellcheck:remove-dictionary", async (_event, id: string) => {
+    if (context === undefined) throw new Error("Application context is not ready");
+    await context.spellcheck.removeDictionary(id);
+    return context.spellcheck.status();
+  });
   ipcMain.handle("style-resources:list", () => context?.styleResources.list() ?? []);
   ipcMain.handle("style-resources:create", (_event, name: string) => {
     if (context === undefined) throw new Error("Application context is not ready");

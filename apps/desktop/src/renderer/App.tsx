@@ -96,7 +96,7 @@ export function App() {
   return <><ThemeRuntime />{activeProject
     ? <Workbench key={activeProject.id} project={activeProject} projects={projects} environments={environments} onHome={onHome} onSwitch={(project) => void openProject(project)}/>
     : <ProjectDirectory projects={projects} onProjectsChange={setProjects} onOpen={(project) => void openProject(project)} styleResources={styleResources} onRefreshResources={refreshStyleResources}/>} 
-    {!warningDismissed && !store.snapshot().toolchain?.available && <aside className="toolchain-warning"><p>{t("settings.missingToolchain")}</p><button onClick={() => void store.detect()}>{t("settings.detect")}</button><button onClick={() => void store.detect("directory")}>{t("settings.locate")}</button><button onClick={() => { setCompilerSettings(true); setWarningDismissed(true); }}>{t("settings.openCompiler")}</button><button onClick={() => setWarningDismissed(true)}>{t("common.close")}</button></aside>}
+    {!warningDismissed && store.snapshot().toolchain && store.snapshot().toolchain?.overallStatus !== "ready" && <aside className="toolchain-warning"><p>{store.snapshot().toolchain?.overallStatus === "limited" ? t("settings.limitedToolchain") : t("settings.missingToolchain")}</p><button onClick={() => void store.detect()}>{t("settings.detect")}</button><button onClick={() => void store.detect("directory")}>{t("settings.locate")}</button><button onClick={() => { setCompilerSettings(true); setWarningDismissed(true); }}>{t("settings.openCompiler")}</button><button onClick={() => setWarningDismissed(true)}>{t("common.close")}</button></aside>}
     {compilerSettings && <SettingsDialog initial="compiler" onClose={() => setCompilerSettings(false)}/>}
   </>;
 }

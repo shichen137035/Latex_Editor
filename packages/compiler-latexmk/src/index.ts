@@ -4,7 +4,7 @@ import { createWriteStream, existsSync, readdirSync } from "node:fs";
 import { access, mkdir } from "node:fs/promises";
 import { basename, dirname, extname, isAbsolute, resolve } from "node:path";
 import {
-  AppError, type CompileInput, type CompileResult, type CompilerProfile, type Project, type ToolchainStatus, type LatexToolchain
+  AppError, type CompileInput, type CompileResult, type CompilerProfile, type Project, type ToolchainStatus, type LatexToolchain, type ToolStatus
 } from "@latex-editor/contracts";
 import { parseLatexDiagnostics } from "@latex-editor/diagnostics";
 import type { Clock, IdGenerator } from "@latex-editor/domain";
@@ -60,28 +60,76 @@ export interface CompilerProjectPort {
 }
 
 /** Resolve related tools together; returned machine paths never enter a project file. */
+type DetectedTool = "latexmk" | "pdflatex" | "xelatex" | "lualatex" | "bibtex" | "biber" | "makeindex";
+
+async function inspectExecutable(executable: string, env: NodeJS.ProcessEnv): Promise<{ ok: boolean; version?: string }> {
+  const output = await new Promise<{ code: number | null; text: string }>((done) => {
+    const child = spawn(executable, ["--version"], { shell: false, windowsHide: true, env });
+    let text = "";
+    child.stdout.on("data", (chunk: Buffer) => { text = appendTail(text, chunk); });
+    child.stderr.on("data", (chunk: Buffer) => { text = appendTail(text, chunk); });
+    const timer = setTimeout(() => { child.kill(); done({ code: null, text }); }, 5000);
+    child.once("error", () => { clearTimeout(timer); done({ code: null, text }); });
+    child.once("close", (code) => { clearTimeout(timer); done({ code, text }); });
+  });
+  const version = output.text.match(/\b\d{4}(?:\.\d+)*\b|\b\d+\.\d+(?:\.\d+)*\b/)?.[0];
+  return { ok: output.code === 0, ...(version ? { version } : {}) };
+}
+
+function toolDirectories(preferred: string | undefined, env: NodeJS.ProcessEnv): string[] {
+  const pathValue = env.PATH ?? env.Path ?? "";
+  const preferredDirectory = preferred && isAbsolute(preferred)
+    ? (existsSync(preferred) && extname(preferred).toLowerCase() !== "" ? dirname(preferred) : preferred)
+    : undefined;
+  return [...new Set([
+    ...(preferredDirectory ? [preferredDirectory] : []),
+    ...pathValue.split(delimiter),
+    ...(process.platform === "win32" ? windowsLatexPathCandidates(env) : [])
+  ].filter((value) => value && isAbsolute(value)).map((value) => value.replace(/[\\/]+$/, "")))];
+}
+
+/** Detect every useful LaTeX capability independently; latexmk is no longer the only success condition. */
 export async function discoverToolchain(preferred?: string): Promise<LatexToolchain> {
   const env = compilerEnvironment();
   const pathValue = env.PATH ?? env.Path ?? "";
-  const directories = [...new Set([...(preferred ? [extname(preferred).toLowerCase() === ".exe" || basename(preferred) === "latexmk" ? dirname(preferred) : preferred] : []), ...pathValue.split(delimiter)].filter((v) => v && isAbsolute(v)))];
   const extension = process.platform === "win32" ? ".exe" : "";
-  const directory = directories.find((dir) => existsSync(resolve(dir, `latexmk${extension}`)));
-  const result: LatexToolchain = { distribution: "unknown", available: false, detectedAt: new Date().toISOString() };
-  if (!directory) return result;
-  result.binDirectory = directory;
-  result.distribution = /miktex/i.test(directory) ? "miktex" : /texlive|tinytex/i.test(directory) ? "texlive" : "unknown";
-  for (const name of ["latexmk", "pdflatex", "xelatex", "lualatex", "bibtex", "biber"] as const) {
-    const path = resolve(directory, `${name}${extension}`);
-    if (existsSync(path)) result[name] = path;
-  }
-  if (result.latexmk) result.available = await new Promise<boolean>((done) => {
-    const child = spawn(result.latexmk!, ["-v"], { shell: false, windowsHide: true, env: { ...env, PATH: [directory, pathValue].join(delimiter) } });
-    child.stdout.resume(); child.stderr.resume();
-    const timer = setTimeout(() => { child.kill(); done(false); }, 8000);
-    child.once("error", () => { clearTimeout(timer); done(false); });
-    child.once("close", (code) => { clearTimeout(timer); done(code === 0); });
-  });
-  return result;
+  const names: DetectedTool[] = ["latexmk", "pdflatex", "xelatex", "lualatex", "bibtex", "biber", "makeindex"];
+  const directories = toolDirectories(preferred, env);
+  const paths = Object.fromEntries(names.map((name) => {
+    const directory = directories.find((candidate) => existsSync(resolve(candidate, `${name}${extension}`)));
+    return [name, directory ? resolve(directory, `${name}${extension}`) : undefined];
+  })) as Partial<Record<DetectedTool, string>>;
+  const checks = await Promise.all(names.map(async (name) => [name, paths[name] ? await inspectExecutable(paths[name]!, { ...env, PATH: [dirname(paths[name]!), pathValue].join(delimiter) }) : { ok: false }] as const));
+  const results = new Map(checks);
+  const versions = new Map(checks.map(([name, result]) => [name, result.version]));
+  const compiler = paths.pdflatex ?? paths.xelatex ?? paths.lualatex;
+  const compilerUsable = (["pdflatex", "xelatex", "lualatex"] as const).some((name) => results.get(name)?.ok);
+  const overallStatus = !compilerUsable ? "unavailable" : !results.get("latexmk")?.ok ? "limited" : "ready";
+  const sourceDirectory = paths.latexmk ?? compiler ?? paths.bibtex ?? paths.biber ?? paths.makeindex;
+  const distribution = sourceDirectory && /miktex/i.test(sourceDirectory) ? "miktex" : sourceDirectory && /texlive|tinytex/i.test(sourceDirectory) ? "texlive" : "unknown";
+  const version = versions.get("latexmk") ?? (compiler === paths.pdflatex ? versions.get("pdflatex") : compiler === paths.xelatex ? versions.get("xelatex") : versions.get("lualatex"));
+  const toolStatus = (name: DetectedTool): ToolStatus => {
+    const executablePath = paths[name];
+    if (executablePath === undefined) return { status: "missing", source: "unknown" };
+    const result = results.get(name);
+    if (!result?.ok) return { status: "broken", executablePath, source: "detected" };
+    return { status: "ready", executablePath, ...(result.version === undefined ? {} : { version: result.version }), source: "detected" };
+  };
+  return {
+    distribution,
+    ...(version ? { version } : {}),
+    ...(sourceDirectory ? { binDirectory: dirname(sourceDirectory) } : {}),
+    ...Object.fromEntries(names.filter((name) => paths[name] !== undefined).map((name) => [name, paths[name]])),
+    available: overallStatus === "ready",
+    overallStatus,
+    environment: {
+      distribution: sourceDirectory ? { type: distribution, ...(version ? { version } : {}) } : null,
+      pdflatex: toolStatus("pdflatex"), xelatex: toolStatus("xelatex"), lualatex: toolStatus("lualatex"),
+      latexmk: toolStatus("latexmk"), bibtex: toolStatus("bibtex"), biber: toolStatus("biber"), makeindex: toolStatus("makeindex"),
+      overallStatus
+    },
+    detectedAt: new Date().toISOString()
+  };
 }
 
 function profileEnvironment(executable: string): NodeJS.ProcessEnv {

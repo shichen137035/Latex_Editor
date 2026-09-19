@@ -1,4 +1,4 @@
-import type { BlockGraphSnapshot, BlockId, CommandMetadata, CompileResult, CreateSemanticBlockInput, DependencyCycle, FileWriteResult, GraphDiagnostic, GraphTraversalOptions, GraphTraversalResult, LogicalRelation, Project, ProjectTreeNode, SemanticBlock, SettingsSnapshot, PreferenceKey, LatexToolchain, StyleResource, ThemeDefinition, SpellCheckMode, SpellCheckStatus, StructuralDependencyOverlap, SyncTexPdfPosition, SyncTexSourcePosition, TextFileContent, UpdateSemanticBlockInput } from "@latex-editor/contracts";
+import type { BlockGraphSnapshot, BlockId, CommandMetadata, CompileResult, CreateSemanticBlockInput, DependencyCycle, DictionaryPackage, FileWriteResult, GraphDiagnostic, GraphTraversalOptions, GraphTraversalResult, LogicalRelation, Project, ProjectTreeNode, SemanticBlock, SettingsSnapshot, PreferenceKey, LatexToolchain, StyleResource, ThemeDefinition, SpellCheckMode, SpellCheckStatus, StructuralDependencyOverlap, SyncTexPdfPosition, SyncTexSourcePosition, TextFileContent, UpdateSemanticBlockInput } from "@latex-editor/contracts";
 
 declare global {
   interface Window {
@@ -40,12 +40,17 @@ declare global {
         validate(projectId: string): Promise<GraphDiagnostic[]>;
       };
       spellcheck: {
+        checkText(text: string, language: string): Promise<Array<{ word: string; start: number; end: number; suggestions: string[] }>>;
         status(): Promise<SpellCheckStatus | undefined>;
         configure(mode: SpellCheckMode, language: string): Promise<SpellCheckStatus | undefined>;
         checkWords(words: string[], language: string): Promise<string[]>;
         suggestions(word: string, language: string): Promise<string[]>;
         addToDictionary(word: string): Promise<boolean>;
         dictionaryWords(): Promise<string[]>;
+        listDictionaries(query?: string): Promise<DictionaryPackage[]>;
+        refreshDictionaries(): Promise<DictionaryPackage[]>;
+        installDictionary(id: string): Promise<DictionaryPackage>;
+        removeDictionary(id: string): Promise<SpellCheckStatus | undefined>;
       };
       styleResources: {
         list(): Promise<StyleResource[]>;

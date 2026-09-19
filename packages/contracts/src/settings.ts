@@ -1,6 +1,33 @@
 /** Shared settings contract. Machine paths and keyboard preferences are global only. */
+export type DependencyStatus = "unknown" | "checking" | "ready" | "limited" | "missing" | "broken" | "installing" | "restart-required";
+export type LatexDistributionType = "miktex" | "texlive" | "unknown";
+export interface ToolStatus {
+  status: DependencyStatus;
+  executablePath?: string;
+  version?: string;
+  source: "user-configured" | "detected" | "system-path" | "unknown";
+  error?: string;
+}
+export interface LatexDistributionInfo {
+  type: LatexDistributionType;
+  version?: string;
+  rootPath?: string;
+}
+export interface LatexEnvironmentStatus {
+  distribution: LatexDistributionInfo | null;
+  pdflatex: ToolStatus;
+  xelatex: ToolStatus;
+  lualatex: ToolStatus;
+  latexmk: ToolStatus;
+  bibtex: ToolStatus;
+  biber: ToolStatus;
+  makeindex: ToolStatus;
+  overallStatus: "ready" | "limited" | "unavailable";
+}
 export interface LatexToolchain {
   distribution: "miktex" | "texlive" | "unknown";
+  version?: string;
+  rootPath?: string;
   binDirectory?: string;
   latexmk?: string;
   pdflatex?: string;
@@ -8,7 +35,10 @@ export interface LatexToolchain {
   lualatex?: string;
   bibtex?: string;
   biber?: string;
+  makeindex?: string;
   available: boolean;
+  overallStatus?: "ready" | "limited" | "unavailable";
+  environment?: LatexEnvironmentStatus;
   detectedAt: string;
 }
 export interface PreferenceValues {
@@ -28,6 +58,7 @@ export interface PreferenceValues {
   referenceLinkModifier: "ctrl" | "alt" | "shift" | "meta";
   spellCheckMode: "auto" | "manual" | "disabled";
   spellCheckLanguage: string;
+  spellCheckActiveLanguages: string[];
   maximize: boolean;
   restoreProject: boolean;
   lastProject: string;
@@ -39,10 +70,12 @@ export interface PreferenceValues {
 export type PreferenceKey = keyof PreferenceValues;
 export const preferenceDefaults: PreferenceValues = {
   locale: "en", theme: "light", themeDirectory: "", fontSize: 15, tabSize: 2, wordWrap: true,
-  autoSave: "off", hideBuildArtifacts: true, documentWordCompletion: true, confirmPreviewEdits: true, visibleFilterGroups: ["blockType", "location", "file", "properties"], referenceLinkModifier: "ctrl", spellCheckMode: "auto", spellCheckLanguage: "en-US", maximize: true, restoreProject: false,
+  autoSave: "off", hideBuildArtifacts: true, documentWordCompletion: true, confirmPreviewEdits: true, visibleFilterGroups: ["blockType", "location", "file", "properties"], referenceLinkModifier: "ctrl", spellCheckMode: "auto", spellCheckLanguage: "en-US", spellCheckActiveLanguages: ["en-US"], maximize: true, restoreProject: false,
   lastProject: "", engine: "pdflatex", keybindings: {}, environments: [], layout: {}
 };
-export const projectPreferenceKeys: PreferenceKey[] = ["fontSize", "tabSize", "wordWrap", "autoSave", "hideBuildArtifacts", "confirmPreviewEdits", "engine", "environments", "layout"];
+// Project-scoped preferences are kept separate from machine-wide tree and editor settings.
+// The project settings UI is reserved for a later release; build-artifact visibility is global.
+export const projectPreferenceKeys: PreferenceKey[] = ["fontSize", "tabSize", "wordWrap", "autoSave", "confirmPreviewEdits", "engine", "environments", "layout"];
 export interface SettingsSnapshot { global: Partial<PreferenceValues>; project: Partial<PreferenceValues>; toolchain?: LatexToolchain }
 export function validPreference(key: string, value: unknown): boolean {
   switch (key) {
@@ -56,6 +89,7 @@ export function validPreference(key: string, value: unknown): boolean {
     case "autoSave": return value === "off" || value === "afterDelay";
     case "wordWrap": case "hideBuildArtifacts": case "documentWordCompletion": case "confirmPreviewEdits": case "maximize": case "restoreProject": return typeof value === "boolean";
     case "referenceLinkModifier": return value === "ctrl" || value === "alt" || value === "shift" || value === "meta";
+    case "spellCheckActiveLanguages": return Array.isArray(value) && value.every((item) => typeof item === "string" && /^[A-Za-z]{2,3}(?:[-_][A-Za-z0-9]{2,8})?$/.test(item));
     case "themeDirectory": case "lastProject": return typeof value === "string";
     case "visibleFilterGroups": return Array.isArray(value) && value.every((item) => ["blockType", "location", "file", "properties"].includes(String(item)));
     case "keybindings": return !!value && typeof value === "object" && !Array.isArray(value) && Object.values(value).every((v) => typeof v === "string");

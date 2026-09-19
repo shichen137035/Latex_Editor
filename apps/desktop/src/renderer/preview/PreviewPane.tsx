@@ -15,6 +15,7 @@ import { MathRenderer } from "./MathRenderer.js";
 import { commands } from "../settings/commands.js";
 import { MathPreviewPopover } from "../math/MathPreviewPopover.js";
 import { extractMathExpression } from "../math/MathRenderService.js";
+import { MathNodeIndex } from "../math/MathNodeLocator.js";
 import { EMPTY_MATH_CONTEXT, type MathContext } from "../math/types.js";
 import { searchPattern } from "../search/SearchEngine.js";
 import type { SearchQuery, SearchResult } from "../search/types.js";
@@ -300,9 +301,11 @@ function ListContent({ node, source, mathContext, searchQuery, activeSearch, ren
 function LocalEditor({ value, onApply, onCancel, onInsertBefore, onInsertAfter, mathDraft = false, sourceStartLine = 1, api, projectId, tree, currentPath, definitions, mathContext, onSpellContextMenu, onDetectedLanguage, onForwardSync }: { value: string; onApply(value: string): void; onCancel(): void; onInsertBefore?(draft: string): void; onInsertAfter?(draft: string): void; mathDraft?: boolean; sourceStartLine?: number; api: EditorApi | undefined; projectId: string; tree: ProjectTreeNode[]; currentPath: string; definitions: EnvironmentDefinition[]; mathContext: MathContext; onSpellContextMenu(request: SpellContextRequest): void; onDetectedLanguage(language: string): void; onForwardSync(path: string, line: number, column?: number): void }) {
   const preferences = useSettings();
   const [draft, setDraft] = useState(value);
+  const [cursorMath, setCursorMath] = useState<{ expression: string; displayMode: boolean; start: number; end: number }>();
   const [mathAnchor, setMathAnchor] = useState<DOMRect>();
   const [confirmLeave, setConfirmLeave] = useState(false);
   const editorShellRef = useRef<HTMLDivElement | null>(null);
+  const localEditorRef = useRef<Parameters<OnMount>[0] | null>(null);
   const draftRef = useRef(value);
   const applyRef = useRef(onApply);
   const cancelRef = useRef(onCancel);
@@ -326,6 +329,7 @@ function LocalEditor({ value, onApply, onCancel, onInsertBefore, onInsertAfter, 
     return () => registrations.forEach((dispose) => dispose());
   }, []);
   const onMount: OnMount = (editor, monaco) => {
+    localEditorRef.current = editor;
     editor.focus();
     completionController.current?.dispose();
     spellCheckController.current?.dispose();
@@ -337,31 +341,68 @@ function LocalEditor({ value, onApply, onCancel, onInsertBefore, onInsertAfter, 
       const position = globalPosition(event.target.position.lineNumber, event.target.position.column);
       onForwardSync(currentPath, position.line, position.column);
     });
+    let indexedVersion = -1;
+    let mathIndex = new MathNodeIndex([]);
+    const updateCursorMath = () => {
+      const model = editor.getModel();
+      const position = editor.getPosition();
+      if (!model || !position) { setCursorMath(undefined); return; }
+      if (model.getVersionId() !== indexedVersion) {
+        indexedVersion = model.getVersionId();
+        mathIndex = MathNodeIndex.fromSource(model.getValue());
+      }
+      const node = mathIndex.findMathNodeAtOffset(model.getOffsetAt(position));
+      if (!node) { setCursorMath(undefined); return; }
+      const extracted = extractMathExpression(model.getValue().slice(node.start, node.end));
+      setCursorMath({ ...extracted, start: node.start, end: node.end });
+    };
+    editor.onDidChangeCursorPosition(updateCursorMath);
+    editor.onDidChangeModelContent(() => { indexedVersion = -1; updateCursorMath(); });
+    editor.onDidBlurEditorWidget(() => setCursorMath(undefined));
+    updateCursorMath();
     if (!api) return;
     completionController.current = new CompletionController({ monaco, api, projectId, getTree: () => tree, getCurrentPath: () => currentPath, getEnvironments: () => definitions, isDocumentWordCompletionEnabled: () => preferences.get("documentWordCompletion") });
     spellCheckController.current = new SpellCheckController({ editor, api, getCurrentPath: () => currentPath, getMode: () => preferences.get("spellCheckMode"), getManualLanguage: () => preferences.get("spellCheckLanguage"), onDetectedLanguage, onContextMenu: onSpellContextMenu });
   };
-  const activeMath = useMemo(() => mathDraft ? extractMathExpression(draft) : undefined, [draft, mathDraft]);
+  const blockMath = useMemo(() => mathDraft ? extractMathExpression(draft) : undefined, [draft, mathDraft]);
+  const activeMath = cursorMath ?? blockMath;
   useEffect(() => {
     if (!activeMath) { setMathAnchor(undefined); return; }
     let frame = 0;
     const updateAnchor = () => {
       window.cancelAnimationFrame(frame);
       frame = window.requestAnimationFrame(() => {
+        const editor = localEditorRef.current;
+        const model = editor?.getModel();
+        const bounds = editor?.getDomNode()?.getBoundingClientRect();
+        if (cursorMath && editor && model && bounds) {
+          const start = editor.getScrolledVisiblePosition(model.getPositionAt(cursorMath.start));
+          const end = editor.getScrolledVisiblePosition(model.getPositionAt(cursorMath.end));
+          if (!start && !end) { setMathAnchor(undefined); return; }
+          const top = Math.max(bounds.top, bounds.top + (start?.top ?? 0));
+          const bottom = Math.min(bounds.bottom, bounds.top + (end?.top ?? bounds.height) + (end?.height ?? 1));
+          if (bottom <= bounds.top || top >= bounds.bottom) { setMathAnchor(undefined); return; }
+          setMathAnchor(new DOMRect(bounds.left + (start?.left ?? end?.left ?? 12), top, 1, Math.max(1, bottom - top)));
+          return;
+        }
         const rect = editorShellRef.current?.getBoundingClientRect();
         setMathAnchor(rect && rect.bottom > 0 && rect.top < window.innerHeight ? rect : undefined);
       });
     };
     const scrollRoot = editorShellRef.current?.closest(".structured-preview");
+    const editorScroll = localEditorRef.current?.onDidScrollChange(updateAnchor);
+    const editorLayout = localEditorRef.current?.onDidLayoutChange(updateAnchor);
     updateAnchor();
     scrollRoot?.addEventListener("scroll", updateAnchor, { passive: true });
     window.addEventListener("resize", updateAnchor);
     return () => {
       window.cancelAnimationFrame(frame);
+      editorScroll?.dispose();
+      editorLayout?.dispose();
       scrollRoot?.removeEventListener("scroll", updateAnchor);
       window.removeEventListener("resize", updateAnchor);
     };
-  }, [activeMath]);
+  }, [activeMath, cursorMath]);
   useEffect(() => {
     const outside = (event: PointerEvent) => {
       const target = event.target as Element;

@@ -29,6 +29,7 @@ interface SpellErrorRange {
   word: string;
   start: number;
   end: number;
+  suggestions?: string[];
 }
 
 interface SpellCheckControllerOptions {
@@ -41,7 +42,7 @@ interface SpellCheckControllerOptions {
   onContextMenu(request: SpellContextRequest): void;
 }
 
-/** Bridges LaTeX-aware source extraction to Electron's Chromium spell checker. */
+/** Shares LaTeX-aware dictionary and phrase-rule diagnostics between both editor modes. */
 export class SpellCheckController {
   private readonly options: SpellCheckControllerOptions;
   private readonly contentListener: IDisposable;
@@ -74,7 +75,7 @@ export class SpellCheckController {
       event.preventDefault();
       event.stopImmediatePropagation();
       const generation = this.generation;
-      void options.api.spellcheck.suggestions(error.word, this.activeLanguage).then((suggestions) => {
+      void (error.suggestions ? Promise.resolve(error.suggestions) : options.api.spellcheck.suggestions(error.word, this.activeLanguage)).then((suggestions) => {
         if (generation !== this.generation || model !== options.editor.getModel()) return;
         options.onContextMenu({
           word: error.word,
@@ -134,14 +135,16 @@ export class SpellCheckController {
       return;
     }
     const extracted = extractLatexText(model.getValue());
-    const words = extractWords(extracted).filter((item) => !ignoredWords.has(item.word.toLocaleLowerCase()));
-    if (!words.length) {
+    const cjkScript = /[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}]/u;
+    const japaneseScript = /[\p{Script=Hiragana}\p{Script=Katakana}]/u;
+    const words = extractWords(extracted).filter((item) => !cjkScript.test(item.word) && !ignoredWords.has(item.word.toLocaleLowerCase()));
+    if (!words.length && !extracted.segments.some((segment) => cjkScript.test(segment.text))) {
       this.errors = [];
       this.options.editor.deltaDecorations(this.decorationIds, []);
       this.decorationIds = [];
       return;
     }
-    this.status ??= await this.options.api.spellcheck.status();
+    this.status = await this.options.api.spellcheck.status();
     const requested = mode === "manual" ? this.options.getManualLanguage() : detectLanguage(extracted.sample).language ?? "en-US";
     const language = mode === "manual" || this.status?.availableLanguages.includes(requested) ? requested : "en-US";
     this.activeLanguage = language;
@@ -152,9 +155,31 @@ export class SpellCheckController {
       this.decorationIds = this.options.editor.deltaDecorations(this.decorationIds, []);
       return;
     }
-    const misspelled = new Set((await this.options.api.spellcheck.checkWords([...new Set(words.map((item) => item.word))], language)).map((word) => word.toLocaleLowerCase()));
+    // Preserve UTF-16 offsets by checking each original text segment independently.
+    const phraseErrors: SpellErrorRange[] = [];
+    if ((mode === "auto" || language === "zh-CN") && this.status.availableLanguages.includes("zh-CN")) {
+      for (const segment of extracted.segments) {
+        if (!/\p{Script=Han}/u.test(segment.text)) continue;
+        const matches = await this.options.api.spellcheck.checkText(segment.text, "zh-CN");
+        if (requestGeneration !== this.generation) return;
+        phraseErrors.push(...matches.filter((item) => !ignoredWords.has(item.word.toLocaleLowerCase())).map((item) => ({ ...item, start: segment.sourceStart + item.start, end: segment.sourceStart + item.end })));
+      }
+    }
+    if ((mode === "auto" || language === "ja-JP") && this.status.availableLanguages.includes("ja-JP")) {
+      for (const segment of extracted.segments) {
+        // Kana is a reliable Japanese signal; requiring it avoids applying Japanese
+        // rules to Chinese prose that happens to share Han characters.
+        if (!japaneseScript.test(segment.text)) continue;
+        const matches = await this.options.api.spellcheck.checkText(segment.text, "ja-JP");
+        if (requestGeneration !== this.generation) return;
+        phraseErrors.push(...matches.filter((item) => !ignoredWords.has(item.word.toLocaleLowerCase())).map((item) => ({ ...item, start: segment.sourceStart + item.start, end: segment.sourceStart + item.end })));
+      }
+    }
+    const wordLanguage = language === "zh-CN" || language === "ja-JP" ? "en-US" : language;
+    this.activeLanguage = wordLanguage;
+    const misspelled = new Set((await this.options.api.spellcheck.checkWords([...new Set(words.map((item) => item.word))], wordLanguage)).map((word) => word.toLocaleLowerCase()));
     if (requestGeneration !== this.generation || model !== this.options.editor.getModel()) return;
-    this.errors = words.filter((item) => misspelled.has(item.word.toLocaleLowerCase())).map((item) => ({ word: item.word, start: item.sourceStart, end: item.sourceEnd }));
+    this.errors = [...phraseErrors, ...words.filter((item) => misspelled.has(item.word.toLocaleLowerCase())).map((item) => ({ word: item.word, start: item.sourceStart, end: item.sourceEnd }))];
     const decorations = this.errors.map((error) => ({
       range: { startLineNumber: model.getPositionAt(error.start).lineNumber, startColumn: model.getPositionAt(error.start).column, endLineNumber: model.getPositionAt(error.end).lineNumber, endColumn: model.getPositionAt(error.end).column },
       options: { inlineClassName: "spell-error", hoverMessage: { value: `Spelling: **${error.word}**` } }

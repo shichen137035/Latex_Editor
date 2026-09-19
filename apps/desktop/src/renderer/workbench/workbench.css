@@ -37,3 +37,7 @@
 .workbench[data-resizing]::after { content: ''; position: fixed; inset: 0; z-index: 10000; cursor: col-resize; }
 .workbench[data-resizing="row"]::after { cursor: row-resize; }
 .workbench[data-resizing] iframe { pointer-events: none; }
+
+.engine-picker { height: 29px; display: flex; align-items: center; gap: 5px; padding: 0 5px 0 8px; border: 1px solid var(--color-border); border-radius: 5px; color: var(--color-text-secondary); background: var(--color-bg-panel); font-size: 10px; white-space: nowrap; }
+.engine-picker select { max-width: 104px; height: 25px; padding: 0 4px; border: 0; outline: 0; color: var(--color-text-primary); background: transparent; font: inherit; cursor: pointer; }
+.engine-picker:focus-within { border-color: var(--color-primary); box-shadow: 0 0 0 2px color-mix(in srgb, var(--color-primary) 16%, transparent); }

@@ -38,12 +38,17 @@ contextBridge.exposeInMainWorld("latexEditor", {
     validate: (projectId) => ipcRenderer.invoke("block-graph:validate", projectId)
   },
   spellcheck: {
+    checkText: (text, language) => ipcRenderer.invoke("spellcheck:check-text", text, language),
     status: () => ipcRenderer.invoke("spellcheck:status"),
     configure: (mode, language) => ipcRenderer.invoke("spellcheck:configure", mode, language),
     checkWords: (words, language) => ipcRenderer.invoke("spellcheck:check-words", words, language),
     suggestions: (word, language) => ipcRenderer.invoke("spellcheck:suggestions", word, language),
     addToDictionary: (word) => ipcRenderer.invoke("spellcheck:add-word", word),
-    dictionaryWords: () => ipcRenderer.invoke("spellcheck:dictionary-words")
+    dictionaryWords: () => ipcRenderer.invoke("spellcheck:dictionary-words"),
+    listDictionaries: (query) => ipcRenderer.invoke("spellcheck:list-dictionaries", query),
+    refreshDictionaries: () => ipcRenderer.invoke("spellcheck:refresh-dictionaries"),
+    installDictionary: (id) => ipcRenderer.invoke("spellcheck:install-dictionary", id),
+    removeDictionary: (id) => ipcRenderer.invoke("spellcheck:remove-dictionary", id)
   },
   styleResources: {
     list: () => ipcRenderer.invoke("style-resources:list"),

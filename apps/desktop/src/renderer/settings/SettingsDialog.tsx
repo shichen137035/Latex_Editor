@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { projectPreferenceKeys, type PreferenceKey, type StyleResource, type ThemeDefinition } from "@latex-editor/contracts";
+import { projectPreferenceKeys, type DictionaryPackage, type LatexToolchain, type PreferenceKey, type StyleResource, type ThemeDefinition } from "@latex-editor/contracts";
 import type { SpellCheckStatus } from "@latex-editor/contracts";
 import { t } from "../i18n/index.js";
 import { EnvironmentManager } from "../preview/EnvironmentManager.js";
@@ -9,8 +9,24 @@ import { useSettings } from "./service.js";
 import { bindings, commandContexts, commandLabels, defaultBindings, displayBinding, eventBinding, validBinding, type CommandId } from "./commands.js";
 import "./settings.css";
 
-const sections = ["general", "appearance", "editor", "searchFilter", "language", "shortcuts", "compiler", "spellcheck", "environments", "styleResources"] as const;
+const sections = ["general", "appearance", "editor", "searchFilter", "language", "shortcuts", "environment", "compiler", "spellcheck", "environments", "styleResources"] as const;
 type Section = typeof sections[number];
+
+function EnvironmentSettingsPanel({ store }: { store: ReturnType<typeof useSettings> }) {
+  const [detecting, setDetecting] = useState(false);
+  const toolchain = store.snapshot().toolchain as LatexToolchain | undefined;
+  const status = toolchain?.overallStatus ?? (toolchain?.available ? "ready" : toolchain ? "unavailable" : "unknown");
+  const tools = [["pdflatex", "pdfLaTeX"], ["xelatex", "XeLaTeX"], ["lualatex", "LuaLaTeX"], ["latexmk", "latexmk"], ["bibtex", "BibTeX"], ["biber", "Biber"], ["makeindex", "MakeIndex"]] as const;
+  const detect = async (manual?: "directory" | "executable") => { setDetecting(true); await store.detect(manual); setDetecting(false); };
+  return <div className="environment-settings">
+    <div className="environment-settings-header"><div><h2>{t("settings.environment")}</h2><p>{t("settings.environmentDescription")}</p></div><button disabled={detecting} onClick={() => void detect()}>{t("settings.recheck")}</button></div>
+    <section className={`environment-status-card ${status}`}><div><strong>{t("settings.environmentStatus")}</strong><b>{t(`settings.environmentStatus.${status}`)}</b></div><div><strong>{t("settings.distribution")}</strong><span>{toolchain?.distribution ?? t("settings.notChecked")}{toolchain?.version ? ` · ${toolchain.version}` : ""}</span></div><div><strong>{t("settings.installation")}</strong><code>{toolchain?.binDirectory ?? t("settings.notConfigured")}</code></div></section>
+    <div className="environment-actions"><button disabled={detecting} onClick={() => void detect("directory")}>{t("settings.locate")}</button><button disabled={detecting} onClick={() => void detect("executable")}>{t("settings.executable")}</button></div>
+    <section className="environment-tool-grid"><h3>{t("settings.latexTools")}</h3>{tools.map(([id, label]) => <div className="environment-tool-row" key={id}><strong>{label}</strong><span className={toolchain?.[id] ? "status-ok" : "status-warning"}>{toolchain?.[id] ? t("settings.found") : t("settings.notFound")}</span><code>{toolchain?.[id] ?? "—"}</code></div>)}</section>
+    {status === "limited" && <p className="spellcheck-settings-note">{t("settings.limitedToolchain")}</p>}
+    {status === "unavailable" && <p className="spellcheck-settings-note">{t("settings.missingToolchain")}</p>}
+  </div>;
+}
 
 function StyleResourcesPanel() {
   const [resources, setResources] = useState<StyleResource[]>([]);
@@ -27,23 +43,63 @@ function StyleResourcesPanel() {
 
 function SpellCheckSettingsPanel({ store }: { store: ReturnType<typeof useSettings> }) {
   const [status, setStatus] = useState<SpellCheckStatus>();
+  const [catalog, setCatalog] = useState<DictionaryPackage[]>([]);
+  const [query, setQuery] = useState("");
   const [loading, setLoading] = useState(false);
+  const [installing, setInstalling] = useState<string>();
+  const [loadError, setLoadError] = useState("");
   const mode = store.global("spellCheckMode");
   const language = store.global("spellCheckLanguage");
-  const reload = async () => {
+  const reload = async (refresh = false) => {
     setLoading(true);
-    try { setStatus(await window.latexEditor!.spellcheck.status()); } finally { setLoading(false); }
+    setLoadError("");
+    try {
+      const api = window.latexEditor!.spellcheck;
+      const [nextStatus, nextCatalog] = await Promise.all([api.status(), refresh ? api.refreshDictionaries() : api.listDictionaries(query)]);
+      setStatus(nextStatus); setCatalog(nextCatalog);
+    } catch (error) { setLoadError(String(error)); } finally { setLoading(false); }
   };
-  useEffect(() => { void reload(); }, []);
+  useEffect(() => { void reload(); }, [query]);
   const languages = [...new Set(["en-US", ...(status?.availableLanguages ?? [])])].sort((a, b) => a.localeCompare(b));
   const setMode = (next: "auto" | "manual" | "disabled") => { void store.set("spellCheckMode", next); };
+  const install = async (item: DictionaryPackage) => {
+    setInstalling(item.id);
+    try { await window.latexEditor!.spellcheck.installDictionary(item.id); await store.set("spellCheckLanguage", item.languageCode); await reload(); }
+    catch (error) { window.alert(error instanceof Error ? error.message : String(error)); }
+    finally { setInstalling(undefined); }
+  };
+  const remove = async (item: DictionaryPackage) => {
+    if (!window.confirm(t("settings.spellcheckRemoveConfirm", { name: item.displayName }))) return;
+    try { await window.latexEditor!.spellcheck.removeDictionary(item.id); if (language === item.languageCode) await store.reset("spellCheckLanguage"); await reload(); }
+    catch (error) { window.alert(error instanceof Error ? error.message : String(error)); }
+  };
+  const installed = catalog.filter((item) => item.installed);
+  const available = catalog.filter((item) => !item.installed && item.id !== "zh-CN" && item.id !== "ja-JP");
   return <div className="spellcheck-settings">
-    <div className="spellcheck-settings-header"><div><h2>{t("settings.spellcheck")}</h2><p>{t("settings.spellcheckDescription")}</p></div><button disabled={loading} onClick={() => void reload()}>{t("settings.spellcheckRefresh")}</button></div>
+    <div className="spellcheck-settings-header"><div><h2>{t("settings.spellcheck")}</h2><p>{t("settings.spellcheckDescription")}</p></div><button disabled={loading || Boolean(installing)} onClick={() => void reload(true)}>{t("settings.spellcheckRefresh")}</button></div>
     <div className="spellcheck-status-card"><div><strong>{t("settings.spellcheckProvider")}</strong><span>{status?.provider === "hunspell" ? "Hunspell (nspell)" : status?.provider ?? "—"}</span></div><div><strong>{t("settings.spellcheckPlatform")}</strong><span>{status?.platform ?? "—"}</span></div><div><strong>{t("settings.spellcheckAvailability")}</strong><span className={status?.available ? "status-ok" : "status-warning"}>{status ? (status.available ? t("settings.spellcheckAvailable") : t("settings.spellcheckUnavailable")) : t("settings.spellcheckChecking")}</span></div></div>
     <label className="preference-row"><span><strong>{t("settings.spellcheckMode")}</strong><small>{t("settings.spellcheckModeHint")}</small></span><select value={mode} onChange={(event) => setMode(event.target.value as "auto" | "manual" | "disabled")}><option value="auto">{t("settings.spellcheckAuto")}</option><option value="manual">{t("settings.spellcheckManual")}</option><option value="disabled">{t("settings.spellcheckDisabled")}</option></select><button type="button" onClick={() => void store.reset("spellCheckMode")}>{t("settings.reset")}</button></label>
     {mode === "manual" && <label className="preference-row"><span><strong>{t("settings.spellcheckLanguage")}</strong><small>{t("settings.spellcheckLanguageHint")}</small></span><select value={language} onChange={(event) => void store.set("spellCheckLanguage", event.target.value)}>{languages.map((item) => <option key={item} value={item}>{item}</option>)}</select><button type="button" onClick={() => void store.reset("spellCheckLanguage")}>{t("settings.reset")}</button></label>}
     <p className="spellcheck-settings-note">{t("settings.spellcheckElectronHint")}</p>
-    <p>{t("settings.spellcheckLanguages")}: {status?.availableLanguages.join(", ") || "—"}</p>
+    <section className="spellcheck-settings-note">
+      <strong>{t("settings.chineseRulesTitle")}</strong>
+      <p>{t("settings.chineseRulesHint")}</p>
+      <p>{status?.availableLanguages.includes("zh-CN") ? t("settings.spellcheckInstalledBadge") : t("settings.spellcheckUnavailable")} · Apache-2.0 · pycorrector</p>
+      <button disabled={Boolean(installing)} onClick={() => void install({ id: "zh-CN", languageCode: "zh-CN", displayName: "Chinese", installed: false, license: { name: "Apache-2.0" } })}>
+        {installing === "zh-CN" ? t("settings.spellcheckInstalling") : t("settings.chineseRulesDownload")}
+      </button>
+    </section>
+    <section className="spellcheck-settings-note">
+      <strong>{t("settings.japaneseRulesTitle")}</strong>
+      <p>{t("settings.japaneseRulesHint")}</p>
+      <p>{status?.availableLanguages.includes("ja-JP") ? t("settings.spellcheckInstalledBadge") : t("settings.spellcheckUnavailable")} · MIT · textlint-rule-ja-no-abusage</p>
+      <button disabled={Boolean(installing)} onClick={() => void install({ id: "ja-JP", languageCode: "ja-JP", displayName: "Japanese", installed: false, license: { name: "MIT" } })}>
+        {installing === "ja-JP" ? t("settings.spellcheckInstalling") : t("settings.japaneseRulesDownload")}
+      </button>
+    </section>
+    {loadError && <p role="alert" className="inline-error">{loadError}</p>}
+    <section className="dictionary-section"><div className="dictionary-section-head"><h3>{t("settings.spellcheckInstalled")}</h3><span>{installed.length}</span></div>{installed.map((item) => <div className="dictionary-row" key={item.id}><span><strong>{item.displayName}</strong><small>{item.region ? `${item.languageCode} · ${item.region}` : item.languageCode}</small></span><em>{t("settings.spellcheckInstalledBadge")}</em>{item.id !== "en-US" && item.id !== "en-GB" && <button className="danger" onClick={() => void remove(item)}>{t("settings.spellcheckRemove")}</button>}</div>)}</section>
+    <section className="dictionary-section"><div className="dictionary-section-head"><h3>{t("settings.spellcheckAdd")}</h3><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder={t("settings.spellcheckSearch")}/></div>{available.map((item) => <div className="dictionary-row" key={item.id}><span><strong>{item.displayName}</strong><small>{item.region ? `${item.languageCode} · ${item.region}` : item.languageCode}</small></span><button disabled={Boolean(installing)} onClick={() => void install(item)}>{installing === item.id ? t("settings.spellcheckInstalling") : t("settings.spellcheckInstall")}</button></div>)}{!available.length && <p>{t("settings.spellcheckNoLanguages")}</p>}</section>
     {status?.dictionaryPath && <p>{t("settings.spellcheckPersonalDictionary")}: <code>{status.dictionaryPath}</code></p>}
     {status?.error && <p role="alert" className="inline-error">{status.error}</p>}
   </div>;
@@ -133,13 +189,14 @@ export function SettingsDialog({ onClose, initial = "general" }: { onClose(): vo
   };
   const configured = read("environments") as EnvironmentDefinition[];
   return <div className="settings-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose(); }}><section className="preferences-dialog" role="dialog" aria-modal="true" aria-label={t("activity.settings")}>
-    <header><h1>{t("activity.settings")}</h1><select aria-label={t("settings.scope")} value={scope} onChange={(event) => setScope(event.target.value as "global" | "project")}><option value="global">{t("settings.global")}</option>{store.projectId() && <option value="project">{t("settings.project")}</option>}</select><button aria-label={t("common.close")} onClick={onClose}>×</button></header>
+    <header><h1>{t("activity.settings")}</h1><select aria-label={t("settings.scope")} value={scope} onChange={(event) => setScope(event.target.value as "global" | "project")}><option value="global">{t("settings.global")}</option>{/* Project settings UI is reserved for a later release. */}</select><button aria-label={t("common.close")} onClick={onClose}>×</button></header>
     <div className="preferences-body"><nav>{sections.map((item) => <button data-section={item} className={section === item ? "active" : ""} key={item} onClick={() => setSection(item)}>{t(item === "environments" ? "environment.manager" : item === "styleResources" ? "settings.styleResources" : `settings.${item}`)}</button>)}</nav><main>
       {section === "general" && <><h2>{t("settings.general")}</h2>{row("autoSave", "settings.autoSave", [["off", "settings.off"], ["afterDelay", "settings.afterDelay"]])}{row("hideBuildArtifacts", "settings.hideBuildArtifacts")}{row("restoreProject", "settings.restore")}{row("maximize", "settings.maximize")}</>}
       {section === "appearance" && <ThemeSettingsPanel store={store}/>} 
       {section === "language" && row("locale", "settings.language", [["en", "English"], ["ja", "日本語"]])}
       {section === "editor" && <>{row("fontSize", "settings.fontSize", undefined, true)}{row("wordWrap", "settings.wordWrap")}{row("tabSize", "settings.tabSize", [["2", "2"], ["4", "4"], ["8", "8"]], true)}{row("documentWordCompletion", "settings.documentWordCompletion")}{row("confirmPreviewEdits", "settings.confirmPreviewEdits")}</>}
       {section === "searchFilter" && <><h2>{t("settings.searchFilter")}</h2><p>{t("settings.filterGroupsHint")}</p>{(["blockType", "location", "file", "properties"] as const).map((group) => { const visible = store.global("visibleFilterGroups"); return <label className="preference-row" key={group}><span><strong>{t(`filter.${group}`)}</strong></span><input type="checkbox" checked={visible.includes(group)} onChange={(event) => void store.set("visibleFilterGroups", event.target.checked ? [...visible, group] : visible.filter((item) => item !== group))}/><button type="button" onClick={() => void store.reset("visibleFilterGroups")}>{t("settings.reset")}</button></label>; })}</>}
+      {section === "environment" && <EnvironmentSettingsPanel store={store}/>}
       {section === "shortcuts" && <><p>{t("settings.globalOnly")}</p>{row("referenceLinkModifier", "settings.referenceLinkModifier", [["ctrl", "settings.modifierCtrl"], ["alt", "settings.modifierAlt"], ["shift", "settings.modifierShift"], ["meta", "settings.modifierMeta"]])}{(Object.keys(defaultBindings) as CommandId[]).map((id) => <div className="preference-row" key={id}><span><strong>{t(commandLabels[id])}</strong><small>{t(commandContexts[id])}</small></span><button data-command={id} onClick={() => { setCapture(id); setConflict(undefined); setInvalid(false); }}>{displayBinding(bindings()[id] ?? "") || t("settings.off")}</button><button onClick={() => { const next = { ...store.global("keybindings") }; delete next[id]; const duplicate = (Object.entries(bindings()) as Array<[CommandId, string]>).find(([other, value]) => other !== id && commandContexts[other] === commandContexts[id] && value === defaultBindings[id]); if (duplicate) next[duplicate[0]] = ""; void store.set("keybindings", next); }}>{t("settings.reset")}</button></div>)}
         {capture && <div className="shortcut-capture"><p>{t(commandLabels[capture])} · {t(commandContexts[capture])}</p><input data-shortcut-capture autoFocus readOnly placeholder={t("shortcut.capture")} value={displayBinding(pending)} onKeyDown={(event) => { event.preventDefault(); event.stopPropagation(); if (event.key === "Escape") { setCapture(undefined); return; } if (["Control", "Meta", "Shift", "Alt"].includes(event.key)) return; const value = eventBinding(event.nativeEvent); setPending(value); if (!validBinding(value)) { setInvalid(true); return; } setInvalid(false); const duplicate = (Object.entries(bindings()) as Array<[CommandId, string]>).find(([id, binding]) => id !== capture && commandContexts[id] === commandContexts[capture] && binding === value); if (duplicate) setConflict(duplicate[0]); else applyBinding(value); }}/>{invalid && <p role="alert">{t("shortcut.invalid")}</p>}{conflict && <><p role="alert">{t("shortcut.conflict")} {t(commandLabels[conflict as CommandId])}</p><button onClick={() => applyBinding(pending, conflict)}>{t("shortcut.replace")}</button></>}<button onClick={() => setCapture(undefined)}>{t("project.cancel")}</button></div>}</>}
       {section === "compiler" && <><h2>{t("settings.localToolchain")}</h2><p>{t("settings.globalOnly")}</p><div className="toolchain-actions"><button disabled={detecting} onClick={() => void detect()}>{t("settings.detect")}</button><button disabled={detecting} onClick={() => void detect("directory")}>{t("settings.locate")}</button><button disabled={detecting} onClick={() => void detect("executable")}>{t("settings.executable")}</button></div><p>{store.snapshot().toolchain?.distribution ?? "unknown"}</p>{(["latexmk", "pdflatex", "xelatex", "lualatex", "bibtex", "biber"] as const).map((tool) => <div className="toolchain-row" key={tool}><strong>{tool}</strong><span>{t(store.snapshot().toolchain?.[tool] ? "settings.found" : "settings.notFound")}</span><code>{store.snapshot().toolchain?.[tool] ?? "—"}</code></div>)}{row("engine", "settings.engine", [["pdflatex", "pdfLaTeX"], ["xelatex", "XeLaTeX"], ["lualatex", "LuaLaTeX"]])}<p>{t("settings.mainFileHint")}</p><p>{t("settings.buildUnavailable")}</p></>}
