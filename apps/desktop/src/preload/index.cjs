@@ -55,6 +55,13 @@ contextBridge.exposeInMainWorld("latexEditor", {
     rename: (id, name) => ipcRenderer.invoke("style-resources:rename", id, name),
     remove: (id) => ipcRenderer.invoke("style-resources:remove", id)
   },
+  themes: {
+    list: () => ipcRenderer.invoke("themes:list"),
+    directory: () => ipcRenderer.invoke("themes:directory"),
+    importFiles: (paths) => ipcRenderer.invoke("themes:import-files", paths),
+    importFolder: (folderPath) => ipcRenderer.invoke("themes:import-folder", folderPath),
+    remove: (id) => ipcRenderer.invoke("themes:remove", id)
+  },
   files: {
     tree: (projectId) => ipcRenderer.invoke("files:tree", projectId),
     read: (projectId, relativePath) => ipcRenderer.invoke("files:read", projectId, relativePath),
@@ -84,6 +91,7 @@ contextBridge.exposeInMainWorld("latexEditor", {
   },
   dialogs: {
     pickFolder: () => ipcRenderer.invoke("dialogs:pick-folder"),
-    pickFiles: () => ipcRenderer.invoke("dialogs:pick-files")
+    pickFiles: () => ipcRenderer.invoke("dialogs:pick-files"),
+    pickThemeFiles: () => ipcRenderer.invoke("dialogs:pick-theme-files")
   }
 });

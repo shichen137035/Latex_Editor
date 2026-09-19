@@ -13,7 +13,10 @@ export interface LatexToolchain {
 }
 export interface PreferenceValues {
   locale: "en" | "ja";
-  theme: "light" | "dark";
+  /** Built-in ids are light/dark; custom ids are provided by the theme catalog. */
+  theme: string;
+  /** Empty means the application-local themes directory. */
+  themeDirectory: string;
   fontSize: number;
   tabSize: number;
   wordWrap: boolean;
@@ -35,7 +38,7 @@ export interface PreferenceValues {
 }
 export type PreferenceKey = keyof PreferenceValues;
 export const preferenceDefaults: PreferenceValues = {
-  locale: "en", theme: "light", fontSize: 15, tabSize: 2, wordWrap: true,
+  locale: "en", theme: "light", themeDirectory: "", fontSize: 15, tabSize: 2, wordWrap: true,
   autoSave: "off", hideBuildArtifacts: true, documentWordCompletion: true, confirmPreviewEdits: true, visibleFilterGroups: ["blockType", "location", "file", "properties"], referenceLinkModifier: "ctrl", spellCheckMode: "auto", spellCheckLanguage: "en-US", maximize: true, restoreProject: false,
   lastProject: "", engine: "pdflatex", keybindings: {}, environments: [], layout: {}
 };
@@ -44,7 +47,7 @@ export interface SettingsSnapshot { global: Partial<PreferenceValues>; project: 
 export function validPreference(key: string, value: unknown): boolean {
   switch (key) {
     case "locale": return value === "en" || value === "ja";
-    case "theme": return value === "light" || value === "dark";
+    case "theme": return typeof value === "string" && /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/.test(value);
     case "engine": return ["pdflatex", "xelatex", "lualatex"].includes(String(value));
     case "spellCheckMode": return value === "auto" || value === "manual" || value === "disabled";
     case "spellCheckLanguage": return typeof value === "string" && /^[A-Za-z]{2,3}(?:[-_][A-Za-z0-9]{2,8})?$/.test(value);
@@ -53,7 +56,7 @@ export function validPreference(key: string, value: unknown): boolean {
     case "autoSave": return value === "off" || value === "afterDelay";
     case "wordWrap": case "hideBuildArtifacts": case "documentWordCompletion": case "confirmPreviewEdits": case "maximize": case "restoreProject": return typeof value === "boolean";
     case "referenceLinkModifier": return value === "ctrl" || value === "alt" || value === "shift" || value === "meta";
-    case "lastProject": return typeof value === "string";
+    case "themeDirectory": case "lastProject": return typeof value === "string";
     case "visibleFilterGroups": return Array.isArray(value) && value.every((item) => ["blockType", "location", "file", "properties"].includes(String(item)));
     case "keybindings": return !!value && typeof value === "object" && !Array.isArray(value) && Object.values(value).every((v) => typeof v === "string");
     case "environments": return Array.isArray(value) && value.every((entry) => {

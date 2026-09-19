@@ -25,6 +25,28 @@ describe("v0.2.2 structured Preview parser", () => {
     expect(document.diagnostics).toEqual([]);
   });
 
+  it("recognizes bracket display math nested inside list environments", () => {
+    const source = String.raw`\begin{itemize}
+\item Before
+\[
+  x^2 + y^2 = z^2
+\]
+\item After
+\end{itemize}
+\begin{enumerate}
+\item Another item
+\begin{equation}
+  a=b
+\end{equation}
+\end{enumerate}`;
+    const document = parsePreview(source, "main.tex", DEFAULT_ENVIRONMENTS);
+    const list = blocks(document.nodes).find((node) => node.environmentId === "itemize");
+    const numberedList = blocks(document.nodes).find((node) => node.environmentId === "enumerate");
+    expect(list?.children.some((node) => node.kind === "block" && node.environmentId === "display-math")).toBe(true);
+    expect(numberedList?.children.some((node) => node.kind === "block" && node.environmentId === "equation")).toBe(true);
+    expect(document.diagnostics).toEqual([]);
+  });
+
   it("keeps sibling spans disjoint and child spans contained", async () => {
     const source = await readFile(resolve("tests/fixtures/preview-basic/main.tex"), "utf8");
     const document = parsePreview(source, "main.tex", DEFAULT_ENVIRONMENTS);

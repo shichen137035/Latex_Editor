@@ -170,6 +170,16 @@ export interface StyleResource {
   mainStyle?: { kind: "package"; name: string };
 }
 
+/** A CSS theme discovered from the built-in or user theme directory. */
+export interface ThemeDefinition {
+  id: string;
+  name: string;
+  source: "built-in" | "user";
+  /** CSS is returned for user themes so the renderer can apply it without file access. */
+  css?: string;
+  filePath?: string;
+}
+
 export interface ProjectTemplate { id: string; name: string; files: Array<{ relativePath: string; content: string }> }
 /** 来自 resources 的编译器配置，arguments 由 catalog 做 allowlist 校验。 */
 export interface CompilerProfile { id: string; executable: string; arguments: string[]; timeoutMs: number }

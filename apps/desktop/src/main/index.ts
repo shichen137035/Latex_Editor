@@ -6,6 +6,7 @@ import type { CommandMetadata, CompileResult, CompileInput, GraphTraversalOption
 import type { ProjectBlockGraphService } from "@latex-editor/application" with { "resolution-mode": "import" };
 import { SettingsRepository } from "./settings.js";
 import { StyleResourceRepository } from "./style-resources.js";
+import { ThemeRepository } from "./themes.js";
 import { OfflineSpellCheckService } from "./spellcheck.js";
 import { forwardSync, reverseSync } from "./synctex.js";
 
@@ -34,6 +35,7 @@ interface DesktopContext {
   resources: { searchCommands(query: string): CommandMetadata[] };
   blockGraph: ProjectBlockGraphService;
   styleResources: StyleResourceRepository;
+  themes: ThemeRepository;
   spellcheck: OfflineSpellCheckService;
 }
 
@@ -57,6 +59,8 @@ async function createContext(): Promise<DesktopContext> {
   const resources = new FileResourceCatalog(resolve(__dirname, "../../../..", "resources"));
   const styleResources = new StyleResourceRepository(resolve(__dirname, "../../../..", "resources"), app.getPath("userData"));
   await styleResources.initialize();
+  const themes = new ThemeRepository(resolve(__dirname, "../../../..", "resources"), resolve(__dirname, "../../../..", "themes"));
+  await themes.initialize();
   const projects = new ProjectService({
     registry,
     environment: new NodeProjectEnvironment(),
@@ -71,6 +75,7 @@ async function createContext(): Promise<DesktopContext> {
   const blockGraph = new ProjectBlockGraphService(files, { next: randomUUID });
   settings = new SettingsRepository(app.getPath("userData"), async (id) => files.resolveFilePath(id, ".texweave/settings.json", false));
   await settings.initialize();
+  await themes.setDirectory(settings.global.themeDirectory ?? "");
   const { discoverToolchain } = await import("@latex-editor/compiler-latexmk");
   let detected = await discoverToolchain(settings.toolchain?.latexmk ?? settings.toolchain?.binDirectory);
   if (!detected.available) detected = await discoverToolchain();
@@ -80,12 +85,16 @@ async function createContext(): Promise<DesktopContext> {
   const spellcheck = new OfflineSpellCheckService();
   await spellcheck.initialize();
   spellcheck.configure(settings.global.spellCheckMode ?? "auto", settings.global.spellCheckLanguage ?? "en-US");
-  return { registry, projects, files, compiler, resources, blockGraph, styleResources, spellcheck };
+  return { registry, projects, files, compiler, resources, blockGraph, styleResources, themes, spellcheck };
 }
 
 function registerIpcHandlers(): void {
   ipcMain.handle("settings:get", (_event, projectId?: string) => settings.snapshot(projectId));
-  ipcMain.handle("settings:set", (_event, key: PreferenceKey, value: unknown, projectId?: string) => settings.set(key, value, projectId));
+  ipcMain.handle("settings:set", async (_event, key: PreferenceKey, value: unknown, projectId?: string) => {
+    const snapshot = await settings.set(key, value, projectId);
+    if (key === "themeDirectory" && projectId === undefined && context) await context.themes.setDirectory(typeof value === "string" ? value : "");
+    return snapshot;
+  });
   ipcMain.handle("resources:commands", (_event, query: string) => context?.resources.searchCommands(query) ?? []);
   ipcMain.handle("block-graph:snapshot", (_event, projectId: string) => context?.blockGraph.snapshot(projectId));
   ipcMain.handle("block-graph:create-block", (_event, projectId: string, input: CreateSemanticBlockInput) => context?.blockGraph.createBlock(projectId, input));
@@ -153,6 +162,20 @@ function registerIpcHandlers(): void {
   ipcMain.handle("style-resources:remove", (_event, id: string) => {
     if (context === undefined) throw new Error("Application context is not ready");
     return context.styleResources.remove(id);
+  });
+  ipcMain.handle("themes:list", () => context?.themes.list() ?? []);
+  ipcMain.handle("themes:directory", () => context?.themes.directory() ?? "");
+  ipcMain.handle("themes:import-files", (_event, paths: string[]) => {
+    if (context === undefined) throw new Error("Application context is not ready");
+    return context.themes.importFiles(paths);
+  });
+  ipcMain.handle("themes:import-folder", (_event, folderPath: string) => {
+    if (context === undefined) throw new Error("Application context is not ready");
+    return context.themes.importFolder(folderPath);
+  });
+  ipcMain.handle("themes:remove", (_event, id: string) => {
+    if (context === undefined) throw new Error("Application context is not ready");
+    return context.themes.remove(id);
   });
   ipcMain.handle("toolchain:detect", async (_event, manual?: "directory" | "executable") => {
     let path: string | undefined;
@@ -264,6 +287,10 @@ function registerIpcHandlers(): void {
   });
   ipcMain.handle("dialogs:pick-files", async () => {
     const result = await dialog.showOpenDialog({ properties: ["openFile", "multiSelections"], filters: [{ name: "TeX resources", extensions: ["sty", "cls", "bst", "bib", "tex", "cfg", "def", "ltx"] }] });
+    return result.canceled ? [] : result.filePaths;
+  });
+  ipcMain.handle("dialogs:pick-theme-files", async () => {
+    const result = await dialog.showOpenDialog({ properties: ["openFile", "multiSelections"], filters: [{ name: "CSS themes", extensions: ["css"] }] });
     return result.canceled ? [] : result.filePaths;
   });
 }

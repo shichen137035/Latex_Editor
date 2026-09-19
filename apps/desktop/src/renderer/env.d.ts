@@ -1,4 +1,4 @@
-import type { BlockGraphSnapshot, BlockId, CommandMetadata, CompileResult, CreateSemanticBlockInput, DependencyCycle, FileWriteResult, GraphDiagnostic, GraphTraversalOptions, GraphTraversalResult, LogicalRelation, Project, ProjectTreeNode, SemanticBlock, SettingsSnapshot, PreferenceKey, LatexToolchain, StyleResource, SpellCheckMode, SpellCheckStatus, StructuralDependencyOverlap, SyncTexPdfPosition, SyncTexSourcePosition, TextFileContent, UpdateSemanticBlockInput } from "@latex-editor/contracts";
+import type { BlockGraphSnapshot, BlockId, CommandMetadata, CompileResult, CreateSemanticBlockInput, DependencyCycle, FileWriteResult, GraphDiagnostic, GraphTraversalOptions, GraphTraversalResult, LogicalRelation, Project, ProjectTreeNode, SemanticBlock, SettingsSnapshot, PreferenceKey, LatexToolchain, StyleResource, ThemeDefinition, SpellCheckMode, SpellCheckStatus, StructuralDependencyOverlap, SyncTexPdfPosition, SyncTexSourcePosition, TextFileContent, UpdateSemanticBlockInput } from "@latex-editor/contracts";
 
 declare global {
   interface Window {
@@ -57,6 +57,13 @@ declare global {
         rename(id: string, name: string): Promise<StyleResource>;
         remove(id: string): Promise<void>;
       };
+      themes: {
+        list(): Promise<ThemeDefinition[]>;
+        directory(): Promise<string>;
+        importFiles(paths: string[]): Promise<ThemeDefinition[]>;
+        importFolder(folderPath: string): Promise<ThemeDefinition[]>;
+        remove(id: string): Promise<void>;
+      };
       projects: {
         list(): Promise<Project[]>;
         create(input: { name: string; parentPath: string; styleResourceIds?: string[] }): Promise<Project>;
@@ -87,6 +94,7 @@ declare global {
       dialogs: {
         pickFolder(): Promise<string | undefined>;
         pickFiles(): Promise<string[]>;
+        pickThemeFiles(): Promise<string[]>;
       };
     };
   }

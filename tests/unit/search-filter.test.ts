@@ -38,9 +38,17 @@ Closing text.`;
 
   it("combines groups with AND and properties with AND", () => {
     const matches = engine.evaluate(document.nodes, source, "main.tex", { ...defaultFilterQuery, enabled: true, blockTypes: ["theorem"], files: ["main.tex"], properties: ["hasMath", "hasLabel"] });
-    expect(matches.matches.size).toBe(1);
+    expect([...matches.matches].some((id) => id.includes("theorem"))).toBe(true);
+    expect([...matches.matches].some((id) => id.includes("equation"))).toBe(true);
     const excluded = engine.evaluate(document.nodes, source, "main.tex", { ...defaultFilterQuery, enabled: true, blockTypes: ["theorem"], files: ["other.tex"] });
     expect(excluded.matches.size).toBe(0);
+  });
+
+  it("keeps all descendants visible when their containing block type matches", () => {
+    const result = engine.evaluate(document.nodes, source, "main.tex", { ...defaultFilterQuery, enabled: true, blockTypes: ["theorem"] });
+    expect([...result.matches].some((id) => id.includes("theorem"))).toBe(true);
+    expect([...result.matches].some((id) => id.includes("equation"))).toBe(true);
+    expect(result.context.size).toBeGreaterThan(0);
   });
 
   it("treats an empty enabled filter as matching everything", () => {

@@ -20,19 +20,26 @@ export class FilterEngine {
     const context = new Set<string>();
     const unmatched = new Set<string>();
     const hasConditions = query.blockTypes.length + query.locations.length + query.files.length + query.properties.length > 0;
-    const visit = (node: PreviewNode, ancestors: PreviewNode[], locations: string[]): boolean => {
+    const visit = (node: PreviewNode, ancestors: PreviewNode[], locations: string[], inheritedMatch = false): boolean => {
       const nextLocations = node.kind === "block" && sectionTypes.has(node.environmentId) ? [...locations, node.id] : locations;
       const raw = source.slice(node.source.startOffset, node.source.endOffset);
       const group = (id: FilterGroupId, active: boolean, match: boolean) => !active || (query.groupModes[id] === "exclude" ? !match : match);
-      const direct = !query.enabled || !hasConditions || (
+      const ownMatch = !query.enabled || !hasConditions || (
         group("blockType", query.blockTypes.length > 0, query.blockTypes.includes(blockType(node))) &&
         group("location", query.locations.length > 0, query.locations.some((id) => nextLocations.includes(id))) &&
         group("file", query.files.length > 0, query.files.includes(fileId)) &&
         group("properties", query.properties.length > 0, query.properties.every((property) => propertyMatches(property, raw)))
       );
+      // An included structural block owns the content below it. Keep that
+      // subtree visible even when its child blocks have another type; the
+      // filter is selecting the containing block and its contents together.
+      // Do not inherit an exclude rule, otherwise excluding one child type
+      // would accidentally make that child visible through its parent.
+      const ownsContent = ownMatch && node.kind === "block" && query.blockTypes.length > 0 && query.groupModes.blockType !== "exclude" && query.blockTypes.includes(blockType(node));
+      const direct = inheritedMatch || ownMatch;
       if (direct) matches.add(node.id);
       let descendantMatch = false;
-      if (node.kind === "block") for (const child of node.children) descendantMatch = visit(child, [...ancestors, node], nextLocations) || descendantMatch;
+      if (node.kind === "block") for (const child of node.children) descendantMatch = visit(child, [...ancestors, node], nextLocations, inheritedMatch || ownsContent) || descendantMatch;
       if (!direct && descendantMatch) context.add(node.id);
       return direct || descendantMatch;
     };

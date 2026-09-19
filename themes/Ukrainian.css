@@ -1,3 +1,4 @@
+/* @theme-name: Ukrainian Light */
 :root,
 [data-theme="light-ukraine"] {
   /* =========================================================
@@ -5,40 +6,40 @@
      Ukraine-inspired: Blue / White / Yellow
      ========================================================= */
 
-  --color-bg-app: #f3f8fd;
+  --color-bg-app: #f6faff;
   --color-bg-panel: #ffffff;
-  --color-bg-toolbar: #f8fbfe;
-  --color-bg-subtle: #eef5fb;
-  --color-bg-hover: #e6f1fb;
+  --color-bg-toolbar: #fbfdff;
+  --color-bg-subtle: #f1f7fd;
+  --color-bg-hover: #eaf4fc;
 
   /* Ukrainian blue */
-  --color-primary: #0057b8;
-  --color-primary-strong: #00448f;
+  --color-primary: #3d86c7;
+  --color-primary-strong: #286aa7;
 
   /* Ukrainian yellow */
-  --color-accent: #ffd700;
+  --color-accent: #e9bf4f;
 
-  --color-text-primary: #16324f;
-  --color-text-secondary: #667f97;
-  --color-text-muted: #94a7b8;
+  --color-text-primary: #234260;
+  --color-text-secondary: #718aa2;
+  --color-text-muted: #9caebe;
 
-  --color-border: #d5e3ef;
-  --color-border-strong: #b8cfe0;
+  --color-border: #dce9f3;
+  --color-border-strong: #c4d9e8;
 
   --color-success: #2a9d72;
   --color-warning: #d6a600;
   --color-error: #d84d57;
 
   /* Strong blue status bar + warm yellow text highlight */
-  --color-status-bg: #0057b8;
-  --color-status-text: #fff8cc;
+  --color-status-bg: #3d86c7;
+  --color-status-text: #fff8df;
 
   --radius-small: 6px;
   --radius-medium: 10px;
   --radius-large: 16px;
 
   --shadow-panel:
-    0 6px 22px rgba(0, 70, 135, 0.09);
+    0 8px 24px rgba(46, 104, 157, 0.08);
 
   --activity-width: 52px;
   --topbar-height: 46px;
@@ -50,10 +51,10 @@
      Strong academic blue
      ========================================================= */
 
-  --env-section-accent: #0057b8;
-  --env-section-fill: rgba(245, 250, 255, 0.82);
-  --env-section-label-bg: #e1effc;
-  --env-section-label-text: #00498f;
+  --env-section-accent: #4f91ca;
+  --env-section-fill: rgba(247, 251, 255, 0.82);
+  --env-section-label-bg: #e8f3fc;
+  --env-section-label-text: #326eaa;
 
 
   /* =========================================================
@@ -61,10 +62,10 @@
      Deep blue with a subtle yellow undertone
      ========================================================= */
 
-  --env-theorem-accent: #2869b2;
-  --env-theorem-fill: #f7faff;
-  --env-theorem-label-bg: #e8f1fc;
-  --env-theorem-label-text: #24558c;
+  --env-theorem-accent: #668fc0;
+  --env-theorem-fill: #fafcff;
+  --env-theorem-label-bg: #eef5fc;
+  --env-theorem-label-text: #4a71a0;
 
 
   /* =========================================================
@@ -72,10 +73,10 @@
      Clean cyan-blue
      ========================================================= */
 
-  --env-definition-accent: #268dab;
-  --env-definition-fill: #f4fbfd;
-  --env-definition-label-bg: #e2f5f9;
-  --env-definition-label-text: #1c7089;
+  --env-definition-accent: #4eabb7;
+  --env-definition-fill: #f8fdfe;
+  --env-definition-label-bg: #e9f8fa;
+  --env-definition-label-text: #39818d;
 
 
   /* =========================================================
@@ -83,10 +84,10 @@
      Muted steel blue
      ========================================================= */
 
-  --env-proof-accent: #4e789e;
-  --env-proof-fill: #f7fafc;
-  --env-proof-label-bg: #e8f0f6;
-  --env-proof-label-text: #395e7e;
+  --env-proof-accent: #6f9ab8;
+  --env-proof-fill: #fafcff;
+  --env-proof-label-bg: #edf5fa;
+  --env-proof-label-text: #527b9b;
 
 
   /* =========================================================
@@ -94,10 +95,10 @@
      Neutral blue-gray
      ========================================================= */
 
-  --env-equation-accent: #71889e;
-  --env-equation-fill: #f7fafc;
-  --env-equation-label-bg: #eaf0f5;
-  --env-equation-label-text: #53687c;
+  --env-equation-accent: #88a3b8;
+  --env-equation-fill: #fbfdff;
+  --env-equation-label-bg: #f0f6fa;
+  --env-equation-label-text: #668198;
 
 
   /* =========================================================
@@ -105,10 +106,10 @@
      Ukrainian yellow
      ========================================================= */
 
-  --env-remark-accent: #d6aa00;
-  --env-remark-fill: #fffdf4;
-  --env-remark-label-bg: #fff4bd;
-  --env-remark-label-text: #806600;
+  --env-remark-accent: #d9b24a;
+  --env-remark-fill: #fffdf8;
+  --env-remark-label-bg: #fff7da;
+  --env-remark-label-text: #987a2e;
 
 
   /* =========================================================
@@ -116,10 +117,10 @@
      Light sky blue
      ========================================================= */
 
-  --env-example-accent: #3b91c8;
-  --env-example-fill: #f5fbff;
-  --env-example-label-bg: #e1f3fd;
-  --env-example-label-text: #286d99;
+  --env-example-accent: #67a8d2;
+  --env-example-fill: #f9fdff;
+  --env-example-label-bg: #eaf6fd;
+  --env-example-label-text: #4b82aa;
 
 
   /* =========================================================
@@ -127,10 +128,10 @@
      Clear Ukrainian blue
      ========================================================= */
 
-  --env-figure-accent: #1677bd;
-  --env-figure-fill: #f5faff;
-  --env-figure-label-bg: #e2f1fc;
-  --env-figure-label-text: #155e91;
+  --env-figure-accent: #4a96cc;
+  --env-figure-fill: #f9fdff;
+  --env-figure-label-bg: #e9f6fd;
+  --env-figure-label-text: #3979a9;
 
 
   /* =========================================================
@@ -138,20 +139,20 @@
      Cool blue-gray
      ========================================================= */
 
-  --env-table-accent: #4f849f;
-  --env-table-fill: #f7fafc;
-  --env-table-label-bg: #e6f1f5;
-  --env-table-label-text: #39697d;
+  --env-table-accent: #70a2b5;
+  --env-table-fill: #fafdfe;
+  --env-table-label-bg: #eef7fa;
+  --env-table-label-text: #568294;
 
 
   /* =========================================================
      List
      ========================================================= */
 
-  --env-list-accent: #8095a8;
+  --env-list-accent: #9aafc0;
   --env-list-fill: transparent;
-  --env-list-label-bg: #edf2f6;
-  --env-list-label-text: #617588;
+  --env-list-label-bg: #f1f6fa;
+  --env-list-label-text: #71879a;
 
 
   /* =========================================================
@@ -159,10 +160,10 @@
      Soft neutral
      ========================================================= */
 
-  --env-quote-accent: #8b98a4;
-  --env-quote-fill: #fafbfd;
-  --env-quote-label-bg: #eff2f5;
-  --env-quote-label-text: #66727d;
+  --env-quote-accent: #9caab6;
+  --env-quote-fill: #fcfdfe;
+  --env-quote-label-bg: #f3f6f8;
+  --env-quote-label-text: #74818b;
 
 
   /* =========================================================
@@ -170,10 +171,10 @@
      Slightly darker / metallic
      ========================================================= */
 
-  --env-code-accent: #506b82;
-  --env-code-fill: #f1f5f8;
-  --env-code-label-bg: #e3eaf0;
-  --env-code-label-text: #3d566b;
+  --env-code-accent: #718ba0;
+  --env-code-fill: #f5f9fc;
+  --env-code-label-bg: #eaf1f6;
+  --env-code-label-text: #587187;
 
 
   /* =========================================================
@@ -181,29 +182,29 @@
      Main yellow environment
      ========================================================= */
 
-  --env-virtual-accent: #d6a900;
-  --env-virtual-fill: #fffaf0;
-  --env-virtual-label-bg: #ffefad;
-  --env-virtual-label-text: #856700;
+  --env-virtual-accent: #d7b044;
+  --env-virtual-fill: #fffdf7;
+  --env-virtual-label-bg: #fff5cf;
+  --env-virtual-label-text: #96772a;
 
 
   /* =========================================================
      Generic
      ========================================================= */
 
-  --env-generic-accent: #8998a6;
-  --env-generic-fill: #fafbfd;
-  --env-generic-label-bg: #edf1f4;
-  --env-generic-label-text: #657480;
+  --env-generic-accent: #9aabb9;
+  --env-generic-fill: #fcfdfe;
+  --env-generic-label-bg: #f1f5f8;
+  --env-generic-label-text: #748493;
 
 
   /* =========================================================
      Environment borders / states
      ========================================================= */
 
-  --env-border-default: rgba(45, 88, 125, 0.13);
-  --env-border-hover: rgba(0, 87, 184, 0.30);
+  --env-border-default: rgba(67, 111, 151, 0.12);
+  --env-border-hover: rgba(61, 134, 199, 0.28);
 
   /* Selected = Ukrainian blue */
-  --env-border-selected: #0057b8;
+  --env-border-selected: #3d86c7;
 }

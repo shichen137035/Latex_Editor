@@ -7,6 +7,7 @@ import { SettingsDialog } from "./settings/SettingsDialog.js";
 import { commands, installShortcuts } from "./settings/commands.js";
 import { DEFAULT_ENVIRONMENTS } from "./preview/environments.js";
 import type { EnvironmentDefinition } from "./preview/types.js";
+import { ThemeRuntime } from "./themes/runtime.js";
 
 function Icon({ children, size = 20 }: { children: ReactNode; size?: number }) {
   return <svg aria-hidden="true" className="icon" width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">{children}</svg>;
@@ -92,7 +93,7 @@ export function App() {
   useEffect(() => { void refreshStyleResources(); }, []);
   useEffect(installShortcuts, []);
   const onHome = () => { void settings.load().then(() => setActiveProject(undefined)); };
-  return <>{activeProject
+  return <><ThemeRuntime />{activeProject
     ? <Workbench key={activeProject.id} project={activeProject} projects={projects} environments={environments} onHome={onHome} onSwitch={(project) => void openProject(project)}/>
     : <ProjectDirectory projects={projects} onProjectsChange={setProjects} onOpen={(project) => void openProject(project)} styleResources={styleResources} onRefreshResources={refreshStyleResources}/>} 
     {!warningDismissed && !store.snapshot().toolchain?.available && <aside className="toolchain-warning"><p>{t("settings.missingToolchain")}</p><button onClick={() => void store.detect()}>{t("settings.detect")}</button><button onClick={() => void store.detect("directory")}>{t("settings.locate")}</button><button onClick={() => { setCompilerSettings(true); setWarningDismissed(true); }}>{t("settings.openCompiler")}</button><button onClick={() => setWarningDismissed(true)}>{t("common.close")}</button></aside>}

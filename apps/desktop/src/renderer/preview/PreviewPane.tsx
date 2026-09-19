@@ -20,6 +20,7 @@ import { searchPattern } from "../search/SearchEngine.js";
 import type { SearchQuery, SearchResult } from "../search/types.js";
 import { FilterEngine } from "../filter/FilterEngine.js";
 import { defaultFilterQuery, type FilterQuery, type FilterState } from "../filter/types.js";
+import { editorThemeName } from "../themes/runtime.js";
 
 type EditorApi = NonNullable<Window["latexEditor"]>;
 type PreviewEditorServices = { api: EditorApi | undefined; projectId: string; tree: ProjectTreeNode[]; currentPath: string; definitions: EnvironmentDefinition[]; mathContext: MathContext; searchQuery: SearchQuery; activeSearchResult?: SearchResult | undefined; filterQuery: FilterQuery; filterStates: Map<string, FilterState>; onSpellContextMenu(request: SpellContextRequest): void; onDetectedLanguage(language: string): void; onForwardSync(path: string, line: number, column?: number): void };
@@ -93,7 +94,7 @@ function highlightedText(value: string, query: SearchQuery, active: boolean, key
 function inlineLatex(value: string | undefined, mathContext: MathContext, searchQuery: SearchQuery = defaultInlineSearch, active = false): ReactNode[] {
   if (!value) return [];
   const clean = value.replace(/^\s*%.*$/gm, "").replace(/%[^\n]*/g, "").trim();
-  const pattern = /\$\$([\s\S]*?)\$\$|\$(?!\$)([^$\n]+?)\$|\\\(([\s\S]*?)\\\)|\\(textbf|textit|emph|texttt)\{([^{}]*)\}|\\([A-Za-z]*cite[A-Za-z]*)\{([^{}]*)\}|\\([A-Za-z]*ref[A-Za-z]*)\{([^{}]*)\}/g;
+  const pattern = /\$\$([\s\S]*?)\$\$|\$(?!\$)([^$\n]+?)\$|\\\(([\s\S]*?)\\\)|\\\[([\s\S]*?)\\\]|\\(textbf|textit|emph|texttt)\{([^{}]*)\}|\\([A-Za-z]*cite[A-Za-z]*)\{([^{}]*)\}|\\([A-Za-z]*ref[A-Za-z]*)\{([^{}]*)\}/g;
   const result: ReactNode[] = [];
   let cursor = 0;
   let index = 0;
@@ -103,11 +104,12 @@ function inlineLatex(value: string | undefined, mathContext: MathContext, search
     if (match[1] !== undefined) result.push(<MathRenderer key={index++} expression={match[1]} display context={mathContext}/>);
     else if (match[2] !== undefined) result.push(<MathRenderer key={index++} expression={match[2]} context={mathContext}/>);
     else if (match[3] !== undefined) result.push(<MathRenderer key={index++} expression={match[3]} context={mathContext}/>);
-    else if (match[4] === "textbf") result.push(<strong key={index++}>{highlightedText(match[5] ?? "", searchQuery, active, index++)}</strong>);
-    else if (match[4] === "texttt") result.push(<code key={index++}>{highlightedText(match[5] ?? "", searchQuery, active, index++)}</code>);
-    else if (match[4]) result.push(<em key={index++}>{highlightedText(match[5] ?? "", searchQuery, active, index++)}</em>);
-    else if (match[6]) result.push(<span className="preview-citation" key={index++} title={`\\${match[6]}`}>[{match[7]}]</span>);
-    else result.push(<button type="button" className="preview-reference" data-reference={match[9]} key={index++} title={`\\${match[8]}`}>[{match[9]}]</button>);
+    else if (match[4] !== undefined) result.push(<MathRenderer key={index++} expression={match[4]} display context={mathContext}/>);
+    else if (match[5] === "textbf") result.push(<strong key={index++}>{highlightedText(match[6] ?? "", searchQuery, active, index++)}</strong>);
+    else if (match[5] === "texttt") result.push(<code key={index++}>{highlightedText(match[6] ?? "", searchQuery, active, index++)}</code>);
+    else if (match[5]) result.push(<em key={index++}>{highlightedText(match[6] ?? "", searchQuery, active, index++)}</em>);
+    else if (match[7]) result.push(<span className="preview-citation" key={index++} title={`\\${match[7]}`}>[{match[8]}]</span>);
+    else result.push(<button type="button" className="preview-reference" data-reference={match[10]} key={index++} title={`\\${match[9]}`}>[{match[10]}]</button>);
     cursor = start + match[0].length;
   }
   if (cursor < clean.length) result.push(...highlightedText(plainLatex(clean.slice(cursor)), searchQuery, active, index));
@@ -117,22 +119,32 @@ function inlineLatex(value: string | undefined, mathContext: MathContext, search
 const defaultInlineSearch: SearchQuery = { text: "", caseSensitive: false, wholeWord: false, useRegex: false, scope: "current-file" };
 
 interface PreviewListItem {
-  content: string;
+  startOffset: number;
+  endOffset: number;
   label?: string;
 }
 
-/**
- * Extracts list items without using a capturing `split`. JavaScript inserts an
- * `undefined` entry for an unmatched optional capture, which previously made
- * ordinary `\item` lists crash the complete React preview while rendering.
- */
-function previewListItems(value: string): PreviewListItem[] {
+/** Keep absolute ranges so nested math blocks can remain independent preview nodes. */
+function listBodyRange(node: StructuralBlock, source: string): [number, number] {
+  const full = nodeSource(node, source);
+  const opening = /^\\begin\{[^}]+\}(?:\[[^\]]*\])?/s.exec(full)?.[0]?.length ?? 0;
+  const closing = /\\end\{[^}]+\}\s*$/s.exec(full);
+  const bodyStart = node.source.startOffset + opening;
+  const bodyEnd = closing ? node.source.startOffset + closing.index : node.source.endOffset;
+  return [bodyStart, Math.max(bodyStart, bodyEnd)];
+}
+
+function previewListItems(node: StructuralBlock, source: string): PreviewListItem[] {
+  const [bodyStart, bodyEnd] = listBodyRange(node, source);
+  const value = source.slice(bodyStart, bodyEnd);
   const matches = [...value.matchAll(/\\item(?:\[([^\]]+)\])?/g)];
+  if (!matches.length) return [{ startOffset: bodyStart, endOffset: bodyEnd }];
   return matches.map((match, index) => {
-    const contentStart = (match.index ?? 0) + match[0].length;
-    const contentEnd = matches[index + 1]?.index ?? value.length;
+    const contentStart = bodyStart + (match.index ?? 0) + match[0].length;
+    const contentEnd = bodyStart + (matches[index + 1]?.index ?? value.length);
     return {
-      content: value.slice(contentStart, contentEnd),
+      startOffset: contentStart,
+      endOffset: contentEnd,
       ...(match[1] ? { label: match[1] } : {})
     };
   });
@@ -224,6 +236,10 @@ function mathBodySource(node: StructuralBlock, source: string): string {
     .trim();
 }
 
+function isListEnvironment(environmentId: string): boolean {
+  return /^(itemize|enumerate|description)$/.test(environmentId);
+}
+
 function environmentLabel(definition: EnvironmentDefinition | undefined, id: string): string {
   if (definition) return definition.label ?? t(definition.labelKey as MessageKey) ?? definition.id;
   if (id.startsWith("virtual:")) return id.slice("virtual:".length).replaceAll("-", " ").toLocaleUpperCase();
@@ -241,11 +257,6 @@ function SpecializedContent({ node, source, mathContext, searchQuery, activeSear
     return <MathRenderer expression={expression} display context={mathContext}/>;
   }
   if (/verbatim|lstlisting/.test(definitionId)) return <pre className="preview-code">{raw.trim()}</pre>;
-  if (/itemize|enumerate|description/.test(definitionId)) {
-    const items = previewListItems(raw);
-    const Tag = definitionId === "enumerate" ? "ol" : "ul";
-    return <Tag className="preview-list">{items.map((item, index) => <li key={index}>{item.label && <strong>{inlineLatex(item.label, mathContext, searchQuery, activeSearch)} </strong>}{inlineLatex(item.content, mathContext, searchQuery, activeSearch)}</li>)}</Tag>;
-  }
   if (definitionId === "figure") {
     const image = /\\includegraphics(?:\[[^\]]*\])?\{([^}]+)\}/.exec(raw)?.[1];
     const caption = /\\caption\{([^}]*)\}/.exec(raw)?.[1];
@@ -256,6 +267,34 @@ function SpecializedContent({ node, source, mathContext, searchQuery, activeSear
     return <div className="preview-table"><pre>{plainLatex(tabular).replaceAll("\\\\", "\n")}</pre></div>;
   }
   return null;
+}
+
+function ListContent({ node, source, mathContext, searchQuery, activeSearch, renderChild }: { node: StructuralBlock; source: string; mathContext: MathContext; searchQuery: SearchQuery; activeSearch: boolean; renderChild(child: PreviewNode): ReactNode }) {
+  const items = previewListItems(node, source);
+  const Tag = node.environmentId === "enumerate" ? "ol" : "ul";
+  const renderItem = (item: PreviewListItem, itemIndex: number) => {
+    const children = node.children.filter((child) => child.source.startOffset < item.endOffset && child.source.endOffset > item.startOffset);
+    const content: ReactNode[] = [];
+    let cursor = item.startOffset;
+    const addText = (start: number, end: number, key: string) => {
+      if (end <= start) return;
+      content.push(<Fragment key={key}>{inlineLatex(source.slice(start, end), mathContext, searchQuery, activeSearch)}</Fragment>);
+    };
+    for (const child of children) {
+      const start = Math.max(cursor, item.startOffset);
+      const end = Math.min(child.source.startOffset, item.endOffset);
+      addText(start, end, `text:${itemIndex}:${start}`);
+      if (child.kind === "block") {
+        content.push(<Fragment key={child.id}>{renderChild(child)}</Fragment>);
+      } else {
+        addText(Math.max(child.source.startOffset, item.startOffset), Math.min(child.source.endOffset, item.endOffset), `content:${child.id}`);
+      }
+      cursor = Math.max(cursor, child.source.endOffset);
+    }
+    addText(Math.max(cursor, item.startOffset), item.endOffset, `tail:${itemIndex}`);
+    return <li key={`${item.startOffset}:${itemIndex}`}>{item.label && <strong>{inlineLatex(item.label, mathContext, searchQuery, activeSearch)} </strong>}{content}</li>;
+  };
+  return <Tag className="preview-list">{items.map(renderItem)}</Tag>;
 }
 
 function LocalEditor({ value, onApply, onCancel, onInsertBefore, onInsertAfter, mathDraft = false, sourceStartLine = 1, api, projectId, tree, currentPath, definitions, mathContext, onSpellContextMenu, onDetectedLanguage, onForwardSync }: { value: string; onApply(value: string): void; onCancel(): void; onInsertBefore?(draft: string): void; onInsertAfter?(draft: string): void; mathDraft?: boolean; sourceStartLine?: number; api: EditorApi | undefined; projectId: string; tree: ProjectTreeNode[]; currentPath: string; definitions: EnvironmentDefinition[]; mathContext: MathContext; onSpellContextMenu(request: SpellContextRequest): void; onDetectedLanguage(language: string): void; onForwardSync(path: string, line: number, column?: number): void }) {
@@ -348,7 +387,7 @@ function LocalEditor({ value, onApply, onCancel, onInsertBefore, onInsertAfter, 
   }, [confirmLeave]);
   return <><div ref={editorShellRef} className="preview-local-editor" onClick={(event) => event.stopPropagation()}>
     {activeMath && mathAnchor && <MathPreviewPopover source={activeMath.expression} displayMode={activeMath.displayMode} context={mathContext} anchor={mathAnchor} className="preview-draft-math"/>}
-    <Editor height="150px" language="latex" value={draft} onChange={(next) => { const value = next ?? ""; draftRef.current = value; setDraft(value); }} theme={preferences.get("theme") === "dark" ? "texweave-dark" : "texweave-light"} options={{ minimap: { enabled: false }, lineNumbers: "off", folding: false, fontSize: preferences.get("fontSize"), tabSize: preferences.get("tabSize"), wordWrap: preferences.get("wordWrap") ? "on" : "off", lineHeight: 23, automaticLayout: true, scrollBeyondLastLine: false, padding: { top: 10 }, quickSuggestions: { other: true, comments: true, strings: true }, suggestOnTriggerCharacters: true, autoClosingBrackets: "always", autoClosingQuotes: "always", autoSurround: "languageDefined" }} onMount={onMount} />
+    <Editor height="150px" language="latex" value={draft} onChange={(next) => { const value = next ?? ""; draftRef.current = value; setDraft(value); }} theme={editorThemeName(preferences.get("theme"))} options={{ minimap: { enabled: false }, lineNumbers: "off", folding: false, fontSize: preferences.get("fontSize"), tabSize: preferences.get("tabSize"), wordWrap: preferences.get("wordWrap") ? "on" : "off", lineHeight: 23, automaticLayout: true, scrollBeyondLastLine: false, padding: { top: 10 }, quickSuggestions: { other: true, comments: true, strings: true }, suggestOnTriggerCharacters: true, autoClosingBrackets: "always", autoClosingQuotes: "always", autoSurround: "languageDefined" }} onMount={onMount} />
     <div className="preview-local-editor-actions"><span>{t("preview.editHint")}</span>{onInsertBefore && onInsertAfter && <div className="preview-line-actions"><button title={t("preview.insertLineBefore")} onClick={() => onInsertBefore(draftRef.current)}>↥＋</button><button title={t("preview.insertLineAfter")} onClick={() => onInsertAfter(draftRef.current)}>↧＋</button></div>}<button onClick={onCancel}>{t("preview.cancel")}</button><button className="primary" onClick={() => onApply(draft)}>{t("preview.apply")}</button></div>
   </div>{confirmLeave && createPortal(<div className="preview-confirm-backdrop"><section className="preview-confirm-dialog" role="dialog" aria-modal="true" aria-label={t("preview.unsavedTitle")}><h2>{t("preview.unsavedTitle")}</h2><p>{t("preview.unsavedMessage")}</p><div><button autoFocus className="primary" onClick={() => { setConfirmLeave(false); applyRef.current(draftRef.current); }}>{t("preview.yes")}</button><button onClick={() => { setConfirmLeave(false); cancelRef.current(); }}>{t("preview.no")}</button></div></section></div>, document.body)}</>;
 }
@@ -382,7 +421,11 @@ function BlockRenderer({ node, source, definitions, selectedId, editingId, bound
   const filterState = services.filterStates.get(node.id) ?? "match";
   const activeSearch = services.activeSearchResult ? services.activeSearchResult.matchStart >= node.source.startOffset && services.activeSearchResult.matchEnd <= node.source.endOffset : false;
   const effectiveSearch = services.filterQuery.enabled && filterState !== "match" ? defaultInlineSearch : services.searchQuery;
+  const listEnvironment = isListEnvironment(node.environmentId);
   const specialized = SpecializedContent({ node, source, mathContext: services.mathContext, searchQuery: effectiveSearch, activeSearch });
+  const specializedContent = listEnvironment
+    ? <ListContent node={node} source={source} mathContext={services.mathContext} searchQuery={effectiveSearch} activeSearch={activeSearch} renderChild={(child) => <PreviewNodeRenderer key={child.id} node={child} source={source} definitions={definitions} selectedId={selectedId} editingId={editingId} boundary={boundary} select={select} edit={edit} applyEdit={applyEdit} applyBoundary={applyBoundary} cancelEdit={cancelEdit} requestBoundary={requestBoundary} services={services} budget={budget}/>} />
+    : specialized;
   const cssValue = (value: string | undefined, fallback: string) => value ? (value.startsWith("--") ? `var(${value})` : value) : `var(${fallback})`;
   const insertion = boundary?.targetId === node.id ? boundary : undefined;
   if (services.filterQuery.enabled && filterState === "unmatched" && !editing && !insertion) {
@@ -395,9 +438,9 @@ function BlockRenderer({ node, source, definitions, selectedId, editingId, bound
     <section className={`preview-block env-${family} ${filterClass} ${activeSearch ? "search-result-active" : ""} ${selected ? "selected" : ""} ${editing ? "editing" : ""}`} data-environment={node.environmentId} data-source-line={node.source.startLine} data-source-start-offset={node.source.startOffset} onDoubleClickCapture={(event) => { const target = event.target as Element; if (target.closest(".preview-local-editor") || target.closest(".preview-block") !== event.currentTarget) return; event.preventDefault(); event.stopPropagation(); services.onForwardSync(services.currentPath, node.source.startLine, 1); }} style={{ "--block-accent": cssValue(definition?.style.accentToken, "--env-generic-accent"), "--block-fill": cssValue(definition?.style.fillToken, "--env-generic-fill"), "--block-border": cssValue(definition?.style.borderToken, "--env-border-default"), "--block-selected-border": cssValue(definition?.style.selectedBorderToken, "--env-border-selected"), "--block-label-bg": cssValue(definition?.style.labelBackgroundToken, "--env-generic-label-bg"), "--block-label-text": cssValue(definition?.style.labelTextToken, "--env-generic-label-text") } as CSSProperties}>
     {(definition?.behavior.showHeader ?? true) && <div className="preview-block-header"><button className="preview-block-header-main" onClick={(event) => { event.stopPropagation(); select(node.id); }}><span>{environmentLabel(definition, node.environmentId)}</span>{node.title && <strong>{node.title}</strong>}{node.latexLabel && <small>{node.latexLabel}</small>}</button>{selected && <div className="preview-block-header-actions"><button title={t("preview.insertBefore")} onClick={(event) => { event.stopPropagation(); requestBoundary(node, "before"); }}>↥＋</button><button title={t("preview.insertAfter")} onClick={(event) => { event.stopPropagation(); requestBoundary(node, "after"); }}>↧＋</button></div>}</div>}
     <div className="preview-block-body" onClick={(event) => {
-      if (specialized && (definition?.behavior.inlineEditable ?? true)) { event.stopPropagation(); edit(node.id); }
-    }}>
-      {editing ? <LocalEditor value={nodeSource(node, source)} sourceStartLine={node.source.startLine} mathDraft={isMathBlock(node)} onApply={(value) => applyEdit(node, value)} onCancel={cancelEdit} onInsertBefore={(draft) => requestBoundary(node, "before", draft)} onInsertAfter={(draft) => requestBoundary(node, "after", draft)} {...services}/> : specialized ?? <PreviewNodeList nodes={node.children} source={source} definitions={definitions} selectedId={selectedId} editingId={editingId} boundary={boundary} select={select} edit={edit} applyEdit={applyEdit} applyBoundary={applyBoundary} cancelEdit={cancelEdit} requestBoundary={requestBoundary} services={services} budget={budget}/> }
+       if (specializedContent && (definition?.behavior.inlineEditable ?? true)) { event.stopPropagation(); edit(node.id); }
+     }}>
+       {editing ? <LocalEditor value={nodeSource(node, source)} sourceStartLine={node.source.startLine} mathDraft={isMathBlock(node)} onApply={(value) => applyEdit(node, value)} onCancel={cancelEdit} onInsertBefore={(draft) => requestBoundary(node, "before", draft)} onInsertAfter={(draft) => requestBoundary(node, "after", draft)} {...services}/> : specializedContent ?? <PreviewNodeList nodes={node.children} source={source} definitions={definitions} selectedId={selectedId} editingId={editingId} boundary={boundary} select={select} edit={edit} applyEdit={applyEdit} applyBoundary={applyBoundary} cancelEdit={cancelEdit} requestBoundary={requestBoundary} services={services} budget={budget}/> }
     </div>
     <div className="preview-block-footer">
       <button className="preview-block-footer-main" title={environmentLabel(definition, node.environmentId)} onClick={(event) => { event.stopPropagation(); select(node.id); }}><span/></button>

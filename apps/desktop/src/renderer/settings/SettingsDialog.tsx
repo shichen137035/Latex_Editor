@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { projectPreferenceKeys, type PreferenceKey, type StyleResource } from "@latex-editor/contracts";
+import { projectPreferenceKeys, type PreferenceKey, type StyleResource, type ThemeDefinition } from "@latex-editor/contracts";
 import type { SpellCheckStatus } from "@latex-editor/contracts";
 import { t } from "../i18n/index.js";
 import { EnvironmentManager } from "../preview/EnvironmentManager.js";
@@ -49,6 +49,60 @@ function SpellCheckSettingsPanel({ store }: { store: ReturnType<typeof useSettin
   </div>;
 }
 
+function ThemeSettingsPanel({ store }: { store: ReturnType<typeof useSettings> }) {
+  const [themes, setThemes] = useState<ThemeDefinition[]>([]);
+  const [directory, setDirectory] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  const reload = async () => {
+    const api = window.latexEditor;
+    if (!api) return;
+    setThemes(await api.themes.list());
+    setDirectory(await api.themes.directory());
+  };
+  useEffect(() => { void reload(); }, []);
+  const run = async (action: () => Promise<void>) => {
+    setBusy(true); setError("");
+    try { await action(); await reload(); window.dispatchEvent(new Event("texweave-themes-changed")); }
+    catch (reason) { setError(reason instanceof Error ? reason.message : String(reason)); }
+    finally { setBusy(false); }
+  };
+  const importFiles = () => void run(async () => {
+    const paths = await window.latexEditor!.dialogs.pickThemeFiles();
+    if (!paths.length) return;
+    const imported = await window.latexEditor!.themes.importFiles(paths);
+    const first = imported[0];
+    if (first) await store.set("theme", first.id);
+  });
+  const importFolder = () => void run(async () => {
+    const path = await window.latexEditor!.dialogs.pickFolder();
+    if (!path) return;
+    const imported = await window.latexEditor!.themes.importFolder(path);
+    const first = imported[0];
+    if (first) await store.set("theme", first.id);
+  });
+  const chooseDirectory = () => void run(async () => {
+    const path = await window.latexEditor!.dialogs.pickFolder();
+    if (path) await store.set("themeDirectory", path);
+  });
+  const resetDirectory = () => void run(async () => { await store.reset("themeDirectory"); });
+  const remove = (theme: ThemeDefinition) => void run(async () => {
+    if (!window.confirm(t("settings.themeDeleteConfirm", { name: theme.name }))) return;
+    if (store.global("theme") === theme.id) await store.set("theme", "light");
+    await window.latexEditor!.themes.remove(theme.id);
+  });
+  const builtIns = themes.filter((theme) => theme.source === "built-in");
+  const userThemes = themes.filter((theme) => theme.source === "user");
+  return <div className="theme-settings-panel">
+    <div className="theme-settings-header"><div><h2>{t("settings.theme")}</h2><p>{t("settings.themeHint")}</p></div><button disabled={busy} onClick={() => void reload()}>{t("settings.themeRefresh")}</button></div>
+    <label className="preference-row"><span><strong>{t("settings.activeTheme")}</strong><small>{t("settings.activeThemeHint")}</small></span><select value={store.global("theme")} onChange={(event) => void store.set("theme", event.target.value)}>{[...builtIns, ...userThemes].map((theme) => <option key={theme.id} value={theme.id}>{theme.name}</option>)}</select><button type="button" onClick={() => void store.reset("theme")}>{t("settings.reset")}</button></label>
+    <div className="theme-import-actions"><button disabled={busy} onClick={importFiles}>＋ {t("settings.themeImport")}</button><button disabled={busy} onClick={importFolder}>{t("settings.themeImportFolder")}</button></div>
+    <div className="theme-directory"><strong>{t("settings.themeDirectory")}</strong><code>{directory || "—"}</code><div><button disabled={busy} onClick={chooseDirectory}>{t("settings.themeChooseDirectory")}</button><button disabled={busy || !store.global("themeDirectory")} onClick={resetDirectory}>{t("settings.themeResetDirectory")}</button></div></div>
+    <section className="theme-catalog"><h3>{t("settings.themeBuiltIn")}</h3>{builtIns.map((theme) => <div className="theme-catalog-row" key={theme.id}><span><strong>{theme.name}</strong><small>{theme.id}</small></span><em>{t("settings.themeBuiltInBadge")}</em></div>)}<h3>{t("settings.themeCustom")}</h3>{userThemes.length ? userThemes.map((theme) => <div className="theme-catalog-row" key={theme.id}><span><strong>{theme.name}</strong><small>{theme.filePath ?? theme.id}</small></span><button className="danger" disabled={busy} onClick={() => remove(theme)}>{t("settings.themeDelete")}</button></div>) : <p>{t("settings.themeNone")}</p>}</section>
+    {error && <p role="alert" className="inline-error">{error}</p>}
+  </div>;
+}
+
 export function SettingsDialog({ onClose, initial = "general" }: { onClose(): void; initial?: Section }) {
   const store = useSettings();
   const [section, setSection] = useState<Section>(initial);
@@ -82,7 +136,7 @@ export function SettingsDialog({ onClose, initial = "general" }: { onClose(): vo
     <header><h1>{t("activity.settings")}</h1><select aria-label={t("settings.scope")} value={scope} onChange={(event) => setScope(event.target.value as "global" | "project")}><option value="global">{t("settings.global")}</option>{store.projectId() && <option value="project">{t("settings.project")}</option>}</select><button aria-label={t("common.close")} onClick={onClose}>×</button></header>
     <div className="preferences-body"><nav>{sections.map((item) => <button data-section={item} className={section === item ? "active" : ""} key={item} onClick={() => setSection(item)}>{t(item === "environments" ? "environment.manager" : item === "styleResources" ? "settings.styleResources" : `settings.${item}`)}</button>)}</nav><main>
       {section === "general" && <><h2>{t("settings.general")}</h2>{row("autoSave", "settings.autoSave", [["off", "settings.off"], ["afterDelay", "settings.afterDelay"]])}{row("hideBuildArtifacts", "settings.hideBuildArtifacts")}{row("restoreProject", "settings.restore")}{row("maximize", "settings.maximize")}</>}
-      {section === "appearance" && row("theme", "settings.theme", [["light", "settings.light"], ["dark", "settings.dark"]])}
+      {section === "appearance" && <ThemeSettingsPanel store={store}/>} 
       {section === "language" && row("locale", "settings.language", [["en", "English"], ["ja", "日本語"]])}
       {section === "editor" && <>{row("fontSize", "settings.fontSize", undefined, true)}{row("wordWrap", "settings.wordWrap")}{row("tabSize", "settings.tabSize", [["2", "2"], ["4", "4"], ["8", "8"]], true)}{row("documentWordCompletion", "settings.documentWordCompletion")}{row("confirmPreviewEdits", "settings.confirmPreviewEdits")}</>}
       {section === "searchFilter" && <><h2>{t("settings.searchFilter")}</h2><p>{t("settings.filterGroupsHint")}</p>{(["blockType", "location", "file", "properties"] as const).map((group) => { const visible = store.global("visibleFilterGroups"); return <label className="preference-row" key={group}><span><strong>{t(`filter.${group}`)}</strong></span><input type="checkbox" checked={visible.includes(group)} onChange={(event) => void store.set("visibleFilterGroups", event.target.checked ? [...visible, group] : visible.filter((item) => item !== group))}/><button type="button" onClick={() => void store.reset("visibleFilterGroups")}>{t("settings.reset")}</button></label>; })}</>}
