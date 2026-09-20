@@ -86,6 +86,8 @@
   "placeholder.settings": "在这里管理全局设置。",
   "placeholder.help": "帮助文档和快捷键将在后续版本提供。",
   "editor.noFile": "从文件树中打开一个文件",
+  "preview.changeEnvironment": "转换环境",
+  "preview.changeEnvironmentHint": "使用当前项目中已启用的兼容环境转换此块。",
   "editor.quick.section": "章节",
   "editor.quick.sectionShort": "节",
   "editor.quick.environment": "环境",

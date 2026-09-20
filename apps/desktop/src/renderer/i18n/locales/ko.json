@@ -72,6 +72,8 @@
   "placeholder.pdfTitle": "PDF 미리보기",
   "placeholder.pdf": "컴파일 후 PDF가 여기에 표시됩니다.",
   "editor.noFile": "파일 트리에서 파일을 여세요",
+  "preview.changeEnvironment": "환경 변환",
+  "preview.changeEnvironmentHint": "현재 프로젝트에서 활성화된 호환 환경으로 이 블록을 변환합니다.",
   "editor.quick.section": "섹션",
   "editor.quick.sectionShort": "섹",
   "editor.quick.environment": "환경",

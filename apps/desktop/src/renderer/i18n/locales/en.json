@@ -101,6 +101,8 @@
   "editor.environmentPicker.search": "Filter environments...",
   "editor.environmentPicker.empty": "No enabled environment matches this search.",
   "editor.environmentPicker.available": "available",
+  "preview.changeEnvironment": "Change environment",
+  "preview.changeEnvironmentHint": "Convert this block using an enabled compatible environment.",
   "editor.quick.bold": "Bold",
   "editor.quick.boldShort": "B",
   "editor.quick.math": "Math",

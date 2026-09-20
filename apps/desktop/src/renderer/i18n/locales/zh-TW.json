@@ -72,6 +72,8 @@
   "placeholder.pdfTitle": "PDF 預覽",
   "placeholder.pdf": "編譯後將在此顯示 PDF。",
   "editor.noFile": "從檔案樹開啟檔案",
+  "preview.changeEnvironment": "轉換環境",
+  "preview.changeEnvironmentHint": "使用目前專案中已啟用的相容環境轉換此區塊。",
   "editor.quick.section": "章節",
   "editor.quick.sectionShort": "節",
   "editor.quick.environment": "環境",

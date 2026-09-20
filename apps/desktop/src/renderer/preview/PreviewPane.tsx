@@ -25,6 +25,7 @@ import { editorThemeName } from "../themes/runtime.js";
 import type { DocumentSelection } from "../custom-blocks/selection.js";
 import { candidateRelationState, type UnmatchedBehavior } from "../relations/model.js";
 import { installSymbolPairing } from "../editor/symbolPairing.js";
+import { convertBlockEnvironmentSource, definitionConversionGroup, EnvironmentPickerPanel, environmentConversionGroup } from "./EnvironmentPicker.js";
 
 type EditorApi = NonNullable<Window["latexEditor"]>;
 export interface PreviewRelationUi {
@@ -293,6 +294,36 @@ function environmentLabel(definition: EnvironmentDefinition | undefined, id: str
   return id.replaceAll("-", " ").toLocaleUpperCase();
 }
 
+function BlockEnvironmentSelector({ node, source, definition, definitions, disabled, onChange }: { node: StructuralBlock; source: string; definition: EnvironmentDefinition | undefined; definitions: EnvironmentDefinition[]; disabled: boolean; onChange(value: string): void }) {
+  const [open, setOpen] = useState(false);
+  const rootRef = useRef<HTMLDivElement>(null);
+  const blockSource = nodeSource(node, source);
+  const group = environmentConversionGroup(blockSource);
+  const available = group ? definitions.some((candidate) => candidate.enabled && candidate.id !== node.environmentId && definitionConversionGroup(candidate) === group) : false;
+  useEffect(() => {
+    if (!open) return;
+    const closeOutside = (event: globalThis.MouseEvent) => { if (!rootRef.current?.contains(event.target as Node)) setOpen(false); };
+    const closeEscape = (event: KeyboardEvent) => { if (event.key === "Escape") setOpen(false); };
+    document.addEventListener("mousedown", closeOutside);
+    document.addEventListener("keydown", closeEscape);
+    return () => { document.removeEventListener("mousedown", closeOutside); document.removeEventListener("keydown", closeEscape); };
+  }, [open]);
+  const label = environmentLabel(definition, node.environmentId);
+  if (!available || disabled) return <span>{label}</span>;
+  return <div className="preview-environment-selector" ref={rootRef} onClick={(event) => event.stopPropagation()}>
+    <span className="preview-environment-label" role="button" tabIndex={0} aria-haspopup="dialog" aria-expanded={open} title={t("preview.changeEnvironment")} onClick={() => setOpen((value) => !value)} onKeyDown={(event) => {
+      if (event.key !== "Enter" && event.key !== " ") return;
+      event.preventDefault();
+      setOpen((value) => !value);
+    }}>{label}</span>
+    {open && <EnvironmentPickerPanel definitions={definitions} title={t("preview.changeEnvironment")} hint={t("preview.changeEnvironmentHint")} include={(candidate) => candidate.id !== node.environmentId && definitionConversionGroup(candidate) === group} onSelect={(candidate) => {
+      const converted = convertBlockEnvironmentSource(blockSource, candidate);
+      if (converted !== undefined && converted !== blockSource) onChange(converted);
+      setOpen(false);
+    }} onClose={() => setOpen(false)}/>}
+  </div>;
+}
+
 function SpecializedContent({ node, source, mathContext, searchQuery, activeSearch }: { node: StructuralBlock; source: string; mathContext: MathContext; searchQuery: SearchQuery; activeSearch: boolean }) {
   const raw = bodySource(node, source);
   const definitionId = node.environmentId;
@@ -491,9 +522,10 @@ function ContentRenderer({ node, source, editing, boundary, beginEdit, applyEdit
   const activeSearch = services.activeSearchResult ? services.activeSearchResult.matchStart >= node.source.startOffset && services.activeSearchResult.matchEnd <= node.source.endOffset : false;
   const effectiveSearch = services.filterQuery.enabled && filterState !== "match" ? defaultInlineSearch : services.searchQuery;
   const filterClass = services.filterQuery.enabled ? `filter-${filterState} filter-view-${services.filterQuery.viewMode}` : "";
+  const virtualClass = node.contentType === "plain" && node.raw.length === 0 ? " preview-content-virtual" : "";
   return <Fragment>
     {insertion?.side === "before" && <LocalEditor value="" onApply={(value) => applyBoundary(insertion, value)} onCancel={cancelEdit} {...services}/>}
-    {editing ? <LocalEditor value={nodeSource(node, source)} sourceStartLine={node.source.startLine} onApply={applyEdit} onCancel={cancelEdit} onInsertBefore={(draft) => requestBoundary(node, "before", draft)} onInsertAfter={(draft) => requestBoundary(node, "after", draft)} {...services}/> : <div className={`preview-content-region ${filterClass} ${activeSearch ? "search-result-active" : ""}`} data-node-id={node.id} data-source-line={node.source.startLine} data-source-start-offset={node.source.startOffset} data-source-end-offset={node.source.endOffset} onClick={(event) => { event.stopPropagation(); if (window.getSelection()?.isCollapsed !== false) beginEdit(); }}>{inlineLatex(node.raw, services.mathContext, effectiveSearch, activeSearch)}</div>}
+    {editing ? <LocalEditor value={nodeSource(node, source)} sourceStartLine={node.source.startLine} onApply={applyEdit} onCancel={cancelEdit} onInsertBefore={(draft) => requestBoundary(node, "before", draft)} onInsertAfter={(draft) => requestBoundary(node, "after", draft)} {...services}/> : <div className={`preview-content-region${virtualClass} ${filterClass} ${activeSearch ? "search-result-active" : ""}`} data-node-id={node.id} data-source-line={node.source.startLine} data-source-start-offset={node.source.startOffset} data-source-end-offset={node.source.endOffset} onClick={(event) => { event.stopPropagation(); if (window.getSelection()?.isCollapsed !== false) beginEdit(); }}>{inlineLatex(node.raw, services.mathContext, effectiveSearch, activeSearch)}</div>}
     {insertion?.side === "after" && <LocalEditor value="" onApply={(value) => applyBoundary(insertion, value)} onCancel={cancelEdit} {...services}/>}
   </Fragment>;
 }
@@ -511,6 +543,7 @@ function BlockRenderer({ node, source, definitions, selectedId, editingId, bound
   const activeSearch = services.activeSearchResult ? services.activeSearchResult.matchStart >= node.source.startOffset && services.activeSearchResult.matchEnd <= node.source.endOffset : false;
   const effectiveSearch = services.filterQuery.enabled && filterState !== "match" ? defaultInlineSearch : services.searchQuery;
   const listEnvironment = isListEnvironment(node.environmentId);
+  const leafBlock = !node.children.some((child) => child.kind === "block");
   const specialized = SpecializedContent({ node, source, mathContext: services.mathContext, searchQuery: effectiveSearch, activeSearch });
   const specializedContent = listEnvironment
     ? <ListContent node={node} source={source} mathContext={services.mathContext} searchQuery={effectiveSearch} activeSearch={activeSearch} renderChild={(child) => <PreviewNodeRenderer key={child.id} node={child} source={source} definitions={definitions} selectedId={selectedId} editingId={editingId} boundary={boundary} select={select} edit={edit} applyEdit={applyEdit} applyBoundary={applyBoundary} cancelEdit={cancelEdit} requestBoundary={requestBoundary} services={services} budget={budget}/>} />
@@ -532,11 +565,11 @@ function BlockRenderer({ node, source, definitions, selectedId, editingId, bound
   return <Fragment>
     {insertion?.side === "before" && <LocalEditor value="" onApply={(value) => applyBoundary(insertion, value)} onCancel={cancelEdit} {...services}/>}
     <section className={`preview-block env-${family} ${filterClass} ${activeSearch ? "search-result-active" : ""} ${selected ? "selected" : ""} ${editing ? "editing" : ""} ${services.relation?.active && !relationMatches ? "relation-unmatched" : ""} ${semanticId === services.relation?.focusId ? "relation-focus" : ""}`} data-environment={node.environmentId} data-semantic-block-id={semanticId} data-source-line={node.source.startLine} data-source-start-offset={node.source.startOffset} data-source-end-offset={node.source.endOffset} onDoubleClickCapture={(event) => { const target = event.target as Element; if (target.closest(".preview-local-editor") || target.closest(".preview-block") !== event.currentTarget) return; event.preventDefault(); event.stopPropagation(); services.onForwardSync(services.currentPath, node.source.startLine, 1); }} style={{ "--block-accent": cssValue(definition?.style.accentToken, "--env-generic-accent"), "--block-fill": cssValue(definition?.style.fillToken, "--env-generic-fill"), "--block-border": cssValue(definition?.style.borderToken, "--env-border-default"), "--block-selected-border": cssValue(definition?.style.selectedBorderToken, "--env-border-selected"), "--block-label-bg": cssValue(definition?.style.labelBackgroundToken, "--env-generic-label-bg"), "--block-label-text": cssValue(definition?.style.labelTextToken, "--env-generic-label-text") } as CSSProperties}>
-    {(definition?.behavior.showHeader ?? true) && <div className="preview-block-header"><button className="preview-block-header-main" onClick={(event) => { event.stopPropagation(); select(node.id); }}><span>{environmentLabel(definition, node.environmentId)}</span>{node.title && <strong>{node.title}</strong>}{node.latexLabel && <small>{node.latexLabel}</small>}</button>{(selected || (services.relation?.active && semanticId)) && <div className="preview-block-header-actions">{services.relation?.active && semanticId && <><button className={semanticId === services.relation.focusId ? "relation-control active" : "relation-control"} title={t("relation.setFocus")} onClick={(event) => { event.stopPropagation(); services.relation?.onFocus(semanticId); }}>◎</button><button className="relation-control" disabled={!!relationState?.disabledReason} title={relationState?.disabledReason ? t(`relation.invalid.${relationState.disabledReason}`) : relationState?.existing ? t("relation.remove") : t("relation.add")} onClick={(event) => { event.stopPropagation(); services.relation?.onToggle(semanticId, event.clientX, event.clientY); }}>{relationState?.existing ? relationState.existingDirection === "prerequisite" ? "← −" : "→ −" : "+"}</button></>}{selected && <><button title={t("preview.insertBefore")} onClick={(event) => { event.stopPropagation(); requestBoundary(node, "before"); }}>↥＋</button><button title={t("preview.insertAfter")} onClick={(event) => { event.stopPropagation(); requestBoundary(node, "after"); }}>↧＋</button></>}</div>}</div>}
+    {(definition?.behavior.showHeader ?? true) && <div className="preview-block-header"><div className="preview-block-header-main" onClick={(event) => { event.stopPropagation(); select(node.id); }}><BlockEnvironmentSelector node={node} source={source} definition={definition} definitions={definitions} disabled={editing} onChange={(value) => applyEdit(node, value)}/>{node.title && <strong>{node.title}</strong>}{node.latexLabel && <small>{node.latexLabel}</small>}</div>{(selected || (services.relation?.active && semanticId)) && <div className="preview-block-header-actions">{services.relation?.active && semanticId && <><button className={semanticId === services.relation.focusId ? "relation-control active" : "relation-control"} title={t("relation.setFocus")} onClick={(event) => { event.stopPropagation(); services.relation?.onFocus(semanticId); }}>◎</button><button className="relation-control" disabled={!!relationState?.disabledReason} title={relationState?.disabledReason ? t(`relation.invalid.${relationState.disabledReason}`) : relationState?.existing ? t("relation.remove") : t("relation.add")} onClick={(event) => { event.stopPropagation(); services.relation?.onToggle(semanticId, event.clientX, event.clientY); }}>{relationState?.existing ? relationState.existingDirection === "prerequisite" ? "← −" : "→ −" : "+"}</button></>}{selected && <><button title={t("preview.insertBefore")} onClick={(event) => { event.stopPropagation(); requestBoundary(node, "before"); }}>↥＋</button><button title={t("preview.insertAfter")} onClick={(event) => { event.stopPropagation(); requestBoundary(node, "after"); }}>↧＋</button></>}</div>}</div>}
     <div className="preview-block-body" onClick={(event) => {
-       if (specializedContent && (definition?.behavior.inlineEditable ?? true)) { event.stopPropagation(); edit(node.id); }
+       if ((specializedContent || leafBlock) && (definition?.behavior.inlineEditable ?? true)) { event.stopPropagation(); edit(node.id); }
      }}>
-       {editing ? <LocalEditor value={nodeSource(node, source)} sourceStartLine={node.source.startLine} mathDraft={isMathBlock(node)} onApply={(value) => applyEdit(node, value)} onCancel={cancelEdit} onInsertBefore={(draft) => requestBoundary(node, "before", draft)} onInsertAfter={(draft) => requestBoundary(node, "after", draft)} {...services}/> : specializedContent ?? <PreviewNodeList nodes={node.children} source={source} definitions={definitions} selectedId={selectedId} editingId={editingId} boundary={boundary} select={select} edit={edit} applyEdit={applyEdit} applyBoundary={applyBoundary} cancelEdit={cancelEdit} requestBoundary={requestBoundary} services={services} budget={budget}/> }
+       {editing ? <LocalEditor value={nodeSource(node, source)} sourceStartLine={node.source.startLine} mathDraft={isMathBlock(node)} onApply={(value) => applyEdit(node, value)} onCancel={cancelEdit} onInsertBefore={(draft) => requestBoundary(node, "before", draft)} onInsertAfter={(draft) => requestBoundary(node, "after", draft)} {...services}/> : specializedContent ?? <PreviewNodeList nodes={node.children} source={source} definitions={definitions} selectedId={selectedId} editingId={editingId} boundary={boundary} select={select} edit={leafBlock ? () => edit(node.id) : edit} applyEdit={applyEdit} applyBoundary={applyBoundary} cancelEdit={cancelEdit} requestBoundary={requestBoundary} services={services} budget={budget}/> }
     </div>
     <div className="preview-block-footer">
       <button className="preview-block-footer-main" title={environmentLabel(definition, node.environmentId)} onClick={(event) => { event.stopPropagation(); select(node.id); }}><span/></button>

@@ -60,6 +60,16 @@ describe("v0.2.2 structured Preview parser", () => {
     expect(document.diagnostics).toEqual([]);
   });
 
+  it("creates an editable virtual text region for an empty heading", () => {
+    const source = "\\section{Empty}\n\\section{Next}\nContent.";
+    const document = parsePreview(source, "main.tex", DEFAULT_ENVIRONMENTS);
+    const section = blocks(document.nodes).find((node) => node.environmentId === "section");
+    const virtual = section?.children.find((node) => node.kind === "content");
+
+    expect(virtual).toMatchObject({ kind: "content", contentType: "plain", raw: "" });
+    expect(virtual?.source.startOffset).toBe(virtual?.source.endOffset);
+  });
+
   it("keeps sibling spans disjoint and child spans contained", async () => {
     const source = await readFile(resolve("tests/fixtures/preview-basic/main.tex"), "utf8");
     const document = parsePreview(source, "main.tex", DEFAULT_ENVIRONMENTS);

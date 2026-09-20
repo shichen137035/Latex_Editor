@@ -227,6 +227,7 @@ export function parsePreview(source: string, filePath: string, definitions: Envi
     children.push(block);
     childrenByParent.set(block.parent, children);
   }
+  const headingEnvironmentIds = new Set(headings.map((heading) => heading.command));
 
   const buildChildren = (parent: RawBlock | undefined, rangeStart: number, rangeEnd: number, parentId?: string): PreviewNode[] => {
     const direct = childrenByParent.get(parent) ?? [];
@@ -251,6 +252,13 @@ export function parsePreview(source: string, filePath: string, definitions: Envi
       cursor = Math.max(cursor, block.end);
     }
     addContent(cursor, rangeEnd);
+    // An empty heading still needs an editable surface in Visual mode. This
+    // zero-width node is UI-only; source is inserted only when the user saves.
+    if (parent && parentId && nodes.length === 0 && headingEnvironmentIds.has(parent.environmentId)) {
+      const offset = parent.bodyStart;
+      const node: ContentRegion = { id: `content:${filePath}:${offset}:${offset}:virtual`, kind: "content", contentType: "plain", source: span(source, filePath, offset, offset, positionAt), raw: "", parentId };
+      nodes.push(node);
+    }
     return nodes;
   };
 
