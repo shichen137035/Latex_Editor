@@ -3,6 +3,7 @@ import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 import { DEFAULT_ENVIRONMENTS, environmentWithOverrides } from "../../apps/desktop/src/renderer/preview/environments.js";
 import { parsePreview } from "../../apps/desktop/src/renderer/preview/parser.js";
+import { previewBlocksForReconciliation } from "../../apps/desktop/src/renderer/preview/reconciliation.js";
 import type { PreviewNode, StructuralBlock } from "../../apps/desktop/src/renderer/preview/types.js";
 
 function blocks(nodes: PreviewNode[]): StructuralBlock[] {
@@ -10,6 +11,18 @@ function blocks(nodes: PreviewNode[]): StructuralBlock[] {
 }
 
 describe("v0.2.2 structured Preview parser", () => {
+  it("emits offset-independent reconciliation fingerprints", () => {
+    const source = "\\section{Stable title}\nA stable paragraph.";
+    const shifted = `\n\n${source}`;
+    const firstDocument = parsePreview(source, "main.tex", DEFAULT_ENVIRONMENTS);
+    const secondDocument = parsePreview(shifted, "main.tex", DEFAULT_ENVIRONMENTS);
+    const first = previewBlocksForReconciliation(firstDocument, source).blocks.find((block) => block.role === "section");
+    const second = previewBlocksForReconciliation(secondDocument, shifted).blocks.find((block) => block.role === "section");
+    expect(first?.transientId).not.toBe(second?.transientId);
+    expect(first?.fingerprint).toBe(second?.fingerprint);
+    expect(first?.origin).toBe("environment");
+  });
+
   it("builds sections, paragraphs, nested equations, theorem, proof, and virtual blocks", async () => {
     const source = await readFile(resolve("tests/fixtures/preview-basic/main.tex"), "utf8");
     const document = parsePreview(source, "main.tex", DEFAULT_ENVIRONMENTS);

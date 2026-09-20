@@ -1,4 +1,17 @@
-import type { BlockGraphSnapshot, BlockId, CommandMetadata, CompileResult, CreateSemanticBlockInput, DependencyCycle, DictionaryPackage, FileWriteResult, GraphDiagnostic, GraphTraversalOptions, GraphTraversalResult, LogicalRelation, Project, ProjectTreeNode, SemanticBlock, SettingsSnapshot, PreferenceKey, LatexToolchain, StyleResource, ThemeDefinition, SpellCheckMode, SpellCheckStatus, StructuralDependencyOverlap, SyncTexPdfPosition, SyncTexSourcePosition, TextFileContent, UpdateSemanticBlockInput } from "@latex-editor/contracts";
+import type { BlockCreationValidation, BlockGraphSnapshot, BlockId, BlockRangeMappingResult, BlockReconciliationResult, CommandMetadata, CompileResult, CreateSemanticBlockInput, CreateUserBlockInput, DependencyCycle, DictionaryPackage, FileWriteResult, GraphDiagnostic, GraphTraversalOptions, GraphTraversalResult, LogicalRelation, MapUserBlockRangesInput, Project, ProjectTreeNode, ReconcileParsedBlocksInput, RelationDirection, RelationMutationResult, RelationNeighborhood, RelationValidation, SemanticBlock, SettingsSnapshot, PreferenceKey, LatexToolchain, StyleResource, ThemeDefinition, SpellCheckMode, SpellCheckStatus, StructuralDependencyOverlap, StructuralHistoryState, SyncTexPdfPosition, SyncTexSourcePosition, TextFileContent, UpdateSemanticBlockInput } from "@latex-editor/contracts";
+
+type InstallationState = {
+  schemaVersion: 1;
+  product: "TeXWeave";
+  appVersion: string;
+  installMode: "recommended" | "custom";
+  installDirectory?: string;
+  installerLanguage?: string;
+  requestedComponents: string[];
+  components: Array<{ id: string; version: string; ownership: "external" | "installed-by-texweave" | "user-managed"; installedAt: string; path?: string; source?: string }>;
+  lastEnvironmentCheck?: string;
+  environment?: LatexToolchain;
+};
 
 declare global {
   interface Window {
@@ -8,16 +21,29 @@ declare global {
         set(key: PreferenceKey, value: unknown, projectId?: string): Promise<SettingsSnapshot>;
         detectToolchain(manual?: "directory" | "executable"): Promise<LatexToolchain | undefined>;
       };
+      installation: {
+        state(): Promise<InstallationState | undefined>;
+        setMode(mode: "recommended" | "custom", installDirectory?: string): Promise<InstallationState | undefined>;
+        recordComponent(component: { id: string; version: string; ownership: "external" | "installed-by-texweave" | "user-managed"; path?: string; source?: string }): Promise<InstallationState | undefined>;
+        recordEnvironment(toolchain: LatexToolchain): Promise<InstallationState | undefined>;
+        removeUserData(options: { settings: boolean; themes: boolean; languages: boolean; spellcheck: boolean; templates: boolean; cache: boolean }): Promise<void>;
+      };
       resources: {
         searchCommands(query: string): Promise<CommandMetadata[]>;
       };
       blockGraph: {
         snapshot(projectId: string): Promise<BlockGraphSnapshot>;
         createBlock(projectId: string, input: CreateSemanticBlockInput): Promise<SemanticBlock>;
+        validateUserBlock(projectId: string, input: CreateUserBlockInput): Promise<BlockCreationValidation>;
+        createUserBlock(projectId: string, input: CreateUserBlockInput): Promise<SemanticBlock>;
+        deleteUserBlock(projectId: string, blockId: BlockId): Promise<void>;
+        reconcileParsedBlocks(projectId: string, input: ReconcileParsedBlocksInput): Promise<BlockReconciliationResult>;
+        mapUserBlockRanges(projectId: string, input: MapUserBlockRangesInput): Promise<BlockRangeMappingResult>;
         addBlock(projectId: string, block: SemanticBlock): Promise<void>;
         updateBlock(projectId: string, blockId: BlockId, patch: UpdateSemanticBlockInput): Promise<SemanticBlock>;
         removeBlock(projectId: string, blockId: BlockId): Promise<void>;
-        addDependency(projectId: string, prerequisite: BlockId, consequence: BlockId): Promise<void>;
+        addDependency(projectId: string, prerequisite: BlockId, consequence: BlockId): Promise<RelationMutationResult>;
+        validateDependency(projectId: string, prerequisite: BlockId, consequence: BlockId): Promise<RelationValidation>;
         removeDependency(projectId: string, prerequisite: BlockId, consequence: BlockId): Promise<void>;
         hasDirectDependency(projectId: string, prerequisite: BlockId, consequence: BlockId): Promise<boolean>;
         setStructuralParent(projectId: string, child: BlockId, parent: BlockId | null): Promise<void>;
@@ -37,6 +63,10 @@ declare global {
         findStructuralOverlapsInConsequences(projectId: string, blockId: BlockId): Promise<StructuralDependencyOverlap[]>;
         findLogicalRelationsWithinPrerequisites(projectId: string, blockId: BlockId): Promise<LogicalRelation[]>;
         getBlocksBetween(projectId: string, start: BlockId, end: BlockId): Promise<BlockId[]>;
+        getRelationNeighborhood(projectId: string, focusId: BlockId | null, direction: RelationDirection, depth: number | "all"): Promise<RelationNeighborhood>;
+        historyState(projectId: string): Promise<StructuralHistoryState>;
+        undo(projectId: string): Promise<BlockGraphSnapshot>;
+        redo(projectId: string): Promise<BlockGraphSnapshot>;
         validate(projectId: string): Promise<GraphDiagnostic[]>;
       };
       spellcheck: {

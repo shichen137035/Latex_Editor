@@ -42,7 +42,7 @@ export interface LatexToolchain {
   detectedAt: string;
 }
 export interface PreferenceValues {
-  locale: "en" | "ja";
+  locale: "en" | "ja" | "zh-CN" | "zh-TW" | "ko" | "fr";
   /** Built-in ids are light/dark; custom ids are provided by the theme catalog. */
   theme: string;
   /** Empty means the application-local themes directory. */
@@ -53,6 +53,7 @@ export interface PreferenceValues {
   autoSave: "off" | "afterDelay";
   hideBuildArtifacts: boolean;
   documentWordCompletion: boolean;
+  autoPairSymbols: boolean;
   confirmPreviewEdits: boolean;
   visibleFilterGroups: string[];
   referenceLinkModifier: "ctrl" | "alt" | "shift" | "meta";
@@ -70,16 +71,16 @@ export interface PreferenceValues {
 export type PreferenceKey = keyof PreferenceValues;
 export const preferenceDefaults: PreferenceValues = {
   locale: "en", theme: "light", themeDirectory: "", fontSize: 15, tabSize: 2, wordWrap: true,
-  autoSave: "off", hideBuildArtifacts: true, documentWordCompletion: true, confirmPreviewEdits: true, visibleFilterGroups: ["blockType", "location", "file", "properties"], referenceLinkModifier: "ctrl", spellCheckMode: "auto", spellCheckLanguage: "en-US", spellCheckActiveLanguages: ["en-US"], maximize: true, restoreProject: false,
+  autoSave: "off", hideBuildArtifacts: true, documentWordCompletion: true, autoPairSymbols: true, confirmPreviewEdits: true, visibleFilterGroups: ["blockType", "location", "file", "properties"], referenceLinkModifier: "ctrl", spellCheckMode: "auto", spellCheckLanguage: "en-US", spellCheckActiveLanguages: ["en-US"], maximize: true, restoreProject: false,
   lastProject: "", engine: "pdflatex", keybindings: {}, environments: [], layout: {}
 };
 // Project-scoped preferences are kept separate from machine-wide tree and editor settings.
 // The project settings UI is reserved for a later release; build-artifact visibility is global.
-export const projectPreferenceKeys: PreferenceKey[] = ["fontSize", "tabSize", "wordWrap", "autoSave", "confirmPreviewEdits", "engine", "environments", "layout"];
+export const projectPreferenceKeys: PreferenceKey[] = ["fontSize", "tabSize", "wordWrap", "autoSave", "autoPairSymbols", "confirmPreviewEdits", "engine", "environments", "layout"];
 export interface SettingsSnapshot { global: Partial<PreferenceValues>; project: Partial<PreferenceValues>; toolchain?: LatexToolchain }
 export function validPreference(key: string, value: unknown): boolean {
   switch (key) {
-    case "locale": return value === "en" || value === "ja";
+    case "locale": return ["en", "ja", "zh-CN", "zh-TW", "ko", "fr"].includes(String(value));
     case "theme": return typeof value === "string" && /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/.test(value);
     case "engine": return ["pdflatex", "xelatex", "lualatex"].includes(String(value));
     case "spellCheckMode": return value === "auto" || value === "manual" || value === "disabled";
@@ -87,7 +88,7 @@ export function validPreference(key: string, value: unknown): boolean {
     case "fontSize": return typeof value === "number" && Number.isInteger(value) && value >= 10 && value <= 32;
     case "tabSize": return typeof value === "number" && [2, 4, 8].includes(value);
     case "autoSave": return value === "off" || value === "afterDelay";
-    case "wordWrap": case "hideBuildArtifacts": case "documentWordCompletion": case "confirmPreviewEdits": case "maximize": case "restoreProject": return typeof value === "boolean";
+    case "wordWrap": case "hideBuildArtifacts": case "documentWordCompletion": case "autoPairSymbols": case "confirmPreviewEdits": case "maximize": case "restoreProject": return typeof value === "boolean";
     case "referenceLinkModifier": return value === "ctrl" || value === "alt" || value === "shift" || value === "meta";
     case "spellCheckActiveLanguages": return Array.isArray(value) && value.every((item) => typeof item === "string" && /^[A-Za-z]{2,3}(?:[-_][A-Za-z0-9]{2,8})?$/.test(item));
     case "themeDirectory": case "lastProject": return typeof value === "string";

@@ -2,12 +2,13 @@ import { app, BrowserWindow, dialog, ipcMain, Menu } from "electron";
 import { randomUUID } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import { resolve } from "node:path";
-import type { CommandMetadata, CompileResult, CompileInput, GraphTraversalOptions, PreferenceKey, SemanticBlock, CreateSemanticBlockInput, UpdateSemanticBlockInput } from "@latex-editor/contracts" with { "resolution-mode": "import" };
+import type { CommandMetadata, CompileResult, CompileInput, GraphTraversalOptions, PreferenceKey, SemanticBlock, CreateSemanticBlockInput, CreateUserBlockInput, UpdateSemanticBlockInput, LatexToolchain, MapUserBlockRangesInput, ReconcileParsedBlocksInput, RelationDirection } from "@latex-editor/contracts" with { "resolution-mode": "import" };
 import type { ProjectBlockGraphService } from "@latex-editor/application" with { "resolution-mode": "import" };
 import { SettingsRepository } from "./settings.js";
 import { StyleResourceRepository } from "./style-resources.js";
 import { ThemeRepository } from "./themes.js";
 import { OfflineSpellCheckService } from "./spellcheck.js";
+import { InstallationStateService } from "./installation.js";
 import { forwardSync, reverseSync } from "./synctex.js";
 
 interface DesktopContext {
@@ -37,10 +38,17 @@ interface DesktopContext {
   styleResources: StyleResourceRepository;
   themes: ThemeRepository;
   spellcheck: OfflineSpellCheckService;
+  installation: InstallationStateService;
 }
 
 let context: DesktopContext | undefined;
 let settings: SettingsRepository;
+
+// Keep Electron's per-user data and Windows AppUserModel identity aligned with
+// the product name used by the installer. This also makes the documented
+// %APPDATA%\\TeXWeave layout stable across updates.
+app.setName("TeXWeave");
+app.setAppUserModelId("com.texweave.editor");
 
 
 async function createContext(): Promise<DesktopContext> {
@@ -55,11 +63,16 @@ async function createContext(): Promise<DesktopContext> {
   ]);
   const registry = new SQLiteProjectRegistry(resolve(app.getPath("userData"), "registry.sqlite"));
   registry.initialize();
-  // Development build lives under apps/desktop/dist/main; packaged builds can later override this path.
-  const resources = new FileResourceCatalog(resolve(__dirname, "../../../..", "resources"));
-  const styleResources = new StyleResourceRepository(resolve(__dirname, "../../../..", "resources"), app.getPath("userData"));
+  const installation = new InstallationStateService(app.getPath("userData"), app.getVersion());
+  await installation.initialize();
+  // Development resources live at the repository root. Packaged resources are
+  // copied beside the app by electron-builder so user projects remain separate.
+  const resourceRoot = app.isPackaged ? resolve(process.resourcesPath, "resources") : resolve(__dirname, "../../../..", "resources");
+  const themeRoot = app.isPackaged ? resolve(process.resourcesPath, "themes") : resolve(__dirname, "../../../..", "themes");
+  const resources = new FileResourceCatalog(resourceRoot);
+  const styleResources = new StyleResourceRepository(resourceRoot, app.getPath("userData"));
   await styleResources.initialize();
-  const themes = new ThemeRepository(resolve(__dirname, "../../../..", "resources"), resolve(__dirname, "../../../..", "themes"));
+  const themes = new ThemeRepository(resourceRoot, themeRoot);
   await themes.initialize();
   const projects = new ProjectService({
     registry,
@@ -80,12 +93,14 @@ async function createContext(): Promise<DesktopContext> {
   let detected = await discoverToolchain(settings.toolchain?.latexmk ?? settings.toolchain?.binDirectory);
   if (!detected.available) detected = await discoverToolchain();
   await settings.saveToolchain(detected);
+  await installation.recordEnvironment(detected);
   const profiles = { getCompilerProfile: () => ({ ...resources.getCompilerProfile(), ...(settings.toolchain?.latexmk ? { executable: settings.toolchain.latexmk } : {}) }) };
   const compiler = new LatexmkCompilerService({ projects, files, profiles, clock: systemClock });
   const spellcheck = new OfflineSpellCheckService();
   await spellcheck.initialize();
   spellcheck.configure(settings.global.spellCheckMode ?? "auto", settings.global.spellCheckLanguage ?? "en-US");
-  return { registry, projects, files, compiler, resources, blockGraph, styleResources, themes, spellcheck };
+  await installation.recordComponent({ id: "core", version: app.getVersion(), ownership: "installed-by-texweave", path: app.getAppPath() });
+  return { registry, projects, files, compiler, resources, blockGraph, styleResources, themes, spellcheck, installation };
 }
 
 function registerIpcHandlers(): void {
@@ -95,13 +110,36 @@ function registerIpcHandlers(): void {
     if (key === "themeDirectory" && projectId === undefined && context) await context.themes.setDirectory(typeof value === "string" ? value : "");
     return snapshot;
   });
+  ipcMain.handle("installation:state", () => context?.installation.snapshot());
+  ipcMain.handle("installation:set-mode", (_event, mode: "recommended" | "custom", installDirectory?: string) => {
+    if (context === undefined) throw new Error("Application context is not ready");
+    return context.installation.setInstallMode(mode, installDirectory);
+  });
+  ipcMain.handle("installation:record-component", (_event, component: { id: "core" | "language-packs" | "spellcheck" | "latex-runtime" | "themes" | "templates"; version: string; ownership: "external" | "installed-by-texweave" | "user-managed"; path?: string; source?: string }) => {
+    if (context === undefined) throw new Error("Application context is not ready");
+    return context.installation.recordComponent(component);
+  });
+  ipcMain.handle("installation:record-environment", (_event, toolchain: LatexToolchain) => {
+    if (context === undefined) throw new Error("Application context is not ready");
+    return context.installation.recordEnvironment(toolchain);
+  });
+  ipcMain.handle("installation:remove-user-data", (_event, options: { settings: boolean; themes: boolean; languages: boolean; spellcheck: boolean; templates: boolean; cache: boolean }) => {
+    if (context === undefined) throw new Error("Application context is not ready");
+    return context.installation.removeUserData(options);
+  });
   ipcMain.handle("resources:commands", (_event, query: string) => context?.resources.searchCommands(query) ?? []);
   ipcMain.handle("block-graph:snapshot", (_event, projectId: string) => context?.blockGraph.snapshot(projectId));
   ipcMain.handle("block-graph:create-block", (_event, projectId: string, input: CreateSemanticBlockInput) => context?.blockGraph.createBlock(projectId, input));
+  ipcMain.handle("block-graph:validate-user-block", (_event, projectId: string, input: CreateUserBlockInput) => context?.blockGraph.validateUserBlock(projectId, input));
+  ipcMain.handle("block-graph:create-user-block", (_event, projectId: string, input: CreateUserBlockInput) => context?.blockGraph.createUserBlock(projectId, input));
+  ipcMain.handle("block-graph:delete-user-block", (_event, projectId: string, blockId: string) => context?.blockGraph.deleteUserBlock(projectId, blockId));
+  ipcMain.handle("block-graph:reconcile-parsed", (_event, projectId: string, input: ReconcileParsedBlocksInput) => context?.blockGraph.reconcileParsedBlocks(projectId, input));
+  ipcMain.handle("block-graph:map-user-ranges", (_event, projectId: string, input: MapUserBlockRangesInput) => context?.blockGraph.mapUserBlockRanges(projectId, input));
   ipcMain.handle("block-graph:add-block", (_event, projectId: string, block: SemanticBlock) => context?.blockGraph.addBlock(projectId, block));
   ipcMain.handle("block-graph:update-block", (_event, projectId: string, blockId: string, patch: UpdateSemanticBlockInput) => context?.blockGraph.updateBlock(projectId, blockId, patch));
   ipcMain.handle("block-graph:remove-block", (_event, projectId: string, blockId: string) => context?.blockGraph.removeBlock(projectId, blockId));
   ipcMain.handle("block-graph:add-dependency", (_event, projectId: string, prerequisite: string, consequence: string) => context?.blockGraph.addDependency(projectId, prerequisite, consequence));
+  ipcMain.handle("block-graph:validate-dependency", (_event, projectId: string, prerequisite: string, consequence: string) => context?.blockGraph.validateDependency(projectId, prerequisite, consequence));
   ipcMain.handle("block-graph:remove-dependency", (_event, projectId: string, prerequisite: string, consequence: string) => context?.blockGraph.removeDependency(projectId, prerequisite, consequence));
   ipcMain.handle("block-graph:has-direct-dependency", (_event, projectId: string, prerequisite: string, consequence: string) => context?.blockGraph.hasDirectDependency(projectId, prerequisite, consequence));
   ipcMain.handle("block-graph:set-structural-parent", (_event, projectId: string, child: string, parent: string | null) => context?.blockGraph.setStructuralParent(projectId, child, parent));
@@ -121,6 +159,10 @@ function registerIpcHandlers(): void {
   ipcMain.handle("block-graph:consequence-overlaps", (_event, projectId: string, blockId: string) => context?.blockGraph.findStructuralOverlapsInConsequences(projectId, blockId));
   ipcMain.handle("block-graph:prerequisite-relations", (_event, projectId: string, blockId: string) => context?.blockGraph.findLogicalRelationsWithinPrerequisites(projectId, blockId));
   ipcMain.handle("block-graph:between", (_event, projectId: string, start: string, end: string) => context?.blockGraph.getBlocksBetween(projectId, start, end));
+  ipcMain.handle("block-graph:neighborhood", (_event, projectId: string, focusId: string | null, direction: RelationDirection, depth: number | "all") => context?.blockGraph.getRelationNeighborhood(projectId, focusId, direction, depth));
+  ipcMain.handle("block-graph:history-state", (_event, projectId: string) => context?.blockGraph.historyState(projectId));
+  ipcMain.handle("block-graph:undo", (_event, projectId: string) => context?.blockGraph.undo(projectId));
+  ipcMain.handle("block-graph:redo", (_event, projectId: string) => context?.blockGraph.redo(projectId));
   ipcMain.handle("block-graph:validate", (_event, projectId: string) => context?.blockGraph.validate(projectId));
   ipcMain.handle("spellcheck:status", () => context?.spellcheck.status());
   ipcMain.handle("spellcheck:check-text", (_event, text: string, language: string) => context?.spellcheck.checkText(text, language) ?? []);
@@ -199,6 +241,7 @@ function registerIpcHandlers(): void {
     const { discoverToolchain } = await import("@latex-editor/compiler-latexmk");
     const detected = await discoverToolchain(path);
     await settings.saveToolchain(detected);
+    if (context) await context.installation.recordEnvironment(detected);
     return detected;
   });
   ipcMain.handle("projects:list", async () => context?.projects.listProjects() ?? []);

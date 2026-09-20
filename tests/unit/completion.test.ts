@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { analyzeCompletionContext, analyzeDocumentWordContext } from "../../apps/desktop/src/renderer/completion/context.js";
+import { analyzeCompletionContext, analyzeDocumentWordContext, analyzeLexicalCompletionContext } from "../../apps/desktop/src/renderer/completion/context.js";
 import { completionEndColumn } from "../../apps/desktop/src/renderer/completion/CompletionController.js";
 import { ProjectIndex } from "../../apps/desktop/src/renderer/completion/ProjectIndex.js";
 import { DEFAULT_ENVIRONMENTS } from "../../apps/desktop/src/renderer/preview/environments.js";
@@ -10,6 +10,20 @@ function context(line: string) {
 
 function wordContext(line: string) {
   return analyzeDocumentWordContext({ getLineContent: () => line }, { lineNumber: 1, column: line.length + 1 });
+}
+
+function lexicalContext(source: string, cursorOffset = source.length) {
+  const before = source.slice(0, cursorOffset);
+  const lines = source.split("\n");
+  const lineNumber = before.split("\n").length;
+  const lineStart = before.lastIndexOf("\n") + 1;
+  const position = { lineNumber, column: cursorOffset - lineStart + 1 };
+  return analyzeLexicalCompletionContext({
+    getLineContent: (requestedLine) => lines[requestedLine - 1] ?? "",
+    getValue: () => source,
+    getOffsetAt: () => cursorOffset,
+    getVersionId: () => 1
+  }, position);
 }
 
 describe("v0.2.5 completion index", () => {
@@ -27,6 +41,13 @@ describe("v0.2.5 completion index", () => {
     expect(wordContext("This com")).toMatchObject({ mode: "document-word", prefix: "com" });
     expect(wordContext("Value $com")).toMatchObject({ mode: "unknown" });
     expect(context("\\cite{com")).toMatchObject({ mode: "citation" });
+  });
+
+  it("keeps prose words and mathematical symbols in separate contexts", () => {
+    expect(lexicalContext("A normal wor")).toMatchObject({ mode: "document-word", prefix: "wor" });
+    expect(lexicalContext("A value $theta + sig", "A value $theta + sig".length)).toMatchObject({ mode: "math-symbol", prefix: "sig" });
+    const display = "Before\n\\begin{equation}\nvariance + est\n\\end{equation}\nAfter";
+    expect(lexicalContext(display, display.indexOf("est") + 3)).toMatchObject({ mode: "math-symbol", prefix: "est" });
   });
 
   it("merges project declarations, labels, bibliography entries, environments, and files", () => {
@@ -48,6 +69,21 @@ describe("v0.2.5 completion index", () => {
     expect(index.complete(context("\\input{sec"), "main.tex").map((item) => item.insertText)).toContain("sections/theory");
     expect(index.complete(context("\\includegraphics{fig"), "main.tex").map((item) => item.insertText)).toContain("figures/model.png");
     expect(index.complete(wordContext("The con"), "main.tex").map((item) => item.label)).toContain("consistency");
+  });
+
+  it("indexes prose words outside math and symbols only inside math", () => {
+    const index = new ProjectIndex();
+    const content = "A common estimator. $theta + sigma$\\n\\begin{equation}variance + score\\end{equation}\\n\\[matrix + vector\\]";
+    index.rebuild([{ name: "main.tex", relativePath: "main.tex", kind: "file" }], [{ path: "main.tex", content }], DEFAULT_ENVIRONMENTS, []);
+
+    const prose = index.complete(lexicalContext("com"), "main.tex").map((item) => item.label);
+    expect(prose).toContain("common");
+    expect(prose).not.toContain("theta");
+    expect(prose).not.toContain("variance");
+
+    const math = index.complete(lexicalContext("$th"), "main.tex").map((item) => item.label);
+    expect(math).toContain("theta");
+    expect(math).not.toContain("common");
   });
 
   it("keeps begin completion separate from environment completion", () => {

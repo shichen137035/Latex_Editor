@@ -68,7 +68,7 @@ SQLite 注册表默认位于 `%LOCALAPPDATA%\latex-editor\registry.sqlite`。测
 - Settings → Style Resources 管理内置 Empty/Default、用户资源导入、文件夹导入、复制、重命名和删除；自定义资源保存在 Electron userData 中。
 - 新建空白项目会创建 `main.tex` 和空的 `reference.bib`；选择 Default 或自定义 `.sty` 后，资源文件会在创建时复制到项目根目录，并按安全元数据自动插入 `\\usepackage{...}`。
 - 项目只依赖本地快照，不依赖 TeXWeave 安装目录；资源库后续变化不会修改已创建项目。Online Resources 目前仅保留诚实的占位区域。
-- v0.3 块关系后端：稳定块 ID、结构从属、前提/结果有向图、深度遍历、Tarjan SCC、重叠/环路诊断和块删除清理；关系快照保存在项目 `.texweave/block-graph.json`，并通过 preload/IPC 提供给后续 Relations UI。
+- v0.3/v0.3.4 块关系后端：稳定块 ID、User/Environment/Virtual 起源、层状区间约束、统一 RelationValidator、结构从属、前提/结果有向图、深度遍历、Tarjan SCC、结构 Undo/Redo 和块删除重挂；关系快照保存在项目 `.texweave/structure.json`，旧 `.texweave/block-graph.json` 会被兼容读取。
 - v0.3.1 数学编辑：结构化 Preview、Source 光标/悬浮窗及 Preview 公式草稿共用项目宏感知的 KaTeX 渲染服务；支持项目内 `newcommand`/`renewcommand`/`providecommand`/`DeclareMathOperator`，并提供可配置的块前后插入命令。
 
 目录按分层架构组织：`apps/` 放 CLI，`packages/` 放 contracts、domain、application 和基础设施适配器，`resources/` 放可编辑数据资源，`tests/` 放分层测试。

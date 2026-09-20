@@ -17,10 +17,12 @@ describe("v0.2.3 foundations", () => {
   });
   it("rejects invalid preferences and global-only project overrides", () => {
     expect(preferenceDefaults.documentWordCompletion).toBe(true);
+    expect(preferenceDefaults.autoPairSymbols).toBe(true);
     expect(preferenceDefaults.referenceLinkModifier).toBe("ctrl");
     expect(preferenceDefaults.spellCheckMode).toBe("auto");
     expect(preferenceDefaults.spellCheckLanguage).toBe("en-US");
-    expect(sanitizePreferences({ fontSize: -3, theme: "broken", locale: "ja", wordWrap: true, documentWordCompletion: false })).toEqual({ locale: "ja", wordWrap: true, documentWordCompletion: false });
+    // Custom theme ids are valid; path-like values remain invalid.
+    expect(sanitizePreferences({ fontSize: -3, theme: "../broken", locale: "ja", wordWrap: true, documentWordCompletion: false, autoPairSymbols: false })).toEqual({ locale: "ja", wordWrap: true, documentWordCompletion: false, autoPairSymbols: false });
     expect(sanitizePreferences({ spellCheckMode: "manual", spellCheckLanguage: "ja-JP" })).toEqual({ spellCheckMode: "manual", spellCheckLanguage: "ja-JP" });
     expect(sanitizePreferences({ referenceLinkModifier: "alt" })).toEqual({ referenceLinkModifier: "alt" });
     expect(sanitizePreferences({ referenceLinkModifier: "mouse" })).toEqual({});

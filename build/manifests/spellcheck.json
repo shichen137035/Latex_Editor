@@ -1,0 +1,15 @@
+{
+  "schemaVersion": 1,
+  "userDirectory": "%APPDATA%/TeXWeave/spellcheck",
+  "providers": [
+    { "id": "hunspell", "kind": "hunspell", "ownership": "user-managed", "bundled": ["en-US", "en-GB"] },
+    { "id": "chinese-rules", "kind": "lightweight-rules", "ownership": "user-managed", "locales": ["zh-CN", "zh-TW"] },
+    { "id": "japanese-rules", "kind": "lightweight-rules", "ownership": "user-managed", "locales": ["ja-JP"] }
+  ],
+  "policy": {
+    "downloadOverHttps": true,
+    "validateBeforeInstall": true,
+    "preserveOnUpdate": true,
+    "preserveOnUninstall": true
+  }
+}

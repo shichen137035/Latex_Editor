@@ -1,13 +1,24 @@
 import {
   AppError,
   type BlockGraphSnapshot,
+  type BlockReconciliationResult,
+  type BlockRangeMappingResult,
+  type BlockTextEdit,
+  type BlockCreationValidation,
   type BlockId,
+  type BlockCapabilities,
+  type CreateUserBlockInput,
   type DependencyCycle,
   type DependencyEdge,
   type GraphDiagnostic,
   type GraphTraversalOptions,
   type GraphTraversalResult,
   type LogicalRelation,
+  type ParsedBlockDescriptor,
+  type RelationDirection,
+  type RelationMutationResult,
+  type RelationNeighborhood,
+  type RelationValidation,
   type SemanticBlock,
   type StructuralDependencyOverlap,
   type StructuralParentEdge,
@@ -20,7 +31,8 @@ export interface IBlockGraphManager {
   addBlock(block: SemanticBlock): void;
   updateBlock(blockId: BlockId, patch: UpdateSemanticBlockInput): SemanticBlock;
   removeBlock(blockId: BlockId): void;
-  addDependency(prerequisite: BlockId, consequence: BlockId): void;
+  validateDependency(prerequisite: BlockId, consequence: BlockId): RelationValidation;
+  addDependency(prerequisite: BlockId, consequence: BlockId): RelationMutationResult;
   removeDependency(prerequisite: BlockId, consequence: BlockId): void;
   hasDirectDependency(prerequisite: BlockId, consequence: BlockId): boolean;
   getDirectPrerequisites(blockId: BlockId): BlockId[];
@@ -37,6 +49,12 @@ export interface IBlockGraphManager {
   detectDependencyCycles(): DependencyCycle[];
   findStructuralOverlapsInPrerequisites(blockId: BlockId): StructuralDependencyOverlap[];
   findLogicalRelationsWithinPrerequisites(blockId: BlockId): LogicalRelation[];
+  validateUserBlock(input: CreateUserBlockInput): BlockCreationValidation;
+  addUserBlock(block: SemanticBlock): void;
+  deleteUserBlock(blockId: BlockId): void;
+  reconcileParsedBlocks(fileId: string, blocks: ParsedBlockDescriptor[], allocateId: () => BlockId): BlockReconciliationResult;
+  mapUserBlockRanges(fileId: string, transactions: BlockTextEdit[][]): BlockRangeMappingResult;
+  getRelationNeighborhood(focusId: BlockId | null, direction: RelationDirection, depth: number | "all"): RelationNeighborhood;
   validateGraph(): GraphDiagnostic[];
 }
 
@@ -47,8 +65,28 @@ function sorted(values: Iterable<BlockId>): BlockId[] {
 function cloneBlock(block: SemanticBlock): SemanticBlock {
   return {
     ...block,
+    ...(block.range === undefined ? {} : { range: { ...block.range } }),
+    ...(block.capabilities === undefined ? {} : { capabilities: { ...block.capabilities } }),
     ...(block.source === undefined ? {} : { source: { ...block.source } }),
     ...(block.metadata === undefined ? {} : { metadata: structuredClone(block.metadata) })
+  };
+}
+
+function defaultCapabilities(origin: SemanticBlock["origin"]): BlockCapabilities {
+  if (origin === "virtual") return { connectable: false, deletable: false, renameable: false, retypable: false };
+  if (origin === "environment") return { connectable: true, deletable: false, renameable: "limited", retypable: false };
+  return { connectable: true, deletable: true, renameable: true, retypable: true };
+}
+
+function normalizedBlock(block: SemanticBlock): SemanticBlock {
+  const origin = block.origin ?? "user";
+  return {
+    ...cloneBlock(block),
+    origin,
+    role: block.role ?? block.type,
+    type: block.type || block.role || "custom",
+    capabilities: { ...defaultCapabilities(origin), ...block.capabilities },
+    state: block.state ?? "active"
   };
 }
 
@@ -67,6 +105,12 @@ function assertBlock(block: SemanticBlock): void {
   }
   if (block.metadata !== undefined && asRecord(block.metadata) === undefined) {
     throw new AppError("GRAPH_SNAPSHOT_INVALID", `Block ${block.id} has invalid metadata`);
+  }
+  if (block.origin !== undefined && !["environment", "virtual", "user"].includes(block.origin)) {
+    throw new AppError("GRAPH_SNAPSHOT_INVALID", `Block ${block.id} has an invalid origin`);
+  }
+  if (block.range !== undefined && (!Number.isInteger(block.range.start) || !Number.isInteger(block.range.end) || block.range.start < 0 || block.range.end <= block.range.start || !block.fileId)) {
+    throw new AppError("GRAPH_SNAPSHOT_INVALID", `Block ${block.id} has an invalid text range`);
   }
   if (block.source !== undefined) {
     const source = asRecord(block.source);
@@ -133,8 +177,9 @@ export class BlockGraphManager implements IBlockGraphManager {
 
   constructor(snapshot?: BlockGraphSnapshot) {
     for (const block of snapshot?.blocks ?? []) {
-      this.#blockEntries.push(cloneBlock(block));
-      if (!this.#blocks.has(block.id)) this.#blocks.set(block.id, cloneBlock(block));
+      const normalized = normalizedBlock(block);
+      this.#blockEntries.push(normalized);
+      if (!this.#blocks.has(block.id)) this.#blocks.set(block.id, cloneBlock(normalized));
     }
     this.#dependencies = (snapshot?.dependencies ?? []).map((edge) => ({ ...edge }));
     this.#structuralParents = (snapshot?.structuralParents ?? []).map((edge) => ({ ...edge }));
@@ -168,20 +213,20 @@ export class BlockGraphManager implements IBlockGraphManager {
   addBlock(block: SemanticBlock): void {
     assertBlock(block);
     if (this.#blocks.has(block.id)) throw new AppError("BLOCK_ALREADY_EXISTS", `Block already exists: ${block.id}`);
-    const copy = cloneBlock(block);
+    const copy = normalizedBlock(block);
     this.#blocks.set(block.id, copy);
     this.#blockEntries.push(copy);
   }
 
   updateBlock(blockId: BlockId, patch: UpdateSemanticBlockInput): SemanticBlock {
     const existing = this.#requireBlock(blockId);
-    const next: SemanticBlock = {
+    const next = normalizedBlock({
       ...existing,
       ...patch,
       id: blockId,
       ...(patch.source === undefined ? {} : { source: { ...patch.source } }),
       ...(patch.metadata === undefined ? {} : { metadata: structuredClone(patch.metadata) })
-    };
+    });
     assertBlock(next);
     this.#blocks.set(blockId, next);
     const index = this.#blockEntries.findIndex((block) => block.id === blockId);
@@ -200,13 +245,240 @@ export class BlockGraphManager implements IBlockGraphManager {
     this.#structuralParents = this.#structuralParents.filter((edge) => edge.parent !== blockId && edge.child !== blockId);
   }
 
-  addDependency(prerequisite: BlockId, consequence: BlockId): void {
-    this.#requireBlock(prerequisite);
-    this.#requireBlock(consequence);
-    if (prerequisite === consequence) {
-      throw new AppError("DEPENDENCY_SELF_REFERENCE", `A block cannot directly depend on itself: ${prerequisite}`);
+  validateDependency(prerequisite: BlockId, consequence: BlockId): RelationValidation {
+    const source = this.#blocks.get(prerequisite);
+    const target = this.#blocks.get(consequence);
+    if (!source || !target) return { status: "invalid", reason: "missing-endpoint", message: "Relation endpoint cannot be resolved." };
+    if (prerequisite === consequence) return { status: "invalid", reason: "self-loop", message: "A block cannot be related to itself." };
+    if (source.capabilities?.connectable === false || target.capabilities?.connectable === false || source.origin === "virtual" || target.origin === "virtual") {
+      return { status: "invalid", reason: "virtual-endpoint", message: "Virtual blocks cannot be relation endpoints." };
     }
-    if (!this.hasDirectDependency(prerequisite, consequence)) this.#dependencies.push({ from: prerequisite, to: consequence });
+    if (this.#isStructuralAncestorIn(consequence, prerequisite, this.#structuralParents)) {
+      return { status: "invalid", reason: "descendant-prerequisite", message: "A child block cannot be a prerequisite of one of its containing blocks." };
+    }
+    if (this.hasDirectDependency(consequence, prerequisite)) {
+      return { status: "invalid", reason: "bidirectional", message: "The reverse relation already exists; bidirectional logical relations are not supported." };
+    }
+    if (this.isPrerequisiteOf(consequence, prerequisite)) {
+      return { status: "warning", reason: "cycle", message: "This relation creates a logical cycle." };
+    }
+    return { status: "valid" };
+  }
+
+  addDependency(prerequisite: BlockId, consequence: BlockId): RelationMutationResult {
+    const validation = this.validateDependency(prerequisite, consequence);
+    if (validation.status === "invalid") {
+      throw new AppError("RELATION_INVALID", validation.message, { details: { prerequisite, consequence, reason: validation.reason } });
+    }
+    if (this.hasDirectDependency(prerequisite, consequence)) return { outcome: "duplicate", validation };
+    this.#dependencies.push({ from: prerequisite, to: consequence });
+    return { outcome: "created", validation };
+  }
+
+  validateUserBlock(input: CreateUserBlockInput): BlockCreationValidation {
+    const { start, end } = input.range;
+    if (!Number.isInteger(start) || !Number.isInteger(end) || start < 0 || end <= start || !input.fileId.trim()) return { status: "invalid", reason: "invalid-range" };
+    let parentId: BlockId | null = null;
+    let parentSize = Number.POSITIVE_INFINITY;
+    for (const block of this.#blockEntries) {
+      if (block.fileId !== input.fileId || !block.range) continue;
+      const other = block.range;
+      if (start === other.start && end === other.end) return { status: "invalid", reason: "duplicate-range", conflictingBlockId: block.id };
+      const disjoint = end <= other.start || other.end <= start;
+      const newContainsOther = start <= other.start && other.end <= end;
+      const otherContainsNew = other.start <= start && end <= other.end;
+      if (!disjoint && !newContainsOther && !otherContainsNew) return { status: "invalid", reason: "partial-overlap", conflictingBlockId: block.id };
+      if (otherContainsNew) {
+        const size = other.end - other.start;
+        if (size < parentSize) { parentId = block.id; parentSize = size; }
+      }
+    }
+    return { status: "valid", parentId };
+  }
+
+  addUserBlock(block: SemanticBlock): void {
+    const input: CreateUserBlockInput = {
+      fileId: block.fileId ?? "",
+      range: block.range ?? { start: -1, end: -1 },
+      role: block.role ?? block.type,
+      ...(block.name === undefined ? {} : { name: block.name }),
+      ...(block.label === undefined ? {} : { label: block.label }),
+      ...(block.source === undefined ? {} : { source: block.source })
+    };
+    const validation = this.validateUserBlock(input);
+    if (validation.status === "invalid") throw new AppError("BLOCK_RANGE_INVALID", `Cannot create custom block: ${validation.reason}`, { details: validation });
+    this.addBlock({ ...block, origin: "user", capabilities: defaultCapabilities("user"), state: "active" });
+    this.#rebuildRangeContainment(input.fileId);
+  }
+
+  deleteUserBlock(blockId: BlockId): void {
+    const block = this.#requireBlock(blockId);
+    if (block.origin !== "user" || block.capabilities?.deletable === false) throw new AppError("BLOCK_DELETE_FORBIDDEN", `Only user blocks can be deleted: ${blockId}`);
+    const parent = this.getStructuralParent(blockId);
+    const children = this.getStructuralChildren(blockId);
+    this.removeBlock(blockId);
+    for (const child of children) this.setStructuralParent(child, parent);
+  }
+
+  /**
+   * Rebinds a fresh parser result to stable semantic UUIDs. Parser-owned blocks
+   * are never silently deleted: unmatched blocks become orphaned so logical
+   * relations can be repaired by the user after a source edit.
+   */
+  reconcileParsedBlocks(fileId: string, descriptors: ParsedBlockDescriptor[], allocateId: () => BlockId): BlockReconciliationResult {
+    if (!fileId.trim()) throw new AppError("GRAPH_SNAPSHOT_INVALID", "Parser reconciliation requires a source file id");
+    const transientIds = new Set<string>();
+    for (const descriptor of descriptors) {
+      if (descriptor.fileId !== fileId || !descriptor.transientId.trim() || transientIds.has(descriptor.transientId)
+        || !descriptor.role.trim() || !descriptor.fingerprint.trim()
+        || !Number.isInteger(descriptor.range.start) || !Number.isInteger(descriptor.range.end)
+        || descriptor.range.start < 0 || descriptor.range.end <= descriptor.range.start) {
+        throw new AppError("GRAPH_SNAPSHOT_INVALID", "Parser reconciliation contains an invalid or duplicate block descriptor");
+      }
+      transientIds.add(descriptor.transientId);
+    }
+
+    const previous = this.#blockEntries.filter((block) => block.fileId === fileId && block.origin !== "user");
+    const unmatched = new Map(previous.map((block) => [block.id, block]));
+    const mapping = new Map<string, BlockId>();
+    const matched: BlockId[] = [];
+    const created: BlockId[] = [];
+    const descriptorByTransient = new Map(descriptors.map((descriptor) => [descriptor.transientId, descriptor]));
+
+    const uniqueCandidate = (predicate: (block: SemanticBlock) => boolean): SemanticBlock | undefined => {
+      const candidates = [...unmatched.values()].filter(predicate);
+      return candidates.length === 1 ? candidates[0] : undefined;
+    };
+    const descriptorLabelCounts = new Map<string, number>();
+    const descriptorFingerprintCounts = new Map<string, number>();
+    for (const descriptor of descriptors) if (descriptor.label) descriptorLabelCounts.set(descriptor.label, (descriptorLabelCounts.get(descriptor.label) ?? 0) + 1);
+    for (const descriptor of descriptors) {
+      const key = `${descriptor.origin}\0${descriptor.role}\0${descriptor.fingerprint}`;
+      descriptorFingerprintCounts.set(key, (descriptorFingerprintCounts.get(key) ?? 0) + 1);
+    }
+
+    for (const descriptor of descriptors) {
+      const parentFingerprint = descriptor.parentTransientId ? descriptorByTransient.get(descriptor.parentTransientId)?.fingerprint : undefined;
+      let existing = descriptor.bindingId
+        ? uniqueCandidate((block) => block.id === descriptor.bindingId || block.metadata?.parserBindingId === descriptor.bindingId)
+        : undefined;
+      if (!existing && descriptor.label && descriptorLabelCounts.get(descriptor.label) === 1) {
+        existing = uniqueCandidate((block) => block.label === descriptor.label);
+      }
+      const fingerprintKey = `${descriptor.origin}\0${descriptor.role}\0${descriptor.fingerprint}`;
+      if (!existing && descriptorFingerprintCounts.get(fingerprintKey) === 1) {
+        existing = uniqueCandidate((block) => block.origin === descriptor.origin && (block.role ?? block.type) === descriptor.role
+          && block.metadata?.parserFingerprint === descriptor.fingerprint);
+      }
+      if (!existing) {
+        const contextual = [...unmatched.values()].filter((block) => block.origin === descriptor.origin && (block.role ?? block.type) === descriptor.role);
+        const scored = contextual.map((block) => ({
+          block,
+          score: Math.abs((block.range?.start ?? descriptor.range.start) - descriptor.range.start)
+            + (block.metadata?.parserParentFingerprint === parentFingerprint ? 0 : 1_000_000)
+        })).sort((left, right) => left.score - right.score);
+        if (scored.length > 0 && (scored.length === 1 || scored[0]!.score < scored[1]!.score)) existing = scored[0]!.block;
+      }
+
+      const metadata = {
+        ...(existing?.metadata ?? {}),
+        parserFingerprint: descriptor.fingerprint,
+        ...(parentFingerprint === undefined ? {} : { parserParentFingerprint: parentFingerprint }),
+        ...(descriptor.bindingId === undefined ? {} : { parserBindingId: descriptor.bindingId })
+      };
+      const common: Omit<SemanticBlock, "id"> = {
+        type: descriptor.role,
+        role: descriptor.role,
+        origin: descriptor.origin,
+        fileId,
+        range: { ...descriptor.range },
+        capabilities: defaultCapabilities(descriptor.origin),
+        state: "active",
+        metadata,
+        ...(descriptor.source === undefined ? {} : { source: { ...descriptor.source } }),
+        ...(descriptor.label === undefined ? {} : { label: descriptor.label }),
+        ...(descriptor.name === undefined ? {} : { name: descriptor.name, title: descriptor.name })
+      };
+      let id: BlockId;
+      if (existing) {
+        id = existing.id;
+        const refreshed = normalizedBlock({ ...existing, ...common, id });
+        if (descriptor.label === undefined) delete refreshed.label;
+        if (descriptor.name === undefined) { delete refreshed.name; delete refreshed.title; }
+        if (descriptor.source === undefined) delete refreshed.source;
+        assertBlock(refreshed);
+        this.#blocks.set(id, refreshed);
+        const index = this.#blockEntries.findIndex((block) => block.id === id);
+        if (index >= 0) this.#blockEntries[index] = refreshed;
+        unmatched.delete(id);
+        matched.push(id);
+      } else {
+        id = allocateId();
+        this.addBlock({ id, ...common });
+        created.push(id);
+      }
+      mapping.set(descriptor.transientId, id);
+    }
+
+    const orphaned = [...unmatched.keys()];
+    for (const id of orphaned) this.updateBlock(id, { state: "orphaned" });
+
+    const activeParsed = this.#blockEntries.filter((block) => block.fileId === fileId && block.origin !== "user" && block.state === "active" && block.range);
+    const conflicted: BlockId[] = [];
+    for (const block of this.#blockEntries.filter((item) => item.fileId === fileId && item.origin === "user" && item.range)) {
+      const conflict = activeParsed.some((parsed) => {
+        const left = block.range!;
+        const right = parsed.range!;
+        const disjoint = left.end <= right.start || right.end <= left.start;
+        const nested = (left.start <= right.start && right.end <= left.end) || (right.start <= left.start && left.end <= right.end);
+        return !disjoint && !nested;
+      });
+      this.updateBlock(block.id, { state: conflict ? "conflicted" : "active" });
+      if (conflict) conflicted.push(block.id);
+    }
+
+    this.#rebuildRangeContainment(fileId);
+    const sameFile = this.#blockEntries.filter((block) => block.fileId === fileId);
+    const otherFiles = this.#blockEntries.filter((block) => block.fileId !== fileId);
+    sameFile.sort((left, right) => (left.range?.start ?? Number.MAX_SAFE_INTEGER) - (right.range?.start ?? Number.MAX_SAFE_INTEGER)
+      || (right.range?.end ?? 0) - (left.range?.end ?? 0) || left.id.localeCompare(right.id));
+    this.#blockEntries.splice(0, this.#blockEntries.length, ...otherFiles, ...sameFile);
+
+    return {
+      snapshot: this.toSnapshot(), matched, created, orphaned, conflicted,
+      transientToBlockId: Object.fromEntries(mapping)
+    };
+  }
+
+  /** Applies editor transactions in order, without searching source strings. */
+  mapUserBlockRanges(fileId: string, transactions: BlockTextEdit[][]): BlockRangeMappingResult {
+    if (!fileId.trim()) throw new AppError("GRAPH_SNAPSHOT_INVALID", "Range mapping requires a source file id");
+    const updated = new Set<BlockId>();
+    const conflicted = new Set<BlockId>();
+    for (const transaction of transactions) {
+      const edits = transaction.map((edit) => ({ ...edit })).sort((left, right) => left.start - right.start || left.end - right.end);
+      for (let index = 0; index < edits.length; index += 1) {
+        const edit = edits[index]!;
+        const previous = edits[index - 1];
+        if (!Number.isInteger(edit.start) || !Number.isInteger(edit.end) || !Number.isInteger(edit.newLength)
+          || edit.start < 0 || edit.end < edit.start || edit.newLength < 0 || (previous !== undefined && edit.start < previous.end)) {
+          throw new AppError("GRAPH_SNAPSHOT_INVALID", "Editor transaction contains an invalid or overlapping text edit");
+        }
+      }
+      for (const block of this.#blockEntries.filter((item) => item.fileId === fileId && item.origin === "user" && item.range)) {
+        const start = this.#mapPosition(block.range!.start, edits, "left");
+        const end = this.#mapPosition(block.range!.end, edits, "right");
+        if (end <= start) {
+          this.updateBlock(block.id, { state: "conflicted", metadata: { ...(block.metadata ?? {}), rangeMappingFailed: true } });
+          conflicted.add(block.id);
+          continue;
+        }
+        this.updateBlock(block.id, { range: { start, end }, metadata: { ...(block.metadata ?? {}), rangeMappingFailed: false } });
+        updated.add(block.id);
+      }
+    }
+    this.#rebuildRangeContainment(fileId);
+    return { snapshot: this.toSnapshot(), updated: [...updated], conflicted: [...conflicted] };
   }
 
   removeDependency(prerequisite: BlockId, consequence: BlockId): void {
@@ -375,6 +647,26 @@ export class BlockGraphManager implements IBlockGraphManager {
     return [start, ...sorted([...fromStart].filter((id) => toEnd.has(id) && id !== start && id !== end)), end];
   }
 
+  getRelationNeighborhood(focusId: BlockId | null, direction: RelationDirection, depth: number | "all"): RelationNeighborhood {
+    if (depth !== "all" && (!Number.isInteger(depth) || depth < 0)) throw new AppError("INVALID_GRAPH_QUERY", "Relation depth must be a non-negative integer or all");
+    const ordered = (ids: Iterable<BlockId>) => {
+      const selected = new Set(ids);
+      return this.#blockEntries.filter((block) => selected.has(block.id)).map((block) => block.id);
+    };
+    if (focusId === null) {
+      const blockIds = ordered(this.#blockEntries.filter((block) => block.capabilities?.connectable !== false && block.state !== "orphaned").map((block) => block.id));
+      const visible = new Set(blockIds);
+      return { focusId, direction, depth, blockIds, edges: this.#dependencies.filter((edge) => visible.has(edge.from) && visible.has(edge.to)).map((edge) => ({ ...edge })) };
+    }
+    this.#requireBlock(focusId);
+    const options = depth === "all" ? undefined : { maxDepth: depth };
+    const ids = new Set<BlockId>([focusId]);
+    if (direction === "prerequisite" || direction === "both") for (const id of this.getPrerequisiteClosure(focusId, options).all) ids.add(id);
+    if (direction === "consequence" || direction === "both") for (const id of this.getConsequenceClosure(focusId, options).all) ids.add(id);
+    const blockIds = ordered(ids);
+    return { focusId, direction, depth, blockIds, edges: this.#dependencies.filter((edge) => ids.has(edge.from) && ids.has(edge.to)).map((edge) => ({ ...edge })) };
+  }
+
   validateGraph(): GraphDiagnostic[] {
     const diagnostics: GraphDiagnostic[] = [];
     const blockCounts = new Map<BlockId, number>();
@@ -445,6 +737,35 @@ export class BlockGraphManager implements IBlockGraphManager {
     const block = this.#blocks.get(blockId);
     if (block === undefined) throw new AppError("BLOCK_NOT_FOUND", `Block not found: ${blockId}`);
     return block;
+  }
+
+  #mapPosition(position: number, edits: BlockTextEdit[], association: "left" | "right"): number {
+    let delta = 0;
+    for (const edit of edits) {
+      if (position < edit.start || (position === edit.start && association === "left")) break;
+      if (position === edit.start) return edit.start + delta + edit.newLength;
+      if (position < edit.end) return edit.start + delta + (association === "left" ? 0 : edit.newLength);
+      if (position === edit.end) return edit.start + delta + edit.newLength;
+      delta += edit.newLength - (edit.end - edit.start);
+    }
+    return position + delta;
+  }
+
+  #rebuildRangeContainment(fileId: string): void {
+    const ranged = this.#blockEntries.filter((block) => block.fileId === fileId && block.range && block.state === "active");
+    const fileBlockIds = new Set(this.#blockEntries.filter((block) => block.fileId === fileId && block.range).map((block) => block.id));
+    this.#structuralParents = this.#structuralParents.filter((edge) => !fileBlockIds.has(edge.child));
+    for (const child of ranged) {
+      let parent: SemanticBlock | undefined;
+      for (const candidate of ranged) {
+        if (candidate.id === child.id || !candidate.range || !child.range) continue;
+        if (candidate.range.start <= child.range.start && child.range.end <= candidate.range.end
+          && (candidate.range.start < child.range.start || child.range.end < candidate.range.end)) {
+          if (!parent || (candidate.range.end - candidate.range.start) < (parent.range!.end - parent.range!.start)) parent = candidate;
+        }
+      }
+      if (parent) this.#structuralParents.push({ parent: parent.id, child: child.id });
+    }
   }
 
   #traverseDependencyGraph(start: BlockId, direction: GraphDirection, options?: GraphTraversalOptions): GraphTraversalResult {

@@ -2,7 +2,7 @@ import type { CommandMetadata, ProjectTreeNode } from "@latex-editor/contracts";
 import type { Monaco } from "@monaco-editor/react";
 import type { IDisposable } from "monaco-editor";
 import type { EnvironmentDefinition } from "../preview/types.js";
-import { analyzeCompletionContext, analyzeDocumentWordContext, type CompletionContext } from "./context.js";
+import { analyzeCompletionContext, analyzeLexicalCompletionContext, type CompletionContext } from "./context.js";
 import { ProjectIndex, type IndexedDocument } from "./ProjectIndex.js";
 
 type EditorApi = NonNullable<Window["latexEditor"]>;
@@ -56,9 +56,11 @@ export class CompletionController {
       provideCompletionItems: async (model, position) => {
         const currentPath = this.options.getCurrentPath() ?? "main.tex";
         const semanticContext = analyzeCompletionContext(model, position);
-        const context = semanticContext.mode !== "unknown" || !this.options.isDocumentWordCompletionEnabled() || !/\.tex$/i.test(currentPath)
+        // Semantic LaTeX contexts always win. Only otherwise choose one of the
+        // mutually exclusive prose-word and mathematical-symbol domains.
+        const context = semanticContext.mode !== "unknown" || !/\.tex$/i.test(currentPath)
           ? semanticContext
-          : analyzeDocumentWordContext(model, position);
+          : analyzeLexicalCompletionContext(model, position, this.options.isDocumentWordCompletionEnabled());
         if (context.mode === "unknown") return { suggestions: [] };
         await this.ensureDocuments();
         const currentDocument: IndexedDocument = { path: currentPath, content: model.getValue() };
@@ -69,7 +71,7 @@ export class CompletionController {
         return {
           suggestions: this.index.complete(context, currentPath).map((entry) => ({
             label: entry.label,
-            kind: entry.kind === "command" ? options.monaco.languages.CompletionItemKind.Function : entry.kind === "environment" ? options.monaco.languages.CompletionItemKind.Struct : entry.kind === "reference" ? options.monaco.languages.CompletionItemKind.Reference : entry.kind === "file" ? options.monaco.languages.CompletionItemKind.File : entry.kind === "word" ? options.monaco.languages.CompletionItemKind.Text : options.monaco.languages.CompletionItemKind.Value,
+            kind: entry.kind === "command" ? options.monaco.languages.CompletionItemKind.Function : entry.kind === "environment" ? options.monaco.languages.CompletionItemKind.Struct : entry.kind === "reference" ? options.monaco.languages.CompletionItemKind.Reference : entry.kind === "file" ? options.monaco.languages.CompletionItemKind.File : entry.kind === "word" ? options.monaco.languages.CompletionItemKind.Text : entry.kind === "math-symbol" ? options.monaco.languages.CompletionItemKind.Variable : options.monaco.languages.CompletionItemKind.Value,
             detail: entry.detail,
             insertText: entry.insertText,
             filterText: entry.filterText,

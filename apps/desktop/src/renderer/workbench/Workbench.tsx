@@ -1,13 +1,13 @@
 import { Editor, type OnMount } from "@monaco-editor/react";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import type { CompileResult, Diagnostic, Project, ProjectTreeNode, SpellCheckStatus, SyncTexPdfPosition } from "@latex-editor/contracts";
+import type { BlockGraphSnapshot, BlockId, BlockTextEdit, BlockTextRange, CompileResult, Diagnostic, Project, ProjectTreeNode, RelationDirection, RelationNeighborhood, SemanticBlock, SpellCheckStatus, StructuralHistoryState, SyncTexPdfPosition } from "@latex-editor/contracts";
 import toolbarActions from "../resources/toolbar-actions.json" with { type: "json" };
 import { t, type MessageKey } from "../i18n/index.js";
 import { PreviewPane } from "../preview/PreviewPane.js";
 import { SettingsDialog } from "../settings/SettingsDialog.js";
 import { useSettings, settings } from "../settings/service.js";
-import { commands } from "../settings/commands.js";
+import { bindings, commands, displayBinding } from "../settings/commands.js";
 import { EnvironmentQuickAction, environmentCursorOffset, environmentInsertion } from "../preview/EnvironmentPicker.js";
 import type { EnvironmentDefinition } from "../preview/types.js";
 import { CompletionController } from "../completion/CompletionController.js";
@@ -23,9 +23,16 @@ import { defaultSearchQuery, type SearchDocument, type SearchQuery, type SearchR
 import { FilterEngine } from "../filter/FilterEngine.js";
 import { defaultFilterQuery, type FilterGroupId, type FilterQuery } from "../filter/types.js";
 import { parsePreview } from "../preview/parser.js";
+import { previewBlocksForReconciliation } from "../preview/reconciliation.js";
 import { PdfViewer } from "../pdf/PdfViewer.js";
 import { installEditorContextActions } from "./editorContextActions.js";
 import { editorThemeName } from "../themes/runtime.js";
+import { boundaryRepairCandidates, normalizeDocumentSelection, type BoundaryRepairCandidate, type DocumentSelection } from "../custom-blocks/selection.js";
+import { installSymbolPairing } from "../editor/symbolPairing.js";
+import { RelationBrowser } from "../relations/RelationBrowser.js";
+import { RelationInspector } from "../relations/RelationInspector.js";
+import { RelationGraphView } from "../relations/RelationGraphView.js";
+import { candidateRelationState, projectRelationCandidates, relationEndpoints, type RelationFilters, type UnmatchedBehavior } from "../relations/model.js";
 
 type SidebarMode = "files" | "search" | "ai" | "settings" | "help";
 type PaneType = "source" | "preview" | "pdf";
@@ -35,6 +42,9 @@ type MenuName = "file" | "edit" | "view" | "history" | "projects";
 interface EditorTab { path: string; content: string; dirty: boolean }
 interface SourceMathPreview { source: string; displayMode: boolean; anchor: DOMRect; kind: "source-cursor" | "source-hover" }
 interface PersistedLayout { sidebarWidth: number; fileTreeHeight: number; splitRatio: number; bottomPanelHeight: number; sidebarVisible: boolean; mode: "single" | "split"; singlePane: PaneType; leftPane: "source" | "preview"; rightPane: "preview" | "pdf" }
+
+const emptyBlockSnapshot: BlockGraphSnapshot = { version: 1, blocks: [], dependencies: [], structuralParents: [] };
+const defaultRelationFilters: RelationFilters = { hierarchyScope: "all", role: "all", origin: "all", label: "all", textQuery: "" };
 
 const defaultLayout: PersistedLayout = { sidebarWidth: 280, fileTreeHeight: 330, splitRatio: 52, bottomPanelHeight: 220, sidebarVisible: true, mode: "split", singlePane: "source", leftPane: "source", rightPane: "pdf" };
 
@@ -98,6 +108,19 @@ function projectFilePaths(nodes: ProjectTreeNode[]): string[] {
 
 type FileContext = { x: number; y: number; path?: string; kind?: ProjectTreeNode["kind"] };
 type FileDropDetail = { paths: string[]; destination: string };
+type BlockContext = { x: number; y: number; selection: DocumentSelection };
+type BlockCreationAvailability = { kind: "none" | "checking" | "valid" | "repair" | "invalid" } | { kind: "edit"; block: SemanticBlock };
+type BoundaryRepairPrompt = { conflictName: string; candidates: BoundaryRepairCandidate[] };
+
+function replacementEdit(before: string, after: string): BlockTextEdit[] {
+  if (before === after) return [];
+  let prefix = 0;
+  while (prefix < before.length && prefix < after.length && before[prefix] === after[prefix]) prefix += 1;
+  let suffix = 0;
+  while (suffix < before.length - prefix && suffix < after.length - prefix
+    && before[before.length - 1 - suffix] === after[after.length - 1 - suffix]) suffix += 1;
+  return [{ start: prefix, end: before.length - suffix, newLength: after.length - prefix - suffix }];
+}
 
 function Tree({ nodes, activePath, mainFile, filter, hideBuildArtifacts, onOpen, onContextMenu }: { nodes: ProjectTreeNode[]; activePath: string | undefined; mainFile: string | undefined; filter: string; hideBuildArtifacts?: boolean; onOpen(path: string): void; onContextMenu?: (path: string, kind: ProjectTreeNode["kind"], event: React.MouseEvent) => void }) {
   const shouldHideBuildArtifacts = hideBuildArtifacts ?? settings.get("hideBuildArtifacts");
@@ -164,6 +187,28 @@ export function Workbench({ project, projects, environments, onHome, onSwitch }:
   const [saveState, setSaveState] = useState<"saved" | "unsaved" | "saving" | "failed">("saved");
   const [activeMenu, setActiveMenu] = useState<MenuName>();
   const [fileContext, setFileContext] = useState<FileContext>();
+  const [blockContext, setBlockContext] = useState<BlockContext>();
+  const [sourceSelection, setSourceSelection] = useState<DocumentSelection>();
+  const [previewSelection, setPreviewSelection] = useState<DocumentSelection>();
+  const [blockSnapshot, setBlockSnapshot] = useState<BlockGraphSnapshot>();
+  const [previewSemanticIds, setPreviewSemanticIds] = useState<Record<string, BlockId>>({});
+  const [relationFocusId, setRelationFocusId] = useState<BlockId | null>(null);
+  const [relationFocusHistory, setRelationFocusHistory] = useState<BlockId[]>([]);
+  const [relationDirection, setRelationDirection] = useState<RelationDirection>("both");
+  const [relationDepth, setRelationDepth] = useState<number | "all">(2);
+  const [relationFilters, setRelationFilters] = useState<RelationFilters>(defaultRelationFilters);
+  const [relationUnmatched, setRelationUnmatched] = useState<UnmatchedBehavior>("dim");
+  const [relationLocateRequest, setRelationLocateRequest] = useState<{ blockId: BlockId; nonce: number }>();
+  const [relationChooser, setRelationChooser] = useState<{ candidateId: BlockId; x: number; y: number }>();
+  const [relationGraphOpen, setRelationGraphOpen] = useState(false);
+  const [relationGraphFocusId, setRelationGraphFocusId] = useState<BlockId | null>(null);
+  const [relationNeighborhood, setRelationNeighborhood] = useState<RelationNeighborhood>();
+  const [structuralHistory, setStructuralHistory] = useState<StructuralHistoryState>({ canUndo: false, canRedo: false });
+  const [blockCreationAvailability, setBlockCreationAvailability] = useState<BlockCreationAvailability>({ kind: "none" });
+  const [boundaryRepair, setBoundaryRepair] = useState<BoundaryRepairPrompt>();
+  const [inspectorBlock, setInspectorBlock] = useState<SemanticBlock>();
+  const [blockNotice, setBlockNotice] = useState<string>();
+  const [createdBlockHighlight, setCreatedBlockHighlight] = useState<{ fileId: string; start: number; end: number; nonce: number }>();
   const [nameRequest, setNameRequest] = useState<{ message: string; fallback: string; resolve(value?: string): void }>();
   const [deleteRequest, setDeleteRequest] = useState<{ path: string; resolve(value: boolean): void }>();
   const [compileState, setCompileState] = useState<"idle" | "running">("idle");
@@ -192,6 +237,7 @@ export function Workbench({ project, projects, environments, onHome, onSwitch }:
   const completionController = useRef<CompletionController | null>(null);
   const spellCheckController = useRef<SpellCheckController | null>(null);
   const referenceMouseListener = useRef<{ dispose(): void } | null>(null);
+  const symbolPairingListener = useRef<{ dispose(): void } | null>(null);
   const treeRef = useRef<ProjectTreeNode[]>([]);
   const activePathRef = useRef<string | undefined>(undefined);
   const environmentsRef = useRef<EnvironmentDefinition[]>([]);
@@ -201,11 +247,22 @@ export function Workbench({ project, projects, environments, onHome, onSwitch }:
   const searchDecorationsRef = useRef<ReturnType<Parameters<OnMount>[0]["createDecorationsCollection"]> | null>(null);
   const resizeCleanup = useRef<(() => void) | undefined>(undefined);
   const lastTextPane = useRef<"source" | "preview">("source");
+  const activeContentRef = useRef("");
+  const pendingRangeTransactions = useRef(new Map<string, BlockTextEdit[][]>());
+  const rangeMappingTimers = useRef(new Map<string, number>());
+  const previewViewportAnchor = useRef<{ fileId: string; offset: number } | undefined>(undefined);
+  const pendingVisualToCodeAnchor = useRef<{ fileId: string; offset: number } | undefined>(undefined);
   useEffect(() => () => resizeCleanup.current?.(), []);
 
   const activeTab = tabs.find((tab) => tab.path === activePath);
   const pdfFile = project.mainFile?.replace(/\.tex$/i, ".pdf");
   const sourceEditorVisible = layout.mode === "single" ? layout.singlePane === "source" : layout.leftPane === "source";
+  const creationSelection = sourceEditorVisible ? sourceSelection : previewSelection;
+  const relationModeActive = outlineMode === "relations";
+  const relationProjection = useMemo(() => projectRelationCandidates(blockSnapshot ?? emptyBlockSnapshot, relationFocusId, relationFilters), [blockSnapshot, relationFocusId, relationFilters]);
+  const chooserPrerequisiteState = relationChooser && blockSnapshot
+    ? candidateRelationState(blockSnapshot, relationFocusId, relationChooser.candidateId, "prerequisite")
+    : undefined;
   const diagnostics = compileResult?.diagnostics ?? [];
   const errors = diagnostics.filter((item) => item.severity === "error").length;
   const warnings = diagnostics.filter((item) => item.severity === "warning").length;
@@ -222,6 +279,10 @@ export function Workbench({ project, projects, environments, onHome, onSwitch }:
     return [...documents.values()];
   }, [projectSearchDocuments, tabs]);
   const filterDocuments = useMemo(() => searchDocuments.filter((item) => item.fileId.toLocaleLowerCase().endsWith(".tex")).map((item) => ({ ...item, preview: parsePreview(item.content, item.fileId, previewEnvironments) })), [searchDocuments, previewEnvironments]);
+  const reconciliationInput = useMemo(() => {
+    const document = filterDocuments.find((item) => item.fileId === activePath);
+    return document ? previewBlocksForReconciliation(document.preview, document.content) : undefined;
+  }, [filterDocuments, activePath]);
   const filterEvaluations = useMemo(() => new Map(filterDocuments.map((item) => [item.fileId, filterEngineRef.current.evaluate(item.preview.nodes, item.content, item.fileId, filterQuery)])), [filterDocuments, filterQuery]);
   const searchedDocuments = useMemo(() => searchQuery.scope === "current-file" ? searchDocuments.filter((item) => item.fileId === activePath) : searchDocuments, [searchDocuments, searchQuery.scope, activePath]);
   const allowedSearchRanges = useMemo(() => {
@@ -242,11 +303,41 @@ export function Workbench({ project, projects, environments, onHome, onSwitch }:
   const spellManualLanguage = store.get("spellCheckLanguage");
   treeRef.current = tree;
   activePathRef.current = activePath;
+  activeContentRef.current = activeTab?.content ?? "";
   environmentsRef.current = previewEnvironments;
 
   useEffect(() => {
     setSourceMathPreview(undefined);
   }, [sourceEditorVisible, activePath]);
+  useEffect(() => {
+    setSourceSelection(undefined);
+    setPreviewSelection(undefined);
+    setPreviewSemanticIds({});
+    setBlockCreationAvailability({ kind: "none" });
+    setBoundaryRepair(undefined);
+    setBlockContext(undefined);
+  }, [activePath]);
+  useEffect(() => {
+    if (!api || !activeTab || !creationSelection || creationSelection.fileId !== activeTab.path) {
+      setBlockCreationAvailability({ kind: "none" });
+      return;
+    }
+    const selection = normalizeDocumentSelection(activeTab.content, creationSelection);
+    if (!selection) { setBlockCreationAvailability({ kind: "none" }); return; }
+    const existing = blockSnapshot?.blocks.find((block) => block.origin === "user" && block.fileId === selection.fileId
+      && block.range?.start === selection.start && block.range.end === selection.end);
+    if (existing) { setBlockCreationAvailability({ kind: "edit", block: existing }); return; }
+    setBlockCreationAvailability({ kind: "checking" });
+    let cancelled = false;
+    const timer = window.setTimeout(() => {
+      void api.blockGraph.validateUserBlock(project.id, { fileId: selection.fileId, range: { start: selection.start, end: selection.end }, role: "custom" })
+        .then((validation) => {
+          if (cancelled) return;
+          setBlockCreationAvailability({ kind: validation.status === "valid" ? "valid" : validation.reason === "partial-overlap" ? "repair" : "invalid" });
+        }).catch(() => { if (!cancelled) setBlockCreationAvailability({ kind: "invalid" }); });
+    }, 100);
+    return () => { cancelled = true; window.clearTimeout(timer); };
+  }, [api, project.id, activeTab, creationSelection, blockSnapshot]);
   useEffect(() => {
     const pane = layout.mode === "single" ? layout.singlePane : layout.leftPane;
     if (pane === "source" || pane === "preview") lastTextPane.current = pane;
@@ -260,6 +351,36 @@ export function Workbench({ project, projects, environments, onHome, onSwitch }:
     if (!api) return;
     void api.spellcheck.status().then((status) => { if (status) setSpellStatus(status); });
   }, [api]);
+  useEffect(() => {
+    if (!api) return;
+    let cancelled = false;
+    void Promise.all([api.blockGraph.snapshot(project.id), api.blockGraph.historyState(project.id)]).then(([snapshot, history]) => {
+      if (cancelled) return;
+      setBlockSnapshot(snapshot);
+      setStructuralHistory(history);
+    }).catch(() => undefined);
+    return () => { cancelled = true; };
+  }, [api, project.id]);
+  useEffect(() => {
+    if (!api || !reconciliationInput) return;
+    const timer = setTimeout(() => {
+      void api.blockGraph.reconcileParsedBlocks(project.id, reconciliationInput).then((result) => {
+        setBlockSnapshot(result.snapshot);
+        setPreviewSemanticIds(result.transientToBlockId);
+      }).catch((error: unknown) => {
+        console.warn("Unable to reconcile parsed blocks", error);
+      });
+    }, 450);
+    return () => clearTimeout(timer);
+  }, [api, project.id, reconciliationInput]);
+  useEffect(() => {
+    if (!api || !relationGraphOpen) return;
+    let cancelled = false;
+    void api.blockGraph.getRelationNeighborhood(project.id, relationGraphFocusId, relationGraphFocusId ? relationDirection : "both", relationGraphFocusId ? relationDepth : "all").then((neighborhood) => {
+      if (!cancelled) setRelationNeighborhood(neighborhood);
+    }).catch((error: unknown) => setBlockNotice(error instanceof Error ? error.message : String(error)));
+    return () => { cancelled = true; };
+  }, [api, project.id, relationGraphOpen, relationGraphFocusId, relationDirection, relationDepth, blockSnapshot]);
   useEffect(() => {
     if (!api) return;
     let cancelled = false;
@@ -304,6 +425,19 @@ export function Workbench({ project, projects, environments, onHome, onSwitch }:
     document.addEventListener("keydown", closeOnEscape);
     return () => { document.removeEventListener("mousedown", closeWhenOutside); document.removeEventListener("keydown", closeOnEscape); };
   }, [fileContext]);
+  useEffect(() => {
+    if (!blockContext) return;
+    const closeWhenOutside = (event: MouseEvent) => { if (!(event.target as Element).closest(".context-menu")) setBlockContext(undefined); };
+    const closeOnEscape = (event: KeyboardEvent) => { if (event.key === "Escape") setBlockContext(undefined); };
+    document.addEventListener("mousedown", closeWhenOutside);
+    document.addEventListener("keydown", closeOnEscape);
+    return () => { document.removeEventListener("mousedown", closeWhenOutside); document.removeEventListener("keydown", closeOnEscape); };
+  }, [blockContext]);
+  useEffect(() => {
+    if (!blockNotice) return;
+    const timer = window.setTimeout(() => setBlockNotice(undefined), 2200);
+    return () => window.clearTimeout(timer);
+  }, [blockNotice]);
   useEffect(() => {
     if (!spellContextMenu) return;
     const closeWhenOutside = (event: MouseEvent) => { if (!(event.target as Element).closest(".spell-context-menu")) setSpellContextMenu(undefined); };
@@ -413,7 +547,7 @@ export function Workbench({ project, projects, environments, onHome, onSwitch }:
     ];
   };
   useEffect(() => { void refreshTree(); }, [project.id]);
-  useEffect(() => () => { completionController.current?.dispose(); spellCheckController.current?.dispose(); }, [project.id]);
+  useEffect(() => () => { completionController.current?.dispose(); spellCheckController.current?.dispose(); symbolPairingListener.current?.dispose(); }, [project.id]);
   useEffect(() => {
     setPdfDataUrl(undefined);
     if (!api || !project.mainFile) return;
@@ -470,6 +604,143 @@ export function Workbench({ project, projects, environments, onHome, onSwitch }:
     } catch { setSaveState("failed"); throw new Error(t("save.failed")); }
   };
   const saveActive = () => saveTabs(false);
+  const highlightCreatedBlock = (block: SemanticBlock) => {
+    if (!block.fileId || !block.range) return;
+    setCreatedBlockHighlight({ fileId: block.fileId, ...block.range, nonce: Date.now() });
+    const editor = editorRef.current;
+    const model = editor?.getModel();
+    if (editor && model && block.fileId === activePath) {
+      const start = model.getPositionAt(block.range.start);
+      const end = model.getPositionAt(block.range.end);
+      const decorations = editor.createDecorationsCollection([{
+        range: { startLineNumber: start.lineNumber, startColumn: start.column, endLineNumber: end.lineNumber, endColumn: end.column },
+        options: { inlineClassName: "texweave-created-block-highlight" }
+      }]);
+      window.setTimeout(() => decorations.clear(), 900);
+    }
+  };
+  const createUserBlockAtRange = async (range: BlockTextRange) => {
+    if (!api || !activeTab) return;
+    const block = await api.blockGraph.createUserBlock(project.id, { fileId: activeTab.path, range, role: "custom" });
+    setInspectorBlock(block);
+    setBoundaryRepair(undefined);
+    setBlockContext(undefined);
+    const normalizedSelection: DocumentSelection = { fileId: activeTab.path, ...range, origin: sourceEditorVisible ? "source" : "preview" };
+    if (sourceEditorVisible) setSourceSelection(normalizedSelection); else setPreviewSelection(normalizedSelection);
+    highlightCreatedBlock(block);
+    const [snapshot, history] = await Promise.all([api.blockGraph.snapshot(project.id), api.blockGraph.historyState(project.id)]);
+    setBlockSnapshot(snapshot);
+    setStructuralHistory(history);
+  };
+  const createUserBlockFromSelection = async (override?: DocumentSelection) => {
+    if (!api || !activeTab) return;
+    const selection = normalizeDocumentSelection(activeTab.content, override ?? creationSelection ?? { fileId: activeTab.path, start: 0, end: 0, origin: "source" });
+    if (!selection || selection.fileId !== activeTab.path) { setBlockNotice(t("block.selectRange")); return; }
+    const existing = blockSnapshot?.blocks.find((block) => block.origin === "user" && block.fileId === selection.fileId
+      && block.range?.start === selection.start && block.range.end === selection.end);
+    if (existing) { setInspectorBlock(existing); return; }
+    const input = { fileId: selection.fileId, range: { start: selection.start, end: selection.end }, role: "custom" };
+    const validation = await api.blockGraph.validateUserBlock(project.id, input);
+    if (validation.status === "valid") { await createUserBlockAtRange(input.range); return; }
+    if (validation.reason !== "partial-overlap") { setBlockNotice(t(validation.reason === "duplicate-range" ? "block.duplicateRange" : "block.invalidRange")); return; }
+    const snapshot = blockSnapshot ?? await api.blockGraph.snapshot(project.id);
+    setBlockSnapshot(snapshot);
+    const candidates = boundaryRepairCandidates(input.range, snapshot.blocks, selection.fileId);
+    const checked = await Promise.all(candidates.map(async (candidate) => ({ candidate, validation: await api.blockGraph.validateUserBlock(project.id, { ...input, range: candidate.range }) })));
+    const validCandidates = checked.filter((item) => item.validation.status === "valid").map((item) => item.candidate);
+    if (!validCandidates.length) { setBlockNotice(t("block.noRepair")); return; }
+    const conflict = snapshot.blocks.find((block) => block.id === validation.conflictingBlockId);
+    setBoundaryRepair({ conflictName: conflict?.name ?? conflict?.title ?? conflict?.label ?? conflict?.role ?? conflict?.type ?? t("block.existingBlock"), candidates: validCandidates });
+  };
+  const updateInspectorBlock = async (patch: Partial<Omit<SemanticBlock, "id">>) => {
+    if (!api || !inspectorBlock) return;
+    const updated = await api.blockGraph.updateBlock(project.id, inspectorBlock.id, patch);
+    setInspectorBlock(updated);
+    setBlockSnapshot((snapshot) => snapshot ? { ...snapshot, blocks: snapshot.blocks.map((block) => block.id === updated.id ? updated : block) } : snapshot);
+  };
+  const trackPreviewViewport = useCallback((anchor: { fileId: string; offset: number }) => {
+    previewViewportAnchor.current = anchor;
+  }, []);
+  const refreshRelationState = async () => {
+    if (!api) return;
+    const [snapshot, history] = await Promise.all([api.blockGraph.snapshot(project.id), api.blockGraph.historyState(project.id)]);
+    setBlockSnapshot(snapshot);
+    setStructuralHistory(history);
+  };
+  const focusRelationBlock = (blockId: BlockId) => {
+    if (blockId === relationFocusId) return;
+    if (relationFocusId) setRelationFocusHistory((history) => [...history, relationFocusId]);
+    setRelationFocusId(blockId);
+    setInspectorBlock(undefined);
+  };
+  const relationBack = () => setRelationFocusHistory((history) => {
+    const previous = history.at(-1);
+    if (previous) setRelationFocusId(previous);
+    return previous ? history.slice(0, -1) : history;
+  });
+  const locateRelationBlock = async (blockId: BlockId) => {
+    const block = blockSnapshot?.blocks.find((item) => item.id === blockId);
+    const path = block?.fileId ?? block?.source?.relativePath;
+    if (path && path !== activePath) await openFile(path);
+    setRelationLocateRequest({ blockId, nonce: Date.now() });
+  };
+  const mutateRelation = async (candidateId: BlockId, requestedDirection?: Exclude<RelationDirection, "both">) => {
+    if (!api || !blockSnapshot || !relationFocusId) return;
+    const state = candidateRelationState(blockSnapshot, relationFocusId, candidateId, relationDirection);
+    if (state.existing) {
+      await api.blockGraph.removeDependency(project.id, state.existing.from, state.existing.to);
+      await refreshRelationState();
+      return;
+    }
+    const direction = requestedDirection ?? (relationDirection === "both" ? undefined : relationDirection);
+    if (!direction) return;
+    const edge = relationEndpoints(relationFocusId, candidateId, direction);
+    const validation = await api.blockGraph.validateDependency(project.id, edge.from, edge.to);
+    if (validation.status === "invalid") { setBlockNotice(validation.message); return; }
+    if (validation.status === "warning" && !window.confirm(`${validation.message}\n\n${t("relation.cycleConfirm")}`)) return;
+    await api.blockGraph.addDependency(project.id, edge.from, edge.to);
+    setRelationChooser(undefined);
+    await refreshRelationState();
+  };
+  const toggleRelation = (candidateId: BlockId, x: number, y: number) => {
+    if (!blockSnapshot || !relationFocusId) return;
+    const state = candidateRelationState(blockSnapshot, relationFocusId, candidateId, relationDirection);
+    if (state.disabledReason) { setBlockNotice(t(`relation.invalid.${state.disabledReason}`)); return; }
+    if (relationDirection === "both" && !state.existing) { setRelationChooser({ candidateId, x, y }); return; }
+    void mutateRelation(candidateId).catch((error: unknown) => setBlockNotice(error instanceof Error ? error.message : String(error)));
+  };
+  const undoStructure = async () => {
+    if (!api || !structuralHistory.canUndo) return;
+    setBlockSnapshot(await api.blockGraph.undo(project.id));
+    setStructuralHistory(await api.blockGraph.historyState(project.id));
+  };
+  const redoStructure = async () => {
+    if (!api || !structuralHistory.canRedo) return;
+    setBlockSnapshot(await api.blockGraph.redo(project.id));
+    setStructuralHistory(await api.blockGraph.historyState(project.id));
+  };
+  useEffect(() => {
+    if (!relationModeActive) return;
+    const handleHistory = (event: KeyboardEvent) => {
+      if (!(event.ctrlKey || event.metaKey) || event.key.toLocaleLowerCase() !== "z") return;
+      const target = event.target instanceof Element ? event.target : undefined;
+      if (target?.closest(".monaco-editor, input, textarea, select, [contenteditable='true']")) return;
+      event.preventDefault();
+      if (event.shiftKey) void redoStructure(); else void undoStructure();
+    };
+    window.addEventListener("keydown", handleHistory, true);
+    return () => window.removeEventListener("keydown", handleHistory, true);
+  }, [relationModeActive, structuralHistory, api, project.id]);
+  useEffect(() => {
+    const openGraph = (event: Event) => {
+      const full = (event as CustomEvent<{ full?: boolean }>).detail?.full === true;
+      setRelationGraphFocusId(full ? null : relationFocusId);
+      setRelationNeighborhood(undefined);
+      setRelationGraphOpen(true);
+    };
+    window.addEventListener("texweave:relation-graph-open", openGraph);
+    return () => window.removeEventListener("texweave:relation-graph-open", openGraph);
+  }, [relationFocusId]);
   useEffect(() => {
     if (store.get("autoSave") !== "afterDelay" || !tabs.some((tab) => tab.dirty)) return;
     const timer = setTimeout(() => { void saveTabs(true).catch(() => undefined); }, 1200);
@@ -482,7 +753,8 @@ export function Workbench({ project, projects, environments, onHome, onSwitch }:
       commands.register("latex.compile", { execute: () => compile().catch(() => undefined) }),
       commands.register("edit.find", { execute: () => editorRef.current?.trigger("command", "actions.find", null), when: () => !!document.querySelector(".editor-surface .monaco-editor") }),
       commands.register("edit.replace", { execute: () => editorRef.current?.trigger("command", "editor.action.startFindReplaceAction", null), when: () => !!document.querySelector(".editor-surface .monaco-editor") }),
-      commands.register("settings.open", { execute: () => setSettingsOpen(true) })
+      commands.register("settings.open", { execute: () => setSettingsOpen(true) }),
+      commands.register("block.createFromSelection", { execute: () => createUserBlockFromSelection().catch((error: unknown) => setBlockNotice(error instanceof Error ? error.message : String(error))) })
     ];
     return () => registrations.forEach((dispose) => dispose());
   });
@@ -498,7 +770,29 @@ export function Workbench({ project, projects, environments, onHome, onSwitch }:
   };
 
   const closeTab = (path: string) => { setTabs((current) => current.filter((tab) => tab.path !== path)); if (activePath === path) { const remaining = tabs.filter((tab) => tab.path !== path); setActivePath(remaining.at(-1)?.path); } };
-  const setEditorContent = (content: string) => { if (!activePath) return; setTabs((current) => current.map((tab) => tab.path === activePath ? { ...tab, content, dirty: true } : tab)); setSaveState("unsaved"); };
+  const queueRangeMapping = (fileId: string, edits: BlockTextEdit[]) => {
+    if (!api || !fileId.toLocaleLowerCase().endsWith(".tex") || edits.length === 0) return;
+    const pending = pendingRangeTransactions.current.get(fileId) ?? [];
+    pending.push(edits);
+    pendingRangeTransactions.current.set(fileId, pending);
+    const previousTimer = rangeMappingTimers.current.get(fileId);
+    if (previousTimer !== undefined) window.clearTimeout(previousTimer);
+    rangeMappingTimers.current.set(fileId, window.setTimeout(() => {
+      rangeMappingTimers.current.delete(fileId);
+      const transactions = pendingRangeTransactions.current.get(fileId) ?? [];
+      pendingRangeTransactions.current.delete(fileId);
+      if (transactions.length > 0) void api.blockGraph.mapUserBlockRanges(project.id, { fileId, transactions }).then((result) => setBlockSnapshot(result.snapshot)).catch((error: unknown) => {
+        console.warn("Unable to map custom block ranges", error);
+      });
+    }, 180));
+  };
+  const setEditorContent = (content: string, edits?: BlockTextEdit[]) => {
+    if (!activePath) return;
+    queueRangeMapping(activePath, edits ?? replacementEdit(activeContentRef.current, content));
+    activeContentRef.current = content;
+    setTabs((current) => current.map((tab) => tab.path === activePath ? { ...tab, content, dirty: true } : tab));
+    setSaveState("unsaved");
+  };
   const insertText = (text: string, cursorOffset?: number, triggerSuggestions = false) => {
     const editor = editorRef.current;
     const model = editor?.getModel();
@@ -538,13 +832,25 @@ export function Workbench({ project, projects, environments, onHome, onSwitch }:
     const snippet = environmentInsertion(definition);
     if (snippet && activeTab) setEditorContent(`${activeTab.content}${activeTab.content.endsWith("\n") ? "" : "\n"}${snippet}\n`);
   };
+  const revealPendingVisualPosition = (editor = editorRef.current) => {
+    const pending = pendingVisualToCodeAnchor.current;
+    const model = editor?.getModel();
+    if (!pending || !editor || !model || pending.fileId !== activePathRef.current) return;
+    pendingVisualToCodeAnchor.current = undefined;
+    const offset = Math.min(Math.max(0, pending.offset), model.getValueLength());
+    editor.revealPositionInCenter(model.getPositionAt(offset));
+  };
   const onEditorMount: OnMount = (editor, monaco) => {
     editorRef.current = editor;
+    requestAnimationFrame(() => revealPendingVisualPosition(editor));
     searchDecorationsRef.current?.clear();
     searchDecorationsRef.current = editor.createDecorationsCollection();
     completionController.current?.dispose();
     spellCheckController.current?.dispose();
     referenceMouseListener.current?.dispose();
+    symbolPairingListener.current?.dispose();
+    symbolPairingListener.current = installSymbolPairing(editor, () => store.get("autoPairSymbols"));
+    const blockAction = editor.addAction({ id: "texweave.createCustomBlock", label: t("block.createFromSelection"), precondition: "editorHasSelection", contextMenuGroupId: "navigation", contextMenuOrder: 0.45, run: () => { commands.execute("block.createFromSelection"); } });
     let indexedVersion = -1;
     let mathIndex = new MathNodeIndex([]);
     let cursorMathActive = false;
@@ -602,6 +908,12 @@ export function Workbench({ project, projects, environments, onHome, onSwitch }:
     const cursorListener = editor.onDidChangeCursorPosition((event) => {
       setCursor({ line: event.position.lineNumber, column: event.position.column });
       updateCursorMath(event.position);
+    });
+    const selectionListener = editor.onDidChangeCursorSelection((event) => {
+      const model = editor.getModel();
+      const path = activePathRef.current;
+      if (!model || !path || event.selection.isEmpty()) { setSourceSelection(undefined); return; }
+      setSourceSelection({ fileId: path, start: model.getOffsetAt(event.selection.getStartPosition()), end: model.getOffsetAt(event.selection.getEndPosition()), origin: "source" });
     });
     const contentListener = editor.onDidChangeModelContent(() => {
       indexedVersion = -1;
@@ -687,7 +999,7 @@ export function Workbench({ project, projects, environments, onHome, onSwitch }:
     const initialPosition = editor.getPosition();
     if (initialPosition) updateCursorMath(initialPosition);
     const contextActions = installEditorContextActions(editor, (line, column) => { if (activePathRef.current) void forwardSyncToPdf(activePathRef.current, line, column); });
-    referenceMouseListener.current = { dispose: () => { if (mathTimer !== undefined) window.clearTimeout(mathTimer); activeMath = undefined; contextActions.dispose(); cursorListener.dispose(); contentListener.dispose(); scrollListener.dispose(); layoutListener.dispose(); blurListener.dispose(); mouseDown.dispose(); mouseMove.dispose(); mouseLeave.dispose(); window.removeEventListener("keydown", modifierChange); window.removeEventListener("keyup", modifierChange); setReferenceCursor(false); setSourceMathPreview(undefined); } };
+    referenceMouseListener.current = { dispose: () => { if (mathTimer !== undefined) window.clearTimeout(mathTimer); activeMath = undefined; blockAction.dispose(); contextActions.dispose(); symbolPairingListener.current?.dispose(); symbolPairingListener.current = null; cursorListener.dispose(); selectionListener.dispose(); contentListener.dispose(); scrollListener.dispose(); layoutListener.dispose(); blurListener.dispose(); mouseDown.dispose(); mouseMove.dispose(); mouseLeave.dispose(); window.removeEventListener("keydown", modifierChange); window.removeEventListener("keyup", modifierChange); setReferenceCursor(false); setSourceMathPreview(undefined); } };
     if (api) {
       completionController.current = new CompletionController({ monaco, api, projectId: project.id, getTree: () => treeRef.current, getCurrentPath: () => activePathRef.current, getEnvironments: () => environmentsRef.current, isDocumentWordCompletionEnabled: () => store.get("documentWordCompletion") });
       spellCheckController.current = new SpellCheckController({ editor, api, getCurrentPath: () => activePathRef.current, getMode: () => store.get("spellCheckMode"), getManualLanguage: () => store.get("spellCheckLanguage"), onDetectedLanguage: setDetectedSpellLanguage, onContextMenu: setSpellContextMenu });
@@ -900,21 +1212,32 @@ export function Workbench({ project, projects, environments, onHome, onSwitch }:
   const menuItems = (menu: Exclude<MenuName, "projects">) => {
     if (menu === "file") return [{ label: t("menu.newFile"), action: () => void createEntry(false, "") }, { label: t("menu.openFile"), disabled: true }, { label: t("menu.save"), action: () => { commands.execute("file.save"); } }, { label: t("menu.saveAll"), action: () => { commands.execute("file.saveAll"); } }, { label: "", divider: true }, { label: t("menu.export"), disabled: true }, { label: t("menu.closeProject"), action: onHome }];
     if (menu === "edit") return [{ label: t("menu.undo"), action: () => editorRef.current?.trigger("menu", "undo", null) }, { label: t("menu.redo"), action: () => editorRef.current?.trigger("menu", "redo", null) }, { label: t("menu.find"), action: () => { commands.execute("edit.find"); } }, { label: t("menu.replace"), action: () => { commands.execute("edit.replace"); } }];
-    if (menu === "view") return [{ label: t("menu.source"), action: () => setLayout((value) => ({ ...value, mode: "single", singlePane: "source" })) }, { label: t("menu.preview"), action: () => setLayout((value) => ({ ...value, mode: "single", singlePane: "preview" })) }, { label: t("menu.pdf"), action: () => setLayout((value) => ({ ...value, mode: "single", singlePane: "pdf" })) }, { label: "", divider: true }, { label: t("menu.single"), action: () => setLayout((value) => ({ ...value, mode: "single" })) }, { label: t("menu.split"), action: () => setLayout((value) => ({ ...value, mode: "split" })) }];
+    if (menu === "view") return [{ label: t("menu.source"), action: () => { const anchor = previewViewportAnchor.current; if ((layout.mode === "single" ? layout.singlePane === "preview" : layout.leftPane === "preview") && anchor?.fileId === activePath) pendingVisualToCodeAnchor.current = anchor; setLayout((value) => ({ ...value, mode: "single", singlePane: "source" })); } }, { label: t("menu.preview"), action: () => setLayout((value) => ({ ...value, mode: "single", singlePane: "preview" })) }, { label: t("menu.pdf"), action: () => setLayout((value) => ({ ...value, mode: "single", singlePane: "pdf" })) }, { label: "", divider: true }, { label: t("menu.single"), action: () => setLayout((value) => ({ ...value, mode: "single" })) }, { label: t("menu.split"), action: () => setLayout((value) => ({ ...value, mode: "split" })) }];
     return [{ label: t("menu.automaticHistory"), action: () => { setBottomTab("versions"); setBottomVisible(true); } }, { label: t("menu.namedVersions"), action: () => { setBottomTab("versions"); setBottomVisible(true); } }];
   };
 
-  const viewSwitch = (active: "source" | "preview", single = false) => <div className="view-switch"><button className={active === "source" ? "active" : ""} onClick={() => setLayout((value) => single ? { ...value, singlePane: "source" } : { ...value, leftPane: "source" })}>{t("menu.code")}</button><button className={active === "preview" ? "active" : ""} onClick={() => setLayout((value) => single ? { ...value, singlePane: "preview" } : { ...value, leftPane: "preview" })}>{t("menu.visual")}</button></div>;
-  const quickActions = toolbarActions.map((action) => { const shortTitleKey = action.shortTitleKey; const icon = "icon" in action ? action.icon : undefined; return action.id === "environment" ? <EnvironmentQuickAction key={action.id} definitions={previewEnvironments} onInsert={insertEnvironment}/> : <button key={action.id} title={t(action.titleKey as MessageKey)} onClick={() => insertToolbarAction(action.id)}>{icon ? <Icon name={icon}/> : <b>{action.glyph}</b>}<span>{t(shortTitleKey as MessageKey)}</span></button>; });
+  const switchTextView = (target: "source" | "preview", single: boolean) => {
+    const switchingFromPreview = target === "source" && (single ? layout.singlePane === "preview" : layout.leftPane === "preview");
+    const anchor = previewViewportAnchor.current;
+    if (switchingFromPreview && anchor?.fileId === activePath) pendingVisualToCodeAnchor.current = anchor;
+    setLayout((value) => single ? { ...value, singlePane: target } : { ...value, leftPane: target });
+  };
+  const viewSwitch = (active: "source" | "preview", single = false) => <div className="view-switch"><button className={active === "source" ? "active" : ""} onClick={() => switchTextView("source", single)}>{t("menu.code")}</button><button className={active === "preview" ? "active" : ""} onClick={() => switchTextView("preview", single)}>{t("menu.visual")}</button></div>;
+  const blockButtonDisabled = blockCreationAvailability.kind === "none" || blockCreationAvailability.kind === "checking" || blockCreationAvailability.kind === "invalid";
+  const blockButton = <button key="custom-block" className={`custom-block-button ${blockCreationAvailability.kind === "repair" ? "warning" : ""} ${blockCreationAvailability.kind === "edit" ? "editing" : ""}`} disabled={blockButtonDisabled} title={blockButtonDisabled ? t("block.selectRange") : t("block.createHint", { shortcut: displayBinding(bindings()["block.createFromSelection"] ?? "") })} onClick={() => {
+    if (blockCreationAvailability.kind === "edit") { setInspectorBlock(blockCreationAvailability.block); return; }
+    void createUserBlockFromSelection().catch((error: unknown) => setBlockNotice(error instanceof Error ? error.message : String(error)));
+  }}><b>{blockCreationAvailability.kind === "repair" ? "+⚠" : blockCreationAvailability.kind === "edit" ? "✎" : "+"}</b><span>{t(blockCreationAvailability.kind === "edit" ? "block.edit" : "block.add")}{blockCreationAvailability.kind === "edit" ? " ▾" : ""}</span></button>;
+  const quickActions = [blockButton, ...toolbarActions.map((action) => { const shortTitleKey = action.shortTitleKey; const icon = "icon" in action ? action.icon : undefined; return action.id === "environment" ? <EnvironmentQuickAction key={action.id} definitions={previewEnvironments} onInsert={insertEnvironment}/> : <button key={action.id} title={t(action.titleKey as MessageKey)} onClick={() => insertToolbarAction(action.id)}>{icon ? <Icon name={icon}/> : <b>{action.glyph}</b>}<span>{t(shortTitleKey as MessageKey)}</span></button>; })];
   const sourceTabs = <div className="editor-tabs">{tabs.map((tab) => <button className={tab.path === activePath ? "active" : ""} key={tab.path} onClick={() => setActivePath(tab.path)}><span>{tab.path.split("/").at(-1)}</span>{tab.dirty && <i/>}<span className="tab-close" title={t("editor.closeTab")} onClick={(event) => { event.stopPropagation(); closeTab(tab.path); }}><Icon name="close"/></span></button>)}</div>;
-  const sourceEditor = <div className="editor-surface">{activeTab ? <Editor height="100%" language={activeTab.path.endsWith(".bib") ? "bibtex" : activeTab.path.endsWith(".json") ? "json" : "latex"} value={activeTab.content} onChange={(value) => setEditorContent(value ?? "")} onMount={onEditorMount} theme={editorThemeName(store.get("theme"))} options={{ minimap: { enabled: true }, fontSize: store.get("fontSize"), tabSize: store.get("tabSize"), lineHeight: Math.round(store.get("fontSize") * 1.5), wordWrap: store.get("wordWrap") ? "on" : "off", quickSuggestions: { other: true, comments: true, strings: true }, suggestOnTriggerCharacters: true, autoClosingBrackets: "always", autoClosingQuotes: "always", autoSurround: "languageDefined", automaticLayout: true, padding: { top: 14 }, renderWhitespace: "selection", scrollBeyondLastLine: false }} /> : <div className="editor-empty"><Logo/><p>{t("editor.noFile")}</p></div>}</div>;
+  const sourceEditor = <div className="editor-surface">{activeTab ? <Editor height="100%" language={activeTab.path.endsWith(".bib") ? "bibtex" : activeTab.path.endsWith(".json") ? "json" : "latex"} value={activeTab.content} onChange={(value, event) => setEditorContent(value ?? "", event.changes.map((change) => ({ start: change.rangeOffset, end: change.rangeOffset + change.rangeLength, newLength: change.text.length })))} onMount={onEditorMount} theme={editorThemeName(store.get("theme"))} options={{ minimap: { enabled: true }, fontSize: store.get("fontSize"), tabSize: store.get("tabSize"), lineHeight: Math.round(store.get("fontSize") * 1.5), wordWrap: store.get("wordWrap") ? "on" : "off", quickSuggestions: { other: true, comments: true, strings: true }, suggestOnTriggerCharacters: true, autoClosingBrackets: "never", autoClosingQuotes: "always", autoSurround: "never", automaticLayout: true, padding: { top: 14 }, renderWhitespace: "selection", scrollBeyondLastLine: false }} /> : <div className="editor-empty"><Logo/><p>{t("editor.noFile")}</p></div>}</div>;
   const sourceToolbar = <div className="latex-toolbar">{quickActions}<div className="toolbar-spacer"/>{viewSwitch("source", layout.mode === "single")}</div>;
   const previewToolbar = <div className="latex-toolbar">{quickActions}<div className="toolbar-spacer"/>{viewSwitch("preview", layout.mode === "single")}</div>;
   const enginePicker = <label className="engine-picker" title={t("settings.engine")}><span>{t("build.engine")}</span><select aria-label={t("settings.engine")} value={store.get("engine")} onChange={(event) => void store.set("engine", event.target.value as "pdflatex" | "xelatex" | "lualatex", "project")}><option value="pdflatex">pdfLaTeX</option><option value="xelatex">XeLaTeX</option><option value="lualatex">LuaLaTeX</option></select></label>;
   const outputToolbar = <div className="output-toolbar"><button className="compile-button" onClick={() => { commands.execute("latex.compile"); }} disabled={compileState === "running"}><Icon name="play"/><span>{t(compileState === "running" ? "build.compiling" : "build.compile")}</span></button>{enginePicker}<button onClick={() => { setBottomTab("compileLog"); setBottomVisible(true); }}>{t("build.log")}</button><div className="toolbar-spacer"/><button className={layout.rightPane === "pdf" ? "active" : ""} onClick={() => setLayout((value) => ({ ...value, rightPane: value.rightPane === "pdf" ? "preview" : "pdf" }))}>{layout.rightPane === "pdf" ? t("menu.preview") : t("menu.pdf")}</button></div>;
   const sourcePaneContent = <section className="work-pane source-pane">{sourceTabs}{sourceEditor}</section>;
   const sourcePane = <section className="work-pane source-pane">{sourceTabs}{sourceToolbar}{sourceEditor}</section>;
-  const previewProps = { filePath: activeTab?.path, source: activeTab?.content, definitions: previewEnvironments, mathContext, filterQuery, searchQuery, activeSearchResult, onSourceChange: setEditorContent, api, projectId: project.id, tree, onSpellContextMenu: setSpellContextMenu, onDetectedLanguage: setDetectedSpellLanguage, onForwardSync: forwardSyncToPdf };
+  const previewProps = { filePath: activeTab?.path, source: activeTab?.content, definitions: previewEnvironments, mathContext, filterQuery, searchQuery, activeSearchResult, highlightRange: createdBlockHighlight, relation: blockSnapshot ? { active: relationModeActive, snapshot: blockSnapshot, transientToBlockId: previewSemanticIds, focusId: relationFocusId, direction: relationDirection, matchIds: relationProjection.matchIds, contextIds: relationProjection.contextIds, unmatchedBehavior: relationUnmatched, locateRequest: relationLocateRequest, onFocus: focusRelationBlock, onToggle: toggleRelation } : undefined, onSourceChange: setEditorContent, onSelectionChange: setPreviewSelection, onSelectionContextMenu: (selection: DocumentSelection, x: number, y: number) => { setPreviewSelection(selection); setBlockContext({ selection, x, y }); }, onViewportAnchorChange: trackPreviewViewport, api, projectId: project.id, tree, onSpellContextMenu: setSpellContextMenu, onDetectedLanguage: setDetectedSpellLanguage, onForwardSync: forwardSyncToPdf };
   const previewContent = <section className="work-pane"><PreviewPane {...previewProps}/></section>;
   const previewPane = <section className="work-pane">{previewToolbar}<PreviewPane {...previewProps}/></section>;
   const secondaryContent = <section className="work-pane output-pane"><Placeholder type={layout.rightPane} pdfDataUrl={pdfDataUrl} pdfTarget={pdfTarget} onPdfInteract={() => setPdfTarget(undefined)} onPdfDoubleClick={(page, x, y) => void reverseSyncFromPdf(page, x, y)}/></section>;
@@ -929,12 +1252,17 @@ export function Workbench({ project, projects, environments, onHome, onSwitch }:
       <button onClick={() => { deleteRequest.resolve(true); setDeleteRequest(undefined); }}>{t("files.delete")}</button>
     </section></div>}
     {nameRequest && createPortal(<EntryNameInput message={nameRequest.message} fallback={nameRequest.fallback} finish={(value) => { nameRequest.resolve(value); setNameRequest(undefined); }}/>, document.querySelector(".file-tree") ?? document.body)}
+    {boundaryRepair && <div className="block-repair-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget) setBoundaryRepair(undefined); }}><section className="block-repair-popover" role="dialog" aria-modal="true" aria-label={t("block.repairTitle")}><strong>{t("block.partialOverlap", { block: boundaryRepair.conflictName })}</strong><p>{t("block.repairHint")}</p><div>{boundaryRepair.candidates.map((candidate) => <button key={`${candidate.kind}:${candidate.range.start}:${candidate.range.end}`} onClick={() => void createUserBlockAtRange(candidate.range).catch((error: unknown) => setBlockNotice(error instanceof Error ? error.message : String(error)))}>{t(`block.${candidate.kind}`)}</button>)}<button onClick={() => setBoundaryRepair(undefined)}>{t("project.cancel")}</button></div></section></div>}
+    {blockNotice && <div className="block-notice" role="status">{blockNotice}</div>}
+    {relationChooser && createPortal(<><div className="relation-chooser-dismiss" onMouseDown={() => setRelationChooser(undefined)}/><div className="relation-direction-chooser" role="dialog" style={{ left: Math.min(relationChooser.x, window.innerWidth - 230), top: Math.min(relationChooser.y, window.innerHeight - 110) }}><button disabled={!!chooserPrerequisiteState?.disabledReason} title={chooserPrerequisiteState?.disabledReason ? t(`relation.invalid.${chooserPrerequisiteState.disabledReason}`) : undefined} onClick={() => void mutateRelation(relationChooser.candidateId, "prerequisite").catch((error: unknown) => setBlockNotice(error instanceof Error ? error.message : String(error)))}>← {t("relation.addPrerequisite")}</button><button onClick={() => void mutateRelation(relationChooser.candidateId, "consequence").catch((error: unknown) => setBlockNotice(error instanceof Error ? error.message : String(error)))}>→ {t("relation.addConsequence")}</button></div></>, document.body)}
+    {relationGraphOpen && relationNeighborhood && createPortal(<RelationGraphView snapshot={blockSnapshot ?? emptyBlockSnapshot} neighborhood={relationNeighborhood} direction={relationDirection} depth={relationDepth} onDirection={setRelationDirection} onDepth={setRelationDepth} onFocus={(id) => { focusRelationBlock(id); setRelationGraphFocusId(id); }} onLocate={(id) => { setRelationGraphOpen(false); void locateRelationBlock(id); }} onClose={() => setRelationGraphOpen(false)}/>, document.body)}
     <header className="workbench-topbar" ref={workbenchRef}><button className="logo-button" onClick={onHome} title={t("project.directory")}><Logo/><span>{t("app.name")}</span></button><nav className="app-menus">{(["file", "edit", "view", "history"] as const).map((menu) => <div className="menu-anchor" key={menu}><button onClick={() => setActiveMenu(activeMenu === menu ? undefined : menu)}>{t(`menu.${menu}` as MessageKey)}</button>{activeMenu === menu && <Menu items={menuItems(menu)} onClose={() => setActiveMenu(undefined)}/>}</div>)}</nav><div className="project-switcher menu-anchor"><button onClick={() => setActiveMenu(activeMenu === "projects" ? undefined : "projects")}><strong>{project.name}</strong><Icon name="chevron"/></button>{activeMenu === "projects" && <div className="menu-popover project-menu">{projects.map((item) => <button key={item.id} onClick={() => { setActiveMenu(undefined); onSwitch(item); }}><span>{item.name}</span>{item.id === project.id && <b>✓</b>}</button>)}<div className="menu-divider"/><button onClick={() => { setActiveMenu(undefined); onHome(); }}>{t("project.directory")}</button></div>}</div><button className={`save-status ${saveState}`} onClick={() => { commands.execute("file.save"); }}><Icon name="save"/>{t(`save.${saveState}` as MessageKey)}</button></header>
     <div className="workbench-body"><aside className="activity-bar"><div>{(["files", "search", "ai"] as const).map((mode) => <button key={mode} className={layout.sidebarVisible && sidebarMode === mode ? "active" : ""} title={t(`activity.${mode}` as MessageKey)} onClick={() => selectActivity(mode)}><Icon name={mode}/><span>{t(`activity.${mode}` as MessageKey)}</span></button>)}</div><div><button className={layout.sidebarVisible && sidebarMode === "settings" ? "active" : ""} title={t("activity.settings")} onClick={() => selectActivity("settings")}><Icon name="settings"/><span>{t("activity.settings")}</span></button><button className={layout.sidebarVisible && sidebarMode === "help" ? "active" : ""} title={t("activity.help")} onClick={() => selectActivity("help")}><Icon name="help"/><span>{t("activity.help")}</span></button></div></aside>
-      {layout.sidebarVisible && <><aside className="sidebar" style={{ width: layout.sidebarWidth }}>{sidebarMode === "files" && <><div className="sidebar-heading"><strong>{t("sidebar.files")}</strong><div><button onClick={() => void createEntry(false, "")} title={t("files.newFile")}><Icon name="plus"/></button><button onClick={() => void refreshTree()} title={t("sidebar.refresh")}><Icon name="refresh"/></button><button onClick={() => setLayout((value) => ({ ...value, sidebarVisible: false }))} title={t("sidebar.collapse")}>‹</button></div></div><div className="tree-section" style={{ height: layout.fileTreeHeight }}><input className="sidebar-input" value={treeFilter} onChange={(event) => setTreeFilter(event.target.value)} placeholder={t("sidebar.fileSearch")}/><Tree nodes={tree} activePath={activePath} mainFile={project.mainFile} filter={treeFilter} hideBuildArtifacts={store.get("hideBuildArtifacts")} onOpen={(path) => void openFile(path)}/></div><div className="horizontal-resizer" onPointerDown={(event) => startResize("tree", event)}/><div className="outline-section"><div className="segment-tabs"><button className={outlineMode === "outline" ? "active" : ""} onClick={() => setOutlineMode("outline")}>{t("sidebar.outline")}</button><button className={outlineMode === "relations" ? "active" : ""} onClick={() => setOutlineMode("relations")}>{t("sidebar.relations")}</button></div>{outlineMode === "outline" ? <div className="outline-list">{outline.map((item, index) => <button key={`${item.title}-${index}`} style={{ paddingLeft: 14 + item.level * 15 }} onClick={() => navigateToOutline(item.line)}>{item.title}</button>)}</div> : <div className="sidebar-placeholder"><strong>{t("placeholder.relationsTitle")}</strong><p>{t("placeholder.relations")}</p></div>}</div></>}{sidebarMode === "search" && <AdvancedSearchPanel query={searchQuery} response={searchResponse} activeResultId={activeSearchResult?.id} replacement={replacement} replaceOpen={replaceOpen} filter={filterQuery} options={filterOptions} visibleGroups={store.get("visibleFilterGroups") as FilterGroupId[]} setQuery={setSearchQuery} setReplacement={setReplacement} setReplaceOpen={setReplaceOpen} setFilter={setFilterQuery} selectResult={(result) => void selectSearchResult(result)} replaceCurrent={() => void replaceCurrentSearchResult()} replaceAll={() => void replaceAllSearchResults()}/>} {sidebarMode === "ai" && <div className="generic-sidebar"><h2>{t("placeholder.aiTitle")}</h2><p>{t("placeholder.ai")}</p></div>}{sidebarMode === "settings" && <div className="generic-sidebar"><h2>{t("activity.settings")}</h2><p>{t("placeholder.settings")}</p><dl><div><dt>{t("settings.language")}</dt><dd>{t("settings.english")}</dd></div><div><dt>{t("settings.theme")}</dt><dd>{t("settings.light")}</dd></div></dl></div>}{sidebarMode === "help" && <div className="generic-sidebar"><h2>{t("activity.help")}</h2><p>{t("placeholder.help")}</p></div>}</aside><div className="vertical-resizer" onPointerDown={(event) => startResize("sidebar", event)}/></>}
+      {layout.sidebarVisible && <><aside className="sidebar" style={{ width: layout.sidebarWidth }}>{sidebarMode === "files" && <><div className="sidebar-heading"><strong>{t("sidebar.files")}</strong><div><button onClick={() => void createEntry(false, "")} title={t("files.newFile")}><Icon name="plus"/></button><button onClick={() => void refreshTree()} title={t("sidebar.refresh")}><Icon name="refresh"/></button><button onClick={() => setLayout((value) => ({ ...value, sidebarVisible: false }))} title={t("sidebar.collapse")}>‹</button></div></div><div className="tree-section" style={{ height: layout.fileTreeHeight }}><input className="sidebar-input" value={treeFilter} onChange={(event) => setTreeFilter(event.target.value)} placeholder={t("sidebar.fileSearch")}/><Tree nodes={tree} activePath={activePath} mainFile={project.mainFile} filter={treeFilter} hideBuildArtifacts={store.get("hideBuildArtifacts")} onOpen={(path) => void openFile(path)}/></div><div className="horizontal-resizer" onPointerDown={(event) => startResize("tree", event)}/><div className="outline-section"><div className="segment-tabs"><button className={outlineMode === "outline" ? "active" : ""} onClick={() => setOutlineMode("outline")}>{t("sidebar.outline")}</button><button className={outlineMode === "relations" ? "active" : ""} onClick={() => { setOutlineMode("relations"); setInspectorBlock(undefined); }}>{t("sidebar.relations")}</button></div>{outlineMode === "outline" ? <div className="outline-list">{outline.map((item, index) => <button key={`${item.title}-${index}`} style={{ paddingLeft: 14 + item.level * 15 }} onClick={() => navigateToOutline(item.line)}>{item.title}</button>)}</div> : <RelationBrowser snapshot={blockSnapshot ?? emptyBlockSnapshot} focusId={relationFocusId} direction={relationDirection} depth={relationDepth} filters={relationFilters} unmatchedBehavior={relationUnmatched} canGoBack={relationFocusHistory.length > 0} onBack={relationBack} onFocus={focusRelationBlock} onLocate={(id) => void locateRelationBlock(id)} onDirection={setRelationDirection} onDepth={setRelationDepth} onFilters={setRelationFilters} onUnmatchedBehavior={setRelationUnmatched} onToggleRelation={(id, event) => toggleRelation(id, event.clientX, event.clientY)}/>}</div></>}{sidebarMode === "search" && <AdvancedSearchPanel query={searchQuery} response={searchResponse} activeResultId={activeSearchResult?.id} replacement={replacement} replaceOpen={replaceOpen} filter={filterQuery} options={filterOptions} visibleGroups={store.get("visibleFilterGroups") as FilterGroupId[]} setQuery={setSearchQuery} setReplacement={setReplacement} setReplaceOpen={setReplaceOpen} setFilter={setFilterQuery} selectResult={(result) => void selectSearchResult(result)} replaceCurrent={() => void replaceCurrentSearchResult()} replaceAll={() => void replaceAllSearchResults()}/>} {sidebarMode === "ai" && <div className="generic-sidebar"><h2>{t("placeholder.aiTitle")}</h2><p>{t("placeholder.ai")}</p></div>}{sidebarMode === "settings" && <div className="generic-sidebar"><h2>{t("activity.settings")}</h2><p>{t("placeholder.settings")}</p><dl><div><dt>{t("settings.language")}</dt><dd>{t("settings.english")}</dd></div><div><dt>{t("settings.theme")}</dt><dd>{t("settings.light")}</dd></div></dl></div>}{sidebarMode === "help" && <div className="generic-sidebar"><h2>{t("activity.help")}</h2><p>{t("placeholder.help")}</p></div>}</aside><div className="vertical-resizer" onPointerDown={(event) => startResize("sidebar", event)}/></>}
       <main className="workspace"><div className="workspace-main">{layout.mode === "single" ? singlePane : <><div className="split-toolbar-row">{splitToolbar}</div><div className="split-layout"><div style={{ width: `${layout.splitRatio}%` }}>{splitLeftContent}</div><div className="split-resizer" onPointerDown={(event) => startResize("split", event)}/><div style={{ width: `${100 - layout.splitRatio}%` }}>{secondaryContent}</div></div></>}</div>{bottomVisible && <><div className="bottom-resizer" onPointerDown={(event) => startResize("bottom", event)}/><section className="bottom-panel" style={{ height: layout.bottomPanelHeight }}><div className="bottom-tabs">{(["problems", "output", "compileLog", "versions"] as const).map((tab) => <button className={bottomTab === tab ? "active" : ""} key={tab} onClick={() => setBottomTab(tab)}>{t(`panel.${tab}` as MessageKey)}{tab === "problems" && diagnostics.length > 0 && <span>{diagnostics.length}</span>}</button>)}<button className="panel-close" onClick={() => setBottomVisible(false)} title={t("common.close")}><Icon name="close"/></button></div><div className="panel-content">{bottomTab === "problems" && (diagnostics.length ? diagnostics.map((diagnostic, index) => <DiagnosticRow diagnostic={diagnostic} onOpen={() => void openDiagnostic(diagnostic)} key={`${diagnostic.message}-${index}`}/>) : <p>{t("panel.noProblems")}</p>)}{bottomTab === "compileLog" && <pre>{compileResult ? `${compileResult.stdoutTail}\n${compileResult.stderrTail}` : t("panel.noOutput")}</pre>}{bottomTab === "output" && <p>{t("panel.noOutput")}</p>}{bottomTab === "versions" && <p>{t("panel.versionsPlaceholder")}</p>}</div></section></>}</main>
+      {inspectorBlock ? <aside className="custom-block-inspector" aria-label={t("block.inspector")}><header><div><small>{t("block.customBlock")}</small><strong>{inspectorBlock.name || inspectorBlock.label || t("block.untitled")}</strong></div><button onClick={() => setInspectorBlock(undefined)} title={t("common.close")}><Icon name="close"/></button></header><div><label><span>{t("block.type")}</span><input value={inspectorBlock.role ?? inspectorBlock.type} onChange={(event) => setInspectorBlock((block) => block ? { ...block, role: event.target.value, type: event.target.value } : block)} onBlur={(event) => void updateInspectorBlock({ role: event.target.value || "custom", type: event.target.value || "custom" })}/></label><label><span>{t("block.name")}</span><input value={inspectorBlock.name ?? ""} placeholder={t("block.optional")} onChange={(event) => setInspectorBlock((block) => block ? { ...block, name: event.target.value, title: event.target.value } : block)} onBlur={(event) => void updateInspectorBlock({ name: event.target.value, title: event.target.value })}/></label><label><span>{t("block.label")}</span><input value={inspectorBlock.label ?? ""} placeholder={t("block.optional")} onChange={(event) => setInspectorBlock((block) => block ? { ...block, label: event.target.value } : block)} onBlur={(event) => void updateInspectorBlock({ label: event.target.value })}/></label><dl><div><dt>{t("block.origin")}</dt><dd>{inspectorBlock.origin}</dd></div><div><dt>{t("block.range")}</dt><dd>{inspectorBlock.range ? `${inspectorBlock.range.start}–${inspectorBlock.range.end}` : "—"}</dd></div></dl></div></aside> : relationModeActive && <RelationInspector snapshot={blockSnapshot ?? emptyBlockSnapshot} focusId={relationFocusId} direction={relationDirection} depth={relationDepth} history={structuralHistory} onDirection={setRelationDirection} onDepth={setRelationDepth} onFocus={focusRelationBlock} onRemove={(from, to) => void api?.blockGraph.removeDependency(project.id, from, to).then(refreshRelationState).catch((error: unknown) => setBlockNotice(error instanceof Error ? error.message : String(error)))} onUndo={() => void undoStructure()} onRedo={() => void redoStructure()} onClose={() => setOutlineMode("outline")}/>} 
     </div><footer className="status-bar"><div><span>{activePath ?? project.mainFile ?? "—"}</span><span>{t("status.line", cursor)}</span><span>{t("status.encoding")}</span><span>{t("status.lineEnding")}</span></div><div><span>{t("status.engine")}</span><button onClick={() => { setBottomTab("problems"); setBottomVisible(true); }}>{compileResult?.status === "succeeded" ? `✓ ${t("build.succeeded")}` : compileResult ? `! ${t("build.failed")}` : t("build.notRun")}</button><button onClick={() => { setBottomTab("problems"); setBottomVisible(true); }}>{t("status.errors", { count: errors })}</button><button onClick={() => { setBottomTab("problems"); setBottomVisible(true); }}>{t("status.warnings", { count: warnings })}</button>{spellStatusControl}<button onClick={() => setBottomVisible((value) => !value)} title={t("panel.output")}><Icon name="panel"/></button></div></footer>
-  {sourceMathPreview && <MathPreviewPopover source={sourceMathPreview.source} displayMode={sourceMathPreview.displayMode} context={mathContext} anchor={sourceMathPreview.anchor}/>} {settingsOpen && <SettingsDialog onClose={() => setSettingsOpen(false)}/>} {fileContext && <ContextMenu context={fileContext} items={fileContextItems()} onClose={() => setFileContext(undefined)}/>} {spellContextMenu && <SpellContextMenu request={spellContextMenu} onClose={() => setSpellContextMenu(undefined)}/>}</div>;
+  {sourceMathPreview && <MathPreviewPopover source={sourceMathPreview.source} displayMode={sourceMathPreview.displayMode} context={mathContext} anchor={sourceMathPreview.anchor}/>} {settingsOpen && <SettingsDialog onClose={() => setSettingsOpen(false)}/>} {fileContext && <ContextMenu context={fileContext} items={fileContextItems()} onClose={() => setFileContext(undefined)}/>} {blockContext && <ContextMenu context={blockContext} items={[{ label: t("block.createFromSelection"), action: () => void createUserBlockFromSelection(blockContext.selection).catch((error: unknown) => setBlockNotice(error instanceof Error ? error.message : String(error))) }]} onClose={() => setBlockContext(undefined)}/>} {spellContextMenu && <SpellContextMenu request={spellContextMenu} onClose={() => setSpellContextMenu(undefined)}/>}</div>;
 }
 
 function DiagnosticRow({ diagnostic, onOpen }: { diagnostic: Diagnostic; onOpen(): void }) {

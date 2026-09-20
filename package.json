@@ -1,6 +1,7 @@
 {
   "name": "latex-editor",
-  "version": "0.1.0",
+  "version": "0.3.4",
+  "main": "apps/desktop/dist/main/index.js",
   "private": true,
   "description": "Local-first LaTeX editor foundation",
   "type": "module",
@@ -21,6 +22,7 @@
     "cli": "tsx apps/cli/src/index.ts",
     "desktop:typecheck": "npm exec tsc -- -p apps/desktop/tsconfig.json --noEmit --pretty false",
     "desktop:build": "npm run typecheck && npm run desktop:typecheck && vite build --config apps/desktop/vite.config.ts && tsc -p apps/desktop/tsconfig.main.json",
+    "desktop:dist:win": "npm run desktop:build && electron-builder --win nsis portable --publish never",
     "desktop:dev": "npm run desktop:build && node apps/desktop/scripts/launch.cjs",
     "desktop:test-ui": "npm run desktop:build && node apps/desktop/scripts/run-file-menu-check.mjs",
     "desktop:test-preview": "npm run desktop:build && node apps/desktop/scripts/run-preview-check.mjs",
@@ -38,6 +40,7 @@
     "@types/react-dom": "^19.1.9",
     "@vitejs/plugin-react": "^5.0.2",
     "electron": "^38.1.0",
+    "electron-builder": "^26.0.12",
     "eslint": "^9.35.0",
     "monaco-editor": "^0.52.2",
     "react": "^19.1.1",
@@ -47,6 +50,86 @@
     "typescript-eslint": "^8.42.0",
     "vite": "^7.1.5",
     "vitest": "^3.2.4"
+  },
+  "build": {
+    "appId": "com.texweave.editor",
+    "productName": "TeXWeave",
+    "artifactName": "TeXWeave-${version}-${arch}.${ext}",
+    "directories": {
+      "output": "release",
+      "buildResources": "apps/desktop/build"
+    },
+    "files": [
+      "apps/desktop/dist/**/*",
+      "apps/desktop/src/preload/**/*",
+      "apps/desktop/package.json",
+      "packages/*/package.json",
+      "packages/*/dist/**/*",
+      "node_modules/**/*",
+      "package.json"
+    ],
+    "extraResources": [
+      {
+        "from": "resources",
+        "to": "resources"
+      },
+      {
+        "from": "themes",
+        "to": "themes"
+      },
+      {
+        "from": "build/manifests",
+        "to": "resources/installer/manifests"
+      },
+      {
+        "from": "build/profiles",
+        "to": "resources/installer/profiles"
+      },
+      {
+        "from": "build/scripts",
+        "to": "resources/installer/scripts"
+      }
+    ],
+    "win": {
+      "signAndEditExecutable": false,
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        },
+        {
+          "target": "portable",
+          "arch": [
+            "x64"
+          ]
+        }
+      ]
+    },
+    "nsis": {
+      "artifactName": "TeXWeave-${version}-${arch}-setup.${ext}",
+      "oneClick": false,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": true,
+      "include": "build/installer.nsh",
+      "deleteAppDataOnUninstall": false,
+      "installerLanguages": ["en_US", "zh_CN", "zh_TW", "ja_JP", "ko_KR", "fr_FR"],
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "runAfterFinish": true
+    },
+    "fileAssociations": [
+      {
+        "ext": "tex",
+        "name": "LaTeX document",
+        "description": "TeXWeave LaTeX document",
+        "role": "Editor"
+      }
+    ],
+    "portable": {
+      "artifactName": "TeXWeave-${version}-${arch}-portable.${ext}"
+    }
   },
   "engines": {
     "node": ">=22"

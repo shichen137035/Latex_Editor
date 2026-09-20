@@ -1,4 +1,5 @@
 import type { CommandMetadata, ProjectTreeNode } from "@latex-editor/contracts";
+import { parseMathNodes } from "../math/MathNodeLocator.js";
 import type { EnvironmentDefinition } from "../preview/types.js";
 import type { CompletionContext } from "./context.js";
 
@@ -7,7 +8,7 @@ export interface IndexedDocument {
   content: string;
 }
 
-type CompletionKind = "command" | "environment" | "reference" | "text" | "file" | "word";
+type CompletionKind = "command" | "environment" | "reference" | "text" | "file" | "word" | "math-symbol";
 
 export interface CompletionEntry {
   label: string;
@@ -36,6 +37,8 @@ interface IndexedCitation {
 
 const imageExtensions = new Set([".png", ".jpg", ".jpeg", ".gif", ".svg", ".eps", ".pdf"]);
 const documentWordPattern = /[\p{L}\p{N}][\p{L}\p{N}'’_-]*/gu;
+const mathSymbolPattern = /[\p{L}][\p{L}\p{N}_]*/gu;
+const mathTextCommandPattern = /\\(?:text|textnormal|textrm|textit|textbf|mathrm|operatorname|mbox)\s*\{[^{}]*\}/g;
 
 function flattenTree(nodes: ProjectTreeNode[], result: IndexedFile[] = []): IndexedFile[] {
   for (const node of nodes) {
@@ -102,6 +105,7 @@ export class ProjectIndex {
   private labels: IndexedLabel[] = [];
   private citations: IndexedCitation[] = [];
   private words: CompletionEntry[] = [];
+  private mathSymbols: CompletionEntry[] = [];
 
   rebuild(tree: ProjectTreeNode[], documents: IndexedDocument[], definitions: EnvironmentDefinition[], builtInCommands: CommandMetadata[]): void {
     this.files = flattenTree(tree);
@@ -121,16 +125,34 @@ export class ProjectIndex {
     const labels: IndexedLabel[] = [];
     const citations: IndexedCitation[] = [];
     const wordEntries = new Map<string, CompletionEntry>();
+    const mathSymbolEntries = new Map<string, CompletionEntry>();
     for (const document of documents) {
       const path = document.path;
       const content = document.content;
       if (extension(path) === ".tex") {
+        const mathNodes = parseMathNodes(content);
+        let mathNodeIndex = 0;
         for (const match of content.matchAll(documentWordPattern)) {
           const word = match[0];
           const offset = match.index ?? 0;
+          while ((mathNodes[mathNodeIndex]?.end ?? Number.MAX_SAFE_INTEGER) < offset) mathNodeIndex += 1;
+          const mathNode = mathNodes[mathNodeIndex];
+          if (mathNode && mathNode.start <= offset && offset < mathNode.end) continue;
           if (word.length < 2 || content[offset - 1] === "\\") continue;
           const key = word.toLocaleLowerCase();
           if (!wordEntries.has(key)) wordEntries.set(key, { label: word, insertText: word, detail: `Document word · ${path}`, kind: "word", filterText: word, sourceRank: 3 });
+        }
+        for (const mathNode of mathNodes) {
+          const body = content.slice(mathNode.contentStart, mathNode.contentEnd);
+          // Prose embedded with \text{...} is neither a formula symbol nor a
+          // document-word source, so keep it out of both completion indexes.
+          const symbolicBody = body.replace(mathTextCommandPattern, (value) => " ".repeat(value.length));
+          for (const match of symbolicBody.matchAll(mathSymbolPattern)) {
+            const symbol = match[0];
+            const localOffset = match.index ?? 0;
+            if (symbolicBody[localOffset - 1] === "\\") continue;
+            if (!mathSymbolEntries.has(symbol)) mathSymbolEntries.set(symbol, { label: symbol, insertText: symbol, detail: `Math symbol · ${path}`, kind: "math-symbol", filterText: symbol, sourceRank: 3 });
+          }
         }
       }
       const commandPattern = /\\(?:newcommand|renewcommand|providecommand)\s*(?:\[[^\]]*\]\s*)?(?:\{\\([A-Za-z@]+)\}|\\([A-Za-z@]+))/g;
@@ -174,6 +196,7 @@ export class ProjectIndex {
     this.labels = labels;
     this.citations = citations;
     this.words = [...wordEntries.values()];
+    this.mathSymbols = [...mathSymbolEntries.values()];
   }
 
   complete(context: CompletionContext, currentPath: string): CompletionEntry[] {
@@ -183,6 +206,7 @@ export class ProjectIndex {
     if (context.mode === "reference") return this.filterEntries(this.labels.map((item) => ({ label: item.key, insertText: item.key, detail: item.detail, kind: "reference" as const, filterText: item.key, sourceRank: 0 })), context.prefix);
     if (context.mode === "citation") return this.filterEntries(this.citations.map((item) => ({ label: item.key, insertText: item.key, detail: item.detail, kind: "text" as const, filterText: item.key, sourceRank: 0 })), context.prefix);
     if (context.mode === "document-word") return this.filterEntries(this.words, context.prefix);
+    if (context.mode === "math-symbol") return this.filterEntries(this.mathSymbols, context.prefix);
 
     const wanted = context.mode === "image-file" ? imageExtensions : context.mode === "bib-file" ? new Set([".bib"]) : new Set([".tex"]);
     const entries = this.files.filter((file) => wanted.has(extension(file.path))).map((file) => {

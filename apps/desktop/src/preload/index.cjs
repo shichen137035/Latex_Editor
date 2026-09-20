@@ -6,16 +6,29 @@ contextBridge.exposeInMainWorld("latexEditor", {
     set: (key, value, projectId) => ipcRenderer.invoke("settings:set", key, value, projectId),
     detectToolchain: (manual) => ipcRenderer.invoke("toolchain:detect", manual)
   },
+  installation: {
+    state: () => ipcRenderer.invoke("installation:state"),
+    setMode: (mode, installDirectory) => ipcRenderer.invoke("installation:set-mode", mode, installDirectory),
+    recordComponent: (component) => ipcRenderer.invoke("installation:record-component", component),
+    recordEnvironment: (toolchain) => ipcRenderer.invoke("installation:record-environment", toolchain),
+    removeUserData: (options) => ipcRenderer.invoke("installation:remove-user-data", options)
+  },
   resources: {
     searchCommands: (query) => ipcRenderer.invoke("resources:commands", query)
   },
   blockGraph: {
     snapshot: (projectId) => ipcRenderer.invoke("block-graph:snapshot", projectId),
     createBlock: (projectId, input) => ipcRenderer.invoke("block-graph:create-block", projectId, input),
+    validateUserBlock: (projectId, input) => ipcRenderer.invoke("block-graph:validate-user-block", projectId, input),
+    createUserBlock: (projectId, input) => ipcRenderer.invoke("block-graph:create-user-block", projectId, input),
+    deleteUserBlock: (projectId, blockId) => ipcRenderer.invoke("block-graph:delete-user-block", projectId, blockId),
+    reconcileParsedBlocks: (projectId, input) => ipcRenderer.invoke("block-graph:reconcile-parsed", projectId, input),
+    mapUserBlockRanges: (projectId, input) => ipcRenderer.invoke("block-graph:map-user-ranges", projectId, input),
     addBlock: (projectId, block) => ipcRenderer.invoke("block-graph:add-block", projectId, block),
     updateBlock: (projectId, blockId, patch) => ipcRenderer.invoke("block-graph:update-block", projectId, blockId, patch),
     removeBlock: (projectId, blockId) => ipcRenderer.invoke("block-graph:remove-block", projectId, blockId),
     addDependency: (projectId, prerequisite, consequence) => ipcRenderer.invoke("block-graph:add-dependency", projectId, prerequisite, consequence),
+    validateDependency: (projectId, prerequisite, consequence) => ipcRenderer.invoke("block-graph:validate-dependency", projectId, prerequisite, consequence),
     removeDependency: (projectId, prerequisite, consequence) => ipcRenderer.invoke("block-graph:remove-dependency", projectId, prerequisite, consequence),
     hasDirectDependency: (projectId, prerequisite, consequence) => ipcRenderer.invoke("block-graph:has-direct-dependency", projectId, prerequisite, consequence),
     setStructuralParent: (projectId, child, parent) => ipcRenderer.invoke("block-graph:set-structural-parent", projectId, child, parent),
@@ -35,6 +48,10 @@ contextBridge.exposeInMainWorld("latexEditor", {
     findStructuralOverlapsInConsequences: (projectId, blockId) => ipcRenderer.invoke("block-graph:consequence-overlaps", projectId, blockId),
     findLogicalRelationsWithinPrerequisites: (projectId, blockId) => ipcRenderer.invoke("block-graph:prerequisite-relations", projectId, blockId),
     getBlocksBetween: (projectId, start, end) => ipcRenderer.invoke("block-graph:between", projectId, start, end),
+    getRelationNeighborhood: (projectId, focusId, direction, depth) => ipcRenderer.invoke("block-graph:neighborhood", projectId, focusId, direction, depth),
+    historyState: (projectId) => ipcRenderer.invoke("block-graph:history-state", projectId),
+    undo: (projectId) => ipcRenderer.invoke("block-graph:undo", projectId),
+    redo: (projectId) => ipcRenderer.invoke("block-graph:redo", projectId),
     validate: (projectId) => ipcRenderer.invoke("block-graph:validate", projectId)
   },
   spellcheck: {
