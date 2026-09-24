@@ -59,6 +59,8 @@ export interface Project {
   mainFile?: string;
   writable: boolean;
   missing: boolean;
+  /** Computed for the project-directory response; not persisted in the registry. */
+  mainFileMissing?: boolean;
   settings: Record<string, unknown>;
 }
 

@@ -1,210 +1,104 @@
-/* @theme-name: Ukrainian Light */
-:root,
-[data-theme="light-ukraine"] {
-  /* =========================================================
-     Base UI
-     Ukraine-inspired: Blue / White / Yellow
-     ========================================================= */
+/* @theme-name: Ukrainian Blue & Gold */
+/* TeXWeave semantic theme tokens: restrained Ukrainian blue, white and gold. */
+:root {
+  color-scheme: light;
 
-  --color-bg-app: #f6faff;
+  /* Application surfaces */
+  --color-bg-app: #f2f8fd;
+  --color-bg-app-top: #fbfdff;
+  --color-bg-app-bottom: #eaf3fa;
+  --color-bg-app-glow: rgba(242, 203, 99, 0.12);
   --color-bg-panel: #ffffff;
-  --color-bg-toolbar: #fbfdff;
-  --color-bg-subtle: #f1f7fd;
-  --color-bg-hover: #eaf4fc;
+  --color-bg-toolbar: #f9fcff;
+  --color-bg-subtle: #f0f6fb;
+  --color-bg-hover: #e8f2fa;
 
-  /* Ukrainian blue */
-  --color-primary: #3d86c7;
-  --color-primary-strong: #286aa7;
+  /* Brand and interaction colors */
+  --color-primary: #2782c4;
+  --color-primary-strong: #185f98;
+  --color-accent: #e4b943;
+  --color-link: #176fae;
+  --color-link-hover: #0f558a;
+  --color-text-primary: #1c3853;
+  --color-text-secondary: #68829a;
+  --color-text-muted: #91a5b7;
+  --color-border: #d7e5f0;
+  --color-border-strong: #b9d2e5;
+  --color-success: #278d68;
+  --color-warning: #bd8c1d;
+  --color-error: #cf4c59;
+  --color-status-bg: #185f98;
+  --color-status-text: #fff9e8;
 
-  /* Ukrainian yellow */
-  --color-accent: #e9bf4f;
-
-  --color-text-primary: #234260;
-  --color-text-secondary: #718aa2;
-  --color-text-muted: #9caebe;
-
-  --color-border: #dce9f3;
-  --color-border-strong: #c4d9e8;
-
-  --color-success: #2a9d72;
-  --color-warning: #d6a600;
-  --color-error: #d84d57;
-
-  /* Strong blue status bar + warm yellow text highlight */
-  --color-status-bg: #3d86c7;
-  --color-status-text: #fff8df;
-
+  /* Shared component geometry and elevation */
   --radius-small: 6px;
   --radius-medium: 10px;
   --radius-large: 16px;
-
-  --shadow-panel:
-    0 8px 24px rgba(46, 104, 157, 0.08);
-
+  --shadow-panel: 0 8px 24px rgba(36, 81, 119, 0.09);
   --activity-width: 52px;
   --topbar-height: 46px;
   --status-height: 24px;
 
-
-  /* =========================================================
-     Section
-     Strong academic blue
-     ========================================================= */
-
-  --env-section-accent: #4f91ca;
-  --env-section-fill: rgba(247, 251, 255, 0.82);
-  --env-section-label-bg: #e8f3fc;
-  --env-section-label-text: #326eaa;
-
-
-  /* =========================================================
-     Theorem
-     Deep blue with a subtle yellow undertone
-     ========================================================= */
-
-  --env-theorem-accent: #668fc0;
-  --env-theorem-fill: #fafcff;
-  --env-theorem-label-bg: #eef5fc;
-  --env-theorem-label-text: #4a71a0;
-
-
-  /* =========================================================
-     Definition
-     Clean cyan-blue
-     ========================================================= */
-
-  --env-definition-accent: #4eabb7;
-  --env-definition-fill: #f8fdfe;
-  --env-definition-label-bg: #e9f8fa;
-  --env-definition-label-text: #39818d;
-
-
-  /* =========================================================
-     Proof
-     Muted steel blue
-     ========================================================= */
-
-  --env-proof-accent: #6f9ab8;
-  --env-proof-fill: #fafcff;
-  --env-proof-label-bg: #edf5fa;
-  --env-proof-label-text: #527b9b;
-
-
-  /* =========================================================
-     Equation
-     Neutral blue-gray
-     ========================================================= */
-
-  --env-equation-accent: #88a3b8;
-  --env-equation-fill: #fbfdff;
-  --env-equation-label-bg: #f0f6fa;
-  --env-equation-label-text: #668198;
-
-
-  /* =========================================================
-     Remark
-     Ukrainian yellow
-     ========================================================= */
-
-  --env-remark-accent: #d9b24a;
-  --env-remark-fill: #fffdf8;
-  --env-remark-label-bg: #fff7da;
-  --env-remark-label-text: #987a2e;
-
-
-  /* =========================================================
-     Example
-     Light sky blue
-     ========================================================= */
-
-  --env-example-accent: #67a8d2;
-  --env-example-fill: #f9fdff;
-  --env-example-label-bg: #eaf6fd;
-  --env-example-label-text: #4b82aa;
-
-
-  /* =========================================================
-     Figure
-     Clear Ukrainian blue
-     ========================================================= */
-
-  --env-figure-accent: #4a96cc;
-  --env-figure-fill: #f9fdff;
-  --env-figure-label-bg: #e9f6fd;
-  --env-figure-label-text: #3979a9;
-
-
-  /* =========================================================
-     Table
-     Cool blue-gray
-     ========================================================= */
-
-  --env-table-accent: #70a2b5;
-  --env-table-fill: #fafdfe;
-  --env-table-label-bg: #eef7fa;
-  --env-table-label-text: #568294;
-
-
-  /* =========================================================
-     List
-     ========================================================= */
-
-  --env-list-accent: #9aafc0;
+  /* Semantic block colors */
+  --env-section-accent: #397fbd;
+  --env-section-fill: rgba(244, 249, 255, 0.72);
+  --env-section-label-bg: #e7f2fc;
+  --env-section-label-text: #285f95;
+  --env-theorem-accent: #6688bd;
+  --env-theorem-fill: #f8faff;
+  --env-theorem-label-bg: #edf2fb;
+  --env-theorem-label-text: #4a6898;
+  --env-definition-accent: #328f9b;
+  --env-definition-fill: #f4fbfc;
+  --env-definition-label-bg: #e3f4f5;
+  --env-definition-label-text: #26747d;
+  --env-proof-accent: #4e8e70;
+  --env-proof-fill: #f7fbf8;
+  --env-proof-label-bg: #e8f4ec;
+  --env-proof-label-text: #3b7358;
+  --env-equation-accent: #71879a;
+  --env-equation-fill: #f7fafc;
+  --env-equation-label-bg: #eaf0f5;
+  --env-equation-label-text: #506779;
+  --env-remark-accent: #c49d3d;
+  --env-remark-fill: #fdfbf5;
+  --env-remark-label-bg: #fbf3dc;
+  --env-remark-label-text: #86691f;
+  --env-example-accent: #4a96bd;
+  --env-example-fill: #f5fafc;
+  --env-example-label-bg: #e5f2f8;
+  --env-example-label-text: #356e8c;
+  --env-figure-accent: #3687b8;
+  --env-figure-fill: #f6fbfd;
+  --env-figure-label-bg: #e5f2f9;
+  --env-figure-label-text: #2c6e98;
+  --env-table-accent: #588c99;
+  --env-table-fill: #f7fafb;
+  --env-table-label-bg: #eaf2f4;
+  --env-table-label-text: #426e78;
+  --env-list-accent: #8095a7;
   --env-list-fill: transparent;
-  --env-list-label-bg: #f1f6fa;
-  --env-list-label-text: #71879a;
+  --env-list-label-bg: #edf2f6;
+  --env-list-label-text: #617587;
+  --env-quote-accent: #8493a0;
+  --env-quote-fill: #fafbfc;
+  --env-quote-label-bg: #eff2f4;
+  --env-quote-label-text: #66737e;
+  --env-code-accent: #596f82;
+  --env-code-fill: #f2f5f7;
+  --env-code-label-bg: #e6ebef;
+  --env-code-label-text: #435769;
+  --env-virtual-accent: #bd9140;
+  --env-virtual-fill: #fdfaf2;
+  --env-virtual-label-bg: #f7efd8;
+  --env-virtual-label-text: #806528;
+  --env-generic-accent: #8a99a6;
+  --env-generic-fill: #fafbfc;
+  --env-generic-label-bg: #edf1f4;
+  --env-generic-label-text: #65737f;
 
-
-  /* =========================================================
-     Quote
-     Soft neutral
-     ========================================================= */
-
-  --env-quote-accent: #9caab6;
-  --env-quote-fill: #fcfdfe;
-  --env-quote-label-bg: #f3f6f8;
-  --env-quote-label-text: #74818b;
-
-
-  /* =========================================================
-     Code
-     Slightly darker / metallic
-     ========================================================= */
-
-  --env-code-accent: #718ba0;
-  --env-code-fill: #f5f9fc;
-  --env-code-label-bg: #eaf1f6;
-  --env-code-label-text: #587187;
-
-
-  /* =========================================================
-     Virtual
-     Main yellow environment
-     ========================================================= */
-
-  --env-virtual-accent: #d7b044;
-  --env-virtual-fill: #fffdf7;
-  --env-virtual-label-bg: #fff5cf;
-  --env-virtual-label-text: #96772a;
-
-
-  /* =========================================================
-     Generic
-     ========================================================= */
-
-  --env-generic-accent: #9aabb9;
-  --env-generic-fill: #fcfdfe;
-  --env-generic-label-bg: #f1f5f8;
-  --env-generic-label-text: #748493;
-
-
-  /* =========================================================
-     Environment borders / states
-     ========================================================= */
-
-  --env-border-default: rgba(67, 111, 151, 0.12);
-  --env-border-hover: rgba(61, 134, 199, 0.28);
-
-  /* Selected = Ukrainian blue */
-  --env-border-selected: #3d86c7;
+  /* Block interaction states */
+  --env-border-default: rgba(70, 100, 126, 0.13);
+  --env-border-hover: rgba(39, 130, 196, 0.28);
+  --env-border-selected: #2782c4;
 }

@@ -11,6 +11,7 @@ import "./themes/light.css";
 import "./workbench/workbench.css";
 import "./themes/dark.css";
 import "./themes/tokens.css";
+import "./project-directory.css";
 
 // Keep the editor fully local. The default Monaco React loader uses a CDN,
 // which would violate TeXWeave's offline-first desktop requirement.

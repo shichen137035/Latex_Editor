@@ -1,5 +1,7 @@
 :root, [data-theme="light"] {
   --color-bg-app: #eef6fc;
+  --color-bg-app-top: #f8fbff;
+  --color-bg-app-bottom: #e8f3fb;
   --color-bg-panel: #ffffff;
   --color-bg-toolbar: #f7fbfe;
   --color-bg-subtle: #edf5fa;

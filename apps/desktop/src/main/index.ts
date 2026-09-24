@@ -1,8 +1,8 @@
-import { app, BrowserWindow, dialog, ipcMain, Menu } from "electron";
+import { app, BrowserWindow, clipboard, dialog, ipcMain, Menu, shell } from "electron";
 import { randomUUID } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import { resolve } from "node:path";
-import type { CommandMetadata, CompileResult, CompileInput, GraphTraversalOptions, PreferenceKey, SemanticBlock, CreateSemanticBlockInput, CreateUserBlockInput, UpdateSemanticBlockInput, LatexToolchain, MapUserBlockRangesInput, ReconcileParsedBlocksInput, RelationDirection, ProjectReferenceLink, ReferenceLibraryEntry } from "@latex-editor/contracts" with { "resolution-mode": "import" };
+import type { CommandMetadata, CompileResult, CompileInput, GraphTraversalOptions, PreferenceKey, SemanticBlock, CreateSemanticBlockInput, CreateUserBlockInput, UpdateSemanticBlockInput, LatexToolchain, MapUserBlockRangesInput, ReconcileParsedBlocksInput, RelationDirection, ProjectReferenceLink, ReferenceLibraryEntry, Project } from "@latex-editor/contracts" with { "resolution-mode": "import" };
 import type { ProjectBlockGraphService } from "@latex-editor/application" with { "resolution-mode": "import" };
 import { SettingsRepository } from "./settings.js";
 import { StyleResourceRepository } from "./style-resources.js";
@@ -14,14 +14,16 @@ import { ProjectImageService } from "./images.js";
 import { ReferenceLibraryRepository } from "./references.js";
 
 interface DesktopContext {
-  registry: { initialize(): void; close(): void };
+  registry: { initialize(): void; close(): void; get(id: string): Project | undefined; update(project: Project): void };
   projects: {
     listProjects(): Promise<unknown>;
     createProject(input: { name: string; parentPath: string; styleResourceIds?: string[] }): Promise<unknown>;
-    registerExistingFolder(folderPath: string): Promise<unknown>;
+    registerExistingFolder(folderPath: string): Promise<Project>;
     openProject(projectId: string): Promise<unknown>;
     setMainFile(projectId: string, relativePath: string): Promise<unknown>;
+    remove(request: { projectId: string; mode: "registryOnly" }): Promise<unknown>;
   };
+  environment: { isUnsafeDeleteTarget(path: string): boolean };
   files: {
     listTree(projectId: string): Promise<unknown>;
     readText(projectId: string, relativePath: string): Promise<unknown>;
@@ -78,9 +80,10 @@ async function createContext(): Promise<DesktopContext> {
   await styleResources.initialize();
   const themes = new ThemeRepository(resourceRoot, themeRoot);
   await themes.initialize();
+  const environment = new NodeProjectEnvironment();
   const projects = new ProjectService({
     registry,
-    environment: new NodeProjectEnvironment(),
+    environment,
     templates: resources,
     styleResources,
     clock: systemClock,
@@ -107,7 +110,7 @@ async function createContext(): Promise<DesktopContext> {
   const images = new ProjectImageService(files);
   const references = new ReferenceLibraryRepository(app.getPath("userData"));
   await references.initialize();
-  return { registry, projects, files, compiler, resources, blockGraph, styleResources, themes, spellcheck, installation, images, references };
+  return { registry, projects, environment, files, compiler, resources, blockGraph, styleResources, themes, spellcheck, installation, images, references };
 }
 
 function registerIpcHandlers(): void {
@@ -280,7 +283,91 @@ function registerIpcHandlers(): void {
     if (context) await context.installation.recordEnvironment(detected);
     return detected;
   });
-  ipcMain.handle("projects:list", async () => context?.projects.listProjects() ?? []);
+  ipcMain.handle("projects:list", async () => {
+    if (!context) return [];
+    const projects = await context.projects.listProjects() as Project[];
+    return Promise.all(projects.map(async (project) => {
+      if (!project.mainFile || project.missing) return project;
+      try { await context!.files.resolveFilePath(project.id, project.mainFile, true); return project; }
+      catch { return { ...project, mainFileMissing: true }; }
+    }));
+  });
+  ipcMain.handle("projects:directory-update", (_event, projectId: string, patch: { displayName?: string; isFavorite?: boolean; isPinned?: boolean }) => {
+    if (!context) throw new Error("Application context is not ready");
+    const project = context.registry.get(projectId);
+    if (!project) throw new Error("Project not found");
+    const current = project.settings.projectDirectory && typeof project.settings.projectDirectory === "object"
+      ? project.settings.projectDirectory as Record<string, unknown> : {};
+    const next: Record<string, unknown> = { ...current };
+    if (patch.displayName !== undefined) {
+      if (typeof patch.displayName !== "string") throw new Error("Display name must be text");
+      const displayName = patch.displayName.trim();
+      if (!displayName || displayName.length > 120) throw new Error("Display name must be between 1 and 120 characters");
+      next.displayName = displayName;
+    }
+    if (patch.isFavorite !== undefined) {
+      if (typeof patch.isFavorite !== "boolean") throw new Error("Favorite state must be boolean");
+      next.isFavorite = patch.isFavorite;
+    }
+    if (patch.isPinned !== undefined) {
+      if (typeof patch.isPinned !== "boolean") throw new Error("Pin state must be boolean");
+      next.isPinned = patch.isPinned;
+    }
+    const updated = { ...project, settings: { ...project.settings, projectDirectory: next } };
+    context.registry.update(updated);
+    return updated;
+  });
+  ipcMain.handle("projects:directory-remove", async (_event, projectId: string) => {
+    if (!context) throw new Error("Application context is not ready");
+    return context.projects.remove({ projectId, mode: "registryOnly" });
+  });
+  ipcMain.handle("projects:directory-relocate", async (_event, projectId: string, folderPath: string) => {
+    if (!context) throw new Error("Application context is not ready");
+    const previous = context.registry.get(projectId);
+    if (!previous) throw new Error("Project not found");
+    const relocated = await context.projects.registerExistingFolder(folderPath);
+    let mainFile: string | undefined;
+    if (previous.mainFile) {
+      try { await context.projects.setMainFile(relocated.id, previous.mainFile); mainFile = previous.mainFile; }
+      catch { /* A moved project may have renamed or removed its former main file. */ }
+    }
+    const updated: Project = {
+      ...previous,
+      canonicalPath: relocated.canonicalPath,
+      missing: false,
+      writable: relocated.writable,
+      ...(mainFile ? { mainFile } : {})
+    };
+    if (!mainFile) delete updated.mainFile;
+    await context.projects.remove({ projectId: relocated.id, mode: "registryOnly" });
+    try { context.registry.update(updated); }
+    catch (error) {
+      await context.projects.registerExistingFolder(relocated.canonicalPath).catch(() => undefined);
+      throw error;
+    }
+    return updated;
+  });
+  ipcMain.handle("projects:directory-delete", async (_event, projectId: string, confirmedPath: string) => {
+    if (!context) throw new Error("Application context is not ready");
+    const project = context.registry.get(projectId);
+    if (!project || project.canonicalPath !== confirmedPath) throw new Error("Project path confirmation did not match");
+    if (project.missing || context.environment.isUnsafeDeleteTarget(project.canonicalPath)) throw new Error("This project folder cannot be safely moved to the Recycle Bin");
+    await shell.trashItem(project.canonicalPath);
+    await context.projects.remove({ projectId, mode: "registryOnly" });
+    return true;
+  });
+  ipcMain.handle("projects:directory-reveal", (_event, projectId: string) => {
+    if (!context) throw new Error("Application context is not ready");
+    const project = context.registry.get(projectId);
+    if (!project || project.missing) throw new Error("Project folder is unavailable");
+    shell.showItemInFolder(project.canonicalPath);
+  });
+  ipcMain.handle("projects:directory-copy-path", (_event, projectId: string) => {
+    if (!context) throw new Error("Application context is not ready");
+    const project = context.registry.get(projectId);
+    if (!project) throw new Error("Project not found");
+    clipboard.writeText(project.canonicalPath);
+  });
   ipcMain.handle("projects:create", async (_event, input: { name: string; parentPath: string }) => {
     if (context === undefined) throw new Error("Application context is not ready");
     return context.projects.createProject(input);

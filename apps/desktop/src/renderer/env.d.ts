@@ -116,6 +116,12 @@ declare global {
         register(folderPath: string): Promise<Project>;
         open(projectId: string): Promise<Project>;
         setMainFile(projectId: string, relativePath: string): Promise<Project>;
+        relocateInDirectory(projectId: string, folderPath: string): Promise<Project>;
+        updateDirectoryEntry(projectId: string, patch: { displayName?: string; isFavorite?: boolean; isPinned?: boolean }): Promise<Project>;
+        removeFromDirectory(projectId: string): Promise<unknown>;
+        deleteToRecycleBin(projectId: string, confirmedPath: string): Promise<boolean>;
+        revealInFileManager(projectId: string): Promise<void>;
+        copyProjectPath(projectId: string): Promise<void>;
       };
       files: {
         tree(projectId: string): Promise<ProjectTreeNode[]>;

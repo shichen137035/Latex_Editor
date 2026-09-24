@@ -117,7 +117,13 @@ contextBridge.exposeInMainWorld("latexEditor", {
     create: (input) => ipcRenderer.invoke("projects:create", input),
     register: (folderPath) => ipcRenderer.invoke("projects:register", folderPath),
     open: (projectId) => ipcRenderer.invoke("projects:open", projectId),
-    setMainFile: (projectId, relativePath) => ipcRenderer.invoke("projects:set-main-file", projectId, relativePath)
+    setMainFile: (projectId, relativePath) => ipcRenderer.invoke("projects:set-main-file", projectId, relativePath),
+    relocateInDirectory: (projectId, folderPath) => ipcRenderer.invoke("projects:directory-relocate", projectId, folderPath),
+    updateDirectoryEntry: (projectId, patch) => ipcRenderer.invoke("projects:directory-update", projectId, patch),
+    removeFromDirectory: (projectId) => ipcRenderer.invoke("projects:directory-remove", projectId),
+    deleteToRecycleBin: (projectId, confirmedPath) => ipcRenderer.invoke("projects:directory-delete", projectId, confirmedPath),
+    revealInFileManager: (projectId) => ipcRenderer.invoke("projects:directory-reveal", projectId),
+    copyProjectPath: (projectId) => ipcRenderer.invoke("projects:directory-copy-path", projectId)
   },
   compile: {
     run: (projectId, mainFile) => ipcRenderer.invoke("compile:run", projectId, mainFile)
