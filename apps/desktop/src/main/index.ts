@@ -10,6 +10,7 @@ import { ThemeRepository } from "./themes.js";
 import { OfflineSpellCheckService } from "./spellcheck.js";
 import { InstallationStateService } from "./installation.js";
 import { forwardSync, reverseSync } from "./synctex.js";
+import { ProjectImageService } from "./images.js";
 
 interface DesktopContext {
   registry: { initialize(): void; close(): void };
@@ -39,6 +40,7 @@ interface DesktopContext {
   themes: ThemeRepository;
   spellcheck: OfflineSpellCheckService;
   installation: InstallationStateService;
+  images: ProjectImageService;
 }
 
 let context: DesktopContext | undefined;
@@ -100,7 +102,8 @@ async function createContext(): Promise<DesktopContext> {
   await spellcheck.initialize();
   spellcheck.configure(settings.global.spellCheckMode ?? "auto", settings.global.spellCheckLanguage ?? "en-US");
   await installation.recordComponent({ id: "core", version: app.getVersion(), ownership: "installed-by-texweave", path: app.getAppPath() });
-  return { registry, projects, files, compiler, resources, blockGraph, styleResources, themes, spellcheck, installation };
+  const images = new ProjectImageService(files);
+  return { registry, projects, files, compiler, resources, blockGraph, styleResources, themes, spellcheck, installation, images };
 }
 
 function registerIpcHandlers(): void {
@@ -303,6 +306,18 @@ function registerIpcHandlers(): void {
   ipcMain.handle("files:remove", async (_event, projectId: string, relativePath: string) => {
     if (context === undefined) throw new Error("Application context is not ready");
     return context.files.removeEntry(projectId, relativePath);
+  });
+  ipcMain.handle("images:pick", async (_event, multiple = false) => {
+    const result = await dialog.showOpenDialog({ properties: ["openFile", ...(multiple ? ["multiSelections" as const] : [])], filters: [{ name: "Images", extensions: ["png", "jpg", "jpeg", "webp", "svg", "pdf"] }] });
+    return result.canceled ? [] : result.filePaths;
+  });
+  ipcMain.handle("images:import", async (_event, projectId: string, sourcePaths: string[], directory: string) => {
+    if (context === undefined) throw new Error("Application context is not ready");
+    return context.images.importImages(projectId, sourcePaths, directory);
+  });
+  ipcMain.handle("images:resolve", async (_event, projectId: string, texPath: string, requestedPath: string, graphicPaths?: string[]) => {
+    if (context === undefined) throw new Error("Application context is not ready");
+    return context.images.resolve(projectId, texPath, requestedPath, graphicPaths);
   });
   ipcMain.handle("projects:set-main-file", async (_event, projectId: string, relativePath: string) => {
     if (context === undefined) throw new Error("Application context is not ready");

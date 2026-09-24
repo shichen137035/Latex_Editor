@@ -1,5 +1,5 @@
 import { Editor, type OnMount } from "@monaco-editor/react";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type DragEvent } from "react";
 import { createPortal } from "react-dom";
 import type { BlockGraphSnapshot, BlockId, BlockTextEdit, BlockTextRange, CompileResult, Diagnostic, Project, ProjectTreeNode, RelationDirection, RelationNeighborhood, SemanticBlock, SpellCheckStatus, StructuralHistoryState, SyncTexPdfPosition } from "@latex-editor/contracts";
 import toolbarActions from "../resources/toolbar-actions.json" with { type: "json" };
@@ -9,6 +9,7 @@ import { SettingsDialog } from "../settings/SettingsDialog.js";
 import { useSettings, settings } from "../settings/service.js";
 import { bindings, commands, displayBinding } from "../settings/commands.js";
 import { EnvironmentQuickAction, environmentCursorOffset, environmentInsertion } from "../preview/EnvironmentPicker.js";
+import { addCommandLabel, addEnvironmentLabel, nextAutomaticLabel } from "../preview/labels.js";
 import type { EnvironmentDefinition } from "../preview/types.js";
 import { CompletionController } from "../completion/CompletionController.js";
 import { SpellCheckController, type SpellContextRequest } from "../spellcheck/SpellCheckController.js";
@@ -33,6 +34,15 @@ import { RelationBrowser } from "../relations/RelationBrowser.js";
 import { RelationInspector } from "../relations/RelationInspector.js";
 import { RelationGraphView } from "../relations/RelationGraphView.js";
 import { candidateRelationState, projectRelationCandidates, relationEndpoints, type RelationFilters, type UnmatchedBehavior } from "../relations/model.js";
+import { ImageQuickAction } from "../figure/ImageQuickAction.js";
+import { ImageInsertDialog, type ImageInsertChoice } from "../figure/ImageInsertDialog.js";
+import { FigureInspector, type FigureSelection } from "../figure/FigureInspector.js";
+import { emptyFigureInsertion, emptyMultiImageInsertion, imageInsertion, multiImageInsertion, uniqueFigureLabels } from "../figure/insert.js";
+import { patchFigureSource } from "../figure/patch.js";
+import { TableInsertDialog, type TableInsertChoice } from "../table/TableInsertDialog.js";
+import { TableInspector } from "../table/TableInspector.js";
+import type { TableSelection } from "../table/model.js";
+import { addLatexPackage, tableInsertion, uniqueTableLabel } from "../table/insert.js";
 
 type SidebarMode = "files" | "search" | "ai" | "settings" | "help";
 type PaneType = "source" | "preview" | "pdf";
@@ -50,6 +60,13 @@ const defaultLayout: PersistedLayout = { sidebarWidth: 280, fileTreeHeight: 330,
 
 function restoreLayout(): PersistedLayout {
   return { ...defaultLayout, ...settings.get("layout") };
+}
+
+function relativeAssetPath(filePath: string, assetPath: string): string {
+  const from = filePath.replaceAll("\\", "/").split("/").slice(0, -1);
+  const to = assetPath.replaceAll("\\", "/").split("/");
+  while (from.length && to.length && from[0]?.toLocaleLowerCase() === to[0]?.toLocaleLowerCase()) { from.shift(); to.shift(); }
+  return [...from.map(() => ".."), ...to].join("/");
 }
 
 function Icon({ name }: { name: string }) {
@@ -111,6 +128,7 @@ type FileDropDetail = { paths: string[]; destination: string };
 type BlockContext = { x: number; y: number; selection: DocumentSelection };
 type BlockCreationAvailability = { kind: "none" | "checking" | "valid" | "repair" | "invalid" } | { kind: "edit"; block: SemanticBlock };
 type BoundaryRepairPrompt = { conflictName: string; candidates: BoundaryRepairCandidate[] };
+type ImageDialogState = { kind: "insert" } | { kind: "replace"; selection: FigureSelection; imageIndex: number };
 
 function replacementEdit(before: string, after: string): BlockTextEdit[] {
   if (before === after) return [];
@@ -207,6 +225,10 @@ export function Workbench({ project, projects, environments, onHome, onSwitch }:
   const [blockCreationAvailability, setBlockCreationAvailability] = useState<BlockCreationAvailability>({ kind: "none" });
   const [boundaryRepair, setBoundaryRepair] = useState<BoundaryRepairPrompt>();
   const [inspectorBlock, setInspectorBlock] = useState<SemanticBlock>();
+  const [figureSelection, setFigureSelection] = useState<FigureSelection>();
+  const [imageDialog, setImageDialog] = useState<ImageDialogState>();
+  const [tableDialogOpen, setTableDialogOpen] = useState(false);
+  const [tableSelection, setTableSelection] = useState<TableSelection>();
   const [blockNotice, setBlockNotice] = useState<string>();
   const [createdBlockHighlight, setCreatedBlockHighlight] = useState<{ fileId: string; start: number; end: number; nonce: number }>();
   const [nameRequest, setNameRequest] = useState<{ message: string; fallback: string; resolve(value?: string): void }>();
@@ -251,12 +273,14 @@ export function Workbench({ project, projects, environments, onHome, onSwitch }:
   const pendingRangeTransactions = useRef(new Map<string, BlockTextEdit[][]>());
   const rangeMappingTimers = useRef(new Map<string, number>());
   const previewViewportAnchor = useRef<{ fileId: string; offset: number } | undefined>(undefined);
+  const previewInsertionAnchor = useRef<{ fileId: string; offset: number } | undefined>(undefined);
   const pendingVisualToCodeAnchor = useRef<{ fileId: string; offset: number } | undefined>(undefined);
   useEffect(() => () => resizeCleanup.current?.(), []);
 
   const activeTab = tabs.find((tab) => tab.path === activePath);
   const pdfFile = project.mainFile?.replace(/\.tex$/i, ".pdf");
   const sourceEditorVisible = layout.mode === "single" ? layout.singlePane === "source" : layout.leftPane === "source";
+  const visualEditorVisible = layout.mode === "single" ? layout.singlePane === "preview" : layout.leftPane === "preview";
   const creationSelection = sourceEditorVisible ? sourceSelection : previewSelection;
   const relationModeActive = outlineMode === "relations";
   const relationProjection = useMemo(() => projectRelationCandidates(blockSnapshot ?? emptyBlockSnapshot, relationFocusId, relationFilters), [blockSnapshot, relationFocusId, relationFilters]);
@@ -518,7 +542,8 @@ export function Workbench({ project, projects, environments, onHome, onSwitch }:
     if (!api || !fileContext?.path) return;
     const confirmed = await new Promise<boolean>((resolve) => setDeleteRequest({ path: fileContext.path!, resolve }));
     if (!confirmed) return;
-    try { await api.files.remove(project.id, fileContext.path); setTabs((current) => current.filter((tab) => tab.path !== fileContext.path)); if (activePath === fileContext.path) setActivePath(undefined); await refreshTree(); }
+    const removedPath = fileContext.path;
+    try { await api.files.remove(project.id, removedPath); setTabs((current) => current.filter((tab) => tab.path !== removedPath && !tab.path.startsWith(`${removedPath}/`))); if (activePath === removedPath || activePath?.startsWith(`${removedPath}/`)) setActivePath(undefined); await refreshTree(); }
     catch (error) { window.alert(error instanceof Error ? error.message : String(error)); }
   };
   const setAsMainFile = async () => {
@@ -537,7 +562,8 @@ export function Workbench({ project, projects, environments, onHome, onSwitch }:
     if (!isFile) return [
       { label: t("files.rename"), action: () => void renameEntry() },
       { label: t("files.newFile"), action: () => void createEntry(false) },
-      { label: t("files.newFolder"), action: () => void createEntry(true) }
+      { label: t("files.newFolder"), action: () => void createEntry(true) },
+      { label: t("files.delete"), action: () => void removeEntry() }
     ];
     return [
       { label: t("files.setMainFile"), disabled: !isTex, action: () => void setAsMainFile() },
@@ -547,6 +573,32 @@ export function Workbench({ project, projects, environments, onHome, onSwitch }:
     ];
   };
   useEffect(() => { void refreshTree(); }, [project.id]);
+  useEffect(() => { setFigureSelection(undefined); }, [project.id, activePath]);
+  useEffect(() => { setTableSelection(undefined); }, [project.id, activePath]);
+  useEffect(() => { if (!visualEditorVisible) setFigureSelection(undefined); }, [visualEditorVisible]);
+  useEffect(() => { if (!visualEditorVisible) setTableSelection(undefined); }, [visualEditorVisible]);
+  useEffect(() => {
+    if (!figureSelection) return;
+    const closeOutsideImageEditor = (event: PointerEvent) => {
+      const target = event.target as Element;
+      if (target.closest(".figure-inspector")) return;
+      const block = target.closest<HTMLElement>(".preview-block[data-source-start-offset]");
+      if (block && Number(block.dataset.sourceStartOffset) === figureSelection.start) return;
+      setFigureSelection(undefined);
+    };
+    document.addEventListener("pointerdown", closeOutsideImageEditor, true);
+    return () => document.removeEventListener("pointerdown", closeOutsideImageEditor, true);
+  }, [figureSelection]);
+  useEffect(() => {
+    if (!tableSelection) return;
+    const closeOutsideTableEditor = (event: PointerEvent) => {
+      const target = event.target as Element;
+      if (target.closest(".table-inspector") || target.closest(".structured-table")) return;
+      setTableSelection(undefined);
+    };
+    document.addEventListener("pointerdown", closeOutsideTableEditor, true);
+    return () => document.removeEventListener("pointerdown", closeOutsideTableEditor, true);
+  }, [tableSelection]);
   useEffect(() => () => { completionController.current?.dispose(); spellCheckController.current?.dispose(); symbolPairingListener.current?.dispose(); }, [project.id]);
   useEffect(() => {
     setPdfDataUrl(undefined);
@@ -660,6 +712,9 @@ export function Workbench({ project, projects, environments, onHome, onSwitch }:
   };
   const trackPreviewViewport = useCallback((anchor: { fileId: string; offset: number }) => {
     previewViewportAnchor.current = anchor;
+  }, []);
+  const trackPreviewInsertion = useCallback((anchor?: { fileId: string; offset: number }) => {
+    previewInsertionAnchor.current = anchor;
   }, []);
   const refreshRelationState = async () => {
     if (!api) return;
@@ -809,19 +864,138 @@ export function Workbench({ project, projects, environments, onHome, onSwitch }:
     const model = editor?.getModel();
     const selection = editor?.getSelection();
     if (!editor || !model || !selection) return;
-    const insertion = toolbarInsertion(id, model.getValueInRange(selection));
+    const selectedText = model.getValueInRange(selection);
+    const insertion = toolbarInsertion(id, selectedText);
     if (!insertion) return;
-    insertText(insertion.text, insertion.cursorOffset, insertion.triggerSuggestions);
+    const text = id === "section" && store.get("autoEnvironmentLabels")
+      ? addCommandLabel(insertion.text, nextAutomaticLabel(model.getValue(), previewEnvironments.find((definition) => definition.match.kind === "command" && definition.match.command === "section" ) ?? { match: { kind: "command", command: "section" } } as EnvironmentDefinition))
+      : insertion.text;
+    insertText(text, insertion.cursorOffset, insertion.triggerSuggestions);
+  };
+  const insertImageSnippets = (generated: Array<{ text: string; cursorOffset: number }>, requestedAnchor?: number) => {
+    if (!activeTab || !generated.length) return;
+    const snippets = generated.map((snippet) => uniqueFigureLabels(snippet, activeTab.content));
+    const joined = snippets.map((item) => item.text).join("\n\n");
+    const firstCursor = snippets[0]?.cursorOffset;
+    const editor = editorRef.current;
+    if (sourceEditorVisible && editor?.getModel() && editor.getSelection()) { insertText(joined, firstCursor); return; }
+    const insertionAnchor = previewInsertionAnchor.current?.fileId === activeTab.path ? previewInsertionAnchor.current.offset : undefined;
+    const anchor = requestedAnchor ?? insertionAnchor ?? (previewViewportAnchor.current?.fileId === activeTab.path ? previewViewportAnchor.current.offset : activeTab.content.length);
+    const prefix = anchor > 0 && !activeTab.content.slice(0, anchor).endsWith("\n") ? "\n\n" : "";
+    const suffix = anchor < activeTab.content.length && !activeTab.content.slice(anchor).startsWith("\n") ? "\n\n" : "";
+    previewInsertionAnchor.current = undefined;
+    setEditorContent(activeTab.content.slice(0, anchor) + prefix + joined + suffix + activeTab.content.slice(anchor));
+  };
+  const importImages = async (paths: string[], type: "figure" | "inline", requestedAnchor?: number) => {
+    if (!api || !activeTab || !paths.length) return;
+    const imported = await api.images.import(project.id, paths, store.get("images").defaultDirectory);
+    await refreshTree();
+    const relativePaths = imported.filter((item) => item.kind === "file" && /\.(?:png|jpe?g|webp|svg|pdf)$/i.test(item.relativePath)).map((item) => relativeAssetPath(activeTab.path, item.relativePath));
+    if (!relativePaths.length) return;
+    insertImageSnippets(type === "figure" && relativePaths.length > 1 ? [multiImageInsertion(relativePaths, store.get("images"))] : relativePaths.map((path) => imageInsertion(path, store.get("images"), type)), requestedAnchor);
+  };
+  const chooseImagePath = async (choice: Extract<ImageInsertChoice, { kind: "project" | "local" }>): Promise<string | undefined> => {
+    if (!api || !activeTab) return undefined;
+    if (choice.kind === "project") return relativeAssetPath(activeTab.path, choice.path);
+    const picked = await api.images.pick(false);
+    if (!picked.length) return undefined;
+    const [imported] = await api.images.import(project.id, picked, store.get("images").defaultDirectory);
+    if (!imported || imported.kind !== "file") return undefined;
+    await refreshTree();
+    return relativeAssetPath(activeTab.path, imported.relativePath);
+  };
+  const applyImageChoice = async (choice: ImageInsertChoice) => {
+    const dialog = imageDialog;
+    if (!activeTab || !dialog) return;
+    if (dialog.kind === "insert") {
+      if (choice.kind === "empty") insertImageSnippets([emptyFigureInsertion(store.get("images"))]);
+      else if (choice.kind === "multi") insertImageSnippets([emptyMultiImageInsertion(choice.rows, choice.columns, store.get("images"))]);
+      else {
+        const path = await chooseImagePath(choice);
+        if (path) insertImageSnippets([imageInsertion(path, store.get("images"), "figure")]);
+      }
+      setImageDialog(undefined);
+      return;
+    }
+    if (choice.kind !== "project" && choice.kind !== "local") return;
+    const path = await chooseImagePath(choice);
+    if (!path || activeTab.path !== dialog.selection.fileId) { setImageDialog(undefined); return; }
+    const replacement = patchFigureSource(dialog.selection.source, { imageIndex: dialog.imageIndex, sourcePath: path });
+    setEditorContent(activeTab.content.slice(0, dialog.selection.start) + replacement + activeTab.content.slice(dialog.selection.end));
+    setFigureSelection({ ...dialog.selection, source: replacement, end: dialog.selection.start + replacement.length, imageIndex: dialog.imageIndex });
+    setImageDialog(undefined);
+  };
+  const applyPreviewTableChange = (selection: TableSelection, replacement: string) => {
+    if (!activeTab || activeTab.path !== selection.fileId) return;
+    let next = activeTab.content.slice(0, selection.start) + replacement + activeTab.content.slice(selection.end);
+    let start = selection.start;
+    if (replacement.includes("\\multirow{") && !selection.source.includes("\\multirow{")) {
+      const packageEdit = addLatexPackage(next, "multirow");
+      next = packageEdit.source;
+      if (packageEdit.insertedAt <= start) start += packageEdit.length;
+    }
+    setEditorContent(next);
+    setTableSelection({ ...selection, start, source: replacement, end: start + replacement.length });
+  };
+  const applyTableChoice = (choice: TableInsertChoice) => {
+    if (!activeTab) return;
+    const preferences = store.get("tables");
+    const insertion = uniqueTableLabel(tableInsertion(choice, preferences), activeTab.content);
+    const editor = editorRef.current;
+    const model = editor?.getModel();
+    const selection = editor?.getSelection();
+    const insertionAnchor = previewInsertionAnchor.current?.fileId === activeTab.path ? previewInsertionAnchor.current.offset : undefined;
+    let anchor = sourceEditorVisible && model && selection
+      ? model.getOffsetAt(selection.getStartPosition())
+      : insertionAnchor ?? (previewViewportAnchor.current?.fileId === activeTab.path ? previewViewportAnchor.current.offset : activeTab.content.length);
+    let source = activeTab.content;
+    if (choice.addBooktabs) {
+      const packageEdit = addLatexPackage(source, "booktabs");
+      source = packageEdit.source;
+      if (packageEdit.length && packageEdit.insertedAt <= anchor) anchor += packageEdit.length;
+    }
+    const prefix = anchor > 0 && !source.slice(0, anchor).endsWith("\n") ? "\n\n" : "";
+    const suffix = anchor < source.length && !source.slice(anchor).startsWith("\n") ? "\n\n" : "";
+    setEditorContent(source.slice(0, anchor) + prefix + insertion.text + suffix + source.slice(anchor));
+    previewInsertionAnchor.current = undefined;
+    setTableDialogOpen(false);
+  };
+  const dropImages = (event: DragEvent<HTMLElement>) => {
+    if (!api || !event.dataTransfer.files.length) return;
+    const paths = Array.from(event.dataTransfer.files).map((file) => api.files.pathForFile(file)).filter(Boolean);
+    if (!paths.length) return;
+    event.preventDefault();
+    let anchor: number | undefined;
+    if ((event.target as Element).closest(".editor-surface")) {
+      const target = editorRef.current?.getTargetAtClientPoint(event.clientX, event.clientY);
+      if (target?.position) editorRef.current?.setPosition(target.position);
+    } else {
+      const sourceTarget = (event.target as Element).closest<HTMLElement>("[data-source-start-offset][data-source-end-offset]");
+      if (sourceTarget) {
+        const rect = sourceTarget.getBoundingClientRect();
+        anchor = event.clientY < rect.top + rect.height / 2 ? Number(sourceTarget.dataset.sourceStartOffset) : Number(sourceTarget.dataset.sourceEndOffset);
+      }
+    }
+    void importImages(paths, store.get("images").defaultInsert.type, anchor).catch((error: unknown) => setBlockNotice(error instanceof Error ? error.message : String(error)));
+  };
+  const dropImagesToProject = (event: DragEvent<HTMLElement>) => {
+    if (event.defaultPrevented) return;
+    if (!api || !event.dataTransfer.files.length) return;
+    const paths = Array.from(event.dataTransfer.files).map((file) => api.files.pathForFile(file)).filter(Boolean);
+    if (!paths.length) return;
+    event.preventDefault();
+    void api.images.import(project.id, paths, store.get("images").defaultDirectory).then(() => refreshTree()).catch((error: unknown) => setBlockNotice(error instanceof Error ? error.message : String(error)));
   };
   const insertEnvironment = (definition: EnvironmentDefinition) => {
     const editor = editorRef.current;
+    const withAutomaticLabel = (snippet: string, source: string) => store.get("autoEnvironmentLabels") ? addEnvironmentLabel(snippet, nextAutomaticLabel(source, definition)) : snippet;
     try {
       const selection = editor?.getSelection();
       const model = editor?.getModel();
-      if (editor && model && selection) {
-        const snippet = environmentInsertion(definition, model.getValueInRange(selection));
-        if (!snippet) return;
+      if (sourceEditorVisible && editor && model && selection) {
         const selectedText = model.getValueInRange(selection);
+        const snippet = withAutomaticLabel(environmentInsertion(definition, selectedText) ?? "", model.getValue());
+        if (!snippet) return;
         const startOffset = model.getOffsetAt(selection.getStartPosition());
         editor.executeEdits("latex-environment-picker", [{ range: selection, text: snippet, forceMoveMarkers: true }]);
         editor.setPosition(model.getPositionAt(startOffset + environmentCursorOffset(snippet, selectedText)));
@@ -829,8 +1003,14 @@ export function Workbench({ project, projects, environments, onHome, onSwitch }:
         return;
       }
     } catch { /* A single-pane Visual view may have disposed the Monaco instance. */ }
-    const snippet = environmentInsertion(definition);
-    if (snippet && activeTab) setEditorContent(`${activeTab.content}${activeTab.content.endsWith("\n") ? "" : "\n"}${snippet}\n`);
+    const snippet = activeTab ? withAutomaticLabel(environmentInsertion(definition) ?? "", activeTab.content) : "";
+    if (snippet && activeTab) {
+      const anchor = previewInsertionAnchor.current?.fileId === activeTab.path ? previewInsertionAnchor.current.offset : activeTab.content.length;
+      const prefix = anchor > 0 && !activeTab.content.slice(0, anchor).endsWith("\n") ? "\n\n" : "";
+      const suffix = anchor < activeTab.content.length && !activeTab.content.slice(anchor).startsWith("\n") ? "\n\n" : "";
+      previewInsertionAnchor.current = undefined;
+      setEditorContent(activeTab.content.slice(0, anchor) + prefix + snippet + suffix + activeTab.content.slice(anchor));
+    }
   };
   const revealPendingVisualPosition = (editor = editorRef.current) => {
     const pending = pendingVisualToCodeAnchor.current;
@@ -1228,18 +1408,19 @@ export function Workbench({ project, projects, environments, onHome, onSwitch }:
     if (blockCreationAvailability.kind === "edit") { setInspectorBlock(blockCreationAvailability.block); return; }
     void createUserBlockFromSelection().catch((error: unknown) => setBlockNotice(error instanceof Error ? error.message : String(error)));
   }}><b>{blockCreationAvailability.kind === "repair" ? "+⚠" : blockCreationAvailability.kind === "edit" ? "✎" : "+"}</b><span>{t(blockCreationAvailability.kind === "edit" ? "block.edit" : "block.add")}{blockCreationAvailability.kind === "edit" ? " ▾" : ""}</span></button>;
-  const quickActions = [blockButton, ...toolbarActions.map((action) => { const shortTitleKey = action.shortTitleKey; const icon = "icon" in action ? action.icon : undefined; return action.id === "environment" ? <EnvironmentQuickAction key={action.id} definitions={previewEnvironments} onInsert={insertEnvironment}/> : <button key={action.id} title={t(action.titleKey as MessageKey)} onClick={() => insertToolbarAction(action.id)}>{icon ? <Icon name={icon}/> : <b>{action.glyph}</b>}<span>{t(shortTitleKey as MessageKey)}</span></button>; })];
+  const quickActions = [blockButton, ...toolbarActions.map((action) => { const shortTitleKey = action.shortTitleKey; const icon = "icon" in action ? action.icon : undefined; return action.id === "environment" ? <EnvironmentQuickAction key={action.id} definitions={previewEnvironments} onInsert={insertEnvironment}/> : action.id === "figure" ? <ImageQuickAction key={action.id} onOpen={() => setImageDialog({ kind: "insert" })}/> : action.id === "table" ? <button key={action.id} title={t(action.titleKey as MessageKey)} onClick={() => setTableDialogOpen(true)}><b>{action.glyph}</b><span>{t(shortTitleKey as MessageKey)}</span></button> : <button key={action.id} title={t(action.titleKey as MessageKey)} onClick={() => insertToolbarAction(action.id)}>{icon ? <Icon name={icon}/> : <b>{action.glyph}</b>}<span>{t(shortTitleKey as MessageKey)}</span></button>; })];
   const sourceTabs = <div className="editor-tabs">{tabs.map((tab) => <button className={tab.path === activePath ? "active" : ""} key={tab.path} onClick={() => setActivePath(tab.path)}><span>{tab.path.split("/").at(-1)}</span>{tab.dirty && <i/>}<span className="tab-close" title={t("editor.closeTab")} onClick={(event) => { event.stopPropagation(); closeTab(tab.path); }}><Icon name="close"/></span></button>)}</div>;
-  const sourceEditor = <div className="editor-surface">{activeTab ? <Editor height="100%" language={activeTab.path.endsWith(".bib") ? "bibtex" : activeTab.path.endsWith(".json") ? "json" : "latex"} value={activeTab.content} onChange={(value, event) => setEditorContent(value ?? "", event.changes.map((change) => ({ start: change.rangeOffset, end: change.rangeOffset + change.rangeLength, newLength: change.text.length })))} onMount={onEditorMount} theme={editorThemeName(store.get("theme"))} options={{ minimap: { enabled: true }, fontSize: store.get("fontSize"), tabSize: store.get("tabSize"), lineHeight: Math.round(store.get("fontSize") * 1.5), wordWrap: store.get("wordWrap") ? "on" : "off", quickSuggestions: { other: true, comments: true, strings: true }, suggestOnTriggerCharacters: true, autoClosingBrackets: "never", autoClosingQuotes: "always", autoSurround: "never", automaticLayout: true, padding: { top: 14 }, renderWhitespace: "selection", scrollBeyondLastLine: false }} /> : <div className="editor-empty"><Logo/><p>{t("editor.noFile")}</p></div>}</div>;
+  const sourceEditor = <div className="editor-surface" onDragOver={(event) => { if (event.dataTransfer.types.includes("Files")) event.preventDefault(); }} onDrop={dropImages}>{activeTab ? <Editor height="100%" language={activeTab.path.endsWith(".bib") ? "bibtex" : activeTab.path.endsWith(".json") ? "json" : "latex"} value={activeTab.content} onChange={(value, event) => setEditorContent(value ?? "", event.changes.map((change) => ({ start: change.rangeOffset, end: change.rangeOffset + change.rangeLength, newLength: change.text.length })))} onMount={onEditorMount} theme={editorThemeName(store.get("theme"))} options={{ minimap: { enabled: true }, fontSize: store.get("fontSize"), tabSize: store.get("tabSize"), lineHeight: Math.round(store.get("fontSize") * 1.5), wordWrap: store.get("wordWrap") ? "on" : "off", quickSuggestions: { other: true, comments: true, strings: true }, suggestOnTriggerCharacters: true, autoClosingBrackets: "never", autoClosingQuotes: "always", autoSurround: "never", automaticLayout: true, padding: { top: 14 }, renderWhitespace: "selection", scrollBeyondLastLine: false }} /> : <div className="editor-empty"><Logo/><p>{t("editor.noFile")}</p></div>}</div>;
   const sourceToolbar = <div className="latex-toolbar">{quickActions}<div className="toolbar-spacer"/>{viewSwitch("source", layout.mode === "single")}</div>;
   const previewToolbar = <div className="latex-toolbar">{quickActions}<div className="toolbar-spacer"/>{viewSwitch("preview", layout.mode === "single")}</div>;
   const enginePicker = <label className="engine-picker" title={t("settings.engine")}><span>{t("build.engine")}</span><select aria-label={t("settings.engine")} value={store.get("engine")} onChange={(event) => void store.set("engine", event.target.value as "pdflatex" | "xelatex" | "lualatex", "project")}><option value="pdflatex">pdfLaTeX</option><option value="xelatex">XeLaTeX</option><option value="lualatex">LuaLaTeX</option></select></label>;
   const outputToolbar = <div className="output-toolbar"><button className="compile-button" onClick={() => { commands.execute("latex.compile"); }} disabled={compileState === "running"}><Icon name="play"/><span>{t(compileState === "running" ? "build.compiling" : "build.compile")}</span></button>{enginePicker}<button onClick={() => { setBottomTab("compileLog"); setBottomVisible(true); }}>{t("build.log")}</button><div className="toolbar-spacer"/><button className={layout.rightPane === "pdf" ? "active" : ""} onClick={() => setLayout((value) => ({ ...value, rightPane: value.rightPane === "pdf" ? "preview" : "pdf" }))}>{layout.rightPane === "pdf" ? t("menu.preview") : t("menu.pdf")}</button></div>;
   const sourcePaneContent = <section className="work-pane source-pane">{sourceTabs}{sourceEditor}</section>;
   const sourcePane = <section className="work-pane source-pane">{sourceTabs}{sourceToolbar}{sourceEditor}</section>;
-  const previewProps = { filePath: activeTab?.path, source: activeTab?.content, definitions: previewEnvironments, mathContext, filterQuery, searchQuery, activeSearchResult, highlightRange: createdBlockHighlight, relation: blockSnapshot ? { active: relationModeActive, snapshot: blockSnapshot, transientToBlockId: previewSemanticIds, focusId: relationFocusId, direction: relationDirection, matchIds: relationProjection.matchIds, contextIds: relationProjection.contextIds, unmatchedBehavior: relationUnmatched, locateRequest: relationLocateRequest, onFocus: focusRelationBlock, onToggle: toggleRelation } : undefined, onSourceChange: setEditorContent, onSelectionChange: setPreviewSelection, onSelectionContextMenu: (selection: DocumentSelection, x: number, y: number) => { setPreviewSelection(selection); setBlockContext({ selection, x, y }); }, onViewportAnchorChange: trackPreviewViewport, api, projectId: project.id, tree, onSpellContextMenu: setSpellContextMenu, onDetectedLanguage: setDetectedSpellLanguage, onForwardSync: forwardSyncToPdf };
-  const previewContent = <section className="work-pane"><PreviewPane {...previewProps}/></section>;
-  const previewPane = <section className="work-pane">{previewToolbar}<PreviewPane {...previewProps}/></section>;
+  const previewProps = { filePath: activeTab?.path, source: activeTab?.content, definitions: previewEnvironments, mathContext, filterQuery, searchQuery, activeSearchResult, highlightRange: createdBlockHighlight, relation: blockSnapshot ? { active: relationModeActive, snapshot: blockSnapshot, transientToBlockId: previewSemanticIds, focusId: relationFocusId, direction: relationDirection, matchIds: relationProjection.matchIds, contextIds: relationProjection.contextIds, unmatchedBehavior: relationUnmatched, locateRequest: relationLocateRequest, onFocus: focusRelationBlock, onToggle: toggleRelation } : undefined, onSourceChange: setEditorContent, onSelectionChange: setPreviewSelection, onSelectionContextMenu: (selection: DocumentSelection, x: number, y: number) => { setPreviewSelection(selection); setBlockContext({ selection, x, y }); }, onViewportAnchorChange: trackPreviewViewport, onFigureSelect: (selection?: FigureSelection) => { if (selection) { setInspectorBlock(undefined); setTableSelection(undefined); } setFigureSelection(selection); }, onFigureSlotSelect: (selection: FigureSelection) => { setInspectorBlock(undefined); setTableSelection(undefined); setFigureSelection(selection); setImageDialog({ kind: "replace", selection, imageIndex: selection.imageIndex ?? 0 }); }, onTableSelect: (selection?: TableSelection) => { if (selection) { setInspectorBlock(undefined); setFigureSelection(undefined); } setTableSelection(selection); }, onTableChange: applyPreviewTableChange, api, projectId: project.id, tree, onSpellContextMenu: setSpellContextMenu, onDetectedLanguage: setDetectedSpellLanguage, onForwardSync: forwardSyncToPdf };
+  const anchoredPreviewProps = { ...previewProps, onInsertionAnchorChange: trackPreviewInsertion };
+  const previewContent = <section className="work-pane" onDragOver={(event) => { if (event.dataTransfer.types.includes("Files")) event.preventDefault(); }} onDrop={dropImages}><PreviewPane {...anchoredPreviewProps}/></section>;
+  const previewPane = <section className="work-pane" onDragOver={(event) => { if (event.dataTransfer.types.includes("Files")) event.preventDefault(); }} onDrop={dropImages}>{previewToolbar}<PreviewPane {...anchoredPreviewProps}/></section>;
   const secondaryContent = <section className="work-pane output-pane"><Placeholder type={layout.rightPane} pdfDataUrl={pdfDataUrl} pdfTarget={pdfTarget} onPdfInteract={() => setPdfTarget(undefined)} onPdfDoubleClick={(page, x, y) => void reverseSyncFromPdf(page, x, y)}/></section>;
   const singlePane = layout.singlePane === "source" ? sourcePane : layout.singlePane === "preview" ? previewPane : <section className="work-pane single-output"><div className="output-toolbar"><div className="view-switch"><button onClick={() => setLayout((value) => ({ ...value, singlePane: "source" }))}>{t("menu.code")}</button><button onClick={() => setLayout((value) => ({ ...value, singlePane: "preview" }))}>{t("menu.visual")}</button><button className="active">{t("menu.pdf")}</button></div><div className="toolbar-spacer"/><button className="compile-button" onClick={() => { commands.execute("latex.compile"); }}><Icon name="play"/>{t("build.compile")}</button></div><Placeholder type="pdf" pdfDataUrl={pdfDataUrl} pdfTarget={pdfTarget} onPdfInteract={() => setPdfTarget(undefined)} onPdfDoubleClick={(page, x, y) => void reverseSyncFromPdf(page, x, y)}/></section>;
   const splitLeftContent = layout.leftPane === "preview" ? previewContent : sourcePaneContent;
@@ -1258,11 +1439,15 @@ export function Workbench({ project, projects, environments, onHome, onSwitch }:
     {relationGraphOpen && relationNeighborhood && createPortal(<RelationGraphView snapshot={blockSnapshot ?? emptyBlockSnapshot} neighborhood={relationNeighborhood} direction={relationDirection} depth={relationDepth} onDirection={setRelationDirection} onDepth={setRelationDepth} onFocus={(id) => { focusRelationBlock(id); setRelationGraphFocusId(id); }} onLocate={(id) => { setRelationGraphOpen(false); void locateRelationBlock(id); }} onClose={() => setRelationGraphOpen(false)}/>, document.body)}
     <header className="workbench-topbar" ref={workbenchRef}><button className="logo-button" onClick={onHome} title={t("project.directory")}><Logo/><span>{t("app.name")}</span></button><nav className="app-menus">{(["file", "edit", "view", "history"] as const).map((menu) => <div className="menu-anchor" key={menu}><button onClick={() => setActiveMenu(activeMenu === menu ? undefined : menu)}>{t(`menu.${menu}` as MessageKey)}</button>{activeMenu === menu && <Menu items={menuItems(menu)} onClose={() => setActiveMenu(undefined)}/>}</div>)}</nav><div className="project-switcher menu-anchor"><button onClick={() => setActiveMenu(activeMenu === "projects" ? undefined : "projects")}><strong>{project.name}</strong><Icon name="chevron"/></button>{activeMenu === "projects" && <div className="menu-popover project-menu">{projects.map((item) => <button key={item.id} onClick={() => { setActiveMenu(undefined); onSwitch(item); }}><span>{item.name}</span>{item.id === project.id && <b>✓</b>}</button>)}<div className="menu-divider"/><button onClick={() => { setActiveMenu(undefined); onHome(); }}>{t("project.directory")}</button></div>}</div><button className={`save-status ${saveState}`} onClick={() => { commands.execute("file.save"); }}><Icon name="save"/>{t(`save.${saveState}` as MessageKey)}</button></header>
     <div className="workbench-body"><aside className="activity-bar"><div>{(["files", "search", "ai"] as const).map((mode) => <button key={mode} className={layout.sidebarVisible && sidebarMode === mode ? "active" : ""} title={t(`activity.${mode}` as MessageKey)} onClick={() => selectActivity(mode)}><Icon name={mode}/><span>{t(`activity.${mode}` as MessageKey)}</span></button>)}</div><div><button className={layout.sidebarVisible && sidebarMode === "settings" ? "active" : ""} title={t("activity.settings")} onClick={() => selectActivity("settings")}><Icon name="settings"/><span>{t("activity.settings")}</span></button><button className={layout.sidebarVisible && sidebarMode === "help" ? "active" : ""} title={t("activity.help")} onClick={() => selectActivity("help")}><Icon name="help"/><span>{t("activity.help")}</span></button></div></aside>
-      {layout.sidebarVisible && <><aside className="sidebar" style={{ width: layout.sidebarWidth }}>{sidebarMode === "files" && <><div className="sidebar-heading"><strong>{t("sidebar.files")}</strong><div><button onClick={() => void createEntry(false, "")} title={t("files.newFile")}><Icon name="plus"/></button><button onClick={() => void refreshTree()} title={t("sidebar.refresh")}><Icon name="refresh"/></button><button onClick={() => setLayout((value) => ({ ...value, sidebarVisible: false }))} title={t("sidebar.collapse")}>‹</button></div></div><div className="tree-section" style={{ height: layout.fileTreeHeight }}><input className="sidebar-input" value={treeFilter} onChange={(event) => setTreeFilter(event.target.value)} placeholder={t("sidebar.fileSearch")}/><Tree nodes={tree} activePath={activePath} mainFile={project.mainFile} filter={treeFilter} hideBuildArtifacts={store.get("hideBuildArtifacts")} onOpen={(path) => void openFile(path)}/></div><div className="horizontal-resizer" onPointerDown={(event) => startResize("tree", event)}/><div className="outline-section"><div className="segment-tabs"><button className={outlineMode === "outline" ? "active" : ""} onClick={() => setOutlineMode("outline")}>{t("sidebar.outline")}</button><button className={outlineMode === "relations" ? "active" : ""} onClick={() => { setOutlineMode("relations"); setInspectorBlock(undefined); }}>{t("sidebar.relations")}</button></div>{outlineMode === "outline" ? <div className="outline-list">{outline.map((item, index) => <button key={`${item.title}-${index}`} style={{ paddingLeft: 14 + item.level * 15 }} onClick={() => navigateToOutline(item.line)}>{item.title}</button>)}</div> : <RelationBrowser snapshot={blockSnapshot ?? emptyBlockSnapshot} focusId={relationFocusId} direction={relationDirection} depth={relationDepth} filters={relationFilters} unmatchedBehavior={relationUnmatched} canGoBack={relationFocusHistory.length > 0} onBack={relationBack} onFocus={focusRelationBlock} onLocate={(id) => void locateRelationBlock(id)} onDirection={setRelationDirection} onDepth={setRelationDepth} onFilters={setRelationFilters} onUnmatchedBehavior={setRelationUnmatched} onToggleRelation={(id, event) => toggleRelation(id, event.clientX, event.clientY)}/>}</div></>}{sidebarMode === "search" && <AdvancedSearchPanel query={searchQuery} response={searchResponse} activeResultId={activeSearchResult?.id} replacement={replacement} replaceOpen={replaceOpen} filter={filterQuery} options={filterOptions} visibleGroups={store.get("visibleFilterGroups") as FilterGroupId[]} setQuery={setSearchQuery} setReplacement={setReplacement} setReplaceOpen={setReplaceOpen} setFilter={setFilterQuery} selectResult={(result) => void selectSearchResult(result)} replaceCurrent={() => void replaceCurrentSearchResult()} replaceAll={() => void replaceAllSearchResults()}/>} {sidebarMode === "ai" && <div className="generic-sidebar"><h2>{t("placeholder.aiTitle")}</h2><p>{t("placeholder.ai")}</p></div>}{sidebarMode === "settings" && <div className="generic-sidebar"><h2>{t("activity.settings")}</h2><p>{t("placeholder.settings")}</p><dl><div><dt>{t("settings.language")}</dt><dd>{t("settings.english")}</dd></div><div><dt>{t("settings.theme")}</dt><dd>{t("settings.light")}</dd></div></dl></div>}{sidebarMode === "help" && <div className="generic-sidebar"><h2>{t("activity.help")}</h2><p>{t("placeholder.help")}</p></div>}</aside><div className="vertical-resizer" onPointerDown={(event) => startResize("sidebar", event)}/></>}
+      {layout.sidebarVisible && <><aside className="sidebar" style={{ width: layout.sidebarWidth }}>{sidebarMode === "files" && <><div className="sidebar-heading"><strong>{t("sidebar.files")}</strong><div><button onClick={() => void createEntry(false, "")} title={t("files.newFile")}><Icon name="plus"/></button><button onClick={() => void refreshTree()} title={t("sidebar.refresh")}><Icon name="refresh"/></button><button onClick={() => setLayout((value) => ({ ...value, sidebarVisible: false }))} title={t("sidebar.collapse")}>‹</button></div></div><div className="tree-section" style={{ height: layout.fileTreeHeight }} onDragOver={(event) => { if (event.dataTransfer.types.includes("Files")) event.preventDefault(); }} onDrop={dropImagesToProject}><input className="sidebar-input" value={treeFilter} onChange={(event) => setTreeFilter(event.target.value)} placeholder={t("sidebar.fileSearch")}/><Tree nodes={tree} activePath={activePath} mainFile={project.mainFile} filter={treeFilter} hideBuildArtifacts={store.get("hideBuildArtifacts")} onOpen={(path) => void openFile(path)}/></div><div className="horizontal-resizer" onPointerDown={(event) => startResize("tree", event)}/><div className="outline-section"><div className="segment-tabs"><button className={outlineMode === "outline" ? "active" : ""} onClick={() => setOutlineMode("outline")}>{t("sidebar.outline")}</button><button className={outlineMode === "relations" ? "active" : ""} onClick={() => { setOutlineMode("relations"); setInspectorBlock(undefined); }}>{t("sidebar.relations")}</button></div>{outlineMode === "outline" ? <div className="outline-list">{outline.map((item, index) => <button key={`${item.title}-${index}`} style={{ paddingLeft: 14 + item.level * 15 }} onClick={() => navigateToOutline(item.line)}>{item.title}</button>)}</div> : <RelationBrowser snapshot={blockSnapshot ?? emptyBlockSnapshot} focusId={relationFocusId} direction={relationDirection} depth={relationDepth} filters={relationFilters} unmatchedBehavior={relationUnmatched} canGoBack={relationFocusHistory.length > 0} onBack={relationBack} onFocus={focusRelationBlock} onLocate={(id) => void locateRelationBlock(id)} onDirection={setRelationDirection} onDepth={setRelationDepth} onFilters={setRelationFilters} onUnmatchedBehavior={setRelationUnmatched} onToggleRelation={(id, event) => toggleRelation(id, event.clientX, event.clientY)}/>}</div></>}{sidebarMode === "search" && <AdvancedSearchPanel query={searchQuery} response={searchResponse} activeResultId={activeSearchResult?.id} replacement={replacement} replaceOpen={replaceOpen} filter={filterQuery} options={filterOptions} visibleGroups={store.get("visibleFilterGroups") as FilterGroupId[]} setQuery={setSearchQuery} setReplacement={setReplacement} setReplaceOpen={setReplaceOpen} setFilter={setFilterQuery} selectResult={(result) => void selectSearchResult(result)} replaceCurrent={() => void replaceCurrentSearchResult()} replaceAll={() => void replaceAllSearchResults()}/>} {sidebarMode === "ai" && <div className="generic-sidebar"><h2>{t("placeholder.aiTitle")}</h2><p>{t("placeholder.ai")}</p></div>}{sidebarMode === "settings" && <div className="generic-sidebar"><h2>{t("activity.settings")}</h2><p>{t("placeholder.settings")}</p><dl><div><dt>{t("settings.language")}</dt><dd>{t("settings.english")}</dd></div><div><dt>{t("settings.theme")}</dt><dd>{t("settings.light")}</dd></div></dl></div>}{sidebarMode === "help" && <div className="generic-sidebar"><h2>{t("activity.help")}</h2><p>{t("placeholder.help")}</p></div>}</aside><div className="vertical-resizer" onPointerDown={(event) => startResize("sidebar", event)}/></>}
       <main className="workspace"><div className="workspace-main">{layout.mode === "single" ? singlePane : <><div className="split-toolbar-row">{splitToolbar}</div><div className="split-layout"><div style={{ width: `${layout.splitRatio}%` }}>{splitLeftContent}</div><div className="split-resizer" onPointerDown={(event) => startResize("split", event)}/><div style={{ width: `${100 - layout.splitRatio}%` }}>{secondaryContent}</div></div></>}</div>{bottomVisible && <><div className="bottom-resizer" onPointerDown={(event) => startResize("bottom", event)}/><section className="bottom-panel" style={{ height: layout.bottomPanelHeight }}><div className="bottom-tabs">{(["problems", "output", "compileLog", "versions"] as const).map((tab) => <button className={bottomTab === tab ? "active" : ""} key={tab} onClick={() => setBottomTab(tab)}>{t(`panel.${tab}` as MessageKey)}{tab === "problems" && diagnostics.length > 0 && <span>{diagnostics.length}</span>}</button>)}<button className="panel-close" onClick={() => setBottomVisible(false)} title={t("common.close")}><Icon name="close"/></button></div><div className="panel-content">{bottomTab === "problems" && (diagnostics.length ? diagnostics.map((diagnostic, index) => <DiagnosticRow diagnostic={diagnostic} onOpen={() => void openDiagnostic(diagnostic)} key={`${diagnostic.message}-${index}`}/>) : <p>{t("panel.noProblems")}</p>)}{bottomTab === "compileLog" && <pre>{compileResult ? `${compileResult.stdoutTail}\n${compileResult.stderrTail}` : t("panel.noOutput")}</pre>}{bottomTab === "output" && <p>{t("panel.noOutput")}</p>}{bottomTab === "versions" && <p>{t("panel.versionsPlaceholder")}</p>}</div></section></>}</main>
-      {inspectorBlock ? <aside className="custom-block-inspector" aria-label={t("block.inspector")}><header><div><small>{t("block.customBlock")}</small><strong>{inspectorBlock.name || inspectorBlock.label || t("block.untitled")}</strong></div><button onClick={() => setInspectorBlock(undefined)} title={t("common.close")}><Icon name="close"/></button></header><div><label><span>{t("block.type")}</span><input value={inspectorBlock.role ?? inspectorBlock.type} onChange={(event) => setInspectorBlock((block) => block ? { ...block, role: event.target.value, type: event.target.value } : block)} onBlur={(event) => void updateInspectorBlock({ role: event.target.value || "custom", type: event.target.value || "custom" })}/></label><label><span>{t("block.name")}</span><input value={inspectorBlock.name ?? ""} placeholder={t("block.optional")} onChange={(event) => setInspectorBlock((block) => block ? { ...block, name: event.target.value, title: event.target.value } : block)} onBlur={(event) => void updateInspectorBlock({ name: event.target.value, title: event.target.value })}/></label><label><span>{t("block.label")}</span><input value={inspectorBlock.label ?? ""} placeholder={t("block.optional")} onChange={(event) => setInspectorBlock((block) => block ? { ...block, label: event.target.value } : block)} onBlur={(event) => void updateInspectorBlock({ label: event.target.value })}/></label><dl><div><dt>{t("block.origin")}</dt><dd>{inspectorBlock.origin}</dd></div><div><dt>{t("block.range")}</dt><dd>{inspectorBlock.range ? `${inspectorBlock.range.start}–${inspectorBlock.range.end}` : "—"}</dd></div></dl></div></aside> : relationModeActive && <RelationInspector snapshot={blockSnapshot ?? emptyBlockSnapshot} focusId={relationFocusId} direction={relationDirection} depth={relationDepth} history={structuralHistory} onDirection={setRelationDirection} onDepth={setRelationDepth} onFocus={focusRelationBlock} onRemove={(from, to) => void api?.blockGraph.removeDependency(project.id, from, to).then(refreshRelationState).catch((error: unknown) => setBlockNotice(error instanceof Error ? error.message : String(error)))} onUndo={() => void undoStructure()} onRedo={() => void redoStructure()} onClose={() => setOutlineMode("outline")}/>} 
+      {figureSelection ? <FigureInspector selection={figureSelection} onClose={() => setFigureSelection(undefined)} onLocate={(imageIndex) => setImageDialog({ kind: "replace", selection: figureSelection, imageIndex })} onChange={(replacement) => {
+        if (!activeTab || activeTab.path !== figureSelection.fileId) return;
+        setEditorContent(activeTab.content.slice(0, figureSelection.start) + replacement + activeTab.content.slice(figureSelection.end));
+        setFigureSelection({ ...figureSelection, source: replacement, end: figureSelection.start + replacement.length });
+      }}/> : tableSelection ? <TableInspector selection={tableSelection} onClose={() => setTableSelection(undefined)} onChange={(replacement) => { if (!activeTab || activeTab.path !== tableSelection.fileId) return; setEditorContent(activeTab.content.slice(0, tableSelection.start) + replacement + activeTab.content.slice(tableSelection.end)); setTableSelection({ ...tableSelection, source: replacement, end: tableSelection.start + replacement.length }); }}/> : inspectorBlock ? <aside className="custom-block-inspector" aria-label={t("block.inspector")}><header><div><small>{t("block.customBlock")}</small><strong>{inspectorBlock.name || inspectorBlock.label || t("block.untitled")}</strong></div><button onClick={() => setInspectorBlock(undefined)} title={t("common.close")}><Icon name="close"/></button></header><div><label><span>{t("block.type")}</span><input value={inspectorBlock.role ?? inspectorBlock.type} onChange={(event) => setInspectorBlock((block) => block ? { ...block, role: event.target.value, type: event.target.value } : block)} onBlur={(event) => void updateInspectorBlock({ role: event.target.value || "custom", type: event.target.value || "custom" })}/></label><label><span>{t("block.name")}</span><input value={inspectorBlock.name ?? ""} placeholder={t("block.optional")} onChange={(event) => setInspectorBlock((block) => block ? { ...block, name: event.target.value, title: event.target.value } : block)} onBlur={(event) => void updateInspectorBlock({ name: event.target.value, title: event.target.value })}/></label><label><span>{t("block.label")}</span><input value={inspectorBlock.label ?? ""} placeholder={t("block.optional")} onChange={(event) => setInspectorBlock((block) => block ? { ...block, label: event.target.value } : block)} onBlur={(event) => void updateInspectorBlock({ label: event.target.value })}/></label><dl><div><dt>{t("block.origin")}</dt><dd>{inspectorBlock.origin}</dd></div><div><dt>{t("block.range")}</dt><dd>{inspectorBlock.range ? `${inspectorBlock.range.start}–${inspectorBlock.range.end}` : "—"}</dd></div></dl></div></aside> : relationModeActive && <RelationInspector snapshot={blockSnapshot ?? emptyBlockSnapshot} focusId={relationFocusId} direction={relationDirection} depth={relationDepth} history={structuralHistory} onDirection={setRelationDirection} onDepth={setRelationDepth} onFocus={focusRelationBlock} onRemove={(from, to) => void api?.blockGraph.removeDependency(project.id, from, to).then(refreshRelationState).catch((error: unknown) => setBlockNotice(error instanceof Error ? error.message : String(error)))} onUndo={() => void undoStructure()} onRedo={() => void redoStructure()} onClose={() => setOutlineMode("outline")}/>}
     </div><footer className="status-bar"><div><span>{activePath ?? project.mainFile ?? "—"}</span><span>{t("status.line", cursor)}</span><span>{t("status.encoding")}</span><span>{t("status.lineEnding")}</span></div><div><span>{t("status.engine")}</span><button onClick={() => { setBottomTab("problems"); setBottomVisible(true); }}>{compileResult?.status === "succeeded" ? `✓ ${t("build.succeeded")}` : compileResult ? `! ${t("build.failed")}` : t("build.notRun")}</button><button onClick={() => { setBottomTab("problems"); setBottomVisible(true); }}>{t("status.errors", { count: errors })}</button><button onClick={() => { setBottomTab("problems"); setBottomVisible(true); }}>{t("status.warnings", { count: warnings })}</button>{spellStatusControl}<button onClick={() => setBottomVisible((value) => !value)} title={t("panel.output")}><Icon name="panel"/></button></div></footer>
-  {sourceMathPreview && <MathPreviewPopover source={sourceMathPreview.source} displayMode={sourceMathPreview.displayMode} context={mathContext} anchor={sourceMathPreview.anchor}/>} {settingsOpen && <SettingsDialog onClose={() => setSettingsOpen(false)}/>} {fileContext && <ContextMenu context={fileContext} items={fileContextItems()} onClose={() => setFileContext(undefined)}/>} {blockContext && <ContextMenu context={blockContext} items={[{ label: t("block.createFromSelection"), action: () => void createUserBlockFromSelection(blockContext.selection).catch((error: unknown) => setBlockNotice(error instanceof Error ? error.message : String(error))) }]} onClose={() => setBlockContext(undefined)}/>} {spellContextMenu && <SpellContextMenu request={spellContextMenu} onClose={() => setSpellContextMenu(undefined)}/>}</div>;
+  {sourceMathPreview && <MathPreviewPopover source={sourceMathPreview.source} displayMode={sourceMathPreview.displayMode} context={mathContext} anchor={sourceMathPreview.anchor}/>} {settingsOpen && <SettingsDialog onClose={() => setSettingsOpen(false)}/>} {imageDialog && createPortal(<ImageInsertDialog tree={tree} replacement={imageDialog.kind === "replace"} onClose={() => setImageDialog(undefined)} onChoose={(choice) => void applyImageChoice(choice).catch((error: unknown) => setBlockNotice(error instanceof Error ? error.message : String(error)))}/>, document.body)} {tableDialogOpen && activeTab && createPortal(<TableInsertDialog documentSource={activeTab.content} defaults={{ style: store.get("tables").defaultStyle, headerRow: store.get("tables").defaultInsert.headerRow, addCaption: store.get("tables").defaultInsert.addCaption, addLabel: store.get("tables").defaultInsert.addLabel }} onClose={() => setTableDialogOpen(false)} onChoose={applyTableChoice}/>, document.body)} {fileContext && <ContextMenu context={fileContext} items={fileContextItems()} onClose={() => setFileContext(undefined)}/>} {blockContext && <ContextMenu context={blockContext} items={[{ label: t("block.createFromSelection"), action: () => void createUserBlockFromSelection(blockContext.selection).catch((error: unknown) => setBlockNotice(error instanceof Error ? error.message : String(error))) }]} onClose={() => setBlockContext(undefined)}/>} {spellContextMenu && <SpellContextMenu request={spellContextMenu} onClose={() => setSpellContextMenu(undefined)}/>}</div>;
 }
 
 function DiagnosticRow({ diagnostic, onOpen }: { diagnostic: Diagnostic; onOpen(): void }) {

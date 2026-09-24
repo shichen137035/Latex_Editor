@@ -41,6 +41,47 @@ export interface LatexToolchain {
   environment?: LatexEnvironmentStatus;
   detectedAt: string;
 }
+export interface ImagePreferences {
+  defaultDirectory: string;
+  defaultInsert: {
+    type: "figure" | "inline";
+    width: string;
+    alignment: "left" | "center" | "right";
+    placement: string;
+    addCaption: boolean;
+    addLabel: boolean;
+    labelPrefix: string;
+  };
+  editor: { defaultMode: "gui" | "source" };
+  multiFigure: {
+    defaultColumns: "auto" | 1 | 2 | 3;
+    subfigureWidth: string;
+    imageWidth: string;
+    horizontalGap: string;
+    verticalGap: string;
+  };
+}
+export const defaultImagePreferences: ImagePreferences = {
+  defaultDirectory: "figures",
+  defaultInsert: { type: "figure", width: "0.8\\textwidth", alignment: "center", placement: "htbp", addCaption: true, addLabel: true, labelPrefix: "fig" },
+  editor: { defaultMode: "gui" },
+  multiFigure: { defaultColumns: "auto", subfigureWidth: "auto", imageWidth: "\\linewidth", horizontalGap: "\\hfill", verticalGap: "1em" }
+};
+export type TableStylePreset = "booktabs-three-line" | "grid" | "horizontal" | "plain" | "header-bottom";
+export interface TablePreferences {
+  defaultStyle: TableStylePreset;
+  defaultInsert: { alignment: "left" | "center" | "right"; placement: string; headerRow: boolean; addCaption: boolean; addLabel: boolean };
+  labelPrefix: string;
+  editor: { defaultMode: "gui" | "source" };
+  editing: { allowAutomaticColumnConversion: boolean; autoAddRowOnTab: boolean };
+}
+export const defaultTablePreferences: TablePreferences = {
+  defaultStyle: "booktabs-three-line",
+  defaultInsert: { alignment: "center", placement: "htbp", headerRow: true, addCaption: true, addLabel: true },
+  labelPrefix: "tab",
+  editor: { defaultMode: "gui" },
+  editing: { allowAutomaticColumnConversion: false, autoAddRowOnTab: false }
+};
 export interface PreferenceValues {
   locale: "en" | "ja" | "zh-CN" | "zh-TW" | "ko" | "fr";
   /** Built-in ids are light/dark; custom ids are provided by the theme catalog. */
@@ -54,7 +95,9 @@ export interface PreferenceValues {
   hideBuildArtifacts: boolean;
   documentWordCompletion: boolean;
   autoPairSymbols: boolean;
+  autoEnvironmentLabels: boolean;
   confirmPreviewEdits: boolean;
+  warnIncompatibleEnvironmentConversion: boolean;
   visibleFilterGroups: string[];
   referenceLinkModifier: "ctrl" | "alt" | "shift" | "meta";
   spellCheckMode: "auto" | "manual" | "disabled";
@@ -67,16 +110,18 @@ export interface PreferenceValues {
   keybindings: Record<string, string>;
   environments: unknown[];
   layout: Record<string, unknown>;
+  images: ImagePreferences;
+  tables: TablePreferences;
 }
 export type PreferenceKey = keyof PreferenceValues;
 export const preferenceDefaults: PreferenceValues = {
   locale: "en", theme: "light", themeDirectory: "", fontSize: 15, tabSize: 2, wordWrap: true,
-  autoSave: "off", hideBuildArtifacts: true, documentWordCompletion: true, autoPairSymbols: true, confirmPreviewEdits: true, visibleFilterGroups: ["blockType", "location", "file", "properties"], referenceLinkModifier: "ctrl", spellCheckMode: "auto", spellCheckLanguage: "en-US", spellCheckActiveLanguages: ["en-US"], maximize: true, restoreProject: false,
-  lastProject: "", engine: "pdflatex", keybindings: {}, environments: [], layout: {}
+  autoSave: "off", hideBuildArtifacts: true, documentWordCompletion: true, autoPairSymbols: true, autoEnvironmentLabels: true, confirmPreviewEdits: true, warnIncompatibleEnvironmentConversion: true, visibleFilterGroups: ["blockType", "location", "file", "properties"], referenceLinkModifier: "ctrl", spellCheckMode: "auto", spellCheckLanguage: "en-US", spellCheckActiveLanguages: ["en-US"], maximize: true, restoreProject: false,
+  lastProject: "", engine: "pdflatex", keybindings: {}, environments: [], layout: {}, images: defaultImagePreferences, tables: defaultTablePreferences
 };
 // Project-scoped preferences are kept separate from machine-wide tree and editor settings.
 // The project settings UI is reserved for a later release; build-artifact visibility is global.
-export const projectPreferenceKeys: PreferenceKey[] = ["fontSize", "tabSize", "wordWrap", "autoSave", "autoPairSymbols", "confirmPreviewEdits", "engine", "environments", "layout"];
+export const projectPreferenceKeys: PreferenceKey[] = ["fontSize", "tabSize", "wordWrap", "autoSave", "autoPairSymbols", "confirmPreviewEdits", "engine", "environments", "layout", "images", "tables"];
 export interface SettingsSnapshot { global: Partial<PreferenceValues>; project: Partial<PreferenceValues>; toolchain?: LatexToolchain }
 export function validPreference(key: string, value: unknown): boolean {
   switch (key) {
@@ -88,7 +133,7 @@ export function validPreference(key: string, value: unknown): boolean {
     case "fontSize": return typeof value === "number" && Number.isInteger(value) && value >= 10 && value <= 32;
     case "tabSize": return typeof value === "number" && [2, 4, 8].includes(value);
     case "autoSave": return value === "off" || value === "afterDelay";
-    case "wordWrap": case "hideBuildArtifacts": case "documentWordCompletion": case "autoPairSymbols": case "confirmPreviewEdits": case "maximize": case "restoreProject": return typeof value === "boolean";
+    case "wordWrap": case "hideBuildArtifacts": case "documentWordCompletion": case "autoPairSymbols": case "autoEnvironmentLabels": case "confirmPreviewEdits": case "warnIncompatibleEnvironmentConversion": case "maximize": case "restoreProject": return typeof value === "boolean";
     case "referenceLinkModifier": return value === "ctrl" || value === "alt" || value === "shift" || value === "meta";
     case "spellCheckActiveLanguages": return Array.isArray(value) && value.every((item) => typeof item === "string" && /^[A-Za-z]{2,3}(?:[-_][A-Za-z0-9]{2,8})?$/.test(item));
     case "themeDirectory": case "lastProject": return typeof value === "string";
@@ -100,6 +145,32 @@ export function validPreference(key: string, value: unknown): boolean {
       return typeof e.id === "string" && typeof e.enabled === "boolean" && typeof e.labelKey === "string" && typeof e.family === "string" && !!e.match && !!e.style && !!e.behavior;
     });
     case "layout": return !!value && typeof value === "object" && !Array.isArray(value);
+    case "images": {
+      if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+      const images = value as Partial<ImagePreferences>;
+      const insert = images.defaultInsert;
+      const editor = images.editor;
+      const multi = images.multiFigure;
+      return typeof images.defaultDirectory === "string" && !images.defaultDirectory.includes("..")
+        && !!insert && (insert.type === "figure" || insert.type === "inline") && typeof insert.width === "string"
+        && ["left", "center", "right"].includes(String(insert.alignment)) && typeof insert.placement === "string"
+        && typeof insert.addCaption === "boolean" && typeof insert.addLabel === "boolean" && typeof insert.labelPrefix === "string"
+        && !!editor && (editor.defaultMode === "gui" || editor.defaultMode === "source")
+        && !!multi && (multi.defaultColumns === "auto" || [1, 2, 3].includes(Number(multi.defaultColumns)))
+        && [multi.subfigureWidth, multi.imageWidth, multi.horizontalGap, multi.verticalGap].every((item) => typeof item === "string");
+    }
+    case "tables": {
+      if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+      const tables = value as Partial<TablePreferences>;
+      const insert = tables.defaultInsert;
+      const editor = tables.editor;
+      const editing = tables.editing;
+      return ["booktabs-three-line", "grid", "horizontal", "plain", "header-bottom"].includes(String(tables.defaultStyle))
+        && !!insert && ["left", "center", "right"].includes(String(insert.alignment)) && typeof insert.placement === "string"
+        && typeof insert.headerRow === "boolean" && typeof insert.addCaption === "boolean" && typeof insert.addLabel === "boolean"
+        && typeof tables.labelPrefix === "string" && !!editor && (editor.defaultMode === "gui" || editor.defaultMode === "source")
+        && !!editing && typeof editing.allowAutomaticColumnConversion === "boolean" && typeof editing.autoAddRowOnTab === "boolean";
+    }
     default: return false;
   }
 }

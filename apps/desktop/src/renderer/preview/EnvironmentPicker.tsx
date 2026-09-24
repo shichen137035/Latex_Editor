@@ -28,6 +28,11 @@ export function environmentCursorOffset(snippet: string, selectedText: string): 
   const closingMarker = snippet.includes("\\end{") ? "\n\\end{" : snippet.includes("\\]") ? "\n\\]" : "\n% tw:block-end";
   const closingOffset = snippet.lastIndexOf(closingMarker);
   if (selectedText && closingOffset >= 0) return closingOffset;
+  const labelStart = snippet.indexOf("\\label{");
+  if (labelStart >= 0) {
+    const labelLineEnd = snippet.indexOf("\n", labelStart);
+    if (labelLineEnd >= 0) return labelLineEnd + 1 + (snippet.slice(labelLineEnd + 1, labelLineEnd + 3) === "  " ? 2 : 0);
+  }
   const firstLineEnd = snippet.indexOf("\n");
   return firstLineEnd >= 0 ? firstLineEnd + 3 : snippet.length;
 }
@@ -86,6 +91,20 @@ export function EnvironmentQuickAction({ definitions, onInsert }: { definitions:
 }
 
 export type EnvironmentConversionGroup = "command" | "wrapper" | "virtual";
+
+const compatibilityClass: Record<EnvironmentDefinition["family"], string> = {
+  section: "section",
+  theorem: "statement", definition: "statement", proof: "statement", remark: "statement", example: "statement",
+  equation: "equation", figure: "figure", table: "table", list: "list", quote: "quote", code: "code",
+  virtual: "virtual", generic: "generic"
+};
+
+/** Semantic compatibility is narrower than sharing the same LaTeX wrapper form. */
+export function environmentDefinitionsCompatible(source: EnvironmentDefinition | undefined, target: EnvironmentDefinition): boolean {
+  if (!source) return false;
+  return definitionConversionGroup(source) === definitionConversionGroup(target)
+    && compatibilityClass[source.family] === compatibilityClass[target.family];
+}
 
 /** Detect the wrapper form from source so configured and unknown environments behave alike. */
 export function environmentConversionGroup(source: string): EnvironmentConversionGroup | undefined {

@@ -28,6 +28,11 @@ async function click(selector) {
   page.webContents.sendInputEvent({ type: "mouseUp", ...point, button: "left", clickCount: 1 });
   await delay(150);
 }
+async function press(keyCode, modifiers = []) {
+  page.webContents.sendInputEvent({ type: "keyDown", keyCode, modifiers });
+  page.webContents.sendInputEvent({ type: "keyUp", keyCode, modifiers });
+  await delay(100);
+}
 
 const source = String.raw`\documentclass{article}
 \begin{document}
@@ -43,6 +48,7 @@ y_t &= \beta y_{t-1}
 \end{equation}
 
 \begin{theorem}
+\label{thm:test}
 Suppose $X$ is compact.
 
 \begin{equation}
@@ -106,6 +112,7 @@ async function run() {
   const inserted = await evaluate(`window.latexEditor.files.read(${JSON.stringify(project.id)}, "main.tex")`);
   assert.ok(inserted.content.includes("\\begin{remark}"));
   assert.ok(inserted.content.includes("\\end{remark}"));
+  assert.ok(inserted.content.includes("\\label{remark:1}"));
   console.log("PASS Environment picker lists active definitions, dismisses outside, and inserts source");
   const visualIndex = await evaluate('Array.from(document.querySelectorAll(".view-switch button")).findIndex(button => button.textContent === "Visual")');
   assert.ok(visualIndex >= 0);
@@ -116,6 +123,14 @@ async function run() {
   assert.equal(await evaluate('document.querySelectorAll(\'[data-environment="equation"]\').length'), 2);
   assert.equal(await evaluate('document.querySelectorAll(\'[data-environment="virtual:intuition"]\').length'), 1);
   assert.equal(await evaluate('document.querySelectorAll(\'[data-environment="custom:mystery"]\').length'), 1);
+  await click('.preview-block[data-environment="theorem"] .preview-block-label');
+  await until('!!document.querySelector(".preview-block-label-editor")', "label editor");
+  await page.webContents.sendInputEvent({ type: "keyDown", keyCode: "A", modifiers: ["control"] });
+  await page.webContents.sendInputEvent({ type: "keyUp", keyCode: "A", modifiers: ["control"] });
+  await page.webContents.insertText("thm:edited");
+  await press("ENTER");
+  await until('document.querySelector(".preview-block-label")?.textContent === "thm:edited"', "label edit");
+  console.log("PASS Preview labels are editable and generated labels are visually distinguished");
   assert.ok(await evaluate('document.querySelectorAll(".katex").length >= 3'), "inline and display formulas are rendered by KaTeX");
   assert.equal(await evaluate('document.querySelectorAll(".katex-error").length'), 0, "nested aligned math is accepted by KaTeX");
   assert.equal(await evaluate('document.querySelectorAll(".preview-math-fallback").length'), 0);

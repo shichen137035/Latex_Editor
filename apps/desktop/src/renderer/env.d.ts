@@ -1,4 +1,4 @@
-import type { BlockCreationValidation, BlockGraphSnapshot, BlockId, BlockRangeMappingResult, BlockReconciliationResult, CommandMetadata, CompileResult, CreateSemanticBlockInput, CreateUserBlockInput, DependencyCycle, DictionaryPackage, FileWriteResult, GraphDiagnostic, GraphTraversalOptions, GraphTraversalResult, LogicalRelation, MapUserBlockRangesInput, Project, ProjectTreeNode, ReconcileParsedBlocksInput, RelationDirection, RelationMutationResult, RelationNeighborhood, RelationValidation, SemanticBlock, SettingsSnapshot, PreferenceKey, LatexToolchain, StyleResource, ThemeDefinition, SpellCheckMode, SpellCheckStatus, StructuralDependencyOverlap, StructuralHistoryState, SyncTexPdfPosition, SyncTexSourcePosition, TextFileContent, UpdateSemanticBlockInput } from "@latex-editor/contracts";
+import type { BlockCreationValidation, BlockGraphSnapshot, BlockId, BlockRangeMappingResult, BlockReconciliationResult, CommandMetadata, CompileResult, CreateSemanticBlockInput, CreateUserBlockInput, DependencyCycle, DictionaryPackage, FileWriteResult, GraphDiagnostic, GraphTraversalOptions, GraphTraversalResult, ImportedImage, LogicalRelation, MapUserBlockRangesInput, Project, ProjectTreeNode, ReconcileParsedBlocksInput, RelationDirection, RelationMutationResult, RelationNeighborhood, RelationValidation, ResolvedGraphic, SemanticBlock, SettingsSnapshot, PreferenceKey, LatexToolchain, StyleResource, ThemeDefinition, SpellCheckMode, SpellCheckStatus, StructuralDependencyOverlap, StructuralHistoryState, SyncTexPdfPosition, SyncTexSourcePosition, TextFileContent, UpdateSemanticBlockInput } from "@latex-editor/contracts";
 
 type InstallationState = {
   schemaVersion: 1;
@@ -118,6 +118,11 @@ declare global {
         copy(projectId: string, fromRelativePath: string, toRelativePath: string): Promise<void>;
         import(projectId: string, sourcePath: string, destinationRelativePath: string): Promise<void>;
         remove(projectId: string, relativePath: string): Promise<void>;
+      };
+      images: {
+        pick(multiple?: boolean): Promise<string[]>;
+        import(projectId: string, sourcePaths: string[], directory: string): Promise<ImportedImage[]>;
+        resolve(projectId: string, texPath: string, requestedPath: string, graphicPaths?: string[]): Promise<ResolvedGraphic>;
       };
       compile: {
         run(projectId: string, mainFile?: string): Promise<CompileResult & { pdfDataUrl?: string }>;

@@ -1,5 +1,7 @@
 import type { ContentRegion, EnvironmentDefinition, PreviewDocument, PreviewNode, SourceSpan, StructuralBlock } from "./types.js";
 
+import { isAutomaticEnvironmentLabel, isAutomaticLabel } from "./labels.js";
+
 interface RawBlock {
   start: number;
   end: number;
@@ -9,6 +11,7 @@ interface RawBlock {
   origin: "latex" | "virtual";
   title?: string;
   latexLabel?: string;
+  autoLabel?: boolean;
   parent?: RawBlock;
 }
 
@@ -136,7 +139,8 @@ export function parsePreview(source: string, filePath: string, definitions: Envi
       if (definition?.enabled === false) continue;
       const value = source.slice(entry.start, offset + match[0].length);
       const latexLabel = labelIn(value);
-      rawBlocks.push({ start: entry.start, end: offset + match[0].length, bodyStart: entry.bodyStart, bodyEnd: offset, environmentId: definition?.id ?? `custom:${entry.name}`, origin: "latex", ...(entry.title ? { title: entry.title } : {}), ...(latexLabel ? { latexLabel } : {}) });
+      const autoLabel = latexLabel ? isAutomaticEnvironmentLabel(source, entry.start, entry.name, latexLabel) : false;
+      rawBlocks.push({ start: entry.start, end: offset + match[0].length, bodyStart: entry.bodyStart, bodyEnd: offset, environmentId: definition?.id ?? `custom:${entry.name}`, origin: "latex", ...(entry.title ? { title: entry.title } : {}), ...(latexLabel ? { latexLabel } : {}), ...(autoLabel ? { autoLabel: true } : {}) });
       continue;
     }
     if (match[0] === "\\[") {
@@ -169,7 +173,7 @@ export function parsePreview(source: string, filePath: string, definitions: Envi
   }
   for (const entry of open) diagnostics.push(`Unclosed ${entry.marker} ${entry.name} at offset ${entry.start}.`);
 
-  const headings: Array<{ start: number; bodyStart: number; command: string; title: string; level: number }> = [];
+  const headings: Array<{ start: number; bodyStart: number; command: string; title: string; level: number; latexLabel?: string; autoLabel?: boolean }> = [];
   const headingPattern = /\\(chapter|section|subsection|subsubsection|paragraph)\*?\{([^{}]*)\}/g;
   for (const match of source.matchAll(headingPattern)) {
     const start = match.index ?? 0;
@@ -178,7 +182,10 @@ export function parsePreview(source: string, filePath: string, definitions: Envi
     if (!commandName) continue;
     const definition = definitions.find((item) => item.match.kind === "command" && item.match.command === commandName);
     if (definition?.enabled === false) continue;
-    headings.push({ start, bodyStart: start + match[0].length, command: definition?.id ?? commandName, title: match[2] ?? "", level: headingLevel[commandName] ?? 3 });
+    const bodyStart = start + match[0].length;
+    const labelMatch = /^\s*\\label\s*\{([^}\n]+)\}/.exec(source.slice(bodyStart));
+    const latexLabel = labelMatch?.[1]?.trim();
+    headings.push({ start, bodyStart, command: definition?.id ?? commandName, title: match[2] ?? "", level: headingLevel[commandName] ?? 3, ...(latexLabel && definition ? { latexLabel, autoLabel: isAutomaticLabel(source, start, definition, latexLabel) } : latexLabel ? { latexLabel } : {}) });
   }
   const nearestHeadingAtLevel: Array<number | undefined> = [];
   headings.slice().reverse().forEach((heading) => {
@@ -187,9 +194,20 @@ export function parsePreview(source: string, filePath: string, definitions: Envi
       const candidate = nearestHeadingAtLevel[level];
       if (candidate !== undefined) end = Math.min(end, candidate);
     }
-    rawBlocks.push({ start: heading.start, end, bodyStart: heading.bodyStart, bodyEnd: end, environmentId: heading.command, origin: "latex", title: heading.title });
+    rawBlocks.push({ start: heading.start, end, bodyStart: heading.bodyStart, bodyEnd: end, environmentId: heading.command, origin: "latex", title: heading.title, ...(heading.latexLabel ? { latexLabel: heading.latexLabel } : {}), ...(heading.autoLabel ? { autoLabel: true } : {}) });
     nearestHeadingAtLevel[heading.level] = heading.start;
   });
+
+  // Standalone \includegraphics is an image object, not a LaTeX environment,
+  // but it still needs a selectable Visual surface. Images already owned by a
+  // figure/subfigure are rendered by their parent and are not duplicated here.
+  for (const match of source.matchAll(/\\includegraphics\s*(?:\[[\s\S]*?\])?\s*\{[^{}]+\}/g)) {
+    const start = match.index ?? 0;
+    const end = start + match[0].length;
+    if (start < documentStart || end > documentEnd || commentedAt(source, start)) continue;
+    const insideFigure = rawBlocks.some((block) => block.start <= start && block.end >= end && /^\\begin\{(?:figure\*?|subfigure)\}/.test(source.slice(block.start, block.bodyStart)));
+    if (!insideFigure) rawBlocks.push({ start, end, bodyStart: start, bodyEnd: end, environmentId: "inline-image", origin: "latex" });
+  }
 
   // Custom patterns are intentionally local and guarded: an invalid regular
   // expression only disables that definition and never prevents Preview.
@@ -246,7 +264,7 @@ export function parsePreview(source: string, filePath: string, definitions: Envi
         id, kind: "block", origin: block.origin, environmentId: block.environmentId,
         source: span(source, filePath, block.start, block.end, positionAt),
         children: buildChildren(block, block.bodyStart, block.bodyEnd, id),
-        ...(parentId ? { parentId } : {}), ...(block.title ? { title: block.title } : {}), ...(block.latexLabel ? { latexLabel: block.latexLabel } : {})
+        ...(parentId ? { parentId } : {}), ...(block.title ? { title: block.title } : {}), ...(block.latexLabel ? { latexLabel: block.latexLabel } : {}), ...(block.autoLabel ? { autoLabel: true } : {})
       };
       nodes.push(node);
       cursor = Math.max(cursor, block.end);

@@ -3,6 +3,7 @@ import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 import { DEFAULT_ENVIRONMENTS, environmentWithOverrides } from "../../apps/desktop/src/renderer/preview/environments.js";
 import { parsePreview } from "../../apps/desktop/src/renderer/preview/parser.js";
+import { plainLatex } from "../../apps/desktop/src/renderer/preview/inlineText.js";
 import { previewBlocksForReconciliation } from "../../apps/desktop/src/renderer/preview/reconciliation.js";
 import type { PreviewNode, StructuralBlock } from "../../apps/desktop/src/renderer/preview/types.js";
 
@@ -11,6 +12,11 @@ function blocks(nodes: PreviewNode[]): StructuralBlock[] {
 }
 
 describe("v0.2.2 structured Preview parser", () => {
+  it("preserves spaces around inline text commands", () => {
+    expect(plainLatex("Before ")).toBe("Before ");
+    expect(plainLatex(" after")).toBe(" after");
+  });
+
   it("emits offset-independent reconciliation fingerprints", () => {
     const source = "\\section{Stable title}\nA stable paragraph.";
     const shifted = `\n\n${source}`;

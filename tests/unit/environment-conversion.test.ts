@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { convertBlockEnvironmentSource, definitionConversionGroup, environmentConversionGroup } from "../../apps/desktop/src/renderer/preview/EnvironmentPicker.js";
+import { convertBlockEnvironmentSource, definitionConversionGroup, environmentDefinitionsCompatible, environmentConversionGroup } from "../../apps/desktop/src/renderer/preview/EnvironmentPicker.js";
 import { DEFAULT_ENVIRONMENTS } from "../../apps/desktop/src/renderer/preview/environments.js";
 import type { EnvironmentDefinition } from "../../apps/desktop/src/renderer/preview/types.js";
 
@@ -33,5 +33,12 @@ describe("Preview block environment conversion", () => {
     const target: EnvironmentDefinition = { ...definition("remark"), id: "virtual-note", match: { kind: "virtual-block", type: "note" } };
     const source = "% tw:block-begin type=idea title=\"Keep me\"\nBody\n% tw:block-end";
     expect(convertBlockEnvironmentSource(source, target)).toBe("% tw:block-begin type=note title=\"Keep me\"\nBody\n% tw:block-end");
+  });
+
+  it("distinguishes semantic compatibility from shared LaTeX wrapper syntax", () => {
+    expect(environmentDefinitionsCompatible(definition("theorem"), definition("definition"))).toBe(true);
+    expect(environmentDefinitionsCompatible(definition("equation"), definition("align"))).toBe(true);
+    expect(environmentDefinitionsCompatible(definition("equation"), definition("figure"))).toBe(false);
+    expect(environmentDefinitionsCompatible(definition("figure"), definition("table"))).toBe(false);
   });
 });

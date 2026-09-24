@@ -20,6 +20,7 @@ export interface StructuralBlock extends PreviewBaseNode {
   environmentId: string;
   title?: string;
   latexLabel?: string;
+  autoLabel?: boolean;
   children: PreviewNode[];
 }
 

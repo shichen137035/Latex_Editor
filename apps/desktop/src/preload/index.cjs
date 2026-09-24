@@ -97,6 +97,11 @@ contextBridge.exposeInMainWorld("latexEditor", {
     import: (projectId, sourcePath, destinationRelativePath) => ipcRenderer.invoke("files:import", projectId, sourcePath, destinationRelativePath),
     remove: (projectId, relativePath) => ipcRenderer.invoke("files:remove", projectId, relativePath)
   },
+  images: {
+    pick: (multiple) => ipcRenderer.invoke("images:pick", multiple),
+    import: (projectId, sourcePaths, directory) => ipcRenderer.invoke("images:import", projectId, sourcePaths, directory),
+    resolve: (projectId, texPath, requestedPath, graphicPaths) => ipcRenderer.invoke("images:resolve", projectId, texPath, requestedPath, graphicPaths)
+  },
   projects: {
     list: () => ipcRenderer.invoke("projects:list"),
     create: (input) => ipcRenderer.invoke("projects:create", input),

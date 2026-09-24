@@ -25,7 +25,13 @@ import { editorThemeName } from "../themes/runtime.js";
 import type { DocumentSelection } from "../custom-blocks/selection.js";
 import { candidateRelationState, type UnmatchedBehavior } from "../relations/model.js";
 import { installSymbolPairing } from "../editor/symbolPairing.js";
-import { convertBlockEnvironmentSource, definitionConversionGroup, EnvironmentPickerPanel, environmentConversionGroup } from "./EnvironmentPicker.js";
+import { convertBlockEnvironmentSource, definitionConversionGroup, environmentDefinitionsCompatible, environmentDisplayName, EnvironmentPickerPanel, environmentConversionGroup } from "./EnvironmentPicker.js";
+import { FigurePreview } from "../figure/FigurePreview.js";
+import type { FigureSelection } from "../figure/FigureInspector.js";
+import { TablePreview } from "../table/TablePreview.js";
+import type { TableSelection } from "../table/model.js";
+import { plainLatex } from "./inlineText.js";
+import { upsertBlockLabel } from "./labels.js";
 
 type EditorApi = NonNullable<Window["latexEditor"]>;
 export interface PreviewRelationUi {
@@ -41,7 +47,7 @@ export interface PreviewRelationUi {
   onFocus(blockId: BlockId): void;
   onToggle(blockId: BlockId, x: number, y: number): void;
 }
-type PreviewEditorServices = { api: EditorApi | undefined; projectId: string; tree: ProjectTreeNode[]; currentPath: string; definitions: EnvironmentDefinition[]; mathContext: MathContext; searchQuery: SearchQuery; activeSearchResult?: SearchResult | undefined; filterQuery: FilterQuery; filterStates: Map<string, FilterState>; relation?: PreviewRelationUi | undefined; onSpellContextMenu(request: SpellContextRequest): void; onDetectedLanguage(language: string): void; onForwardSync(path: string, line: number, column?: number): void };
+type PreviewEditorServices = { api: EditorApi | undefined; projectId: string; tree: ProjectTreeNode[]; currentPath: string; documentSource: string; definitions: EnvironmentDefinition[]; mathContext: MathContext; searchQuery: SearchQuery; activeSearchResult?: SearchResult | undefined; filterQuery: FilterQuery; filterStates: Map<string, FilterState>; relation?: PreviewRelationUi | undefined; onFigureSelect: ((selection?: FigureSelection) => void) | undefined; onFigureSlotSelect: ((selection: FigureSelection) => void) | undefined; onTableSelect: ((selection?: TableSelection) => void) | undefined; onTableChange: ((selection: TableSelection, source: string) => void) | undefined; onSpellContextMenu(request: SpellContextRequest): void; onDetectedLanguage(language: string): void; onForwardSync(path: string, line: number, column?: number): void };
 interface BoundaryInsertion { targetId: string; position: number; side: "before" | "after" }
 interface PreviewRenderBudget { remaining: number; }
 const previewNodeLimit = 900;
@@ -102,22 +108,6 @@ function takePreviewNodes(nodes: PreviewNode[], budget: PreviewRenderBudget): Pr
     }
   }
   return visible;
-}
-
-function plainLatex(value: string): string {
-  return value
-    .replace(/^\s*%.*$/gm, "")
-    .replace(/%[^\n]*/g, "")
-    .replace(/\\label\{[^}]+\}/g, "")
-    .replace(/\\(?:begin|end)\{[^}]+\}/g, "")
-    .replace(/\\(?:caption|section|subsection|subsubsection)\*?\{([^}]*)\}/g, "$1")
-    .replace(/\\(?:textbf|textit|emph|textrm|texttt)\{([^}]*)\}/g, "$1")
-    .replace(/\\(?:[A-Za-z]*cite[A-Za-z]*)\{([^}]*)\}/g, "[$1]")
-    .replace(/\\(?:[A-Za-z]*ref[A-Za-z]*)\{([^}]*)\}/g, "[$1]")
-    .replace(/\\(?:quad|qquad)/g, "  ")
-    .replace(/\\,/g, " ")
-    .replace(/\\([%&_#$])/g, "$1")
-    .trim();
 }
 
 function highlightedText(value: string, query: SearchQuery, active: boolean, keyBase: number): ReactNode[] {
@@ -296,19 +286,27 @@ function environmentLabel(definition: EnvironmentDefinition | undefined, id: str
 
 function BlockEnvironmentSelector({ node, source, definition, definitions, disabled, onChange }: { node: StructuralBlock; source: string; definition: EnvironmentDefinition | undefined; definitions: EnvironmentDefinition[]; disabled: boolean; onChange(value: string): void }) {
   const [open, setOpen] = useState(false);
+  const [pendingIncompatible, setPendingIncompatible] = useState<EnvironmentDefinition>();
   const rootRef = useRef<HTMLDivElement>(null);
+  const preferences = useSettings();
   const blockSource = nodeSource(node, source);
   const group = environmentConversionGroup(blockSource);
   const available = group ? definitions.some((candidate) => candidate.enabled && candidate.id !== node.environmentId && definitionConversionGroup(candidate) === group) : false;
   useEffect(() => {
-    if (!open) return;
+    if (!open && !pendingIncompatible) return;
     const closeOutside = (event: globalThis.MouseEvent) => { if (!rootRef.current?.contains(event.target as Node)) setOpen(false); };
-    const closeEscape = (event: KeyboardEvent) => { if (event.key === "Escape") setOpen(false); };
+    const closeEscape = (event: KeyboardEvent) => { if (event.key === "Escape") { setOpen(false); setPendingIncompatible(undefined); } };
     document.addEventListener("mousedown", closeOutside);
     document.addEventListener("keydown", closeEscape);
     return () => { document.removeEventListener("mousedown", closeOutside); document.removeEventListener("keydown", closeEscape); };
-  }, [open]);
+  }, [open, pendingIncompatible]);
   const label = environmentLabel(definition, node.environmentId);
+  const applyConversion = (candidate: EnvironmentDefinition) => {
+    const converted = convertBlockEnvironmentSource(blockSource, candidate);
+    if (converted !== undefined && converted !== blockSource) onChange(converted);
+    setPendingIncompatible(undefined);
+    setOpen(false);
+  };
   if (!available || disabled) return <span>{label}</span>;
   return <div className="preview-environment-selector" ref={rootRef} onClick={(event) => event.stopPropagation()}>
     <span className="preview-environment-label" role="button" tabIndex={0} aria-haspopup="dialog" aria-expanded={open} title={t("preview.changeEnvironment")} onClick={() => setOpen((value) => !value)} onKeyDown={(event) => {
@@ -317,31 +315,43 @@ function BlockEnvironmentSelector({ node, source, definition, definitions, disab
       setOpen((value) => !value);
     }}>{label}</span>
     {open && <EnvironmentPickerPanel definitions={definitions} title={t("preview.changeEnvironment")} hint={t("preview.changeEnvironmentHint")} include={(candidate) => candidate.id !== node.environmentId && definitionConversionGroup(candidate) === group} onSelect={(candidate) => {
-      const converted = convertBlockEnvironmentSource(blockSource, candidate);
-      if (converted !== undefined && converted !== blockSource) onChange(converted);
-      setOpen(false);
+      if (preferences.get("warnIncompatibleEnvironmentConversion") && !environmentDefinitionsCompatible(definition, candidate)) { setPendingIncompatible(candidate); setOpen(false); return; }
+      applyConversion(candidate);
     }} onClose={() => setOpen(false)}/>}
+    {pendingIncompatible && createPortal(<div className="environment-conversion-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget) setPendingIncompatible(undefined); }}><section className="environment-conversion-warning" role="alertdialog" aria-modal="true" aria-label={t("preview.incompatibleEnvironmentTitle")}><h2>{t("preview.incompatibleEnvironmentTitle")}</h2><p>{t("preview.incompatibleEnvironmentMessage", { source: definition ? environmentDisplayName(definition) : label, target: environmentDisplayName(pendingIncompatible) })}</p><small>{t("preview.incompatibleEnvironmentDetail")}</small><div><button onClick={() => setPendingIncompatible(undefined)}>{t("project.cancel")}</button><button className="danger" onClick={() => applyConversion(pendingIncompatible)}>{t("preview.replaceAnyway")}</button></div></section></div>, document.body)}
   </div>;
 }
 
-function SpecializedContent({ node, source, mathContext, searchQuery, activeSearch }: { node: StructuralBlock; source: string; mathContext: MathContext; searchQuery: SearchQuery; activeSearch: boolean }) {
+function LabelEditor({ label, auto, onCommit }: { label: string; auto: boolean; onCommit(value: string): void }) {
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState(label);
+  useEffect(() => { if (!editing) setDraft(label); }, [editing, label]);
+  const commit = () => {
+    const next = draft.replace(/[{}\r\n]/g, "").trim();
+    if (next && next !== label) onCommit(next);
+    setEditing(false);
+  };
+  if (editing) return <input className="preview-block-label-editor" autoFocus value={draft} aria-label={t("preview.editLabel")} onClick={(event) => event.stopPropagation()} onChange={(event) => setDraft(event.target.value)} onBlur={commit} onKeyDown={(event) => {
+    if (event.key === "Enter") { event.preventDefault(); commit(); }
+    if (event.key === "Escape") { event.preventDefault(); setDraft(label); setEditing(false); }
+  }}/>;
+  return <button type="button" className={`preview-block-label${auto ? " auto" : ""}${label ? "" : " empty"}`} title={t(label ? (auto ? "preview.autoLabelHint" : "preview.editLabel") : "preview.addLabel")} onClick={(event) => { event.stopPropagation(); setDraft(label); setEditing(true); }}>{label || t("preview.addLabel")}</button>;
+}
+
+function SpecializedContent({ node, source, services }: { node: StructuralBlock; source: string; services: PreviewEditorServices }) {
   const raw = bodySource(node, source);
   const definitionId = node.environmentId;
   if (/equation|align|gather|multline|display-math/.test(definitionId)) {
     const mathBody = mathBodySource(node, source);
     const environment = definitionId.replace(/-star$/, "");
     const expression = /^(align|gather|multline)$/.test(environment) ? `\\begin{${environment}}${mathBody}\\end{${environment}}` : mathBody;
-    return <MathRenderer expression={expression} display context={mathContext}/>;
+    return <MathRenderer expression={expression} display context={services.mathContext}/>;
   }
   if (/verbatim|lstlisting/.test(definitionId)) return <pre className="preview-code">{raw.trim()}</pre>;
-  if (definitionId === "figure") {
-    const image = /\\includegraphics(?:\[[^\]]*\])?\{([^}]+)\}/.exec(raw)?.[1];
-    const caption = /\\caption\{([^}]*)\}/.exec(raw)?.[1];
-    return <figure className="preview-figure"><div className="preview-media">{image ? `Image · ${image}` : t("preview.figurePlaceholder")}</div>{caption && <figcaption>{inlineLatex(caption, mathContext, searchQuery, activeSearch)}</figcaption>}</figure>;
-  }
-  if (definitionId === "table") {
-    const tabular = /\\begin\{tabular\}\{[^}]*\}([\s\S]*?)\\end\{tabular\}/.exec(raw)?.[1] ?? raw;
-    return <div className="preview-table"><pre>{plainLatex(tabular).replaceAll("\\\\", "\n")}</pre></div>;
+  if (definitionId === "figure" || definitionId === "figure-star" || definitionId === "custom:figure*" || definitionId === "inline-image") return <FigurePreview source={nodeSource(node, source)} documentSource={services.documentSource} api={services.api} projectId={services.projectId} texPath={services.currentPath} onChooseSlot={(imageIndex) => services.onFigureSlotSelect?.({ fileId: services.currentPath, start: node.source.startOffset, end: node.source.endOffset, source: nodeSource(node, source), imageIndex })}/>;
+  if (["table", "table-star", "tabular", "tabular-star", "tabularx", "longtable"].includes(definitionId)) {
+    const selection = { fileId: services.currentPath, start: node.source.startOffset, end: node.source.endOffset, source: nodeSource(node, source), kind: "table" as const };
+    return <TablePreview source={selection.source} renderCell={(content) => inlineLatex(content, services.mathContext, services.searchQuery, false)} onSelect={(detail) => services.onTableSelect?.({ ...selection, ...detail })} onChange={(replacement) => services.onTableChange?.(selection, replacement)}/>;
   }
   return null;
 }
@@ -543,8 +553,11 @@ function BlockRenderer({ node, source, definitions, selectedId, editingId, bound
   const activeSearch = services.activeSearchResult ? services.activeSearchResult.matchStart >= node.source.startOffset && services.activeSearchResult.matchEnd <= node.source.endOffset : false;
   const effectiveSearch = services.filterQuery.enabled && filterState !== "match" ? defaultInlineSearch : services.searchQuery;
   const listEnvironment = isListEnvironment(node.environmentId);
+  const figureBlock = node.environmentId === "figure" || node.environmentId === "figure-star" || node.environmentId === "custom:figure*" || node.environmentId === "inline-image";
+  const tableBlock = ["table", "table-star", "tabular", "tabular-star", "tabularx", "longtable"].includes(node.environmentId);
   const leafBlock = !node.children.some((child) => child.kind === "block");
-  const specialized = SpecializedContent({ node, source, mathContext: services.mathContext, searchQuery: effectiveSearch, activeSearch });
+  const preferences = useSettings();
+  const specialized = SpecializedContent({ node, source, services });
   const specializedContent = listEnvironment
     ? <ListContent node={node} source={source} mathContext={services.mathContext} searchQuery={effectiveSearch} activeSearch={activeSearch} renderChild={(child) => <PreviewNodeRenderer key={child.id} node={child} source={source} definitions={definitions} selectedId={selectedId} editingId={editingId} boundary={boundary} select={select} edit={edit} applyEdit={applyEdit} applyBoundary={applyBoundary} cancelEdit={cancelEdit} requestBoundary={requestBoundary} services={services} budget={budget}/>} />
     : specialized;
@@ -562,18 +575,38 @@ function BlockRenderer({ node, source, definitions, selectedId, editingId, bound
     if (services.filterQuery.viewMode === "collapse") return <div className="preview-filter-collapsed">⋯ 1 {t("filter.blockCollapsed")}</div>;
   }
   const filterClass = services.filterQuery.enabled ? `filter-${filterState} filter-view-${services.filterQuery.viewMode}` : "";
+  const applyLabel = (label: string) => {
+    const blockSource = nodeSource(node, source);
+    const replacement = upsertBlockLabel(blockSource, label);
+    if (replacement !== blockSource) applyEdit(node, replacement);
+  };
   return <Fragment>
     {insertion?.side === "before" && <LocalEditor value="" onApply={(value) => applyBoundary(insertion, value)} onCancel={cancelEdit} {...services}/>}
-    <section className={`preview-block env-${family} ${filterClass} ${activeSearch ? "search-result-active" : ""} ${selected ? "selected" : ""} ${editing ? "editing" : ""} ${services.relation?.active && !relationMatches ? "relation-unmatched" : ""} ${semanticId === services.relation?.focusId ? "relation-focus" : ""}`} data-environment={node.environmentId} data-semantic-block-id={semanticId} data-source-line={node.source.startLine} data-source-start-offset={node.source.startOffset} data-source-end-offset={node.source.endOffset} onDoubleClickCapture={(event) => { const target = event.target as Element; if (target.closest(".preview-local-editor") || target.closest(".preview-block") !== event.currentTarget) return; event.preventDefault(); event.stopPropagation(); services.onForwardSync(services.currentPath, node.source.startLine, 1); }} style={{ "--block-accent": cssValue(definition?.style.accentToken, "--env-generic-accent"), "--block-fill": cssValue(definition?.style.fillToken, "--env-generic-fill"), "--block-border": cssValue(definition?.style.borderToken, "--env-border-default"), "--block-selected-border": cssValue(definition?.style.selectedBorderToken, "--env-border-selected"), "--block-label-bg": cssValue(definition?.style.labelBackgroundToken, "--env-generic-label-bg"), "--block-label-text": cssValue(definition?.style.labelTextToken, "--env-generic-label-text") } as CSSProperties}>
-    {(definition?.behavior.showHeader ?? true) && <div className="preview-block-header"><div className="preview-block-header-main" onClick={(event) => { event.stopPropagation(); select(node.id); }}><BlockEnvironmentSelector node={node} source={source} definition={definition} definitions={definitions} disabled={editing} onChange={(value) => applyEdit(node, value)}/>{node.title && <strong>{node.title}</strong>}{node.latexLabel && <small>{node.latexLabel}</small>}</div>{(selected || (services.relation?.active && semanticId)) && <div className="preview-block-header-actions">{services.relation?.active && semanticId && <><button className={semanticId === services.relation.focusId ? "relation-control active" : "relation-control"} title={t("relation.setFocus")} onClick={(event) => { event.stopPropagation(); services.relation?.onFocus(semanticId); }}>◎</button><button className="relation-control" disabled={!!relationState?.disabledReason} title={relationState?.disabledReason ? t(`relation.invalid.${relationState.disabledReason}`) : relationState?.existing ? t("relation.remove") : t("relation.add")} onClick={(event) => { event.stopPropagation(); services.relation?.onToggle(semanticId, event.clientX, event.clientY); }}>{relationState?.existing ? relationState.existingDirection === "prerequisite" ? "← −" : "→ −" : "+"}</button></>}{selected && <><button title={t("preview.insertBefore")} onClick={(event) => { event.stopPropagation(); requestBoundary(node, "before"); }}>↥＋</button><button title={t("preview.insertAfter")} onClick={(event) => { event.stopPropagation(); requestBoundary(node, "after"); }}>↧＋</button></>}</div>}</div>}
-    <div className="preview-block-body" onClick={(event) => {
+    <section className={`preview-block env-${family} ${filterClass} ${activeSearch ? "search-result-active" : ""} ${selected ? "selected" : ""} ${editing ? "editing" : ""} ${services.relation?.active && !relationMatches ? "relation-unmatched" : ""} ${semanticId === services.relation?.focusId ? "relation-focus" : ""}`} data-environment={node.environmentId} data-semantic-block-id={semanticId} data-source-line={node.source.startLine} data-source-start-offset={node.source.startOffset} data-source-end-offset={node.source.endOffset} onDoubleClickCapture={(event) => { const target = event.target as Element; if (target.closest(".preview-local-editor, .structured-table") || target.closest(".preview-block") !== event.currentTarget) return; event.preventDefault(); event.stopPropagation(); const figureBlock = node.environmentId === "figure" || node.environmentId === "figure-star" || node.environmentId === "custom:figure*" || node.environmentId === "inline-image"; if (figureBlock) { if (preferences.get("images").editor.defaultMode === "source") edit(node.id); else { select(node.id); services.onFigureSelect?.({ fileId: services.currentPath, start: node.source.startOffset, end: node.source.endOffset, source: nodeSource(node, source) }); } return; } services.onForwardSync(services.currentPath, node.source.startLine, 1); }} style={{ "--block-accent": cssValue(definition?.style.accentToken, "--env-generic-accent"), "--block-fill": cssValue(definition?.style.fillToken, "--env-generic-fill"), "--block-border": cssValue(definition?.style.borderToken, "--env-border-default"), "--block-selected-border": cssValue(definition?.style.selectedBorderToken, "--env-border-selected"), "--block-label-bg": cssValue(definition?.style.labelBackgroundToken, "--env-generic-label-bg"), "--block-label-text": cssValue(definition?.style.labelTextToken, "--env-generic-label-text") } as CSSProperties}>
+    {(definition?.behavior.showHeader ?? true) && <div className="preview-block-header"><div className="preview-block-header-main" onClick={(event) => { event.stopPropagation(); select(node.id); }}><BlockEnvironmentSelector node={node} source={source} definition={definition} definitions={definitions} disabled={editing} onChange={(value) => applyEdit(node, value)}/>{node.title && <strong>{node.title}</strong>}{(definition?.behavior.showLabel ?? true) && <LabelEditor label={node.latexLabel ?? ""} auto={Boolean(node.autoLabel)} onCommit={applyLabel}/>}</div>{(selected || (services.relation?.active && semanticId)) && <div className="preview-block-header-actions">{services.relation?.active && semanticId && <><button className={semanticId === services.relation.focusId ? "relation-control active" : "relation-control"} title={t("relation.setFocus")} onClick={(event) => { event.stopPropagation(); services.relation?.onFocus(semanticId); }}>◎</button><button className="relation-control" disabled={!!relationState?.disabledReason} title={relationState?.disabledReason ? t(`relation.invalid.${relationState.disabledReason}`) : relationState?.existing ? t("relation.remove") : t("relation.add")} onClick={(event) => { event.stopPropagation(); services.relation?.onToggle(semanticId, event.clientX, event.clientY); }}>{relationState?.existing ? relationState.existingDirection === "prerequisite" ? "← −" : "→ −" : "+"}</button></>}{selected && <><button title={t("preview.insertBefore")} onPointerDown={(event) => { event.preventDefault(); event.stopPropagation(); requestBoundary(node, "before"); }} onClick={(event) => { event.stopPropagation(); if (event.detail === 0) requestBoundary(node, "before"); }}>↥＋</button><button title={t("preview.insertAfter")} onPointerDown={(event) => { event.preventDefault(); event.stopPropagation(); requestBoundary(node, "after"); }} onClick={(event) => { event.stopPropagation(); if (event.detail === 0) requestBoundary(node, "after"); }}>↧＋</button></>}</div>}</div>}
+    <div className="preview-block-body" onClickCapture={() => {
+       // Figure and table previews stop propagation for their own controls/cell editing.
+       // Activate the surrounding block during capture so its boundary actions remain
+       // available even when the specialized preview consumes the click afterwards.
+       if (!editing && (figureBlock || tableBlock)) {
+         select(node.id);
+         if (figureBlock) services.onFigureSelect?.({ fileId: services.currentPath, start: node.source.startOffset, end: node.source.endOffset, source: nodeSource(node, source) });
+         if (tableBlock) services.onTableSelect?.({ fileId: services.currentPath, start: node.source.startOffset, end: node.source.endOffset, source: nodeSource(node, source), kind: "table" });
+       }
+     }} onClick={(event) => {
+       if (figureBlock && preferences.get("images").editor.defaultMode === "gui") {
+         event.stopPropagation();
+         select(node.id);
+         services.onFigureSelect?.({ fileId: services.currentPath, start: node.source.startOffset, end: node.source.endOffset, source: nodeSource(node, source) });
+         return;
+       }
        if ((specializedContent || leafBlock) && (definition?.behavior.inlineEditable ?? true)) { event.stopPropagation(); edit(node.id); }
      }}>
        {editing ? <LocalEditor value={nodeSource(node, source)} sourceStartLine={node.source.startLine} mathDraft={isMathBlock(node)} onApply={(value) => applyEdit(node, value)} onCancel={cancelEdit} onInsertBefore={(draft) => requestBoundary(node, "before", draft)} onInsertAfter={(draft) => requestBoundary(node, "after", draft)} {...services}/> : specializedContent ?? <PreviewNodeList nodes={node.children} source={source} definitions={definitions} selectedId={selectedId} editingId={editingId} boundary={boundary} select={select} edit={leafBlock ? () => edit(node.id) : edit} applyEdit={applyEdit} applyBoundary={applyBoundary} cancelEdit={cancelEdit} requestBoundary={requestBoundary} services={services} budget={budget}/> }
     </div>
     <div className="preview-block-footer">
       <button className="preview-block-footer-main" title={environmentLabel(definition, node.environmentId)} onClick={(event) => { event.stopPropagation(); select(node.id); }}><span/></button>
-      {selected && <div className="preview-block-footer-actions"><button title={t("preview.insertBefore")} onClick={(event) => { event.stopPropagation(); requestBoundary(node, "before"); }}>↥＋</button><button title={t("preview.insertAfter")} onClick={(event) => { event.stopPropagation(); requestBoundary(node, "after"); }}>↧＋</button></div>}
+      {selected && <div className="preview-block-footer-actions"><button title={t("preview.insertBefore")} onPointerDown={(event) => { event.preventDefault(); event.stopPropagation(); requestBoundary(node, "before"); }} onClick={(event) => { event.stopPropagation(); if (event.detail === 0) requestBoundary(node, "before"); }}>↥＋</button><button title={t("preview.insertAfter")} onPointerDown={(event) => { event.preventDefault(); event.stopPropagation(); requestBoundary(node, "after"); }} onClick={(event) => { event.stopPropagation(); if (event.detail === 0) requestBoundary(node, "after"); }}>↧＋</button></div>}
     </div>
     </section>
     {insertion?.side === "after" && <LocalEditor value="" onApply={(value) => applyBoundary(insertion, value)} onCancel={cancelEdit} {...services}/>}
@@ -593,7 +626,9 @@ function PreviewNodeList({ nodes, ...props }: { nodes: PreviewNode[] } & Omit<Pa
     const node = nodes[index];
     if (!node) break;
     const collapsible = props.services.filterQuery.enabled && props.services.filterQuery.viewMode === "collapse" && props.services.filterStates.get(node.id) === "unmatched" && props.editingId !== node.id && props.boundary?.targetId !== node.id;
-    if (!collapsible) { rendered.push(<PreviewNodeRenderer key={node.id} node={node} {...props}/>); index += 1; continue; }
+    // Source offsets change on every edit (including added preamble packages).
+    // Keep the render slot stable so an active table retains its draft and focus.
+    if (!collapsible) { rendered.push(<PreviewNodeRenderer key={`${node.source.filePath}:${index}:${node.kind === "block" ? node.environmentId : node.kind}`} node={node} {...props}/>); index += 1; continue; }
     let end = index + 1;
     while (end < nodes.length) {
       const next = nodes[end];
@@ -606,7 +641,7 @@ function PreviewNodeList({ nodes, ...props }: { nodes: PreviewNode[] } & Omit<Pa
   return rendered;
 }
 
-export function PreviewPane({ filePath, source, definitions, mathContext = EMPTY_MATH_CONTEXT, searchQuery = defaultInlineSearch, filterQuery = defaultFilterQuery, activeSearchResult, highlightRange, relation, onSourceChange, onSelectionChange, onSelectionContextMenu, onViewportAnchorChange, api, projectId, tree, onSpellContextMenu, onDetectedLanguage, onForwardSync }: { filePath?: string | undefined; source?: string | undefined; definitions: EnvironmentDefinition[]; mathContext?: MathContext; searchQuery?: SearchQuery; filterQuery?: FilterQuery; activeSearchResult?: SearchResult | undefined; highlightRange?: { fileId: string; start: number; end: number; nonce: number } | undefined; relation?: PreviewRelationUi | undefined; onSourceChange(next: string): void; onSelectionChange?(selection?: DocumentSelection): void; onSelectionContextMenu?(selection: DocumentSelection, x: number, y: number): void; onViewportAnchorChange?(anchor: { fileId: string; offset: number }): void; api: EditorApi | undefined; projectId: string; tree: ProjectTreeNode[]; onSpellContextMenu(request: SpellContextRequest): void; onDetectedLanguage(language: string): void; onForwardSync(path: string, line: number, column?: number): void }) {
+export function PreviewPane({ filePath, source, definitions, mathContext = EMPTY_MATH_CONTEXT, searchQuery = defaultInlineSearch, filterQuery = defaultFilterQuery, activeSearchResult, highlightRange, relation, onSourceChange, onSelectionChange, onSelectionContextMenu, onViewportAnchorChange, onInsertionAnchorChange, onFigureSelect, onFigureSlotSelect, onTableSelect, onTableChange, api, projectId, tree, onSpellContextMenu, onDetectedLanguage, onForwardSync }: { filePath?: string | undefined; source?: string | undefined; definitions: EnvironmentDefinition[]; mathContext?: MathContext; searchQuery?: SearchQuery; filterQuery?: FilterQuery; activeSearchResult?: SearchResult | undefined; highlightRange?: { fileId: string; start: number; end: number; nonce: number } | undefined; relation?: PreviewRelationUi | undefined; onSourceChange(next: string): void; onSelectionChange?(selection?: DocumentSelection): void; onSelectionContextMenu?(selection: DocumentSelection, x: number, y: number): void; onViewportAnchorChange?(anchor: { fileId: string; offset: number }): void; onInsertionAnchorChange?(anchor?: { fileId: string; offset: number }): void; onFigureSelect?(selection?: FigureSelection): void; onFigureSlotSelect?(selection: FigureSelection): void; onTableSelect?(selection?: TableSelection): void; onTableChange?(selection: TableSelection, source: string): void; api: EditorApi | undefined; projectId: string; tree: ProjectTreeNode[]; onSpellContextMenu(request: SpellContextRequest): void; onDetectedLanguage(language: string): void; onForwardSync(path: string, line: number, column?: number): void }) {
   const [selectedId, setSelectedId] = useState<string>();
   const [editingId, setEditingId] = useState<string>();
   const [boundary, setBoundary] = useState<BoundaryInsertion>();
@@ -616,6 +651,9 @@ export function PreviewPane({ filePath, source, definitions, mathContext = EMPTY
   const pendingBoundaryRef = useRef<{ startOffset: number; position: number; side: "before" | "after"; kind: PreviewNode["kind"] } | undefined>(undefined);
   const document = useMemo(() => filePath && source !== undefined ? parsePreview(source, filePath, definitions) : undefined, [filePath, source, definitions]);
   const filterEvaluation = useMemo(() => document && source !== undefined && filePath ? previewFilterEngine.evaluate(document.nodes, source, filePath, filterQuery) : undefined, [document, source, filePath, filterQuery]);
+  useEffect(() => {
+    onInsertionAnchorChange?.(boundary && filePath ? { fileId: filePath, offset: boundary.position } : undefined);
+  }, [boundary, filePath, onInsertionAnchorChange]);
   useEffect(() => { pendingBoundaryRef.current = undefined; setRenderLimit(previewNodeLimit); setEditingId(undefined); setSelectedId(undefined); setBoundary(undefined); }, [filePath]);
   useEffect(() => {
     const pending = pendingBoundaryRef.current;
@@ -728,7 +766,7 @@ export function PreviewPane({ filePath, source, definitions, mathContext = EMPTY
   }, [filePath, document, renderLimit, onViewportAnchorChange]);
   if (!filePath || source === undefined) return <div className="preview-empty"><h2>{t("preview.noSourceTitle")}</h2><p>{t("preview.noSource")}</p></div>;
   if (!filePath.toLocaleLowerCase().endsWith(".tex")) return <div className="preview-empty"><h2>{t("preview.unsupportedFileTitle")}</h2><p>{t("preview.unsupportedFile")}</p></div>;
-  const services: PreviewEditorServices = { api, projectId, tree, currentPath: filePath, definitions, mathContext, searchQuery, activeSearchResult: activeSearchResult?.fileId === filePath ? activeSearchResult : undefined, filterQuery, filterStates: filterEvaluation?.states ?? new Map(), relation, onSpellContextMenu, onDetectedLanguage, onForwardSync };
+  const services: PreviewEditorServices = { api, projectId, tree, currentPath: filePath, documentSource: source, definitions, mathContext, searchQuery, activeSearchResult: activeSearchResult?.fileId === filePath ? activeSearchResult : undefined, filterQuery, filterStates: filterEvaluation?.states ?? new Map(), relation, onFigureSelect, onFigureSlotSelect, onTableSelect, onTableChange, onSpellContextMenu, onDetectedLanguage, onForwardSync };
   const applyEdit = (node: PreviewNode, replacement: string) => {
     onSourceChange(source.slice(0, node.source.startOffset) + replacement + source.slice(node.source.endOffset));
     setEditingId(undefined);
@@ -759,6 +797,8 @@ export function PreviewPane({ filePath, source, definitions, mathContext = EMPTY
     }
     setSelectedId(undefined);
     setBoundary(undefined);
+    onFigureSelect?.(undefined);
+    onTableSelect?.(undefined);
   };
   const emitSelection = () => {
     const selection = previewRootRef.current ? previewDocumentSelection(previewRootRef.current, source, filePath) : undefined;
@@ -772,7 +812,7 @@ export function PreviewPane({ filePath, source, definitions, mathContext = EMPTY
     event.stopPropagation();
     onSelectionContextMenu(selection, event.clientX, event.clientY);
   }}>
-    <article><PreviewNodeList nodes={visibleNodes} source={source} definitions={definitions} selectedId={selectedId} editingId={editingId} boundary={boundary} select={(id) => { setSelectedId(id); setEditingId(undefined); setBoundary(undefined); }} edit={(id) => { setEditingId(id); setSelectedId(undefined); setBoundary(undefined); }} applyEdit={applyEdit} applyBoundary={applyBoundary} cancelEdit={() => { setEditingId(undefined); setBoundary(undefined); }} requestBoundary={requestBoundary} services={services} budget={{ remaining: Number.MAX_SAFE_INTEGER }}/></article>
+    <article><PreviewNodeList nodes={visibleNodes} source={source} definitions={definitions} selectedId={selectedId} editingId={editingId} boundary={boundary} select={(id) => { setSelectedId(id); setEditingId(undefined); setBoundary(undefined); const node = document ? nodeById(document.nodes, id) : undefined; if (node?.kind === "block" && ["figure", "figure-star", "custom:figure*", "inline-image"].includes(node.environmentId)) onFigureSelect?.({ fileId: filePath, start: node.source.startOffset, end: node.source.endOffset, source: nodeSource(node, source) }); else onFigureSelect?.(undefined); if (node?.kind === "block" && ["table", "table-star", "tabular", "tabular-star", "tabularx", "longtable"].includes(node.environmentId)) onTableSelect?.({ fileId: filePath, start: node.source.startOffset, end: node.source.endOffset, source: nodeSource(node, source), kind: "table" }); else onTableSelect?.(undefined); }} edit={(id) => { setEditingId(id); setSelectedId(undefined); setBoundary(undefined); onFigureSelect?.(undefined); onTableSelect?.(undefined); }} applyEdit={applyEdit} applyBoundary={applyBoundary} cancelEdit={() => { setEditingId(undefined); setBoundary(undefined); }} requestBoundary={requestBoundary} services={services} budget={{ remaining: Number.MAX_SAFE_INTEGER }}/></article>
     {totalNodes > shownNodes && <aside className="preview-limit-notice"><strong>{t("preview.largeDocumentTitle")}</strong><span>{t("preview.largeDocumentMessage", { shown: shownNodes, total: totalNodes })}</span><button onClick={(event) => { event.stopPropagation(); setRenderLimit((value) => value + previewNodeLimit); }}>{t("preview.loadMore")}</button></aside>}
     {filterQuery.enabled && filterEvaluation && filterEvaluation.matches.size === 0 && <aside className="preview-filter-empty">{t("filter.noMatches")}</aside>}
     {document?.diagnostics.length ? <aside className="preview-diagnostics"><strong>{t("preview.recovered")}</strong>{document.diagnostics.map((message, index) => <p key={index}>{message}</p>)}</aside> : null}

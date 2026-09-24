@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { projectPreferenceKeys, type DictionaryPackage, type LatexToolchain, type PreferenceKey, type StyleResource, type ThemeDefinition } from "@latex-editor/contracts";
+import { preferenceDefaults, projectPreferenceKeys, type DictionaryPackage, type ImagePreferences, type LatexToolchain, type PreferenceKey, type StyleResource, type TablePreferences, type TableStylePreset, type ThemeDefinition } from "@latex-editor/contracts";
 import type { SpellCheckStatus } from "@latex-editor/contracts";
 import { t } from "../i18n/index.js";
 import { EnvironmentManager } from "../preview/EnvironmentManager.js";
@@ -9,8 +9,60 @@ import { useSettings } from "./service.js";
 import { bindings, commandContexts, commandLabels, defaultBindings, displayBinding, eventBinding, validBinding, type CommandId } from "./commands.js";
 import "./settings.css";
 
-const sections = ["general", "appearance", "editor", "searchFilter", "language", "shortcuts", "environment", "compiler", "spellcheck", "environments", "styleResources"] as const;
+const sections = ["general", "appearance", "editor", "images", "tables", "searchFilter", "language", "shortcuts", "environment", "compiler", "spellcheck", "environments", "styleResources"] as const;
 type Section = typeof sections[number];
+
+const projectSettingsBySection: Partial<Record<Section, PreferenceKey[]>> = {
+  general: ["autoSave"],
+  editor: ["fontSize", "tabSize", "wordWrap", "autoPairSymbols", "confirmPreviewEdits"],
+  images: ["images"],
+  tables: ["tables"],
+  compiler: ["engine"],
+  environments: ["environments"]
+};
+
+function ImageSettingsPanel({ store, scope }: { store: ReturnType<typeof useSettings>; scope: "global" | "project" }) {
+  const value = (scope === "global" ? store.global("images") : store.get("images")) as ImagePreferences;
+  const save = (next: ImagePreferences) => void store.set("images", next, scope);
+  const insert = (patch: Partial<ImagePreferences["defaultInsert"]>) => save({ ...value, defaultInsert: { ...value.defaultInsert, ...patch } });
+  const multi = (patch: Partial<ImagePreferences["multiFigure"]>) => save({ ...value, multiFigure: { ...value.multiFigure, ...patch } });
+  return <div className="image-settings"><h2>Images</h2><p>Defaults for imported images and generated LaTeX. Project values can override these settings.</p>
+    <label className="preference-row"><span><strong>Project image directory</strong><small>Imported files are copied here; existing files are never overwritten.</small></span><input value={value.defaultDirectory} onChange={(event) => save({ ...value, defaultDirectory: event.target.value })}/></label>
+    <label className="preference-row"><span><strong>Default insertion</strong></span><select value={value.defaultInsert.type} onChange={(event) => insert({ type: event.target.value as "figure" | "inline" })}><option value="figure">Figure environment</option><option value="inline">Inline image</option></select></label>
+    <label className="preference-row"><span><strong>Default width</strong></span><input value={value.defaultInsert.width} onChange={(event) => insert({ width: event.target.value })}/></label>
+    <label className="preference-row"><span><strong>Alignment</strong></span><select value={value.defaultInsert.alignment} onChange={(event) => insert({ alignment: event.target.value as "left" | "center" | "right" })}><option value="left">Left</option><option value="center">Center</option><option value="right">Right</option></select></label>
+    <label className="preference-row"><span><strong>Placement</strong></span><input value={value.defaultInsert.placement} onChange={(event) => insert({ placement: event.target.value })}/></label>
+    <label className="preference-row"><span><strong>Add caption</strong></span><input type="checkbox" checked={value.defaultInsert.addCaption} onChange={(event) => insert({ addCaption: event.target.checked })}/></label>
+    <label className="preference-row"><span><strong>Add label</strong></span><input type="checkbox" checked={value.defaultInsert.addLabel} onChange={(event) => insert({ addLabel: event.target.checked })}/></label>
+    <label className="preference-row"><span><strong>Label prefix</strong></span><input value={value.defaultInsert.labelPrefix} onChange={(event) => insert({ labelPrefix: event.target.value })}/></label>
+    <label className="preference-row"><span><strong>Figure editor</strong></span><select value={value.editor.defaultMode} onChange={(event) => save({ ...value, editor: { defaultMode: event.target.value as "gui" | "source" } })}><option value="gui">Properties (GUI)</option><option value="source">LaTeX source</option></select></label>
+    <h3>Multiple images</h3>
+    <label className="preference-row"><span><strong>Columns</strong></span><select value={String(value.multiFigure.defaultColumns)} onChange={(event) => multi({ defaultColumns: event.target.value === "auto" ? "auto" : Number(event.target.value) as 1 | 2 | 3 })}><option value="auto">Auto</option><option value="1">1</option><option value="2">2</option><option value="3">3</option></select></label>
+    <label className="preference-row"><span><strong>Subfigure width</strong></span><input value={value.multiFigure.subfigureWidth} onChange={(event) => multi({ subfigureWidth: event.target.value })}/></label>
+    <label className="preference-row"><span><strong>Image width</strong></span><input value={value.multiFigure.imageWidth} onChange={(event) => multi({ imageWidth: event.target.value })}/></label>
+    <button onClick={() => void store.reset("images", scope)}>Reset image defaults</button>
+  </div>;
+}
+
+function TableSettingsPanel({ store, scope }: { store: ReturnType<typeof useSettings>; scope: "global" | "project" }) {
+  const value = (scope === "global" ? store.global("tables") : store.get("tables")) as TablePreferences;
+  const save = (next: TablePreferences) => void store.set("tables", next, scope);
+  const insert = (patch: Partial<TablePreferences["defaultInsert"]>) => save({ ...value, defaultInsert: { ...value.defaultInsert, ...patch } });
+  const editing = (patch: Partial<TablePreferences["editing"]>) => save({ ...value, editing: { ...value.editing, ...patch } });
+  return <div className="image-settings"><h2>Tables</h2><p>Defaults for structured LaTeX table insertion and Preview editing.</p>
+    <label className="preference-row"><span><strong>Default style</strong></span><select value={value.defaultStyle} onChange={(event) => save({ ...value, defaultStyle: event.target.value as TableStylePreset })}><option value="booktabs-three-line">Academic three-line</option><option value="grid">Simple grid</option><option value="horizontal">Horizontal lines</option><option value="plain">No borders</option><option value="header-bottom">Header + bottom</option></select></label>
+    <label className="preference-row"><span><strong>Alignment</strong></span><select value={value.defaultInsert.alignment} onChange={(event) => insert({ alignment: event.target.value as "left" | "center" | "right" })}><option value="left">Left</option><option value="center">Center</option><option value="right">Right</option></select></label>
+    <label className="preference-row"><span><strong>Float placement</strong></span><input value={value.defaultInsert.placement} onChange={(event) => insert({ placement: event.target.value })}/></label>
+    <label className="preference-row"><span><strong>First row is header</strong></span><input type="checkbox" checked={value.defaultInsert.headerRow} onChange={(event) => insert({ headerRow: event.target.checked })}/></label>
+    <label className="preference-row"><span><strong>Add caption</strong></span><input type="checkbox" checked={value.defaultInsert.addCaption} onChange={(event) => insert({ addCaption: event.target.checked })}/></label>
+    <label className="preference-row"><span><strong>Add label</strong></span><input type="checkbox" checked={value.defaultInsert.addLabel} onChange={(event) => insert({ addLabel: event.target.checked })}/></label>
+    <label className="preference-row"><span><strong>Label prefix</strong></span><input value={value.labelPrefix} onChange={(event) => save({ ...value, labelPrefix: event.target.value })}/></label>
+    <label className="preference-row"><span><strong>Table editor</strong></span><select value={value.editor.defaultMode} onChange={(event) => save({ ...value, editor: { defaultMode: event.target.value as "gui" | "source" } })}><option value="gui">Properties (GUI)</option><option value="source">LaTeX source</option></select></label>
+    <label className="preference-row"><span><strong>Automatic fixed-width conversion</strong><small>Allow column width edits to convert l/c/r columns to fixed-width columns.</small></span><input type="checkbox" checked={value.editing.allowAutomaticColumnConversion} onChange={(event) => editing({ allowAutomaticColumnConversion: event.target.checked })}/></label>
+    <label className="preference-row"><span><strong>Add row after final Tab</strong></span><input type="checkbox" checked={value.editing.autoAddRowOnTab} onChange={(event) => editing({ autoAddRowOnTab: event.target.checked })}/></label>
+    <button onClick={() => void store.reset("tables", scope)}>Reset table defaults</button>
+  </div>;
+}
 
 function EnvironmentSettingsPanel({ store }: { store: ReturnType<typeof useSettings> }) {
   const [detecting, setDetecting] = useState(false);
@@ -151,7 +203,7 @@ function ThemeSettingsPanel({ store }: { store: ReturnType<typeof useSettings> }
   const userThemes = themes.filter((theme) => theme.source === "user");
   return <div className="theme-settings-panel">
     <div className="theme-settings-header"><div><h2>{t("settings.theme")}</h2><p>{t("settings.themeHint")}</p></div><button disabled={busy} onClick={() => void reload()}>{t("settings.themeRefresh")}</button></div>
-    <label className="preference-row"><span><strong>{t("settings.activeTheme")}</strong><small>{t("settings.activeThemeHint")}</small></span><select value={store.global("theme")} onChange={(event) => void store.set("theme", event.target.value)}>{[...builtIns, ...userThemes].map((theme) => <option key={theme.id} value={theme.id}>{theme.name}</option>)}</select><button type="button" onClick={() => void store.reset("theme")}>{t("settings.reset")}</button></label>
+    <label className="preference-row"><span><strong>{t("settings.activeTheme")}</strong><small>{t("settings.activeThemeHint")}</small></span><select data-setting="theme" value={store.global("theme")} onChange={(event) => void store.set("theme", event.currentTarget.value, "global")}>{[...builtIns, ...userThemes].map((theme) => <option key={theme.id} value={theme.id}>{theme.name}</option>)}</select><button type="button" onClick={() => void store.reset("theme", "global")}>{t("settings.reset")}</button></label>
     <div className="theme-import-actions"><button disabled={busy} onClick={importFiles}>＋ {t("settings.themeImport")}</button><button disabled={busy} onClick={importFolder}>{t("settings.themeImportFolder")}</button></div>
     <div className="theme-directory"><strong>{t("settings.themeDirectory")}</strong><code>{directory || "—"}</code><div><button disabled={busy} onClick={chooseDirectory}>{t("settings.themeChooseDirectory")}</button><button disabled={busy || !store.global("themeDirectory")} onClick={resetDirectory}>{t("settings.themeResetDirectory")}</button></div></div>
     <section className="theme-catalog"><h3>{t("settings.themeBuiltIn")}</h3>{builtIns.map((theme) => <div className="theme-catalog-row" key={theme.id}><span><strong>{theme.name}</strong><small>{theme.id}</small></span><em>{t("settings.themeBuiltInBadge")}</em></div>)}<h3>{t("settings.themeCustom")}</h3>{userThemes.length ? userThemes.map((theme) => <div className="theme-catalog-row" key={theme.id}><span><strong>{theme.name}</strong><small>{theme.filePath ?? theme.id}</small></span><button className="danger" disabled={busy} onClick={() => remove(theme)}>{t("settings.themeDelete")}</button></div>) : <p>{t("settings.themeNone")}</p>}</section>
@@ -172,11 +224,14 @@ export function SettingsDialog({ onClose, initial = "general" }: { onClose(): vo
     const escape = (event: KeyboardEvent) => { if (event.key === "Escape") { if (capture) setCapture(undefined); else onClose(); } };
     window.addEventListener("keydown", escape); return () => window.removeEventListener("keydown", escape);
   }, [capture, onClose]);
+  const sectionProjectKeys = projectSettingsBySection[section] ?? [];
+  const projectScopeAvailable = Boolean(store.projectId() && sectionProjectKeys.length);
+  useEffect(() => { if (!projectScopeAvailable && scope === "project") setScope("global"); }, [projectScopeAvailable, scope]);
   const read = (key: PreferenceKey) => scope === "global" ? store.global(key) : store.get(key);
   const row = (key: PreferenceKey, label: string, options?: Array<[string, string]>, numeric = false) => {
     const allowed = scope === "global" || projectPreferenceKeys.includes(key);
     const value = read(key);
-    const hint = key === "hideBuildArtifacts" ? t("settings.hideBuildArtifactsHint") : key === "documentWordCompletion" ? t("settings.documentWordCompletionHint") : key === "autoPairSymbols" ? t("settings.autoPairSymbolsHint") : key === "confirmPreviewEdits" ? t("settings.confirmPreviewEditsHint") : undefined;
+    const hint = key === "hideBuildArtifacts" ? t("settings.hideBuildArtifactsHint") : key === "documentWordCompletion" ? t("settings.documentWordCompletionHint") : key === "autoPairSymbols" ? t("settings.autoPairSymbolsHint") : key === "autoEnvironmentLabels" ? t("settings.autoEnvironmentLabelsHint") : key === "confirmPreviewEdits" ? t("settings.confirmPreviewEditsHint") : key === "warnIncompatibleEnvironmentConversion" ? t("settings.warnIncompatibleEnvironmentConversionHint") : undefined;
     return <label className="preference-row" key={key}><span><strong>{t(label)}</strong>{hint && <small>{hint}</small>}{scope === "project" && !(key in store.snapshot().project) && <small>{t(allowed ? "settings.inherited" : "settings.globalOnly")}</small>}</span>
       {options ? <select data-setting={key} disabled={!allowed} value={String(value)} onChange={(event) => void store.set(key, numeric ? Number(event.target.value) : event.target.value as never, scope)}>{options.map(([id, labelKey]) => <option key={id} value={id}>{t(labelKey)}</option>)}</select> : numeric ? <input data-setting={key} disabled={!allowed} type="number" min={10} max={32} value={Number(value)} onChange={(event) => { const next = Number(event.target.value); if (next >= 10 && next <= 32) void store.set(key, next, scope); }}/> : <input data-setting={key} disabled={!allowed} type="checkbox" checked={Boolean(value)} onChange={(event) => void store.set(key, event.target.checked, scope)}/>}
       <button type="button" disabled={!allowed} onClick={() => void store.reset(key, scope)}>{t("settings.reset")}</button></label>;
@@ -188,13 +243,35 @@ export function SettingsDialog({ onClose, initial = "general" }: { onClose(): vo
     void store.set("keybindings", next); setCapture(undefined); setConflict(undefined);
   };
   const configured = read("environments") as EnvironmentDefinition[];
+  const resetKeys = async (keys: PreferenceKey[]) => {
+    for (const key of keys) {
+      if (scope === "global" || projectPreferenceKeys.includes(key)) await store.reset(key, scope);
+    }
+  };
+  const resetSection = () => void resetKeys(sectionProjectKeys.length && scope === "project" ? sectionProjectKeys : Object.keys(preferenceDefaults).filter((key) => {
+    if (section === "general") return ["autoSave", "restoreProject", "maximize"].includes(key);
+    if (section === "appearance") return ["theme", "themeDirectory"].includes(key);
+    if (section === "editor") return ["fontSize", "tabSize", "wordWrap", "autoPairSymbols", "documentWordCompletion", "autoEnvironmentLabels", "confirmPreviewEdits", "warnIncompatibleEnvironmentConversion"].includes(key);
+    if (section === "language") return key === "locale";
+    if (section === "searchFilter") return key === "visibleFilterGroups";
+    if (section === "compiler") return key === "engine";
+    if (section === "shortcuts") return key === "keybindings";
+    if (section === "spellcheck") return ["spellCheckMode", "spellCheckLanguage", "spellCheckActiveLanguages"].includes(key);
+    if (section === "images") return key === "images";
+    if (section === "tables") return key === "tables";
+    if (section === "environments") return key === "environments";
+    return false;
+  }) as PreferenceKey[]);
+  const resetAll = () => void resetKeys(scope === "project" ? projectPreferenceKeys : Object.keys(preferenceDefaults) as PreferenceKey[]);
   return <div className="settings-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose(); }}><section className="preferences-dialog" role="dialog" aria-modal="true" aria-label={t("activity.settings")}>
-    <header><h1>{t("activity.settings")}</h1><select aria-label={t("settings.scope")} value={scope} onChange={(event) => setScope(event.target.value as "global" | "project")}><option value="global">{t("settings.global")}</option>{/* Project settings UI is reserved for a later release. */}</select><button aria-label={t("common.close")} onClick={onClose}>×</button></header>
-    <div className="preferences-body"><nav>{sections.map((item) => <button data-section={item} className={section === item ? "active" : ""} key={item} onClick={() => setSection(item)}>{t(item === "environments" ? "environment.manager" : item === "styleResources" ? "settings.styleResources" : `settings.${item}`)}</button>)}</nav><main>
+    <header><h1>{t("activity.settings")}</h1><select aria-label={t("settings.scope")} value={scope} onChange={(event) => setScope(event.target.value as "global" | "project")}><option value="global">{t("settings.global")}</option>{projectScopeAvailable && <option value="project">{t("settings.project")}</option>}</select><div className="settings-header-actions"><button type="button" onClick={resetSection}>{t("settings.resetSection")}</button><button type="button" onClick={resetAll}>{t("settings.resetAll")}</button><button aria-label={t("common.close")} onClick={onClose}>×</button></div></header>
+    <div className="preferences-body"><nav>{sections.map((item) => <button data-section={item} className={section === item ? "active" : ""} key={item} onClick={() => setSection(item)}>{item === "images" ? "Images" : item === "tables" ? "Tables" : t(item === "environments" ? "environment.manager" : item === "styleResources" ? "settings.styleResources" : `settings.${item}`)}</button>)}</nav><main>
       {section === "general" && <><h2>{t("settings.general")}</h2>{row("autoSave", "settings.autoSave", [["off", "settings.off"], ["afterDelay", "settings.afterDelay"]])}{row("hideBuildArtifacts", "settings.hideBuildArtifacts")}{row("restoreProject", "settings.restore")}{row("maximize", "settings.maximize")}</>}
       {section === "appearance" && <ThemeSettingsPanel store={store}/>} 
       {section === "language" && row("locale", "settings.language", [["en", "settings.localeEnglish"], ["ja", "settings.localeJapanese"], ["zh-CN", "settings.localeSimplifiedChinese"], ["zh-TW", "settings.localeTraditionalChinese"], ["ko", "settings.localeKorean"], ["fr", "settings.localeFrench"]])}
-      {section === "editor" && <>{row("fontSize", "settings.fontSize", undefined, true)}{row("wordWrap", "settings.wordWrap")}{row("tabSize", "settings.tabSize", [["2", "2"], ["4", "4"], ["8", "8"]], true)}{row("autoPairSymbols", "settings.autoPairSymbols")}{row("documentWordCompletion", "settings.documentWordCompletion")}{row("confirmPreviewEdits", "settings.confirmPreviewEdits")}</>}
+      {section === "editor" && <>{row("fontSize", "settings.fontSize", undefined, true)}{row("wordWrap", "settings.wordWrap")}{row("tabSize", "settings.tabSize", [["2", "2"], ["4", "4"], ["8", "8"]], true)}{row("autoPairSymbols", "settings.autoPairSymbols")}{row("documentWordCompletion", "settings.documentWordCompletion")}{row("autoEnvironmentLabels", "settings.autoEnvironmentLabels")}{row("confirmPreviewEdits", "settings.confirmPreviewEdits")}{row("warnIncompatibleEnvironmentConversion", "settings.warnIncompatibleEnvironmentConversion")}</>}
+      {section === "images" && <ImageSettingsPanel store={store} scope={scope}/>}
+      {section === "tables" && <TableSettingsPanel store={store} scope={scope}/>}
       {section === "searchFilter" && <><h2>{t("settings.searchFilter")}</h2><p>{t("settings.filterGroupsHint")}</p>{(["blockType", "location", "file", "properties"] as const).map((group) => { const visible = store.global("visibleFilterGroups"); return <label className="preference-row" key={group}><span><strong>{t(`filter.${group}`)}</strong></span><input type="checkbox" checked={visible.includes(group)} onChange={(event) => void store.set("visibleFilterGroups", event.target.checked ? [...visible, group] : visible.filter((item) => item !== group))}/><button type="button" onClick={() => void store.reset("visibleFilterGroups")}>{t("settings.reset")}</button></label>; })}</>}
       {section === "environment" && <EnvironmentSettingsPanel store={store}/>}
       {section === "shortcuts" && <><p>{t("settings.globalOnly")}</p>{row("referenceLinkModifier", "settings.referenceLinkModifier", [["ctrl", "settings.modifierCtrl"], ["alt", "settings.modifierAlt"], ["shift", "settings.modifierShift"], ["meta", "settings.modifierMeta"]])}{(Object.keys(defaultBindings) as CommandId[]).map((id) => <div className="preference-row" key={id}><span><strong>{t(commandLabels[id])}</strong><small>{t(commandContexts[id])}</small></span><button data-command={id} onClick={() => { setCapture(id); setConflict(undefined); setInvalid(false); }}>{displayBinding(bindings()[id] ?? "") || t("settings.off")}</button><button onClick={() => { const next = { ...store.global("keybindings") }; delete next[id]; const duplicate = (Object.entries(bindings()) as Array<[CommandId, string]>).find(([other, value]) => other !== id && commandContexts[other] === commandContexts[id] && value === defaultBindings[id]); if (duplicate) next[duplicate[0]] = ""; void store.set("keybindings", next); }}>{t("settings.reset")}</button></div>)}

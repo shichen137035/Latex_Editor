@@ -69,6 +69,20 @@ export interface ProjectTreeNode {
   children?: ProjectTreeNode[];
 }
 
+export type ImagePreviewError = "FILE_NOT_FOUND" | "UNSUPPORTED_FORMAT" | "FAILED_TO_DECODE" | "PDF_RENDER_FAILED" | "PERMISSION_DENIED" | "PATH_OUTSIDE_PROJECT";
+export interface ImportedImage { sourcePath: string; relativePath: string; renamed: boolean; kind: "file" | "directory" }
+export interface ResolvedGraphic {
+  requestedPath: string;
+  resolvedPath?: string;
+  exists: boolean;
+  format?: "png" | "jpg" | "jpeg" | "webp" | "svg" | "pdf";
+  resolutionSource?: "direct" | "graphicspath" | "extension-search";
+  dataUrl?: string;
+  modifiedAt?: string;
+  size?: number;
+  error?: ImagePreviewError;
+}
+
 export interface TextFileContent {
   projectId: string;
   relativePath: string;
