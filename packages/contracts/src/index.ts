@@ -202,6 +202,7 @@ export interface ReferenceLibraryEntry {
   citationKey: string;
   entryType: string;
   fields: Record<string, string>;
+  favorite: boolean;
   rawBibtex?: string;
   sourceFile?: string;
   tags: string[];

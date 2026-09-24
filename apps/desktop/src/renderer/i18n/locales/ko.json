@@ -1,4 +1,5 @@
 {
+  "preview.selectedBlocks": "{{count}}개 블록 선택됨",
   "settings.warnIncompatibleEnvironmentConversion": "호환되지 않는 환경 변경 전 경고",
   "settings.warnIncompatibleEnvironmentConversionHint": "수식, 그림, 표 또는 기타 블록을 의미상 호환되지 않는 환경으로 변환하기 전에 확인합니다.",
   "preview.incompatibleEnvironmentTitle": "호환되지 않는 환경",
@@ -23,7 +24,6 @@
   "pdf.fitPage": "페이지에 맞춤",
   "pdf.loading": "PDF 로드 중…",
   "app.name": "TeXWeave",
-  "app.version": "v0.3.4",
   "app.tagline": "로컬 LaTeX 작업 공간",
   "project.directory": "프로젝트 디렉터리",
   "project.directoryHint": "논문, 메모, 실험을 가까이 관리하세요.",

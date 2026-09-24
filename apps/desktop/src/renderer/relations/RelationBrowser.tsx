@@ -72,7 +72,7 @@ export function RelationBrowser(props: RelationBrowserProps) {
           if (next.has(node.block.id)) next.delete(node.block.id); else next.add(node.block.id);
           return next;
         })}>{node.children.length ? (expanded ? "⌄" : "›") : ""}</button>
-        <button className="relation-focus-name" title={blockName(node.block)} onClick={() => props.onFocus(node.block.id)}>
+        <button className="relation-focus-name" title={blockName(node.block)} onClick={() => props.onFocus(node.block.id)} onDoubleClick={(event) => { event.preventDefault(); event.stopPropagation(); props.onLocate(node.block.id); }}>
           <small>{blockRole(node.block)}</small><span>{blockName(node.block)}</span>{node.block.state !== "active" && <i title={node.block.state}>!</i>}
         </button>
         <button className="relation-locate" title={t("relation.locate")} onClick={() => props.onLocate(node.block.id)}>◎</button>

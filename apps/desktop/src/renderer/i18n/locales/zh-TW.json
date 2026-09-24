@@ -1,4 +1,5 @@
 {
+  "preview.selectedBlocks": "已選取 {{count}} 個區塊",
   "settings.warnIncompatibleEnvironmentConversion": "不相容環境轉換前警告",
   "settings.warnIncompatibleEnvironmentConversionHint": "將公式、圖片、表格或其他區塊轉換為語意不相容的環境前進行確認。",
   "preview.incompatibleEnvironmentTitle": "環境不相容",
@@ -23,7 +24,6 @@
   "pdf.fitPage": "符合頁面",
   "pdf.loading": "正在載入 PDF…",
   "app.name": "TeXWeave",
-  "app.version": "v0.3.4",
   "app.tagline": "本機 LaTeX 工作區",
   "project.directory": "專案目錄",
   "project.directoryHint": "讓論文、筆記與實驗隨手可得。",

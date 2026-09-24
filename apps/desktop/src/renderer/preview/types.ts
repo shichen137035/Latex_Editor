@@ -74,6 +74,7 @@ export interface PreviewDocument {
   filePath: string;
   nodes: PreviewNode[];
   diagnostics: string[];
+  title?: { title?: string; author?: string; date?: string };
 }
 
 export interface PreviewInteractionState {

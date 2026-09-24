@@ -61,6 +61,31 @@ function metadataValue(metadata: string, key: string): string | undefined {
   return new RegExp(`${key}=([^\\s]+)`).exec(metadata)?.[1];
 }
 
+function commandArgument(source: string, command: string): string | undefined {
+  const expression = new RegExp(`\\\\${command}\\*?(?:\\s*\\[[^\\]]*\\])?\\s*\\{`, "g");
+  for (const match of source.matchAll(expression)) {
+    const start = match.index ?? 0;
+    if (commentedAt(source, start)) continue;
+    let depth = 1;
+    let cursor = start + match[0].length;
+    const contentStart = cursor;
+    while (cursor < source.length && depth > 0) {
+      const character = source[cursor];
+      if (character === "%" && commentedAt(source, cursor)) {
+        const lineEnd = source.indexOf("\n", cursor);
+        cursor = lineEnd < 0 ? source.length : lineEnd + 1;
+        continue;
+      }
+      if (character === "\\") { cursor += 2; continue; }
+      if (character === "{") depth += 1;
+      else if (character === "}") depth -= 1;
+      if (depth > 0) cursor += 1;
+    }
+    if (depth === 0) return source.slice(contentStart, cursor).trim();
+  }
+  return undefined;
+}
+
 function stripForVisibility(value: string): string {
   return value
     .replace(/^\s*%.*$/gm, "")
@@ -173,6 +198,22 @@ export function parsePreview(source: string, filePath: string, definitions: Envi
   }
   for (const entry of open) diagnostics.push(`Unclosed ${entry.marker} ${entry.name} at offset ${entry.start}.`);
 
+  const titleCommand = /\\maketitle\b/g;
+  const hasMakeTitle = [...source.matchAll(titleCommand)].some((match) => {
+    const start = match.index ?? 0;
+    return start >= documentStart && start < documentEnd && !commentedAt(source, start);
+  });
+  const preamble = source.slice(0, documentStart);
+  const titleText = hasMakeTitle ? commandArgument(preamble, "title") : undefined;
+  const authorText = hasMakeTitle ? commandArgument(preamble, "author") : undefined;
+  const dateText = hasMakeTitle ? commandArgument(preamble, "date") : undefined;
+  const title = hasMakeTitle ? {
+    ...(titleText !== undefined ? { title: titleText } : {}),
+    ...(authorText !== undefined ? { author: authorText } : {}),
+    // LaTeX's default \maketitle date is \today when no \date is declared.
+    date: dateText ?? "\\today"
+  } : undefined;
+
   const headings: Array<{ start: number; bodyStart: number; command: string; title: string; level: number; latexLabel?: string; autoLabel?: boolean }> = [];
   const headingPattern = /\\(chapter|section|subsection|subsubsection|paragraph)\*?\{([^{}]*)\}/g;
   for (const match of source.matchAll(headingPattern)) {
@@ -280,5 +321,5 @@ export function parsePreview(source: string, filePath: string, definitions: Envi
     return nodes;
   };
 
-  return { filePath, nodes: buildChildren(undefined, documentStart, documentEnd), diagnostics };
+  return { filePath, nodes: buildChildren(undefined, documentStart, documentEnd), diagnostics, ...(title ? { title } : {}) };
 }

@@ -1,4 +1,5 @@
 {
+  "preview.selectedBlocks": "{{count}} blocs sélectionnés",
   "settings.warnIncompatibleEnvironmentConversion": "Avertir avant un changement d’environnement incompatible",
   "settings.warnIncompatibleEnvironmentConversionHint": "Demander confirmation avant de convertir une équation, une figure, un tableau ou un autre bloc vers un environnement sémantiquement incompatible.",
   "preview.incompatibleEnvironmentTitle": "Environnement incompatible",
@@ -23,7 +24,6 @@
   "pdf.fitPage": "Ajuster à la page",
   "pdf.loading": "Chargement du PDF…",
   "app.name": "TeXWeave",
-  "app.version": "v0.3.4",
   "app.tagline": "Espace de travail LaTeX local",
   "project.directory": "Répertoire des projets",
   "project.directoryHint": "Gardez vos articles, notes et expériences à portée de main.",

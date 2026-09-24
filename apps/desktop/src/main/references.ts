@@ -76,22 +76,27 @@ export class ReferenceLibraryRepository {
   async initialize(): Promise<void> {
     await mkdir(dirname(join(this.root, "references.sqlite")), { recursive: true });
     this.db.exec(`PRAGMA foreign_keys = ON;
-      CREATE TABLE IF NOT EXISTS library_entries (id TEXT PRIMARY KEY, citation_key TEXT NOT NULL UNIQUE, entry_type TEXT NOT NULL, fields_json TEXT NOT NULL, raw_bibtex TEXT, source_file TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL, deleted_at TEXT);
+      CREATE TABLE IF NOT EXISTS library_entries (id TEXT PRIMARY KEY, citation_key TEXT NOT NULL UNIQUE, entry_type TEXT NOT NULL, fields_json TEXT NOT NULL, favorite INTEGER NOT NULL DEFAULT 0, raw_bibtex TEXT, source_file TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL, deleted_at TEXT);
       CREATE TABLE IF NOT EXISTS collections (id TEXT PRIMARY KEY, name TEXT NOT NULL UNIQUE, parent_id TEXT REFERENCES collections(id) ON DELETE SET NULL);
       CREATE TABLE IF NOT EXISTS tags (id TEXT PRIMARY KEY, name TEXT NOT NULL UNIQUE, color TEXT);
       CREATE TABLE IF NOT EXISTS entry_collections (entry_id TEXT NOT NULL REFERENCES library_entries(id) ON DELETE CASCADE, collection_id TEXT NOT NULL REFERENCES collections(id) ON DELETE CASCADE, PRIMARY KEY(entry_id, collection_id));
       CREATE TABLE IF NOT EXISTS entry_tags (entry_id TEXT NOT NULL REFERENCES library_entries(id) ON DELETE CASCADE, tag_id TEXT NOT NULL REFERENCES tags(id) ON DELETE CASCADE, PRIMARY KEY(entry_id, tag_id));
       CREATE TABLE IF NOT EXISTS project_references (project_id TEXT NOT NULL, entry_id TEXT NOT NULL REFERENCES library_entries(id) ON DELETE CASCADE, citation_key TEXT NOT NULL, mode TEXT NOT NULL, target_bib_path TEXT, last_snapshot TEXT, PRIMARY KEY(project_id, entry_id));`);
+    const columns = this.db.prepare("PRAGMA table_info(library_entries)").all() as Array<{ name: string }>;
+    if (!columns.some((column) => column.name === "favorite")) this.db.exec("ALTER TABLE library_entries ADD COLUMN favorite INTEGER NOT NULL DEFAULT 0");
   }
 
   private collectionsFor(entryId: string): string[] { return (this.db.prepare("SELECT c.name FROM collections c JOIN entry_collections ec ON ec.collection_id = c.id WHERE ec.entry_id = ? ORDER BY c.name").all(entryId) as Array<{ name: string }>).map((item) => item.name); }
   private tagsFor(entryId: string): string[] { return (this.db.prepare("SELECT t.name FROM tags t JOIN entry_tags et ON et.tag_id = t.id WHERE et.entry_id = ? ORDER BY t.name").all(entryId) as Array<{ name: string }>).map((item) => item.name); }
 
   snapshot(projectId?: string): ReferenceLibrarySnapshot {
-    const entries = (this.db.prepare("SELECT * FROM library_entries WHERE deleted_at IS NULL ORDER BY updated_at DESC, citation_key").all() as Array<Record<string, unknown>>).map((row) => ({ id: String(row.id), citationKey: String(row.citation_key), entryType: String(row.entry_type), fields: JSON.parse(String(row.fields_json)) as Record<string, string>, ...(row.raw_bibtex ? { rawBibtex: String(row.raw_bibtex) } : {}), ...(row.source_file ? { sourceFile: String(row.source_file) } : {}), tags: this.tagsFor(String(row.id)), collections: this.collectionsFor(String(row.id)), createdAt: String(row.created_at), updatedAt: String(row.updated_at), ...(row.deleted_at ? { deletedAt: String(row.deleted_at) } : {}) } satisfies ReferenceLibraryEntry));
+    const entries = (this.db.prepare("SELECT * FROM library_entries WHERE deleted_at IS NULL ORDER BY updated_at DESC, citation_key").all() as Array<Record<string, unknown>>).map((row) => ({ id: String(row.id), citationKey: String(row.citation_key), entryType: String(row.entry_type), fields: JSON.parse(String(row.fields_json)) as Record<string, string>, favorite: Number(row.favorite) === 1, ...(row.raw_bibtex ? { rawBibtex: String(row.raw_bibtex) } : {}), ...(row.source_file ? { sourceFile: String(row.source_file) } : {}), tags: this.tagsFor(String(row.id)), collections: this.collectionsFor(String(row.id)), createdAt: String(row.created_at), updatedAt: String(row.updated_at), ...(row.deleted_at ? { deletedAt: String(row.deleted_at) } : {}) } satisfies ReferenceLibraryEntry));
     const collections = this.db.prepare("SELECT id, name, parent_id FROM collections ORDER BY name").all().map((row) => { const item = row as { id: string; name: string; parent_id?: string | null }; return ({ id: item.id, name: item.name, ...(item.parent_id ? { parentId: item.parent_id } : {}) } satisfies ReferenceCollection); });
     const tags = this.db.prepare("SELECT id, name, color FROM tags ORDER BY name").all().map((row) => { const item = row as { id: string; name: string; color?: string | null }; return ({ id: item.id, name: item.name, ...(item.color ? { color: item.color } : {}) } satisfies ReferenceTag); });
-    const projectLinks = projectId ? this.db.prepare("SELECT project_id, entry_id, citation_key, mode, target_bib_path, last_snapshot FROM project_references WHERE project_id = ?").all(projectId).map((row) => { const item = row as { project_id: string; entry_id: string; citation_key: string; mode: ProjectReferenceLink["mode"]; target_bib_path?: string | null; last_snapshot?: string | null }; return ({ projectId: item.project_id, libraryEntryId: item.entry_id, citationKeyInProject: item.citation_key, mode: item.mode, ...(item.target_bib_path ? { targetBibPath: item.target_bib_path } : {}), ...(item.last_snapshot ? { lastSnapshot: item.last_snapshot } : {}) } satisfies ProjectReferenceLink); }) : [];
+    const projectLinkStatement = projectId
+      ? this.db.prepare("SELECT project_id, entry_id, citation_key, mode, target_bib_path, last_snapshot FROM project_references WHERE project_id = ?")
+      : this.db.prepare("SELECT project_id, entry_id, citation_key, mode, target_bib_path, last_snapshot FROM project_references");
+    const projectLinks = (projectId ? projectLinkStatement.all(projectId) : projectLinkStatement.all()).map((row) => { const item = row as { project_id: string; entry_id: string; citation_key: string; mode: ProjectReferenceLink["mode"]; target_bib_path?: string | null; last_snapshot?: string | null }; return ({ projectId: item.project_id, libraryEntryId: item.entry_id, citationKeyInProject: item.citation_key, mode: item.mode, ...(item.target_bib_path ? { targetBibPath: item.target_bib_path } : {}), ...(item.last_snapshot ? { lastSnapshot: item.last_snapshot } : {}) } satisfies ProjectReferenceLink); });
     return { entries, collections, tags, projectLinks };
   }
 
@@ -118,9 +123,11 @@ export class ReferenceLibraryRepository {
     const id = input.id ?? randomUUID();
     const existing = this.db.prepare("SELECT id FROM library_entries WHERE id = ?").get(id);
     if (existing) this.db.prepare("UPDATE library_entries SET citation_key = ?, entry_type = ?, fields_json = ?, raw_bibtex = ?, updated_at = ?, deleted_at = NULL WHERE id = ?").run(input.citationKey, input.entryType, JSON.stringify(input.fields), input.rawBibtex ?? null, timestamp, id);
-    else this.db.prepare("INSERT INTO library_entries (id, citation_key, entry_type, fields_json, raw_bibtex, source_file, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)").run(id, input.citationKey, input.entryType, JSON.stringify(input.fields), input.rawBibtex ?? null, input.sourceFile ?? null, input.createdAt ?? timestamp, timestamp);
+    else this.db.prepare("INSERT INTO library_entries (id, citation_key, entry_type, fields_json, favorite, raw_bibtex, source_file, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)").run(id, input.citationKey, input.entryType, JSON.stringify(input.fields), input.favorite ? 1 : 0, input.rawBibtex ?? null, input.sourceFile ?? null, input.createdAt ?? timestamp, timestamp);
     return this.snapshot().entries.find((entry) => entry.id === id)!;
   }
+
+  setFavorite(id: string, favorite: boolean): void { this.db.prepare("UPDATE library_entries SET favorite = ?, updated_at = ? WHERE id = ?").run(favorite ? 1 : 0, now(), id); }
 
   removeEntry(id: string): void { this.db.prepare("UPDATE library_entries SET deleted_at = ? WHERE id = ?").run(now(), id); }
   createCollection(name: string, parentId?: string): ReferenceCollection { const id = randomUUID(); this.db.prepare("INSERT INTO collections (id, name, parent_id) VALUES (?, ?, ?)").run(id, name.trim(), parentId ?? null); return { id, name: name.trim(), ...(parentId ? { parentId } : {}) }; }

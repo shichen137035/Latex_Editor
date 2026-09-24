@@ -21,6 +21,7 @@ contextBridge.exposeInMainWorld("latexEditor", {
     importFile: (path) => ipcRenderer.invoke("references:import-file", path),
     saveEntry: (entry) => ipcRenderer.invoke("references:save-entry", entry),
     removeEntry: (id) => ipcRenderer.invoke("references:remove-entry", id),
+    setFavorite: (id, favorite) => ipcRenderer.invoke("references:set-favorite", id, favorite),
     createCollection: (name, parentId) => ipcRenderer.invoke("references:create-collection", name, parentId),
     setProjectLink: (link) => ipcRenderer.invoke("references:set-project-link", link),
     removeProjectLink: (projectId, entryId) => ipcRenderer.invoke("references:remove-project-link", projectId, entryId)

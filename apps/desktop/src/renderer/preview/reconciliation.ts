@@ -27,6 +27,10 @@ function explicitBinding(value: string): string | undefined {
 
 function flatten(nodes: PreviewNode[], source: string, output: ParsedBlockDescriptor[], parentTransientId?: string): void {
   for (const node of nodes) {
+    if (node.source.endOffset <= node.source.startOffset) {
+      if (node.kind === "block") flatten(node.children, source, output, parentTransientId);
+      continue;
+    }
     const raw = source.slice(node.source.startOffset, node.source.endOffset);
     const role = node.kind === "block" ? node.environmentId : node.contentType;
     const origin = node.kind === "block" && node.origin === "latex" ? "environment" : "virtual";

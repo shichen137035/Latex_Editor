@@ -16,7 +16,7 @@ let locale: Locale = "en";
 export function setLocale(value: Locale): void { locale = value in catalogs ? value : "en"; }
 
 export function t(key: string, variables?: Record<string, string | number>): string {
-  let value = catalogs[locale][key] ?? catalogs.en[key] ?? key;
+  let value = key === "app.version" ? `v${__APP_VERSION__}` : catalogs[locale][key] ?? catalogs.en[key] ?? key;
   for (const [name, replacement] of Object.entries(variables ?? {})) {
     value = value.replaceAll(`{{${name}}}`, String(replacement));
   }

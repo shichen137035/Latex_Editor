@@ -76,6 +76,15 @@ describe("v0.2.2 structured Preview parser", () => {
     expect(virtual?.source.startOffset).toBe(virtual?.source.endOffset);
   });
 
+  it("omits zero-length virtual text regions from block-graph reconciliation", () => {
+    const source = "\\section{Empty}\n\\section{Next}\nContent.";
+    const document = parsePreview(source, "main.tex", DEFAULT_ENVIRONMENTS);
+    const reconciliation = previewBlocksForReconciliation(document, source);
+
+    expect(reconciliation.blocks.length).toBeGreaterThan(0);
+    expect(reconciliation.blocks.every(({ range }) => range.end > range.start)).toBe(true);
+  });
+
   it("keeps sibling spans disjoint and child spans contained", async () => {
     const source = await readFile(resolve("tests/fixtures/preview-basic/main.tex"), "utf8");
     const document = parsePreview(source, "main.tex", DEFAULT_ENVIRONMENTS);

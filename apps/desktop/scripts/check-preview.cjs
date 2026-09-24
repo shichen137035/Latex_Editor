@@ -143,8 +143,34 @@ async function run() {
   console.log("PASS block header selects without editing");
 
   const paragraphSelector = '.preview-content-region[data-node-id*="content"]';
-  await click(paragraphSelector);
+  const previewClick = await evaluate(`(() => {
+    const region = Array.from(document.querySelectorAll(${JSON.stringify(paragraphSelector)})).find((item) => item.textContent.includes("First paragraph"));
+    const walker = document.createTreeWalker(region, NodeFilter.SHOW_TEXT);
+    let textNode;
+    while ((textNode = walker.nextNode())) if (textNode.textContent.includes("inline math")) break;
+    if (!region || !textNode) throw new Error("Could not find test text in Visual preview");
+    const marker = textNode.parentElement.closest("[data-preview-source-start][data-preview-source-end]");
+    const charOffset = textNode.textContent.indexOf("math") + 1;
+    const charRange = document.createRange();
+    charRange.setStart(textNode, charOffset);
+    charRange.setEnd(textNode, charOffset + 1);
+    const rect = charRange.getBoundingClientRect();
+    const x = rect.left + rect.width / 2;
+    const y = rect.top + rect.height / 2;
+    const hit = document.caretRangeFromPoint(x, y);
+    const hitMarker = hit.startContainer.parentElement.closest("[data-preview-source-start][data-preview-source-end]");
+    const prefix = document.createRange();
+    prefix.selectNodeContents(hitMarker);
+    prefix.setEnd(hit.startContainer, hit.startOffset);
+    return { x, y, expected: Number(hitMarker.dataset.previewSourceStart) + prefix.toString().length - Number(region.dataset.sourceStartOffset) };
+  })()`);
+  page.webContents.sendInputEvent({ type: "mouseDown", x: previewClick.x, y: previewClick.y, button: "left", clickCount: 1 });
+  await delay(60);
+  page.webContents.sendInputEvent({ type: "mouseUp", x: previewClick.x, y: previewClick.y, button: "left", clickCount: 1 });
   await until('!!document.querySelector(".preview-local-editor .monaco-editor")', "local source editor");
+  await until('document.querySelector(".preview-local-editor")?.dataset.cursorOffset !== undefined', "mapped Visual caret");
+  assert.equal(await evaluate('Number(document.querySelector(".preview-local-editor").dataset.cursorOffset'), previewClick.expected, "Visual click position is transferred to the inline source editor caret");
+  console.log("PASS Visual text click places the source caret at the corresponding offset");
   page.webContents.sendInputEvent({ type: "keyDown", keyCode: "A", modifiers: ["control"] });
   page.webContents.sendInputEvent({ type: "keyUp", keyCode: "A", modifiers: ["control"] });
   await page.webContents.insertText("Edited paragraph with $z$. ");

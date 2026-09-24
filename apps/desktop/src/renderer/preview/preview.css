@@ -1,5 +1,9 @@
 .structured-preview { min-height: 0; flex: 1; overflow: auto; background: linear-gradient(180deg, #f8fcff 0, #fff 150px); }
 .structured-preview > article { width: min(780px, calc(100% - 48px)); min-height: 100%; margin: 0 auto; padding: 42px 0 100px; color: #23364a; font: 400 16px/1.72 Georgia, "Times New Roman", serif; }
+.preview-document-title { margin: 0 4px 32px; padding: 0 12px 24px; border-bottom: 1px solid var(--color-border); text-align: center; }
+.preview-document-title h1 { margin: 0 0 16px; color: var(--color-text-primary); font: 700 clamp(28px, 4vw, 40px)/1.2 "Space Grotesk", Georgia, serif; letter-spacing: -.025em; }
+.preview-document-authors { margin: 0 auto 9px; color: var(--color-text-secondary); font: 500 16px/1.6 "Space Grotesk", sans-serif; white-space: pre-line; }
+.preview-document-title time { color: var(--color-text-muted); font: 400 13px/1.5 "Space Grotesk", sans-serif; }
 .preview-content-region { margin: 5px 4px 16px; padding: 4px 8px; border: 1px solid transparent; border-radius: 5px; white-space: pre-line; cursor: text; transition: .15s ease; }
 .preview-content-region:hover { border-color: var(--env-border-hover); background: rgba(225,241,250,.35); }
 .preview-content-virtual { min-height: 34px; border-color: color-mix(in srgb, var(--env-border-hover) 48%, transparent); border-style: dashed; background: color-mix(in srgb, var(--color-bg-subtle) 42%, transparent); }
@@ -24,6 +28,17 @@
 .preview-block:hover { border-color: var(--env-border-hover); background: color-mix(in srgb, var(--block-fill) 34%, transparent); }
 .preview-block.selected { border: 2px solid var(--block-selected-border); background: color-mix(in srgb, var(--block-fill) 54%, transparent); box-shadow: 0 5px 18px rgba(23,86,130,.07); }
 .preview-block.selected::before { width: 6px; opacity: 1; }
+.preview-block.multi-selected { outline: 2px solid color-mix(in srgb, var(--color-primary) 34%, transparent); outline-offset: 2px; }
+.preview-block-delete { color: var(--color-danger, #b54747) !important; }
+.preview-block-delete:hover { border-color: var(--color-danger, #b54747) !important; background: color-mix(in srgb, var(--color-danger, #b54747) 9%, var(--color-bg-panel)) !important; }
+.preview-selection-toolbar { position: sticky; top: 8px; z-index: 12; width: max-content; max-width: calc(100% - 24px); display: flex; align-items: center; gap: 6px; margin: 0 auto -42px; padding: 6px; border: 1px solid var(--color-border-strong); border-radius: 10px; color: var(--color-text-primary); background: color-mix(in srgb, var(--color-bg-panel) 95%, var(--color-primary) 5%); box-shadow: var(--shadow-panel); font: 600 11px "Space Grotesk", sans-serif; }
+.preview-selection-toolbar button { min-height: 27px; padding: 4px 10px; border: 1px solid var(--color-border); border-radius: 6px; color: var(--color-primary-strong); background: var(--color-bg-panel); font: inherit; }
+.preview-selection-toolbar button:hover { border-color: var(--color-primary); background: var(--color-bg-hover); }
+.preview-selection-toolbar button.danger { color: var(--color-danger, #b54747); }
+.preview-selection-toolbar button.danger:hover { border-color: var(--color-danger, #b54747); background: color-mix(in srgb, var(--color-danger, #b54747) 9%, var(--color-bg-panel)); }
+.preview-selection-count { padding: 0 6px; color: var(--color-text-secondary); white-space: nowrap; }
+.preview-marquee { position: fixed; z-index: 30; pointer-events: none; border: 1px solid color-mix(in srgb, var(--color-primary) 75%, white); border-radius: 3px; background: color-mix(in srgb, var(--color-primary) 13%, transparent); }
+.structured-preview.marquee-selecting { cursor: crosshair; }
 .preview-block-header { width: 100%; min-height: 32px; display: flex; align-items: center; gap: 8px; padding: 4px 8px 3px 4px; font-family: "Space Grotesk", sans-serif !important; }
 .preview-block-header-main { min-width: 0; flex: 1; min-height: 28px; display: flex; align-items: center; gap: 10px; padding: 3px 4px; border: 0; color: inherit; text-align: left; background: transparent; font: inherit; cursor: pointer; }
 .preview-block-header-main > span, .preview-environment-label { padding: 2px 7px; border-radius: 4px; color: var(--block-label-text); background: color-mix(in srgb, var(--block-label-bg) 42%, transparent); font-size: 10px; font-weight: 700; letter-spacing: .12em; text-transform: uppercase; }

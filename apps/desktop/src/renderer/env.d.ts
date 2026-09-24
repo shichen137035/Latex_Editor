@@ -14,6 +14,7 @@ type InstallationState = {
 };
 
 declare global {
+  const __APP_VERSION__: string;
   interface Window {
     latexEditor?: {
       settings: {
@@ -36,6 +37,7 @@ declare global {
         importFile(path: string): Promise<ReferenceImportResult>;
         saveEntry(entry: Partial<ReferenceLibraryEntry> & Pick<ReferenceLibraryEntry, "citationKey" | "entryType" | "fields">): Promise<ReferenceLibraryEntry>;
         removeEntry(id: string): Promise<void>;
+        setFavorite(id: string, favorite: boolean): Promise<void>;
         createCollection(name: string, parentId?: string): Promise<{ id: string; name: string; parentId?: string }>;
         setProjectLink(link: ProjectReferenceLink): Promise<void>;
         removeProjectLink(projectId: string, entryId: string): Promise<void>;

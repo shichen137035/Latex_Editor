@@ -148,6 +148,10 @@ function registerIpcHandlers(): void {
     if (!context) throw new Error("Application context is not ready");
     return context.references.removeEntry(id);
   });
+  ipcMain.handle("references:set-favorite", (_event, id: string, favorite: boolean) => {
+    if (!context) throw new Error("Application context is not ready");
+    return context.references.setFavorite(id, favorite);
+  });
   ipcMain.handle("references:create-collection", (_event, name: string, parentId?: string) => {
     if (!context) throw new Error("Application context is not ready");
     return context.references.createCollection(name, parentId);
