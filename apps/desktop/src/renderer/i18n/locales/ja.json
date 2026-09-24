@@ -29,7 +29,7 @@
   "pdf.fitPage": "ページ全体",
   "pdf.loading": "PDF を読み込み中…",
   "menu.file": "ファイル", "menu.edit": "編集", "menu.view": "表示", "menu.history": "履歴",
-  "activity.settings": "設定", "activity.files": "ファイル", "activity.search": "検索", "activity.help": "ヘルプ",
+  "activity.settings": "設定", "activity.files": "ファイル", "activity.search": "検索", "activity.library": "文献庫", "activity.help": "ヘルプ",
   "settings.language": "表示言語", "settings.theme": "テーマ", "settings.light": "ライト", "settings.activeTheme": "現在のテーマ", "settings.activeThemeHint": "組み込みテーマまたは読み込んだ CSS テーマを選択します。", "settings.themeRefresh": "テーマを更新", "settings.themeImport": "CSS を読み込む", "settings.themeImportFolder": "フォルダーを読み込む", "settings.themeDirectory": "スキャン対象のテーマフォルダー", "settings.themeChooseDirectory": "フォルダーを選択", "settings.themeResetDirectory": "アプリケーションフォルダーを使用", "settings.themeBuiltIn": "組み込みテーマ", "settings.themeBuiltInBadge": "組み込み", "settings.themeCustom": "読み込んだテーマ", "settings.themeNone": "読み込んだテーマはありません。", "settings.themeDelete": "削除", "settings.themeDeleteConfirm": "テーマ「{{name}}」を削除しますか？",
   "settings.general": "一般", "settings.appearance": "外観", "settings.editor": "エディター", "settings.searchFilter": "検索とフィルター", "settings.shortcuts": "ショートカット", "settings.compiler": "コンパイラー",
 "settings.global": "全体設定", "settings.project": "プロジェクト設定", "settings.reset": "リセット", "settings.resetSection": "このセクションをリセット", "settings.resetAll": "既定値に戻す", "settings.inherited": "全体設定を継承", "settings.referenceLinkModifier": "参照リンクの修飾キー", "settings.modifierCtrl": "Ctrl", "settings.modifierAlt": "Alt", "settings.modifierShift": "Shift", "settings.modifierMeta": "Cmd / Windows",

@@ -1,4 +1,4 @@
-import type { BlockCreationValidation, BlockGraphSnapshot, BlockId, BlockRangeMappingResult, BlockReconciliationResult, CommandMetadata, CompileResult, CreateSemanticBlockInput, CreateUserBlockInput, DependencyCycle, DictionaryPackage, FileWriteResult, GraphDiagnostic, GraphTraversalOptions, GraphTraversalResult, ImportedImage, LogicalRelation, MapUserBlockRangesInput, Project, ProjectTreeNode, ReconcileParsedBlocksInput, RelationDirection, RelationMutationResult, RelationNeighborhood, RelationValidation, ResolvedGraphic, SemanticBlock, SettingsSnapshot, PreferenceKey, LatexToolchain, StyleResource, ThemeDefinition, SpellCheckMode, SpellCheckStatus, StructuralDependencyOverlap, StructuralHistoryState, SyncTexPdfPosition, SyncTexSourcePosition, TextFileContent, UpdateSemanticBlockInput } from "@latex-editor/contracts";
+import type { BlockCreationValidation, BlockGraphSnapshot, BlockId, BlockRangeMappingResult, BlockReconciliationResult, CommandMetadata, CompileResult, CreateSemanticBlockInput, CreateUserBlockInput, DependencyCycle, DictionaryPackage, FileWriteResult, GraphDiagnostic, GraphTraversalOptions, GraphTraversalResult, ImportedImage, LogicalRelation, MapUserBlockRangesInput, Project, ProjectTreeNode, ReconcileParsedBlocksInput, RelationDirection, RelationMutationResult, RelationNeighborhood, RelationValidation, ResolvedGraphic, SemanticBlock, SettingsSnapshot, PreferenceKey, LatexToolchain, StyleResource, ThemeDefinition, SpellCheckMode, SpellCheckStatus, StructuralDependencyOverlap, StructuralHistoryState, SyncTexPdfPosition, SyncTexSourcePosition, TextFileContent, UpdateSemanticBlockInput, ProjectReferenceLink, ReferenceLibraryEntry, ReferenceLibrarySnapshot, ReferenceImportResult } from "@latex-editor/contracts";
 
 type InstallationState = {
   schemaVersion: 1;
@@ -30,6 +30,15 @@ declare global {
       };
       resources: {
         searchCommands(query: string): Promise<CommandMetadata[]>;
+      };
+      references: {
+        snapshot(projectId?: string): Promise<ReferenceLibrarySnapshot | undefined>;
+        importFile(path: string): Promise<ReferenceImportResult>;
+        saveEntry(entry: Partial<ReferenceLibraryEntry> & Pick<ReferenceLibraryEntry, "citationKey" | "entryType" | "fields">): Promise<ReferenceLibraryEntry>;
+        removeEntry(id: string): Promise<void>;
+        createCollection(name: string, parentId?: string): Promise<{ id: string; name: string; parentId?: string }>;
+        setProjectLink(link: ProjectReferenceLink): Promise<void>;
+        removeProjectLink(projectId: string, entryId: string): Promise<void>;
       };
       blockGraph: {
         snapshot(projectId: string): Promise<BlockGraphSnapshot>;

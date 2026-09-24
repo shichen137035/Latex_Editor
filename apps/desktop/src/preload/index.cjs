@@ -16,6 +16,15 @@ contextBridge.exposeInMainWorld("latexEditor", {
   resources: {
     searchCommands: (query) => ipcRenderer.invoke("resources:commands", query)
   },
+  references: {
+    snapshot: (projectId) => ipcRenderer.invoke("references:snapshot", projectId),
+    importFile: (path) => ipcRenderer.invoke("references:import-file", path),
+    saveEntry: (entry) => ipcRenderer.invoke("references:save-entry", entry),
+    removeEntry: (id) => ipcRenderer.invoke("references:remove-entry", id),
+    createCollection: (name, parentId) => ipcRenderer.invoke("references:create-collection", name, parentId),
+    setProjectLink: (link) => ipcRenderer.invoke("references:set-project-link", link),
+    removeProjectLink: (projectId, entryId) => ipcRenderer.invoke("references:remove-project-link", projectId, entryId)
+  },
   blockGraph: {
     snapshot: (projectId) => ipcRenderer.invoke("block-graph:snapshot", projectId),
     createBlock: (projectId, input) => ipcRenderer.invoke("block-graph:create-block", projectId, input),

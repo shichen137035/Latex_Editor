@@ -196,5 +196,41 @@ export interface ThemeDefinition {
 }
 
 export interface ProjectTemplate { id: string; name: string; files: Array<{ relativePath: string; content: string }> }
+
+export interface ReferenceLibraryEntry {
+  id: string;
+  citationKey: string;
+  entryType: string;
+  fields: Record<string, string>;
+  rawBibtex?: string;
+  sourceFile?: string;
+  tags: string[];
+  collections: string[];
+  createdAt: string;
+  updatedAt: string;
+  deletedAt?: string;
+}
+
+export interface ReferenceCollection { id: string; name: string; parentId?: string; }
+export interface ReferenceTag { id: string; name: string; color?: string; }
+export interface ProjectReferenceLink {
+  projectId: string;
+  libraryEntryId: string;
+  citationKeyInProject: string;
+  mode: "link" | "copy" | "local";
+  targetBibPath?: string;
+  lastSnapshot?: string;
+}
+export interface ReferenceLibrarySnapshot {
+  entries: ReferenceLibraryEntry[];
+  collections: ReferenceCollection[];
+  tags: ReferenceTag[];
+  projectLinks: ProjectReferenceLink[];
+}
+export interface ReferenceImportResult {
+  entries: ReferenceLibraryEntry[];
+  invalid: Array<{ raw: string; message: string; start?: number; end?: number }>;
+  duplicates: string[];
+}
 /** 来自 resources 的编译器配置，arguments 由 catalog 做 allowlist 校验。 */
 export interface CompilerProfile { id: string; executable: string; arguments: string[]; timeoutMs: number }

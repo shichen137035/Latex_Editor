@@ -2,7 +2,7 @@ import { app, BrowserWindow, dialog, ipcMain, Menu } from "electron";
 import { randomUUID } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import { resolve } from "node:path";
-import type { CommandMetadata, CompileResult, CompileInput, GraphTraversalOptions, PreferenceKey, SemanticBlock, CreateSemanticBlockInput, CreateUserBlockInput, UpdateSemanticBlockInput, LatexToolchain, MapUserBlockRangesInput, ReconcileParsedBlocksInput, RelationDirection } from "@latex-editor/contracts" with { "resolution-mode": "import" };
+import type { CommandMetadata, CompileResult, CompileInput, GraphTraversalOptions, PreferenceKey, SemanticBlock, CreateSemanticBlockInput, CreateUserBlockInput, UpdateSemanticBlockInput, LatexToolchain, MapUserBlockRangesInput, ReconcileParsedBlocksInput, RelationDirection, ProjectReferenceLink, ReferenceLibraryEntry } from "@latex-editor/contracts" with { "resolution-mode": "import" };
 import type { ProjectBlockGraphService } from "@latex-editor/application" with { "resolution-mode": "import" };
 import { SettingsRepository } from "./settings.js";
 import { StyleResourceRepository } from "./style-resources.js";
@@ -11,6 +11,7 @@ import { OfflineSpellCheckService } from "./spellcheck.js";
 import { InstallationStateService } from "./installation.js";
 import { forwardSync, reverseSync } from "./synctex.js";
 import { ProjectImageService } from "./images.js";
+import { ReferenceLibraryRepository } from "./references.js";
 
 interface DesktopContext {
   registry: { initialize(): void; close(): void };
@@ -41,6 +42,7 @@ interface DesktopContext {
   spellcheck: OfflineSpellCheckService;
   installation: InstallationStateService;
   images: ProjectImageService;
+  references: ReferenceLibraryRepository;
 }
 
 let context: DesktopContext | undefined;
@@ -103,7 +105,9 @@ async function createContext(): Promise<DesktopContext> {
   spellcheck.configure(settings.global.spellCheckMode ?? "auto", settings.global.spellCheckLanguage ?? "en-US");
   await installation.recordComponent({ id: "core", version: app.getVersion(), ownership: "installed-by-texweave", path: app.getAppPath() });
   const images = new ProjectImageService(files);
-  return { registry, projects, files, compiler, resources, blockGraph, styleResources, themes, spellcheck, installation, images };
+  const references = new ReferenceLibraryRepository(app.getPath("userData"));
+  await references.initialize();
+  return { registry, projects, files, compiler, resources, blockGraph, styleResources, themes, spellcheck, installation, images, references };
 }
 
 function registerIpcHandlers(): void {
@@ -131,6 +135,31 @@ function registerIpcHandlers(): void {
     return context.installation.removeUserData(options);
   });
   ipcMain.handle("resources:commands", (_event, query: string) => context?.resources.searchCommands(query) ?? []);
+  ipcMain.handle("references:snapshot", (_event, projectId?: string) => context?.references.snapshot(projectId));
+  ipcMain.handle("references:import-file", (_event, path: string) => {
+    if (!context) throw new Error("Application context is not ready");
+    return context.references.importBibFile(path);
+  });
+  ipcMain.handle("references:save-entry", (_event, input: Partial<ReferenceLibraryEntry> & Pick<ReferenceLibraryEntry, "citationKey" | "entryType" | "fields">) => {
+    if (!context) throw new Error("Application context is not ready");
+    return context.references.saveEntry(input);
+  });
+  ipcMain.handle("references:remove-entry", (_event, id: string) => {
+    if (!context) throw new Error("Application context is not ready");
+    return context.references.removeEntry(id);
+  });
+  ipcMain.handle("references:create-collection", (_event, name: string, parentId?: string) => {
+    if (!context) throw new Error("Application context is not ready");
+    return context.references.createCollection(name, parentId);
+  });
+  ipcMain.handle("references:set-project-link", (_event, link: ProjectReferenceLink) => {
+    if (!context) throw new Error("Application context is not ready");
+    return context.references.setProjectLink(link);
+  });
+  ipcMain.handle("references:remove-project-link", (_event, projectId: string, entryId: string) => {
+    if (!context) throw new Error("Application context is not ready");
+    return context.references.removeProjectLink(projectId, entryId);
+  });
   ipcMain.handle("block-graph:snapshot", (_event, projectId: string) => context?.blockGraph.snapshot(projectId));
   ipcMain.handle("block-graph:create-block", (_event, projectId: string, input: CreateSemanticBlockInput) => context?.blockGraph.createBlock(projectId, input));
   ipcMain.handle("block-graph:validate-user-block", (_event, projectId: string, input: CreateUserBlockInput) => context?.blockGraph.validateUserBlock(projectId, input));
@@ -412,5 +441,6 @@ app.whenReady().then(() => {
 
 app.on("window-all-closed", () => {
   context?.registry.close();
+  context?.references.close();
   if (process.platform !== "darwin") app.quit();
 });
