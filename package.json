@@ -24,6 +24,7 @@
     "desktop:build": "npm run typecheck && npm run desktop:typecheck && vite build --config apps/desktop/vite.config.ts && tsc -p apps/desktop/tsconfig.main.json",
     "desktop:dist:win": "npm run desktop:build && electron-builder --win nsis portable --publish never",
     "desktop:dev": "npm run desktop:build && node apps/desktop/scripts/launch.cjs",
+    "desktop:test-ai": "npm run desktop:build && node apps/desktop/scripts/run-ai-connection-check.cjs",
     "desktop:test-ui": "npm run desktop:build && node apps/desktop/scripts/run-file-menu-check.mjs",
     "desktop:test-preview": "npm run desktop:build && node apps/desktop/scripts/run-preview-check.mjs",
     "desktop:test-preview-startup": "npm run desktop:build && node apps/desktop/scripts/run-preview-startup-check.mjs",
@@ -115,7 +116,14 @@
       "allowToChangeInstallationDirectory": true,
       "include": "build/installer.nsh",
       "deleteAppDataOnUninstall": false,
-      "installerLanguages": ["en_US", "zh_CN", "zh_TW", "ja_JP", "ko_KR", "fr_FR"],
+      "installerLanguages": [
+        "en_US",
+        "zh_CN",
+        "zh_TW",
+        "ja_JP",
+        "ko_KR",
+        "fr_FR"
+      ],
       "createDesktopShortcut": true,
       "createStartMenuShortcut": true,
       "runAfterFinish": true
@@ -136,6 +144,7 @@
     "node": ">=22"
   },
   "dependencies": {
+    "@github/copilot-sdk": "^1.0.13",
     "dictionary-en": "^4.0.0",
     "dictionary-en-gb": "^3.0.0",
     "katex": "^0.18.7",

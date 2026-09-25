@@ -9,8 +9,9 @@ import { useSettings } from "./service.js";
 import { bindings, commandContexts, commandLabels, defaultBindings, displayBinding, eventBinding, validBinding, type CommandId } from "./commands.js";
 import "./settings.css";
 
-const sections = ["general", "appearance", "editor", "images", "tables", "searchFilter", "language", "shortcuts", "environment", "compiler", "spellcheck", "environments", "styleResources"] as const;
-type Section = typeof sections[number];
+const sections = ["general", "appearance", "editor", "images", "tables", "searchFilter", "language", "shortcuts", "environment", "compiler", "spellcheck", "ai", "environments", "styleResources"] as const;
+export type SettingsSection = typeof sections[number];
+type Section = SettingsSection;
 
 const projectSettingsBySection: Partial<Record<Section, PreferenceKey[]>> = {
   general: ["autoSave"],
@@ -257,6 +258,7 @@ export function SettingsDialog({ onClose, initial = "general" }: { onClose(): vo
     if (section === "compiler") return key === "engine";
     if (section === "shortcuts") return key === "keybindings";
     if (section === "spellcheck") return ["spellCheckMode", "spellCheckLanguage", "spellCheckActiveLanguages"].includes(key);
+    if (section === "ai") return key === "aiDefaultMode";
     if (section === "images") return key === "images";
     if (section === "tables") return key === "tables";
     if (section === "environments") return key === "environments";
@@ -278,6 +280,7 @@ export function SettingsDialog({ onClose, initial = "general" }: { onClose(): vo
         {capture && <div className="shortcut-capture"><p>{t(commandLabels[capture])} · {t(commandContexts[capture])}</p><input data-shortcut-capture autoFocus readOnly placeholder={t("shortcut.capture")} value={displayBinding(pending)} onKeyDown={(event) => { event.preventDefault(); event.stopPropagation(); if (event.key === "Escape") { setCapture(undefined); return; } if (["Control", "Meta", "Shift", "Alt"].includes(event.key)) return; const value = eventBinding(event.nativeEvent); setPending(value); if (!validBinding(value)) { setInvalid(true); return; } setInvalid(false); const duplicate = (Object.entries(bindings()) as Array<[CommandId, string]>).find(([id, binding]) => id !== capture && commandContexts[id] === commandContexts[capture] && binding === value); if (duplicate) setConflict(duplicate[0]); else applyBinding(value); }}/>{invalid && <p role="alert">{t("shortcut.invalid")}</p>}{conflict && <><p role="alert">{t("shortcut.conflict")} {t(commandLabels[conflict as CommandId])}</p><button onClick={() => applyBinding(pending, conflict)}>{t("shortcut.replace")}</button></>}<button onClick={() => setCapture(undefined)}>{t("project.cancel")}</button></div>}</>}
       {section === "compiler" && <><h2>{t("settings.localToolchain")}</h2><p>{t("settings.globalOnly")}</p><div className="toolchain-actions"><button disabled={detecting} onClick={() => void detect()}>{t("settings.detect")}</button><button disabled={detecting} onClick={() => void detect("directory")}>{t("settings.locate")}</button><button disabled={detecting} onClick={() => void detect("executable")}>{t("settings.executable")}</button></div><p>{store.snapshot().toolchain?.distribution ?? "unknown"}</p>{(["latexmk", "pdflatex", "xelatex", "lualatex", "bibtex", "biber"] as const).map((tool) => <div className="toolchain-row" key={tool}><strong>{tool}</strong><span>{t(store.snapshot().toolchain?.[tool] ? "settings.found" : "settings.notFound")}</span><code>{store.snapshot().toolchain?.[tool] ?? "—"}</code></div>)}{row("engine", "settings.engine", [["pdflatex", "pdfLaTeX"], ["xelatex", "XeLaTeX"], ["lualatex", "LuaLaTeX"]])}<p>{t("settings.mainFileHint")}</p><p>{t("settings.buildUnavailable")}</p></>}
       {section === "spellcheck" && <SpellCheckSettingsPanel store={store}/>}
+      {section === "ai" && <><h2>{t("settings.ai")}</h2><p>{t("settings.aiPrivacyHint")}</p>{row("aiDefaultMode", "settings.aiDefaultMode", [["chat", "ai.chat"], ["codex", "ai.codex"]])}<div className="ai-phase-card"><strong>{t("settings.aiChangeReview")}</strong><p>{t("settings.aiChangeReviewDetails")}</p></div></>}
       {section === "environments" && <div className="settings-environments"><button onClick={() => void store.reset("environments", scope)}>{t("settings.reset")}</button><EnvironmentManager definitions={configured.length ? configured : DEFAULT_ENVIRONMENTS} onChange={(next) => void store.set("environments", next, scope)}/></div>}
       {section === "styleResources" && <StyleResourcesPanel/>}
       {store.error() && <p role="alert">{t("settings.saveFailed")} {store.error()}</p>}

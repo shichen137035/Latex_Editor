@@ -1,11 +1,11 @@
-import { Editor, type OnMount } from "@monaco-editor/react";
+import { DiffEditor, Editor, type OnMount } from "@monaco-editor/react";
 import { useCallback, useEffect, useMemo, useRef, useState, type DragEvent } from "react";
 import { createPortal } from "react-dom";
-import type { BlockGraphSnapshot, BlockId, BlockTextEdit, BlockTextRange, CompileResult, Diagnostic, Project, ProjectTreeNode, RelationDirection, RelationNeighborhood, SemanticBlock, SpellCheckStatus, StructuralHistoryState, SyncTexPdfPosition } from "@latex-editor/contracts";
+import type { AIChangeSet, BlockGraphSnapshot, BlockId, BlockTextEdit, BlockTextRange, CompileResult, Diagnostic, Project, ProjectTreeNode, RelationDirection, RelationNeighborhood, SemanticBlock, SpellCheckStatus, StructuralHistoryState, SyncTexPdfPosition } from "@latex-editor/contracts";
 import toolbarActions from "../resources/toolbar-actions.json" with { type: "json" };
 import { t, type MessageKey } from "../i18n/index.js";
 import { PreviewPane } from "../preview/PreviewPane.js";
-import { SettingsDialog } from "../settings/SettingsDialog.js";
+import { SettingsDialog, type SettingsSection } from "../settings/SettingsDialog.js";
 import { useSettings, settings } from "../settings/service.js";
 import { bindings, commands, displayBinding } from "../settings/commands.js";
 import { EnvironmentQuickAction, environmentCursorOffset, environmentInsertion } from "../preview/EnvironmentPicker.js";
@@ -45,6 +45,7 @@ import type { TableSelection } from "../table/model.js";
 import { addLatexPackage, tableInsertion, uniqueTableLabel } from "../table/insert.js";
 import { ReferenceLibraryPanel } from "../references/ReferenceLibraryPanel.js";
 import { BibtexPreviewPane } from "../references/BibtexPreviewPane.js";
+import { AIView } from "../ai/AIView.js";
 
 type SidebarMode = "files" | "search" | "library" | "ai" | "settings" | "help";
 type PaneType = "source" | "preview" | "pdf";
@@ -142,6 +143,20 @@ function replacementEdit(before: string, after: string): BlockTextEdit[] {
   return [{ start: prefix, end: before.length - suffix, newLength: after.length - prefix - suffix }];
 }
 
+function applyAIHunks(content: string, hunks: AIChangeSet["files"][number]["hunks"], direction: "forward" | "reverse"): string {
+  const lines = content.match(/[^\n]*\n|[^\n]+$/g) ?? [];
+  const accepted = hunks.filter((hunk) => hunk.decision === "accepted").sort((left, right) => direction === "forward" ? right.oldStart - left.oldStart : right.newStart - left.newStart);
+  for (const hunk of accepted) {
+    const start = direction === "forward" ? hunk.oldStart : hunk.newStart;
+    const count = direction === "forward" ? hunk.oldLines : hunk.newLines;
+    const expected = direction === "forward" ? hunk.oldText : hunk.newText;
+    const replacement = direction === "forward" ? hunk.newText : hunk.oldText;
+    if (lines.slice(start, start + count).join("") !== expected) throw new Error("The editor buffer no longer matches this AI change; it was left unchanged.");
+    lines.splice(start, count, ...(replacement.match(/[^\n]*\n|[^\n]+$/g) ?? []));
+  }
+  return lines.join("");
+}
+
 function Tree({ nodes, activePath, mainFile, filter, hideBuildArtifacts, onOpen, onContextMenu }: { nodes: ProjectTreeNode[]; activePath: string | undefined; mainFile: string | undefined; filter: string; hideBuildArtifacts?: boolean; onOpen(path: string): void; onContextMenu?: (path: string, kind: ProjectTreeNode["kind"], event: React.MouseEvent) => void }) {
   const shouldHideBuildArtifacts = hideBuildArtifacts ?? settings.get("hideBuildArtifacts");
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
@@ -196,6 +211,7 @@ function EntryNameInput({ message, fallback, finish }: { message: string; fallba
 export function Workbench({ project, projects, environments, onHome, onSwitch, onOpenLibrary }: { project: Project; projects: Project[]; environments: EnvironmentDefinition[]; onHome(): void; onSwitch(project: Project): void; onOpenLibrary(): void }) {
   const store = useSettings();
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [settingsInitial, setSettingsInitial] = useState<SettingsSection>("general");
   const api = window.latexEditor;
   const [layout, setLayout] = useState(restoreLayout);
   const [sidebarMode, setSidebarMode] = useState<SidebarMode>("files");
@@ -203,6 +219,7 @@ export function Workbench({ project, projects, environments, onHome, onSwitch, o
   const [treeFilter, setTreeFilter] = useState("");
   const [outlineMode, setOutlineMode] = useState<"outline" | "relations">("outline");
   const [tabs, setTabs] = useState<EditorTab[]>([]);
+  const [aiReviewChanges, setAiReviewChanges] = useState<AIChangeSet[]>([]);
   const [activePath, setActivePath] = useState<string>();
   const [saveState, setSaveState] = useState<"saved" | "unsaved" | "saving" | "failed">("saved");
   const [activeMenu, setActiveMenu] = useState<MenuName>();
@@ -273,6 +290,7 @@ export function Workbench({ project, projects, environments, onHome, onSwitch, o
   const lastTextPane = useRef<"source" | "preview">("source");
   const activeContentRef = useRef("");
   const pendingRangeTransactions = useRef(new Map<string, BlockTextEdit[][]>());
+  const aiUndoRef = useRef<{ changes: AIChangeSet; activePath?: string; priorDirty: Map<string, boolean> } | undefined>(undefined);
   const rangeMappingTimers = useRef(new Map<string, number>());
   const previewViewportAnchor = useRef<{ fileId: string; offset: number } | undefined>(undefined);
   const previewInsertionAnchor = useRef<{ fileId: string; offset: number } | undefined>(undefined);
@@ -280,6 +298,7 @@ export function Workbench({ project, projects, environments, onHome, onSwitch, o
   useEffect(() => () => resizeCleanup.current?.(), []);
 
   const activeTab = tabs.find((tab) => tab.path === activePath);
+  const aiReviewFile = useMemo(() => activePath ? aiReviewChanges.flatMap((changeSet) => changeSet.files).find((file) => file.path === activePath && file.hunks.some((hunk) => hunk.decision === "pending")) : undefined, [activePath, aiReviewChanges]);
   const pdfFile = project.mainFile?.replace(/\.tex$/i, ".pdf");
   const sourceEditorVisible = layout.mode === "single" ? layout.singlePane === "source" : layout.leftPane === "source";
   const visualEditorVisible = layout.mode === "single" ? layout.singlePane === "preview" : layout.leftPane === "preview";
@@ -824,7 +843,8 @@ export function Workbench({ project, projects, environments, onHome, onSwitch, o
       commands.register("latex.compile", { execute: () => compile().catch(() => undefined) }),
       commands.register("edit.find", { execute: () => editorRef.current?.trigger("command", "actions.find", null), when: () => !!document.querySelector(".editor-surface .monaco-editor") }),
       commands.register("edit.replace", { execute: () => editorRef.current?.trigger("command", "editor.action.startFindReplaceAction", null), when: () => !!document.querySelector(".editor-surface .monaco-editor") }),
-      commands.register("settings.open", { execute: () => setSettingsOpen(true) }),
+      commands.register("settings.open", { execute: () => { setSettingsInitial("general"); setSettingsOpen(true); } }),
+      commands.register("ai.open", { execute: () => { setSidebarMode("ai"); setLayout((value) => ({ ...value, sidebarVisible: true })); } }),
       commands.register("block.createFromSelection", { execute: () => createUserBlockFromSelection().catch((error: unknown) => setBlockNotice(error instanceof Error ? error.message : String(error))) })
     ];
     return () => registrations.forEach((dispose) => dispose());
@@ -864,6 +884,94 @@ export function Workbench({ project, projects, environments, onHome, onSwitch, o
     setTabs((current) => current.map((tab) => tab.path === activePath ? { ...tab, content, dirty: true } : tab));
     setSaveState("unsaved");
   };
+  const applyAIChanges = async (changes: AIChangeSet) => {
+    if (!api) return;
+    const nextTabs = [...tabs];
+    const appliedFiles: AIChangeSet["files"] = [];
+    const priorDirty = new Map(tabs.map((tab) => [tab.path, tab.dirty]));
+    let targetActivePath: string | undefined;
+    for (const file of changes.files) {
+      const accepted = file.hunks.filter((hunk) => hunk.decision === "accepted");
+      if (!accepted.length) continue;
+      let tab = nextTabs.find((item) => item.path === file.path);
+      if (file.type === "create") {
+        if (tree.some((node) => projectFilePaths([node]).includes(file.path))) throw new Error(`${file.path} already exists in the project.`);
+        await api.files.createFile(project.id, file.path);
+        tab = { path: file.path, content: file.proposedContent ?? accepted.at(-1)?.newText ?? "", dirty: true };
+        nextTabs.push(tab);
+        appliedFiles.push(file);
+        targetActivePath = file.path;
+        continue;
+      }
+      if (file.type === "delete") {
+        if (!window.confirm(t("ai.confirmDeleteFile", { path: file.path }))) continue;
+        await api.files.remove(project.id, file.path);
+        appliedFiles.push(file);
+        const index = nextTabs.findIndex((item) => item.path === file.path);
+        if (index >= 0) nextTabs.splice(index, 1);
+        if (activePath === file.path) setActivePath(undefined);
+        continue;
+      }
+      if (!tab) {
+        const disk = await api.files.read(project.id, file.path);
+        tab = { path: file.path, content: disk.content, dirty: false };
+        nextTabs.push(tab);
+      }
+      if (file.originalContent !== undefined && tab.content !== file.originalContent) throw new Error(t("ai.bufferConflict", { path: file.path }));
+      let nextContent: string;
+      try { nextContent = applyAIHunks(tab.content, accepted, "forward"); }
+      catch { throw new Error(t("ai.hunkConflict", { path: file.path })); }
+      const index = nextTabs.findIndex((item) => item.path === file.path);
+      if (index >= 0) nextTabs[index] = { ...nextTabs[index]!, content: nextContent, dirty: true };
+      appliedFiles.push(file);
+      targetActivePath = file.path;
+    }
+    setTabs(nextTabs);
+    if (targetActivePath) setActivePath(targetActivePath);
+    if (appliedFiles.length) aiUndoRef.current = { changes: { ...changes, files: appliedFiles }, ...(activePath ? { activePath } : {}), priorDirty };
+    setSaveState("unsaved");
+    await refreshTree();
+  };
+  const undoAIChanges = async (requestedChanges?: AIChangeSet) => {
+    const undo = aiUndoRef.current;
+    if (!api || !undo) return;
+    if (requestedChanges && requestedChanges.id !== undo.changes.id) throw new Error(t("ai.undoNoLongerAvailable"));
+    const nextTabs = [...tabs];
+    for (const file of [...undo.changes.files].reverse()) {
+      if (file.type === "create") {
+        const tab = nextTabs.find((item) => item.path === file.path);
+        const expected = file.proposedContent ?? file.hunks.find((hunk) => hunk.decision === "accepted")?.newText ?? "";
+        const actual = tab?.content ?? (await api.files.read(project.id, file.path)).content;
+        if (actual !== expected) throw new Error(t("ai.undoConflict", { path: file.path }));
+        await api.files.remove(project.id, file.path);
+        const index = nextTabs.findIndex((item) => item.path === file.path); if (index >= 0) nextTabs.splice(index, 1);
+      } else if (file.type === "delete") {
+        if (file.originalContent === undefined) continue;
+        await api.files.createFile(project.id, file.path);
+        await api.files.write(project.id, file.path, file.originalContent);
+        nextTabs.push({ path: file.path, content: file.originalContent, dirty: false });
+      } else {
+        if (file.originalContent === undefined) continue;
+        let tab = nextTabs.find((item) => item.path === file.path);
+        if (!tab) { const disk = await api.files.read(project.id, file.path); tab = { path: file.path, content: disk.content, dirty: false }; nextTabs.push(tab); }
+        const expected = applyAIHunks(file.originalContent, file.hunks, "forward");
+        if (tab.content !== expected) throw new Error(t("ai.undoConflict", { path: file.path }));
+        const index = nextTabs.findIndex((item) => item.path === file.path);
+        if (index >= 0) nextTabs[index] = { ...nextTabs[index]!, content: file.originalContent, dirty: undo.priorDirty.get(file.path) ?? true };
+      }
+    }
+    setTabs(nextTabs);
+    if (undo.activePath) setActivePath(undo.activePath);
+    aiUndoRef.current = undefined;
+    setSaveState("unsaved");
+    await refreshTree();
+    if (requestedChanges) window.dispatchEvent(new CustomEvent("texweave:ai-undo-complete", { detail: requestedChanges.id }));
+  };
+  useEffect(() => {
+    const listener = (event: Event) => { void undoAIChanges((event as CustomEvent<AIChangeSet>).detail).catch((error: unknown) => setBlockNotice(error instanceof Error ? error.message : String(error))); };
+    window.addEventListener("texweave:ai-undo", listener);
+    return () => window.removeEventListener("texweave:ai-undo", listener);
+  }, [undoAIChanges]);
   const insertText = (text: string, cursorOffset?: number, triggerSuggestions = false) => {
     const editor = editorRef.current;
     const model = editor?.getModel();
@@ -1428,7 +1536,7 @@ export function Workbench({ project, projects, environments, onHome, onSwitch, o
   const isBibFile = activeTab?.path.toLocaleLowerCase().endsWith(".bib") ?? false;
   const editorQuickActions = isBibFile ? [] : quickActions;
   const sourceTabs = <div className="editor-tabs">{tabs.map((tab) => <button className={tab.path === activePath ? "active" : ""} key={tab.path} onClick={() => setActivePath(tab.path)}><span>{tab.path.split("/").at(-1)}</span>{tab.dirty && <i/>}<span className="tab-close" title={t("editor.closeTab")} onClick={(event) => { event.stopPropagation(); closeTab(tab.path); }}><Icon name="close"/></span></button>)}</div>;
-  const sourceEditor = <div className="editor-surface" onDragOver={(event) => { if (event.dataTransfer.types.includes("Files")) event.preventDefault(); }} onDrop={dropImages}>{activeTab ? <Editor height="100%" language={activeTab.path.endsWith(".bib") ? "bibtex" : activeTab.path.endsWith(".json") ? "json" : "latex"} value={activeTab.content} onChange={(value, event) => setEditorContent(value ?? "", event.changes.map((change) => ({ start: change.rangeOffset, end: change.rangeOffset + change.rangeLength, newLength: change.text.length })))} onMount={onEditorMount} theme={editorThemeName(store.get("theme"))} options={{ minimap: { enabled: true }, fontSize: store.get("fontSize"), tabSize: store.get("tabSize"), lineHeight: Math.round(store.get("fontSize") * 1.5), wordWrap: store.get("wordWrap") ? "on" : "off", quickSuggestions: { other: true, comments: true, strings: true }, suggestOnTriggerCharacters: true, autoClosingBrackets: "never", autoClosingQuotes: "always", autoSurround: "never", automaticLayout: true, padding: { top: 14 }, renderWhitespace: "selection", scrollBeyondLastLine: false }} /> : <div className="editor-empty"><Logo/><p>{t("editor.noFile")}</p></div>}</div>;
+  const sourceEditor = <div className="editor-surface" onDragOver={(event) => { if (event.dataTransfer.types.includes("Files")) event.preventDefault(); }} onDrop={dropImages}>{activeTab ? aiReviewFile ? <div className="ai-inline-diff"><div className="ai-inline-diff-heading"><strong>{t("ai.inlineDiffTitle")}</strong><span>{aiReviewFile.path}</span></div><DiffEditor height="calc(100% - 34px)" language={activeTab.path.endsWith(".bib") ? "bibtex" : activeTab.path.endsWith(".json") ? "json" : "latex"} original={aiReviewFile.originalContent ?? ""} modified={aiReviewFile.proposedContent ?? ""} theme={editorThemeName(store.get("theme"))} options={{ readOnly: true, originalEditable: false, renderSideBySide: true, automaticLayout: true, minimap: { enabled: false }, fontSize: store.get("fontSize"), lineHeight: Math.round(store.get("fontSize") * 1.5), wordWrap: store.get("wordWrap") ? "on" : "off", scrollBeyondLastLine: false }} /></div> : <Editor height="100%" language={activeTab.path.endsWith(".bib") ? "bibtex" : activeTab.path.endsWith(".json") ? "json" : "latex"} value={activeTab.content} onChange={(value, event) => setEditorContent(value ?? "", event.changes.map((change) => ({ start: change.rangeOffset, end: change.rangeOffset + change.rangeLength, newLength: change.text.length })))} onMount={onEditorMount} theme={editorThemeName(store.get("theme"))} options={{ minimap: { enabled: true }, fontSize: store.get("fontSize"), tabSize: store.get("tabSize"), lineHeight: Math.round(store.get("fontSize") * 1.5), wordWrap: store.get("wordWrap") ? "on" : "off", quickSuggestions: { other: true, comments: true, strings: true }, suggestOnTriggerCharacters: true, autoClosingBrackets: "never", autoClosingQuotes: "always", autoSurround: "never", automaticLayout: true, padding: { top: 14 }, renderWhitespace: "selection", scrollBeyondLastLine: false }} /> : <div className="editor-empty"><Logo/><p>{t("editor.noFile")}</p></div>}</div>;
   const sourceToolbar = <div className="latex-toolbar">{editorQuickActions}<div className="toolbar-spacer"/>{viewSwitch("source", layout.mode === "single")}</div>;
   const previewToolbar = <div className="latex-toolbar">{editorQuickActions}<div className="toolbar-spacer"/>{viewSwitch("preview", layout.mode === "single")}</div>;
   const enginePicker = <label className="engine-picker" title={t("settings.engine")}><span>{t("build.engine")}</span><select aria-label={t("settings.engine")} value={store.get("engine")} onChange={(event) => void store.set("engine", event.target.value as "pdflatex" | "xelatex" | "lualatex", "project")}><option value="pdflatex">pdfLaTeX</option><option value="xelatex">XeLaTeX</option><option value="lualatex">LuaLaTeX</option></select></label>;
@@ -1472,7 +1580,7 @@ export function Workbench({ project, projects, environments, onHome, onSwitch, o
     {relationGraphOpen && relationNeighborhood && createPortal(<RelationGraphView snapshot={blockSnapshot ?? emptyBlockSnapshot} neighborhood={relationNeighborhood} direction={relationDirection} depth={relationDepth} onDirection={setRelationDirection} onDepth={setRelationDepth} onFocus={(id) => { focusRelationBlock(id); setRelationGraphFocusId(id); }} onLocate={(id) => { setRelationGraphOpen(false); void locateRelationBlock(id); }} onClose={() => setRelationGraphOpen(false)}/>, document.body)}
     <header className="workbench-topbar" ref={workbenchRef}><button className="logo-button" onClick={onHome} title={t("project.directory")}><Logo/><span>{t("app.name")}</span></button><nav className="app-menus">{(["file", "edit", "view", "history"] as const).map((menu) => <div className="menu-anchor" key={menu}><button onClick={() => setActiveMenu(activeMenu === menu ? undefined : menu)}>{t(`menu.${menu}` as MessageKey)}</button>{activeMenu === menu && <Menu items={menuItems(menu)} onClose={() => setActiveMenu(undefined)}/>}</div>)}</nav><div className="project-switcher menu-anchor"><button onClick={() => setActiveMenu(activeMenu === "projects" ? undefined : "projects")}><strong>{project.name}</strong><Icon name="chevron"/></button>{activeMenu === "projects" && <div className="menu-popover project-menu">{projects.map((item) => <button key={item.id} onClick={() => { setActiveMenu(undefined); onSwitch(item); }}><span>{item.name}</span>{item.id === project.id && <b>✓</b>}</button>)}<div className="menu-divider"/><button onClick={() => { setActiveMenu(undefined); onHome(); }}>{t("project.directory")}</button></div>}</div><button className={`save-status ${saveState}`} onClick={() => { commands.execute("file.save"); }}><Icon name="save"/>{t(`save.${saveState}` as MessageKey)}</button></header>
     <div className="workbench-body"><aside className="activity-bar"><div>{(["files", "search", "library", "ai"] as const).map((mode) => <button key={mode} className={layout.sidebarVisible && sidebarMode === mode ? "active" : ""} title={t(`activity.${mode}` as MessageKey)} onClick={() => selectActivity(mode)}><Icon name={mode}/><span>{t(`activity.${mode}` as MessageKey)}</span></button>)}</div><div><button className={layout.sidebarVisible && sidebarMode === "settings" ? "active" : ""} title={t("activity.settings")} onClick={() => selectActivity("settings")}><Icon name="settings"/><span>{t("activity.settings")}</span></button><button className={layout.sidebarVisible && sidebarMode === "help" ? "active" : ""} title={t("activity.help")} onClick={() => selectActivity("help")}><Icon name="help"/><span>{t("activity.help")}</span></button></div></aside>
-      {layout.sidebarVisible && <><aside className="sidebar" style={{ width: layout.sidebarWidth }}>{sidebarMode === "files" && <><div className="sidebar-heading"><strong>{t("sidebar.files")}</strong><div><button onClick={() => void createEntry(false, "")} title={t("files.newFile")}><Icon name="plus"/></button><button onClick={() => void refreshTree()} title={t("sidebar.refresh")}><Icon name="refresh"/></button><button onClick={() => setLayout((value) => ({ ...value, sidebarVisible: false }))} title={t("sidebar.collapse")}>‹</button></div></div><div className="tree-section" style={{ height: layout.fileTreeHeight }} onDragOver={(event) => { if (event.dataTransfer.types.includes("Files")) event.preventDefault(); }} onDrop={dropImagesToProject}><input className="sidebar-input" value={treeFilter} onChange={(event) => setTreeFilter(event.target.value)} placeholder={t("sidebar.fileSearch")}/><Tree nodes={tree} activePath={activePath} mainFile={project.mainFile} filter={treeFilter} hideBuildArtifacts={store.get("hideBuildArtifacts")} onOpen={(path) => void openFile(path)}/></div><div className="horizontal-resizer" onPointerDown={(event) => startResize("tree", event)}/><div className="outline-section"><div className="segment-tabs"><button className={outlineMode === "outline" ? "active" : ""} onClick={() => setOutlineMode("outline")}>{t("sidebar.outline")}</button><button className={outlineMode === "relations" ? "active" : ""} onClick={() => { setOutlineMode("relations"); setInspectorBlock(undefined); }}>{t("sidebar.relations")}</button></div>{outlineMode === "outline" ? <div className="outline-list">{outline.map((item, index) => <button key={`${item.title}-${index}`} style={{ paddingLeft: 14 + item.level * 15 }} onClick={() => navigateToOutline(item.line)}>{item.title}</button>)}</div> : <RelationBrowser snapshot={blockSnapshot ?? emptyBlockSnapshot} focusId={relationFocusId} direction={relationDirection} depth={relationDepth} filters={relationFilters} unmatchedBehavior={relationUnmatched} canGoBack={relationFocusHistory.length > 0} onBack={relationBack} onFocus={focusRelationBlock} onLocate={(id) => void locateRelationBlock(id)} onDirection={setRelationDirection} onDepth={setRelationDepth} onFilters={setRelationFilters} onUnmatchedBehavior={setRelationUnmatched} onToggleRelation={(id, event) => toggleRelation(id, event.clientX, event.clientY)}/>}</div></>}{sidebarMode === "search" && <AdvancedSearchPanel query={searchQuery} response={searchResponse} activeResultId={activeSearchResult?.id} replacement={replacement} replaceOpen={replaceOpen} filter={filterQuery} options={filterOptions} visibleGroups={store.get("visibleFilterGroups") as FilterGroupId[]} setQuery={setSearchQuery} setReplacement={setReplacement} setReplaceOpen={setReplaceOpen} setFilter={setFilterQuery} selectResult={(result) => void selectSearchResult(result)} replaceCurrent={() => void replaceCurrentSearchResult()} replaceAll={() => void replaceAllSearchResults()}/>} {sidebarMode === "library" && <ReferenceLibraryPanel project={project} onOpenLibrary={onOpenLibrary} onReturnToEditor={() => setLayout((value) => ({ ...value, sidebarVisible: false }))} onCite={(key) => insertText(`\\cite{${key}}`, `\\cite{${key}}`.length)}/>} {sidebarMode === "ai" && <div className="generic-sidebar"><h2>{t("placeholder.aiTitle")}</h2><p>{t("placeholder.ai")}</p></div>}{sidebarMode === "settings" && <div className="generic-sidebar"><h2>{t("activity.settings")}</h2><p>{t("placeholder.settings")}</p><dl><div><dt>{t("settings.language")}</dt><dd>{t("settings.english")}</dd></div><div><dt>{t("settings.theme")}</dt><dd>{t("settings.light")}</dd></div></dl></div>}{sidebarMode === "help" && <div className="generic-sidebar"><h2>{t("activity.help")}</h2><p>{t("placeholder.help")}</p></div>}</aside><div className="vertical-resizer" onPointerDown={(event) => startResize("sidebar", event)}/></>}
+      {layout.sidebarVisible && <><aside className="sidebar" style={{ width: layout.sidebarWidth }}>{sidebarMode === "files" && <><div className="sidebar-heading"><strong>{t("sidebar.files")}</strong><div><button onClick={() => void createEntry(false, "")} title={t("files.newFile")}><Icon name="plus"/></button><button onClick={() => void refreshTree()} title={t("sidebar.refresh")}><Icon name="refresh"/></button><button onClick={() => setLayout((value) => ({ ...value, sidebarVisible: false }))} title={t("sidebar.collapse")}>‹</button></div></div><div className="tree-section" style={{ height: layout.fileTreeHeight }} onDragOver={(event) => { if (event.dataTransfer.types.includes("Files")) event.preventDefault(); }} onDrop={dropImagesToProject}><input className="sidebar-input" value={treeFilter} onChange={(event) => setTreeFilter(event.target.value)} placeholder={t("sidebar.fileSearch")}/><Tree nodes={tree} activePath={activePath} mainFile={project.mainFile} filter={treeFilter} hideBuildArtifacts={store.get("hideBuildArtifacts")} onOpen={(path) => void openFile(path)}/></div><div className="horizontal-resizer" onPointerDown={(event) => startResize("tree", event)}/><div className="outline-section"><div className="segment-tabs"><button className={outlineMode === "outline" ? "active" : ""} onClick={() => setOutlineMode("outline")}>{t("sidebar.outline")}</button><button className={outlineMode === "relations" ? "active" : ""} onClick={() => { setOutlineMode("relations"); setInspectorBlock(undefined); }}>{t("sidebar.relations")}</button></div>{outlineMode === "outline" ? <div className="outline-list">{outline.map((item, index) => <button key={`${item.title}-${index}`} style={{ paddingLeft: 14 + item.level * 15 }} onClick={() => navigateToOutline(item.line)}>{item.title}</button>)}</div> : <RelationBrowser snapshot={blockSnapshot ?? emptyBlockSnapshot} focusId={relationFocusId} direction={relationDirection} depth={relationDepth} filters={relationFilters} unmatchedBehavior={relationUnmatched} canGoBack={relationFocusHistory.length > 0} onBack={relationBack} onFocus={focusRelationBlock} onLocate={(id) => void locateRelationBlock(id)} onDirection={setRelationDirection} onDepth={setRelationDepth} onFilters={setRelationFilters} onUnmatchedBehavior={setRelationUnmatched} onToggleRelation={(id, event) => toggleRelation(id, event.clientX, event.clientY)}/>}</div></>}{sidebarMode === "search" && <AdvancedSearchPanel query={searchQuery} response={searchResponse} activeResultId={activeSearchResult?.id} replacement={replacement} replaceOpen={replaceOpen} filter={filterQuery} options={filterOptions} visibleGroups={store.get("visibleFilterGroups") as FilterGroupId[]} setQuery={setSearchQuery} setReplacement={setReplacement} setReplaceOpen={setReplaceOpen} setFilter={setFilterQuery} selectResult={(result) => void selectSearchResult(result)} replaceCurrent={() => void replaceCurrentSearchResult()} replaceAll={() => void replaceAllSearchResults()}/>} {sidebarMode === "library" && <ReferenceLibraryPanel project={project} onOpenLibrary={onOpenLibrary} onReturnToEditor={() => setLayout((value) => ({ ...value, sidebarVisible: false }))} onCite={(key) => insertText(`\\cite{${key}}`, `\\cite{${key}}`.length)}/>} {sidebarMode === "ai" && <AIView projectId={project.id} projectRoot={project.canonicalPath} overrides={tabs.map(({ path, content }) => ({ path, content }))} {...(activeTab ? { currentFile: activeTab.path, currentFileContent: activeTab.content } : {})} {...(creationSelection && activeTab && creationSelection.fileId === activeTab.path ? { selectedText: activeTab.content.slice(creationSelection.start, creationSelection.end) } : {})} onApplyChanges={applyAIChanges} onReviewChanges={setAiReviewChanges} onOpenSettings={() => { setSettingsInitial("ai"); setSettingsOpen(true); }}/ >}{sidebarMode === "settings" && <div className="generic-sidebar"><h2>{t("activity.settings")}</h2><p>{t("placeholder.settings")}</p><dl><div><dt>{t("settings.language")}</dt><dd>{t("settings.english")}</dd></div><div><dt>{t("settings.theme")}</dt><dd>{t("settings.light")}</dd></div></dl></div>}{sidebarMode === "help" && <div className="generic-sidebar"><h2>{t("activity.help")}</h2><p>{t("placeholder.help")}</p></div>}</aside><div className="vertical-resizer" onPointerDown={(event) => startResize("sidebar", event)}/></>}
       <main className="workspace"><div className="workspace-main">{layout.mode === "single" ? singlePane : <><div className="split-toolbar-row">{splitToolbar}</div><div className="split-layout"><div style={{ width: `${layout.splitRatio}%` }}>{splitLeftContent}</div><div className="split-resizer" onPointerDown={(event) => startResize("split", event)}/><div style={{ width: `${100 - layout.splitRatio}%` }}>{secondaryContent}</div></div></>}</div>{bottomVisible && <><div className="bottom-resizer" onPointerDown={(event) => startResize("bottom", event)}/><section className="bottom-panel" style={{ height: layout.bottomPanelHeight }}><div className="bottom-tabs">{(["problems", "output", "compileLog", "versions"] as const).map((tab) => <button className={bottomTab === tab ? "active" : ""} key={tab} onClick={() => setBottomTab(tab)}>{t(`panel.${tab}` as MessageKey)}{tab === "problems" && diagnostics.length > 0 && <span>{diagnostics.length}</span>}</button>)}<button className="panel-close" onClick={() => setBottomVisible(false)} title={t("common.close")}><Icon name="close"/></button></div><div className="panel-content">{bottomTab === "problems" && (diagnostics.length ? diagnostics.map((diagnostic, index) => <DiagnosticRow diagnostic={diagnostic} onOpen={() => void openDiagnostic(diagnostic)} key={`${diagnostic.message}-${index}`}/>) : <p>{t("panel.noProblems")}</p>)}{bottomTab === "compileLog" && <pre>{compileResult ? `${compileResult.stdoutTail}\n${compileResult.stderrTail}` : t("panel.noOutput")}</pre>}{bottomTab === "output" && <p>{t("panel.noOutput")}</p>}{bottomTab === "versions" && <p>{t("panel.versionsPlaceholder")}</p>}</div></section></>}</main>
       {figureSelection ? <FigureInspector selection={figureSelection} onClose={() => setFigureSelection(undefined)} onLocate={(imageIndex) => setImageDialog({ kind: "replace", selection: figureSelection, imageIndex })} onChange={(replacement) => {
         if (!activeTab || activeTab.path !== figureSelection.fileId) return;
@@ -1480,7 +1588,7 @@ export function Workbench({ project, projects, environments, onHome, onSwitch, o
         setFigureSelection({ ...figureSelection, source: replacement, end: figureSelection.start + replacement.length });
       }}/> : tableSelection ? <TableInspector selection={tableSelection} onClose={() => setTableSelection(undefined)} onChange={(replacement) => { if (!activeTab || activeTab.path !== tableSelection.fileId) return; setEditorContent(activeTab.content.slice(0, tableSelection.start) + replacement + activeTab.content.slice(tableSelection.end)); setTableSelection({ ...tableSelection, source: replacement, end: tableSelection.start + replacement.length }); }}/> : inspectorBlock ? <aside className="custom-block-inspector" aria-label={t("block.inspector")}><header><div><small>{t("block.customBlock")}</small><strong>{inspectorBlock.name || inspectorBlock.label || t("block.untitled")}</strong></div><button onClick={() => setInspectorBlock(undefined)} title={t("common.close")}><Icon name="close"/></button></header><div><label><span>{t("block.type")}</span><input value={inspectorBlock.role ?? inspectorBlock.type} onChange={(event) => setInspectorBlock((block) => block ? { ...block, role: event.target.value, type: event.target.value } : block)} onBlur={(event) => void updateInspectorBlock({ role: event.target.value || "custom", type: event.target.value || "custom" })}/></label><label><span>{t("block.name")}</span><input value={inspectorBlock.name ?? ""} placeholder={t("block.optional")} onChange={(event) => setInspectorBlock((block) => block ? { ...block, name: event.target.value, title: event.target.value } : block)} onBlur={(event) => void updateInspectorBlock({ name: event.target.value, title: event.target.value })}/></label><label><span>{t("block.label")}</span><input value={inspectorBlock.label ?? ""} placeholder={t("block.optional")} onChange={(event) => setInspectorBlock((block) => block ? { ...block, label: event.target.value } : block)} onBlur={(event) => void updateInspectorBlock({ label: event.target.value })}/></label><dl><div><dt>{t("block.origin")}</dt><dd>{inspectorBlock.origin}</dd></div><div><dt>{t("block.range")}</dt><dd>{inspectorBlock.range ? `${inspectorBlock.range.start}–${inspectorBlock.range.end}` : "—"}</dd></div></dl></div></aside> : relationModeActive && <RelationInspector snapshot={blockSnapshot ?? emptyBlockSnapshot} focusId={relationFocusId} direction={relationDirection} depth={relationDepth} history={structuralHistory} onDirection={setRelationDirection} onDepth={setRelationDepth} onFocus={focusRelationBlock} onRemove={(from, to) => void api?.blockGraph.removeDependency(project.id, from, to).then(refreshRelationState).catch((error: unknown) => setBlockNotice(error instanceof Error ? error.message : String(error)))} onUndo={() => void undoStructure()} onRedo={() => void redoStructure()} onClose={() => setOutlineMode("outline")}/>}
     </div><footer className="status-bar"><div><span>{activePath ?? project.mainFile ?? "—"}</span><span>{t("status.line", cursor)}</span><span>{t("status.encoding")}</span><span>{t("status.lineEnding")}</span></div><div><span>{t("status.engine")}</span><button onClick={() => { setBottomTab("problems"); setBottomVisible(true); }}>{compileResult?.status === "succeeded" ? `✓ ${t("build.succeeded")}` : compileResult ? `! ${t("build.failed")}` : t("build.notRun")}</button><button onClick={() => { setBottomTab("problems"); setBottomVisible(true); }}>{t("status.errors", { count: errors })}</button><button onClick={() => { setBottomTab("problems"); setBottomVisible(true); }}>{t("status.warnings", { count: warnings })}</button>{spellStatusControl}<button onClick={() => setBottomVisible((value) => !value)} title={t("panel.output")}><Icon name="panel"/></button></div></footer>
-  {sourceMathPreview && <MathPreviewPopover source={sourceMathPreview.source} displayMode={sourceMathPreview.displayMode} context={mathContext} anchor={sourceMathPreview.anchor}/>} {settingsOpen && <SettingsDialog onClose={() => setSettingsOpen(false)}/>} {imageDialog && createPortal(<ImageInsertDialog tree={tree} replacement={imageDialog.kind === "replace"} onClose={() => setImageDialog(undefined)} onChoose={(choice) => void applyImageChoice(choice).catch((error: unknown) => setBlockNotice(error instanceof Error ? error.message : String(error)))}/>, document.body)} {tableDialogOpen && activeTab && createPortal(<TableInsertDialog documentSource={activeTab.content} defaults={{ style: store.get("tables").defaultStyle, headerRow: store.get("tables").defaultInsert.headerRow, addCaption: store.get("tables").defaultInsert.addCaption, addLabel: store.get("tables").defaultInsert.addLabel }} onClose={() => setTableDialogOpen(false)} onChoose={applyTableChoice}/>, document.body)} {fileContext && <ContextMenu context={fileContext} items={fileContextItems()} onClose={() => setFileContext(undefined)}/>} {blockContext && <ContextMenu context={blockContext} items={[{ label: t("block.createFromSelection"), action: () => void createUserBlockFromSelection(blockContext.selection).catch((error: unknown) => setBlockNotice(error instanceof Error ? error.message : String(error))) }]} onClose={() => setBlockContext(undefined)}/>} {spellContextMenu && <SpellContextMenu request={spellContextMenu} onClose={() => setSpellContextMenu(undefined)}/>}</div>;
+  {sourceMathPreview && <MathPreviewPopover source={sourceMathPreview.source} displayMode={sourceMathPreview.displayMode} context={mathContext} anchor={sourceMathPreview.anchor}/>} {settingsOpen && <SettingsDialog initial={settingsInitial} onClose={() => setSettingsOpen(false)}/>} {imageDialog && createPortal(<ImageInsertDialog tree={tree} replacement={imageDialog.kind === "replace"} onClose={() => setImageDialog(undefined)} onChoose={(choice) => void applyImageChoice(choice).catch((error: unknown) => setBlockNotice(error instanceof Error ? error.message : String(error)))}/>, document.body)} {tableDialogOpen && activeTab && createPortal(<TableInsertDialog documentSource={activeTab.content} defaults={{ style: store.get("tables").defaultStyle, headerRow: store.get("tables").defaultInsert.headerRow, addCaption: store.get("tables").defaultInsert.addCaption, addLabel: store.get("tables").defaultInsert.addLabel }} onClose={() => setTableDialogOpen(false)} onChoose={applyTableChoice}/>, document.body)} {fileContext && <ContextMenu context={fileContext} items={fileContextItems()} onClose={() => setFileContext(undefined)}/>} {blockContext && <ContextMenu context={blockContext} items={[{ label: t("block.createFromSelection"), action: () => void createUserBlockFromSelection(blockContext.selection).catch((error: unknown) => setBlockNotice(error instanceof Error ? error.message : String(error))) }]} onClose={() => setBlockContext(undefined)}/>} {spellContextMenu && <SpellContextMenu request={spellContextMenu} onClose={() => setSpellContextMenu(undefined)}/>}</div>;
 }
 
 function DiagnosticRow({ diagnostic, onOpen }: { diagnostic: Diagnostic; onOpen(): void }) {

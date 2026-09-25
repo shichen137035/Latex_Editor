@@ -9,7 +9,12 @@ delete environment.ELECTRON_RUN_AS_NODE;
 // MiKTeX's latexmk is a Perl script. Strawberry Perl is installed locally on
 // Windows, but managed shells may not have refreshed PATH yet.
 const perlPaths = ["C:\\Strawberry\\perl\\bin", "C:\\Strawberry\\c\\bin"];
-environment.PATH = [...perlPaths, environment.PATH ?? ""].join(path.delimiter);
+// Explorer commonly supplies "Path", while development terminals supply "PATH".
+// Passing both to spawn can silently discard the inherited system search path.
+const pathKeys = Object.keys(environment).filter(key => key.toLowerCase() === "path");
+const inheritedPaths = pathKeys.map(key => environment[key]).filter(Boolean);
+for (const key of pathKeys) delete environment[key];
+environment.PATH = [...perlPaths, ...inheritedPaths].join(path.delimiter);
 
 const child = spawn(electronExecutable, [path.resolve(root, "apps/desktop")], {
   cwd: root,

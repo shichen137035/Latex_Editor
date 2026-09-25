@@ -128,6 +128,37 @@ contextBridge.exposeInMainWorld("latexEditor", {
   compile: {
     run: (projectId, mainFile) => ipcRenderer.invoke("compile:run", projectId, mainFile)
   },
+  ai: {
+    detect: () => ipcRenderer.invoke("ai:detect"),
+    install: () => ipcRenderer.invoke("ai:install"),
+    status: () => ipcRenderer.invoke("ai:status"),
+    login: () => ipcRenderer.invoke("ai:login"),
+    logout: () => ipcRenderer.invoke("ai:logout"),
+    setExecutable: (path) => ipcRenderer.invoke("ai:set-executable", path),
+    models: () => ipcRenderer.invoke("ai:models"),
+    copilotStatus: () => ipcRenderer.invoke("ai:copilot:status"),
+    installCopilot: () => ipcRenderer.invoke("ai:copilot:install"),
+    loginCopilot: () => ipcRenderer.invoke("ai:copilot:login"),
+    logoutCopilot: () => ipcRenderer.invoke("ai:copilot:logout"),
+    copilotModels: () => ipcRenderer.invoke("ai:copilot:models"),
+    conversations: (projectId) => ipcRenderer.invoke("ai:conversations", projectId),
+    createConversation: (mode, projectId) => ipcRenderer.invoke("ai:conversation:create", mode, projectId),
+    setConversationMode: (id, mode) => ipcRenderer.invoke("ai:conversation:mode", id, mode),
+    removeConversation: (id) => ipcRenderer.invoke("ai:conversation:remove", id),
+    resolveChangeSet: (id, decisions, applied) => ipcRenderer.invoke("ai:change-set:resolve", id, decisions, applied),
+    send: (input) => ipcRenderer.invoke("ai:send", input),
+    cancel: (taskId) => ipcRenderer.invoke("ai:cancel", taskId),
+    onUpdate: (listener) => {
+      const handler = (_event, update) => listener(update);
+      ipcRenderer.on("ai:update", handler);
+      return () => ipcRenderer.removeListener("ai:update", handler);
+    },
+    onStatus: (listener) => {
+      const handler = (_event, status) => listener(status);
+      ipcRenderer.on("ai:status", handler);
+      return () => ipcRenderer.removeListener("ai:status", handler);
+    }
+  },
   synctex: {
     forward: (projectId, sourceFile, pdfFile, line, column) => ipcRenderer.invoke("synctex:forward", projectId, sourceFile, pdfFile, line, column),
     reverse: (projectId, pdfFile, page, x, y) => ipcRenderer.invoke("synctex:reverse", projectId, pdfFile, page, x, y)

@@ -2,7 +2,7 @@ import { app, BrowserWindow, clipboard, dialog, ipcMain, Menu, shell } from "ele
 import { randomUUID } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import { resolve } from "node:path";
-import type { CommandMetadata, CompileResult, CompileInput, GraphTraversalOptions, PreferenceKey, SemanticBlock, CreateSemanticBlockInput, CreateUserBlockInput, UpdateSemanticBlockInput, LatexToolchain, MapUserBlockRangesInput, ReconcileParsedBlocksInput, RelationDirection, ProjectReferenceLink, ReferenceLibraryEntry, Project } from "@latex-editor/contracts" with { "resolution-mode": "import" };
+import type { AIStatus, AIContextSnapshotFile, CommandMetadata, CompileResult, CompileInput, GraphTraversalOptions, PreferenceKey, SemanticBlock, CreateSemanticBlockInput, CreateUserBlockInput, UpdateSemanticBlockInput, LatexToolchain, MapUserBlockRangesInput, ReconcileParsedBlocksInput, RelationDirection, ProjectReferenceLink, ReferenceLibraryEntry, Project, ProjectTreeNode } from "@latex-editor/contracts" with { "resolution-mode": "import" };
 import type { ProjectBlockGraphService } from "@latex-editor/application" with { "resolution-mode": "import" };
 import { SettingsRepository } from "./settings.js";
 import { StyleResourceRepository } from "./style-resources.js";
@@ -12,6 +12,9 @@ import { InstallationStateService } from "./installation.js";
 import { forwardSync, reverseSync } from "./synctex.js";
 import { ProjectImageService } from "./images.js";
 import { ReferenceLibraryRepository } from "./references.js";
+import { CodexAppServer } from "./ai/codex-app-server.js";
+import { CopilotChatService } from "./ai/copilot-chat.js";
+import { AIWorkspaceService } from "./ai/ai-workspace.js";
 
 interface DesktopContext {
   registry: { initialize(): void; close(): void; get(id: string): Project | undefined; update(project: Project): void };
@@ -45,6 +48,9 @@ interface DesktopContext {
   installation: InstallationStateService;
   images: ProjectImageService;
   references: ReferenceLibraryRepository;
+  ai: CodexAppServer;
+  copilot: CopilotChatService;
+  aiWorkspaces: AIWorkspaceService;
 }
 
 let context: DesktopContext | undefined;
@@ -110,7 +116,23 @@ async function createContext(): Promise<DesktopContext> {
   const images = new ProjectImageService(files);
   const references = new ReferenceLibraryRepository(app.getPath("userData"));
   await references.initialize();
-  return { registry, projects, environment, files, compiler, resources, blockGraph, styleResources, themes, spellcheck, installation, images, references };
+  const ai = new CodexAppServer({
+    userDataPath: app.getPath("userData"),
+    executable: () => settings.global.aiCodexExecutable ?? "",
+    version: app.getVersion(),
+    onStatus: (status: AIStatus) => BrowserWindow.getAllWindows().forEach((window) => window.webContents.send("ai:status", status))
+  });
+  const copilot = new CopilotChatService(app.getPath("userData"));
+  const aiWorkspaces = new AIWorkspaceService({
+    userDataPath: app.getPath("userData"),
+    codex: ai,
+    copilot,
+    projectFiles: files,
+    projectExists: (id) => Boolean(registry.get(id) && !registry.get(id)?.missing),
+    onUpdate: (kind, payload) => BrowserWindow.getAllWindows().forEach((window) => window.webContents.send("ai:update", { kind, payload }))
+  });
+  await aiWorkspaces.initialize();
+  return { registry, projects, environment, files, compiler, resources, blockGraph, styleResources, themes, spellcheck, installation, images, references, ai, copilot, aiWorkspaces };
 }
 
 function registerIpcHandlers(): void {
@@ -459,6 +481,56 @@ function registerIpcHandlers(): void {
     const pdfDataUrl = `data:application/pdf;base64,${(await readFile(result.pdfPath)).toString("base64")}`;
     return { ...result, pdfDataUrl };
   });
+  ipcMain.handle("ai:detect", () => context?.ai.detect());
+  ipcMain.handle("ai:install", async () => {
+    if (context === undefined) throw new Error("Application context is not ready");
+    const status = await context.ai.install();
+    if (status.executablePath) await settings.set("aiCodexExecutable", status.executablePath);
+    return status;
+  });
+  ipcMain.handle("ai:status", () => context?.ai.refresh());
+  ipcMain.handle("ai:models", () => context?.aiWorkspaces.listModels());
+  ipcMain.handle("ai:login", () => context?.ai.login());
+  ipcMain.handle("ai:logout", () => context?.ai.logout());
+  ipcMain.handle("ai:copilot:status", () => context?.copilot.status());
+  ipcMain.handle("ai:copilot:install", () => context?.copilot.installCli());
+  ipcMain.handle("ai:copilot:login", () => context?.copilot.login());
+  ipcMain.handle("ai:copilot:logout", () => context?.copilot.logout());
+  ipcMain.handle("ai:copilot:models", () => context?.aiWorkspaces.listCopilotModels());
+  ipcMain.handle("ai:conversations", (_event, projectId?: string) => context?.aiWorkspaces.snapshot(projectId));
+  ipcMain.handle("ai:conversation:create", (_event, mode: "chat" | "codex", projectId?: string) => {
+    if (!context) throw new Error("Application context is not ready");
+    return context.aiWorkspaces.create({ mode, ...(projectId ? { projectId } : {}) });
+  });
+  ipcMain.handle("ai:conversation:mode", (_event, id: string, mode: "chat" | "codex") => context?.aiWorkspaces.setMode(id, mode));
+  ipcMain.handle("ai:conversation:remove", (_event, id: string) => context?.aiWorkspaces.remove(id));
+  ipcMain.handle("ai:change-set:resolve", (_event, id: string, decisions: Record<string, "accepted" | "rejected">, applied: boolean) => context?.aiWorkspaces.resolveChangeSet(id, decisions, applied));
+  ipcMain.handle("ai:send", async (_event, input: { conversationId: string; projectId?: string; content: string; contextText?: string; overrides?: AIContextSnapshotFile[] }) => {
+    if (!context) throw new Error("Application context is not ready");
+    const conversation = context.aiWorkspaces.snapshot(input.projectId).conversations.find((item) => item.id === input.conversationId);
+    if (!conversation) throw new Error("AI conversation was not found for this project.");
+    if (conversation.projectId !== input.projectId) throw new Error("AI conversations can only access their associated project.");
+    let snapshot: AIContextSnapshotFile[] = [];
+    if (input.projectId) {
+      const collect = (nodes: ProjectTreeNode[]): string[] => nodes.flatMap((node) => node.kind === "file" ? [node.relativePath] : node.children ? collect(node.children) : []);
+      const paths = collect(await context.files.listTree(input.projectId) as ProjectTreeNode[]).filter((path) => /\.(?:tex|bib|sty|cls|txt|md|cfg|def|ltx|ts|tsx|js|jsx|mjs|cjs|json|css|scss|html|yml|yaml|toml|xml|svg)$/i.test(path) || path.replaceAll("\\", "/").toLocaleLowerCase() === ".texweave/settings.json");
+      snapshot = (await Promise.all(paths.map(async (path) => {
+        const value = await context!.files.readText(input.projectId!, path) as { content?: unknown };
+        return typeof value?.content === "string" ? { path, content: value.content } : undefined;
+      }))).filter((item): item is AIContextSnapshotFile => Boolean(item));
+      const overrideMap = new Map((input.overrides ?? []).map((file) => [file.path.replaceAll("\\", "/"), file.content]));
+      snapshot = snapshot.map((file) => overrideMap.has(file.path) ? { ...file, content: overrideMap.get(file.path)! } : file);
+      for (const [path, content] of overrideMap) if (!snapshot.some((file) => file.path === path)) snapshot.push({ path, content });
+    }
+    const model = conversation.mode === "chat" ? settings.global.aiCopilotModel : settings.global.aiModel;
+    return context.aiWorkspaces.send({ conversationId: input.conversationId, content: input.content, ...(model ? { model } : {}), ...(snapshot.length ? { snapshot } : {}), ...(input.contextText ? { contextText: input.contextText } : {}) });
+  });
+  ipcMain.handle("ai:cancel", (_event, taskId: string) => context?.aiWorkspaces.cancel(taskId));
+  ipcMain.handle("ai:set-executable", async (_event, path: string) => {
+    await settings.set("aiCodexExecutable", path);
+    await context?.ai.stop();
+    return context?.ai.detect();
+  });
   ipcMain.handle("synctex:forward", async (_event, projectId: string, sourceFile: string, pdfFile: string, line: number, column: number) => {
     if (context === undefined) throw new Error("Application context is not ready");
     const project = await context.projects.openProject(projectId) as { canonicalPath: string };
@@ -531,6 +603,8 @@ app.whenReady().then(() => {
 });
 
 app.on("window-all-closed", () => {
+  void context?.ai.stop();
+  void context?.copilot.dispose();
   context?.registry.close();
   context?.references.close();
   if (process.platform !== "darwin") app.quit();

@@ -88,6 +88,14 @@ export interface PreferenceValues {
   theme: string;
   /** Empty means the application-local themes directory. */
   themeDirectory: string;
+  /** Optional absolute path to codex.exe; empty means resolve `codex` from PATH. */
+  aiCodexExecutable: string;
+  /** Empty delegates model selection to the installed Codex account's default. */
+  aiModel: string;
+  /** Empty delegates model selection to Copilot's default model. */
+  aiCopilotModel: string;
+  aiDefaultMode: "chat" | "codex";
+  aiIncludeCurrentFile: boolean;
   fontSize: number;
   tabSize: number;
   wordWrap: boolean;
@@ -115,7 +123,7 @@ export interface PreferenceValues {
 }
 export type PreferenceKey = keyof PreferenceValues;
 export const preferenceDefaults: PreferenceValues = {
-  locale: "en", theme: "light", themeDirectory: "", fontSize: 15, tabSize: 2, wordWrap: true,
+  locale: "en", theme: "light", themeDirectory: "", aiCodexExecutable: "", aiModel: "", aiCopilotModel: "", aiDefaultMode: "chat", aiIncludeCurrentFile: false, fontSize: 15, tabSize: 2, wordWrap: true,
   autoSave: "off", hideBuildArtifacts: true, documentWordCompletion: true, autoPairSymbols: true, autoEnvironmentLabels: true, confirmPreviewEdits: true, warnIncompatibleEnvironmentConversion: true, visibleFilterGroups: ["blockType", "location", "file", "properties"], referenceLinkModifier: "ctrl", spellCheckMode: "auto", spellCheckLanguage: "en-US", spellCheckActiveLanguages: ["en-US"], maximize: true, restoreProject: false,
   lastProject: "", engine: "pdflatex", keybindings: {}, environments: [], layout: {}, images: defaultImagePreferences, tables: defaultTablePreferences
 };
@@ -133,10 +141,12 @@ export function validPreference(key: string, value: unknown): boolean {
     case "fontSize": return typeof value === "number" && Number.isInteger(value) && value >= 10 && value <= 32;
     case "tabSize": return typeof value === "number" && [2, 4, 8].includes(value);
     case "autoSave": return value === "off" || value === "afterDelay";
-    case "wordWrap": case "hideBuildArtifacts": case "documentWordCompletion": case "autoPairSymbols": case "autoEnvironmentLabels": case "confirmPreviewEdits": case "warnIncompatibleEnvironmentConversion": case "maximize": case "restoreProject": return typeof value === "boolean";
+    case "wordWrap": case "hideBuildArtifacts": case "documentWordCompletion": case "autoPairSymbols": case "autoEnvironmentLabels": case "confirmPreviewEdits": case "warnIncompatibleEnvironmentConversion": case "maximize": case "restoreProject": case "aiIncludeCurrentFile": return typeof value === "boolean";
+    case "aiDefaultMode": return value === "chat" || value === "codex";
     case "referenceLinkModifier": return value === "ctrl" || value === "alt" || value === "shift" || value === "meta";
     case "spellCheckActiveLanguages": return Array.isArray(value) && value.every((item) => typeof item === "string" && /^[A-Za-z]{2,3}(?:[-_][A-Za-z0-9]{2,8})?$/.test(item));
-    case "themeDirectory": case "lastProject": return typeof value === "string";
+    case "themeDirectory": case "aiCodexExecutable": case "lastProject": return typeof value === "string";
+    case "aiModel": case "aiCopilotModel": return typeof value === "string" && value.length <= 160;
     case "visibleFilterGroups": return Array.isArray(value) && value.every((item) => ["blockType", "location", "file", "properties"].includes(String(item)));
     case "keybindings": return !!value && typeof value === "object" && !Array.isArray(value) && Object.values(value).every((v) => typeof v === "string");
     case "environments": return Array.isArray(value) && value.every((entry) => {

@@ -2,6 +2,65 @@
 export * from "./settings.js";
 export * from "./spellcheck.js";
 export * from "./block-graph.js";
+
+export type AIAuthState = "unknown" | "signed_out" | "authenticating" | "signed_in" | "expired" | "error";
+export type AICodexProcessState = "not_detected" | "stopped" | "starting" | "running" | "crashed";
+/** Safe-to-display AI connection summary. Never contains credentials or raw protocol payloads. */
+export interface AIStatus {
+  auth: AIAuthState;
+  process: AICodexProcessState;
+  executablePath?: string | undefined;
+  accountLabel?: string | undefined;
+  error?: string | undefined;
+}
+export interface AIModelOption { id: string; name: string; description?: string; isDefault: boolean }
+export type AIMode = "chat" | "codex";
+export type AIMessageRole = "user" | "assistant" | "system" | "tool";
+export interface AIMessage {
+  id: string;
+  role: AIMessageRole;
+  content: string;
+  createdAt: number;
+  status?: "streaming" | "complete" | "error";
+}
+export interface AIConversation {
+  id: string;
+  title: string;
+  mode: AIMode;
+  createdAt: number;
+  updatedAt: number;
+  projectId?: string;
+  threadId?: string;
+  copilotSessionId?: string;
+  messages: AIMessage[];
+}
+export interface AIContextSnapshotFile { path: string; content: string }
+export interface AIChangeHunk {
+  id: string;
+  oldStart: number;
+  oldLines: number;
+  newStart: number;
+  newLines: number;
+  oldText: string;
+  newText: string;
+  decision: "pending" | "accepted" | "rejected";
+}
+export interface AIFileChange {
+  path: string;
+  type: "modify" | "create" | "delete";
+  originalContent?: string;
+  proposedContent?: string;
+  hunks: AIChangeHunk[];
+  status: "pending" | "partially_accepted" | "accepted" | "rejected";
+}
+export interface AIChangeSet {
+  id: string;
+  conversationId: string;
+  createdAt: number;
+  files: AIFileChange[];
+  status: "pending" | "partially_accepted" | "accepted" | "rejected";
+}
+export interface AIConversationSnapshot { conversations: AIConversation[]; changeSets: AIChangeSet[] }
 export const errorCodes = [
   "PROJECT_NOT_FOUND", "PROJECT_PATH_MISSING", "PROJECT_ALREADY_REGISTERED", "PROJECT_NOT_WRITABLE",
   "PATH_OUTSIDE_PROJECT", "INVALID_RELATIVE_PATH", "FILE_NOT_FOUND", "FILE_ALREADY_EXISTS",

@@ -1,4 +1,4 @@
-import type { BlockCreationValidation, BlockGraphSnapshot, BlockId, BlockRangeMappingResult, BlockReconciliationResult, CommandMetadata, CompileResult, CreateSemanticBlockInput, CreateUserBlockInput, DependencyCycle, DictionaryPackage, FileWriteResult, GraphDiagnostic, GraphTraversalOptions, GraphTraversalResult, ImportedImage, LogicalRelation, MapUserBlockRangesInput, Project, ProjectTreeNode, ReconcileParsedBlocksInput, RelationDirection, RelationMutationResult, RelationNeighborhood, RelationValidation, ResolvedGraphic, SemanticBlock, SettingsSnapshot, PreferenceKey, LatexToolchain, StyleResource, ThemeDefinition, SpellCheckMode, SpellCheckStatus, StructuralDependencyOverlap, StructuralHistoryState, SyncTexPdfPosition, SyncTexSourcePosition, TextFileContent, UpdateSemanticBlockInput, ProjectReferenceLink, ReferenceLibraryEntry, ReferenceLibrarySnapshot, ReferenceImportResult } from "@latex-editor/contracts";
+import type { AIStatus, AIModelOption, AIConversation, AIChangeSet, AIContextSnapshotFile, AIMode, AIMessage, BlockCreationValidation, BlockGraphSnapshot, BlockId, BlockRangeMappingResult, BlockReconciliationResult, CommandMetadata, CompileResult, CreateSemanticBlockInput, CreateUserBlockInput, DependencyCycle, DictionaryPackage, FileWriteResult, GraphDiagnostic, GraphTraversalOptions, GraphTraversalResult, ImportedImage, LogicalRelation, MapUserBlockRangesInput, Project, ProjectTreeNode, ReconcileParsedBlocksInput, RelationDirection, RelationMutationResult, RelationNeighborhood, RelationValidation, ResolvedGraphic, SemanticBlock, SettingsSnapshot, PreferenceKey, LatexToolchain, StyleResource, ThemeDefinition, SpellCheckMode, SpellCheckStatus, StructuralDependencyOverlap, StructuralHistoryState, SyncTexPdfPosition, SyncTexSourcePosition, TextFileContent, UpdateSemanticBlockInput, ProjectReferenceLink, ReferenceLibraryEntry, ReferenceLibrarySnapshot, ReferenceImportResult } from "@latex-editor/contracts";
 
 type InstallationState = {
   schemaVersion: 1;
@@ -143,6 +143,29 @@ declare global {
       };
       compile: {
         run(projectId: string, mainFile?: string): Promise<CompileResult & { pdfDataUrl?: string }>;
+      };
+      ai: {
+        detect(): Promise<AIStatus | undefined>;
+        models(): Promise<AIModelOption[] | undefined>;
+        install(): Promise<AIStatus | undefined>;
+        status(): Promise<AIStatus | undefined>;
+        login(): Promise<AIStatus | undefined>;
+        logout(): Promise<AIStatus | undefined>;
+        setExecutable(path: string): Promise<AIStatus | undefined>;
+        copilotStatus(): Promise<AIStatus | undefined>;
+        installCopilot(): Promise<AIStatus | undefined>;
+        loginCopilot(): Promise<AIStatus | undefined>;
+        logoutCopilot(): Promise<AIStatus | undefined>;
+        copilotModels(): Promise<AIModelOption[] | undefined>;
+        conversations(projectId?: string): Promise<{ conversations: AIConversation[]; changeSets: AIChangeSet[] } | undefined>;
+        createConversation(mode: AIMode, projectId?: string): Promise<AIConversation | undefined>;
+        setConversationMode(id: string, mode: AIMode): Promise<AIConversation | undefined>;
+        removeConversation(id: string): Promise<void>;
+        resolveChangeSet(id: string, decisions: Record<string, "accepted" | "rejected">, applied: boolean): Promise<AIChangeSet | undefined>;
+        send(input: { conversationId: string; projectId?: string; content: string; contextText?: string; overrides?: AIContextSnapshotFile[] }): Promise<{ conversation: AIConversation; taskId: string } | undefined>;
+        cancel(taskId: string): Promise<void>;
+        onUpdate(listener: (update: { kind: "conversation" | "changes"; payload: AIConversation | AIChangeSet }) => void): () => void;
+        onStatus(listener: (status: AIStatus) => void): () => void;
       };
       synctex: {
         forward(projectId: string, sourceFile: string, pdfFile: string, line: number, column: number): Promise<SyncTexPdfPosition>;
