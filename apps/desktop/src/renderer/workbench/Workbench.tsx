@@ -56,7 +56,7 @@ interface EditorTab { path: string; content: string; dirty: boolean }
 interface SourceMathPreview { source: string; displayMode: boolean; anchor: DOMRect; kind: "source-cursor" | "source-hover" }
 interface PersistedLayout { sidebarWidth: number; fileTreeHeight: number; splitRatio: number; bottomPanelHeight: number; sidebarVisible: boolean; mode: "single" | "split"; singlePane: PaneType; leftPane: "source" | "preview"; rightPane: "preview" | "pdf" }
 
-const emptyBlockSnapshot: BlockGraphSnapshot = { version: 1, blocks: [], dependencies: [], structuralParents: [] };
+const emptyBlockSnapshot: BlockGraphSnapshot = { version: 2, blocks: [], dependencies: [], structuralParents: [] };
 const defaultRelationFilters: RelationFilters = { hierarchyScope: "all", role: "all", origin: "all", label: "all", textQuery: "" };
 
 const defaultLayout: PersistedLayout = { sidebarWidth: 280, fileTreeHeight: 330, splitRatio: 52, bottomPanelHeight: 220, sidebarVisible: true, mode: "split", singlePane: "source", leftPane: "source", rightPane: "pdf" };

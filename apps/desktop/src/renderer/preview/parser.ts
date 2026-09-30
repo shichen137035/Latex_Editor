@@ -1,5 +1,6 @@
 import type { ContentRegion, EnvironmentDefinition, PreviewDocument, PreviewNode, SourceSpan, StructuralBlock } from "./types.js";
 
+import { inferBlockKind, type BlockKind } from "@latex-editor/contracts";
 import { isAutomaticEnvironmentLabel, isAutomaticLabel } from "./labels.js";
 
 interface RawBlock {
@@ -286,7 +287,13 @@ export function parsePreview(source: string, filePath: string, definitions: Envi
     children.push(block);
     childrenByParent.set(block.parent, children);
   }
-  const headingEnvironmentIds = new Set(headings.map((heading) => heading.command));
+  const contentBlockIds = new Set(definitions.filter((definition) => definition.family === "equation").map((definition) => definition.id));
+  contentBlockIds.add("display-math");
+  const semanticKindFor = (block: RawBlock): BlockKind => {
+    const definition = definitions.find((item) => item.id === block.environmentId);
+    return definition && ["equation", "figure", "table"].includes(definition.family)
+      ? "content" : inferBlockKind(block.environmentId);
+  };
 
   const buildChildren = (parent: RawBlock | undefined, rangeStart: number, rangeEnd: number, parentId?: string): PreviewNode[] => {
     const direct = childrenByParent.get(parent) ?? [];
@@ -294,30 +301,28 @@ export function parsePreview(source: string, filePath: string, definitions: Envi
     let cursor = rangeStart;
     const addContent = (from: number, to: number) => {
       for (const [start, end] of paragraphRanges(source, from, to)) {
-        const node: ContentRegion = { id: `content:${filePath}:${start}:${end}`, kind: "content", contentType: "paragraph", source: span(source, filePath, start, end, positionAt), raw: source.slice(start, end), ...(parentId ? { parentId } : {}) };
+        const node: ContentRegion = { id: `content:${filePath}:${start}:${end}`, kind: "content", contentType: "paragraph", origin: "source", source: span(source, filePath, start, end, positionAt), raw: source.slice(start, end), ...(parentId ? { parentId } : {}) };
         nodes.push(node);
       }
     };
     for (const block of direct) {
       addContent(cursor, block.start);
       const id = `block:${filePath}:${block.start}:${block.end}:${block.environmentId}`;
+      const definition = definitions.find((item) => item.id === block.environmentId);
+      const semanticKind = semanticKindFor(block);
       const node: StructuralBlock = {
-        id, kind: "block", origin: block.origin, environmentId: block.environmentId,
+        id, kind: "block", semanticKind, origin: block.origin, environmentId: block.environmentId,
         source: span(source, filePath, block.start, block.end, positionAt),
-        children: buildChildren(block, block.bodyStart, block.bodyEnd, id),
+        body: span(source, filePath, block.bodyStart, block.bodyEnd, positionAt),
+        // Equation blocks own their full TeX body; math internals are not
+        // paragraph or child blocks in TeXWeave's document tree.
+        children: contentBlockIds.has(block.environmentId) ? [] : buildChildren(block, block.bodyStart, block.bodyEnd, id),
         ...(parentId ? { parentId } : {}), ...(block.title ? { title: block.title } : {}), ...(block.latexLabel ? { latexLabel: block.latexLabel } : {}), ...(block.autoLabel ? { autoLabel: true } : {})
       };
       nodes.push(node);
       cursor = Math.max(cursor, block.end);
     }
     addContent(cursor, rangeEnd);
-    // An empty heading still needs an editable surface in Visual mode. This
-    // zero-width node is UI-only; source is inserted only when the user saves.
-    if (parent && parentId && nodes.length === 0 && headingEnvironmentIds.has(parent.environmentId)) {
-      const offset = parent.bodyStart;
-      const node: ContentRegion = { id: `content:${filePath}:${offset}:${offset}:virtual`, kind: "content", contentType: "plain", source: span(source, filePath, offset, offset, positionAt), raw: "", parentId };
-      nodes.push(node);
-    }
     return nodes;
   };
 

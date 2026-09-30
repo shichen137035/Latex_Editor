@@ -1,5 +1,7 @@
 import {
   AppError,
+  type AddSemanticBlockInput,
+  inferBlockKind,
   type BlockGraphSnapshot,
   type BlockReconciliationResult,
   type BlockRangeMappingResult,
@@ -21,6 +23,7 @@ import {
   type SemanticBlock,
   type StructuralHistoryState,
   type StructuralDependencyOverlap,
+  type StructureWarning,
   type UpdateSemanticBlockInput
 } from "@latex-editor/contracts";
 import type { IdGenerator } from "@latex-editor/domain";
@@ -61,7 +64,7 @@ export class ProjectBlockGraphService {
 
   async createBlock(projectId: string, input: CreateSemanticBlockInput): Promise<SemanticBlock> {
     return this.#mutate(projectId, (graph) => {
-      const block: SemanticBlock = { ...input, id: this.#ids.next() };
+      const block: SemanticBlock = { ...input, id: this.#ids.next(), kind: input.kind ?? inferBlockKind(input.role ?? input.type) };
       graph.addBlock(block);
       return block;
     });
@@ -76,6 +79,7 @@ export class ProjectBlockGraphService {
       const block: SemanticBlock = {
         id: this.#ids.next(),
         type: input.role,
+        kind: input.kind ?? "structural",
         role: input.role,
         origin: "user",
         fileId: input.fileId,
@@ -111,7 +115,7 @@ export class ProjectBlockGraphService {
     );
   }
 
-  async addBlock(projectId: string, block: SemanticBlock): Promise<void> {
+  async addBlock(projectId: string, block: AddSemanticBlockInput): Promise<void> {
     await this.#mutate(projectId, (graph) => graph.addBlock(block));
   }
 
@@ -242,6 +246,10 @@ export class ProjectBlockGraphService {
 
   async validate(projectId: string): Promise<GraphDiagnostic[]> {
     return (await this.#load(projectId)).validateGraph();
+  }
+
+  async validateStructure(projectId: string): Promise<StructureWarning[]> {
+    return (await this.#load(projectId)).validateStructure();
   }
 
   async #load(projectId: string): Promise<BlockGraphManager> {

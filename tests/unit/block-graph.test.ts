@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { AppError, type ParsedBlockDescriptor, type SemanticBlock } from "@latex-editor/contracts";
+import { AppError, inferBlockKind, type CreateSemanticBlockInput, type ParsedBlockDescriptor } from "@latex-editor/contracts";
 import { ProjectBlockGraphService, type BlockGraphFilePort } from "../../packages/application/src/block-graph-service.js";
 import { BlockGraphManager } from "../../packages/editor-core/src/block-graph.js";
 
@@ -10,6 +10,41 @@ function createGraph(...ids: string[]): BlockGraphManager {
 }
 
 describe("v0.3.0 block relationship graph", () => {
+  it("classifies blocks independently of origin and migrates v1 records by type", () => {
+    const graph = BlockGraphManager.fromUnknown({
+      version: 1,
+      blocks: [
+        { id: "section", type: "section", origin: "environment" },
+        { id: "equation", type: "equation", origin: "environment" },
+        { id: "paragraph", type: "paragraph", origin: "virtual" },
+        { id: "custom", type: "custom", origin: "user" },
+        { id: "future", type: "future-widget", origin: "environment" }
+      ], dependencies: [], structuralParents: []
+    });
+    const snapshot = graph.toSnapshot();
+    expect(snapshot.version).toBe(2);
+    expect(snapshot.blocks.map(({ id, kind }) => [id, kind])).toEqual([
+      ["section", "structural"], ["equation", "content"], ["paragraph", "content"], ["custom", "structural"], ["future", "structural"]
+    ]);
+    expect(graph.validateStructure()).toContainEqual(expect.objectContaining({ code: "UNKNOWN_BLOCK_KIND", blockId: "future", severity: "info" }));
+  });
+
+  it("warns about content children without rejecting or rewriting the structure", () => {
+    const graph = BlockGraphManager.empty();
+    graph.addBlock({ id: "equation", type: "equation", origin: "environment" });
+    graph.addBlock({ id: "paragraph", type: "paragraph", origin: "virtual" });
+    graph.addBlock({ id: "custom", type: "custom", origin: "user" });
+    graph.setStructuralParent("paragraph", "equation");
+    graph.setStructuralParent("custom", "equation");
+
+    expect(graph.getStructuralChildren("equation")).toEqual(["custom", "paragraph"]);
+    expect(graph.validateStructure()).toContainEqual(expect.objectContaining({
+      code: "CONTENT_BLOCK_HAS_CHILDREN", severity: "warning", blockId: "equation",
+      details: { childCount: 2, childIds: ["custom", "paragraph"] }
+    }));
+    expect(graph.validateGraph()).toEqual(expect.arrayContaining([expect.objectContaining({ code: "CONTENT_BLOCK_HAS_CHILDREN", type: "content-block-has-children" })]));
+  });
+
   it("traverses chains, skip edges, diamonds, distances, and depth limits without reducing declared edges", () => {
     const graph = createGraph("A", "B", "C", "D", "X");
     graph.addDependency("A", "B");
@@ -179,7 +214,7 @@ describe("v0.3.4 custom blocks and relation validation", () => {
     const graph = BlockGraphManager.empty();
     const ids = ["section-id", "theorem-id"];
     const parsed = (transientId: string, role: string, start: number, end: number, fingerprint: string, label?: string): ParsedBlockDescriptor => ({
-      transientId, origin: "environment", role, fileId: "main.tex", range: { start, end }, fingerprint, ...(label ? { label } : {})
+      transientId, origin: "environment", role, kind: inferBlockKind(role), fileId: "main.tex", range: { start, end }, fingerprint, ...(label ? { label } : {})
     });
     const first = graph.reconcileParsedBlocks("main.tex", [
       parsed("section:0", "section", 0, 100, "section-fingerprint"),
@@ -202,7 +237,7 @@ describe("v0.3.4 custom blocks and relation validation", () => {
     const graph = BlockGraphManager.empty();
     graph.addUserBlock({ id: "user-id", type: "argument", origin: "user", fileId: "main.tex", range: { start: 50, end: 120 } });
     const result = graph.reconcileParsedBlocks("main.tex", [{
-      transientId: "section:0", origin: "environment", role: "section", fileId: "main.tex",
+      transientId: "section:0", origin: "environment", role: "section", kind: "structural", fileId: "main.tex",
       range: { start: 0, end: 100 }, fingerprint: "section-fingerprint"
     }], () => "section-id");
     expect(result.conflicted).toEqual(["user-id"]);
@@ -242,7 +277,7 @@ describe("project block graph persistence", () => {
     const files = new MemoryGraphFiles();
     const ids = ["block-a", "block-b"];
     const service = new ProjectBlockGraphService(files, { next: () => ids.shift()! });
-    const inputs: Array<Omit<SemanticBlock, "id">> = [{ type: "theorem", title: "A" }, { type: "proof", title: "B" }];
+    const inputs: CreateSemanticBlockInput[] = [{ type: "theorem", title: "A" }, { type: "proof", title: "B" }];
     const [a, b] = await Promise.all(inputs.map((input) => service.createBlock("project", input)));
     await service.addDependency("project", a.id, b.id);
     await service.setStructuralParent("project", b.id, a.id);
@@ -251,7 +286,7 @@ describe("project block graph persistence", () => {
     expect(await reloaded.getPrerequisiteClosure("project", b.id)).toMatchObject({ direct: [a.id], all: [a.id] });
     expect(await reloaded.getStructuralParent("project", b.id)).toBe(a.id);
     expect((await reloaded.snapshot("project")).blocks.map((block) => block.id)).toEqual(["block-a", "block-b"]);
-    expect(files.contents.get("project:.texweave/structure.json")).toContain('"version": 1');
+    expect(files.contents.get("project:.texweave/structure.json")).toContain('"version": 2');
   });
 
   it("keeps structural undo separate from editor undo and migrates the legacy metadata path", async () => {
@@ -273,7 +308,7 @@ describe("project block graph persistence", () => {
     const service = new ProjectBlockGraphService(files, { next: () => "parsed-id" });
     const result = await service.reconcileParsedBlocks("project", {
       fileId: "main.tex",
-      blocks: [{ transientId: "temporary", origin: "environment", role: "section", fileId: "main.tex", range: { start: 0, end: 20 }, fingerprint: "stable" }]
+      blocks: [{ transientId: "temporary", origin: "environment", role: "section", kind: "structural", fileId: "main.tex", range: { start: 0, end: 20 }, fingerprint: "stable" }]
     });
     expect(result.created).toEqual(["parsed-id"]);
     expect(service.historyState("project")).toEqual({ canUndo: false, canRedo: false });

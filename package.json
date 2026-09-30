@@ -1,6 +1,6 @@
 {
   "name": "latex-editor",
-  "version": "0.3.4",
+  "version": "0.5.2",
   "main": "apps/desktop/dist/main/index.js",
   "private": true,
   "description": "Local-first LaTeX editor foundation",

@@ -62,7 +62,8 @@ contextBridge.exposeInMainWorld("latexEditor", {
     historyState: (projectId) => ipcRenderer.invoke("block-graph:history-state", projectId),
     undo: (projectId) => ipcRenderer.invoke("block-graph:undo", projectId),
     redo: (projectId) => ipcRenderer.invoke("block-graph:redo", projectId),
-    validate: (projectId) => ipcRenderer.invoke("block-graph:validate", projectId)
+    validate: (projectId) => ipcRenderer.invoke("block-graph:validate", projectId),
+    validateStructure: (projectId) => ipcRenderer.invoke("block-graph:validate-structure", projectId)
   },
   spellcheck: {
     checkText: (text, language) => ipcRenderer.invoke("spellcheck:check-text", text, language),

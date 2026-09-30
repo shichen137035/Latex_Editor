@@ -1,3 +1,5 @@
+import type { BlockKind } from "@latex-editor/contracts";
+
 export interface SourceSpan {
   filePath: string;
   startOffset: number;
@@ -16,6 +18,8 @@ export interface PreviewBaseNode {
 
 export interface StructuralBlock extends PreviewBaseNode {
   kind: "block";
+  semanticKind?: BlockKind;
+  body: SourceSpan;
   origin: "latex" | "virtual";
   environmentId: string;
   title?: string;
@@ -27,6 +31,7 @@ export interface StructuralBlock extends PreviewBaseNode {
 export interface ContentRegion extends PreviewBaseNode {
   kind: "content";
   contentType: "paragraph" | "plain" | "other";
+  origin?: "source" | "virtual";
   raw: string;
 }
 

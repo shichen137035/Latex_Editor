@@ -2,6 +2,32 @@
 export type BlockId = string;
 export type BlockOrigin = "environment" | "virtual" | "user";
 export type BlockRole = string;
+export type BlockKind = "structural" | "content";
+
+const defaultBlockKinds: Record<string, BlockKind> = {
+  abstract: "structural", chapter: "structural", section: "structural", subsection: "structural", subsubsection: "structural",
+  theorem: "structural", lemma: "structural", proposition: "structural", corollary: "structural", definition: "structural",
+  assumption: "structural", remark: "structural", example: "structural", proof: "structural", enumerate: "structural",
+  itemize: "structural", description: "structural", algorithm: "structural", algorithmic: "structural", quote: "structural",
+  quotation: "structural", custom: "structural",
+  paragraph: "content", equation: "content", "equation-star": "content", "display-math": "content", align: "content", "align-star": "content", gather: "content", multline: "content",
+  aligned: "content", split: "content", cases: "content", image: "content", "inline-image": "content", figure: "content",
+  table: "content", "table-star": "content", tabular: "content", "tabular-star": "content", tabularx: "content", longtable: "content",
+  "figure-star": "content", verbatim: "content", lstlisting: "content"
+};
+
+function normalizedBlockType(type: string): string {
+  return type.trim().toLocaleLowerCase().replace(/^custom:/, "").replace(/\*$/, "");
+}
+
+/** Unknown types remain usable as containers and can be reported by validation. */
+export function inferBlockKind(type: string): BlockKind {
+  return defaultBlockKinds[normalizedBlockType(type)] ?? "structural";
+}
+
+export function isKnownBlockType(type: string): boolean {
+  return Object.hasOwn(defaultBlockKinds, normalizedBlockType(type));
+}
 
 /** Absolute UTF-16 offsets in one source file. Ranges are half-open: [start, end). */
 export interface BlockTextRange {
@@ -32,6 +58,7 @@ export interface SemanticBlock {
   id: BlockId;
   /** Legacy semantic name retained for v0.3.0 snapshots. Prefer `role`. */
   type: string;
+  kind: BlockKind;
   origin?: BlockOrigin;
   role?: BlockRole;
   fileId?: string;
@@ -46,13 +73,15 @@ export interface SemanticBlock {
   metadata?: Record<string, unknown>;
 }
 
-export type CreateSemanticBlockInput = Omit<SemanticBlock, "id">;
+export type CreateSemanticBlockInput = Omit<SemanticBlock, "id" | "kind"> & { kind?: BlockKind };
+export type AddSemanticBlockInput = CreateSemanticBlockInput & { id: BlockId };
 export type UpdateSemanticBlockInput = Partial<Omit<SemanticBlock, "id">>;
 
 export interface CreateUserBlockInput {
   fileId: string;
   range: BlockTextRange;
   role: BlockRole;
+  kind?: BlockKind;
   name?: string;
   label?: string;
   source?: BlockSourceRange;
@@ -68,6 +97,7 @@ export interface ParsedBlockDescriptor {
   parentTransientId?: string;
   origin: Exclude<BlockOrigin, "user">;
   role: BlockRole;
+  kind: BlockKind;
   fileId: string;
   range: BlockTextRange;
   source?: BlockSourceRange;
@@ -153,7 +183,7 @@ export interface StructuralParentEdge {
 }
 
 export interface BlockGraphSnapshot {
-  version: 1;
+  version: 2;
   blocks: SemanticBlock[];
   dependencies: DependencyEdge[];
   structuralParents: StructuralParentEdge[];
@@ -197,13 +227,28 @@ export type GraphDiagnosticType =
   | "dependency-cycle"
   | "prerequisite-structural-overlap"
   | "consequence-structural-overlap"
-  | "prerequisite-logical-relation";
+  | "prerequisite-logical-relation"
+  | "content-block-has-children"
+  | "unknown-block-kind";
+
+export type StructureWarningCode = "CONTENT_BLOCK_HAS_CHILDREN" | "UNKNOWN_BLOCK_KIND";
+
+export interface StructureWarning {
+  code: StructureWarningCode;
+  severity: "info" | "warning" | "error";
+  blockId: BlockId;
+  message: string;
+  details?: { childIds?: BlockId[]; childCount?: number; type?: string };
+}
 
 export interface GraphDiagnostic {
   type: GraphDiagnosticType;
   severity: "info" | "warning" | "error";
   blockIds: BlockId[];
   message: string;
+  code?: StructureWarningCode;
+  blockId?: BlockId;
+  details?: StructureWarning["details"];
 }
 
 export interface GraphTraversalOptions {

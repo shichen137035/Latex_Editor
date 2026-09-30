@@ -2,7 +2,7 @@ import { app, BrowserWindow, clipboard, dialog, ipcMain, Menu, shell } from "ele
 import { randomUUID } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import { resolve } from "node:path";
-import type { AIStatus, AIContextSnapshotFile, CommandMetadata, CompileResult, CompileInput, GraphTraversalOptions, PreferenceKey, SemanticBlock, CreateSemanticBlockInput, CreateUserBlockInput, UpdateSemanticBlockInput, LatexToolchain, MapUserBlockRangesInput, ReconcileParsedBlocksInput, RelationDirection, ProjectReferenceLink, ReferenceLibraryEntry, Project, ProjectTreeNode } from "@latex-editor/contracts" with { "resolution-mode": "import" };
+import type { AIStatus, AIContextSnapshotFile, AddSemanticBlockInput, CommandMetadata, CompileResult, CompileInput, GraphTraversalOptions, PreferenceKey, CreateSemanticBlockInput, CreateUserBlockInput, UpdateSemanticBlockInput, LatexToolchain, MapUserBlockRangesInput, ReconcileParsedBlocksInput, RelationDirection, ProjectReferenceLink, ReferenceLibraryEntry, Project, ProjectTreeNode } from "@latex-editor/contracts" with { "resolution-mode": "import" };
 import type { ProjectBlockGraphService } from "@latex-editor/application" with { "resolution-mode": "import" };
 import { SettingsRepository } from "./settings.js";
 import { StyleResourceRepository } from "./style-resources.js";
@@ -64,6 +64,8 @@ app.setAppUserModelId("com.texweave.editor");
 
 
 async function createContext(): Promise<DesktopContext> {
+  const packageInfo = JSON.parse(await readFile(resolve(__dirname, "../../../../package.json"), "utf8")) as { version?: unknown };
+  const appVersion = typeof packageInfo.version === "string" ? packageInfo.version : app.getVersion();
   // Backend packages are ESM; dynamic import keeps this Electron entry CommonJS-compatible.
   const [{ ProjectService, ProjectBlockGraphService }, { systemClock }, { NodeProjectEnvironment, NodeProjectFileService }, { SQLiteProjectRegistry }, { FileResourceCatalog }, { LatexmkCompilerService }] = await Promise.all([
     import("@latex-editor/application"),
@@ -75,7 +77,7 @@ async function createContext(): Promise<DesktopContext> {
   ]);
   const registry = new SQLiteProjectRegistry(resolve(app.getPath("userData"), "registry.sqlite"));
   registry.initialize();
-  const installation = new InstallationStateService(app.getPath("userData"), app.getVersion());
+  const installation = new InstallationStateService(app.getPath("userData"), appVersion);
   await installation.initialize();
   // Development resources live at the repository root. Packaged resources are
   // copied beside the app by electron-builder so user projects remain separate.
@@ -112,14 +114,14 @@ async function createContext(): Promise<DesktopContext> {
   const spellcheck = new OfflineSpellCheckService();
   await spellcheck.initialize();
   spellcheck.configure(settings.global.spellCheckMode ?? "auto", settings.global.spellCheckLanguage ?? "en-US");
-  await installation.recordComponent({ id: "core", version: app.getVersion(), ownership: "installed-by-texweave", path: app.getAppPath() });
+  await installation.recordComponent({ id: "core", version: appVersion, ownership: "installed-by-texweave", path: app.getAppPath() });
   const images = new ProjectImageService(files);
   const references = new ReferenceLibraryRepository(app.getPath("userData"));
   await references.initialize();
   const ai = new CodexAppServer({
     userDataPath: app.getPath("userData"),
     executable: () => settings.global.aiCodexExecutable ?? "",
-    version: app.getVersion(),
+    version: appVersion,
     onStatus: (status: AIStatus) => BrowserWindow.getAllWindows().forEach((window) => window.webContents.send("ai:status", status))
   });
   const copilot = new CopilotChatService(app.getPath("userData"));
@@ -205,7 +207,7 @@ function registerIpcHandlers(): void {
   ipcMain.handle("block-graph:delete-user-block", (_event, projectId: string, blockId: string) => context?.blockGraph.deleteUserBlock(projectId, blockId));
   ipcMain.handle("block-graph:reconcile-parsed", (_event, projectId: string, input: ReconcileParsedBlocksInput) => context?.blockGraph.reconcileParsedBlocks(projectId, input));
   ipcMain.handle("block-graph:map-user-ranges", (_event, projectId: string, input: MapUserBlockRangesInput) => context?.blockGraph.mapUserBlockRanges(projectId, input));
-  ipcMain.handle("block-graph:add-block", (_event, projectId: string, block: SemanticBlock) => context?.blockGraph.addBlock(projectId, block));
+  ipcMain.handle("block-graph:add-block", (_event, projectId: string, block: AddSemanticBlockInput & { id: string }) => context?.blockGraph.addBlock(projectId, block));
   ipcMain.handle("block-graph:update-block", (_event, projectId: string, blockId: string, patch: UpdateSemanticBlockInput) => context?.blockGraph.updateBlock(projectId, blockId, patch));
   ipcMain.handle("block-graph:remove-block", (_event, projectId: string, blockId: string) => context?.blockGraph.removeBlock(projectId, blockId));
   ipcMain.handle("block-graph:add-dependency", (_event, projectId: string, prerequisite: string, consequence: string) => context?.blockGraph.addDependency(projectId, prerequisite, consequence));
@@ -234,6 +236,7 @@ function registerIpcHandlers(): void {
   ipcMain.handle("block-graph:undo", (_event, projectId: string) => context?.blockGraph.undo(projectId));
   ipcMain.handle("block-graph:redo", (_event, projectId: string) => context?.blockGraph.redo(projectId));
   ipcMain.handle("block-graph:validate", (_event, projectId: string) => context?.blockGraph.validate(projectId));
+  ipcMain.handle("block-graph:validate-structure", (_event, projectId: string) => context?.blockGraph.validateStructure(projectId));
   ipcMain.handle("spellcheck:status", () => context?.spellcheck.status());
   ipcMain.handle("spellcheck:check-text", (_event, text: string, language: string) => context?.spellcheck.checkText(text, language) ?? []);
   ipcMain.handle("spellcheck:check-words", (_event, words: string[], language: string) => context?.spellcheck.checkWords(words, language) ?? []);

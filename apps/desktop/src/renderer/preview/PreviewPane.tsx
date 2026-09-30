@@ -5,7 +5,7 @@ import type { BlockGraphSnapshot, BlockId, ProjectTreeNode, RelationDirection } 
 import { t, type MessageKey } from "../i18n/index.js";
 import { definitionForId } from "./environments.js";
 import { parsePreview } from "./parser.js";
-import type { ContentRegion, EnvironmentDefinition, PreviewNode, StructuralBlock } from "./types.js";
+import type { ContentRegion, EnvironmentDefinition, PreviewNode, SourceSpan, StructuralBlock } from "./types.js";
 import "./preview.css";
 import { useSettings } from "../settings/service.js";
 import { CompletionController } from "../completion/CompletionController.js";
@@ -26,6 +26,7 @@ import type { DocumentSelection } from "../custom-blocks/selection.js";
 import { candidateRelationState, type UnmatchedBehavior } from "../relations/model.js";
 import { installSymbolPairing } from "../editor/symbolPairing.js";
 import { convertBlockEnvironmentSource, definitionConversionGroup, environmentDefinitionsCompatible, environmentDisplayName, EnvironmentPickerPanel, environmentConversionGroup } from "./EnvironmentPicker.js";
+import { unwrapLatexEnvironment } from "./sourceOperations.js";
 import { FigurePreview } from "../figure/FigurePreview.js";
 import type { FigureSelection } from "../figure/FigureInspector.js";
 import { TablePreview } from "../table/TablePreview.js";
@@ -47,7 +48,33 @@ export interface PreviewRelationUi {
   onFocus(blockId: BlockId): void;
   onToggle(blockId: BlockId, x: number, y: number): void;
 }
-type PreviewEditorServices = { api: EditorApi | undefined; projectId: string; tree: ProjectTreeNode[]; currentPath: string; documentSource: string; definitions: EnvironmentDefinition[]; mathContext: MathContext; searchQuery: SearchQuery; activeSearchResult?: SearchResult | undefined; filterQuery: FilterQuery; filterStates: Map<string, FilterState>; relation?: PreviewRelationUi | undefined; selectedBlockIds: string[]; setSelectedBlockIds(ids: string[]): void; deleteBlocks(ids: string[]): void; onFigureSelect: ((selection?: FigureSelection) => void) | undefined; onFigureSlotSelect: ((selection: FigureSelection) => void) | undefined; onTableSelect: ((selection?: TableSelection) => void) | undefined; onTableChange: ((selection: TableSelection, source: string) => void) | undefined; onSpellContextMenu(request: SpellContextRequest): void; onDetectedLanguage(language: string): void; onForwardSync(path: string, line: number, column?: number): void };
+type PreviewEditorServices = { api: EditorApi | undefined; projectId: string; tree: ProjectTreeNode[]; currentPath: string; documentSource: string; definitions: EnvironmentDefinition[]; mathContext: MathContext; searchQuery: SearchQuery; activeSearchResult?: SearchResult | undefined; filterQuery: FilterQuery; filterStates: Map<string, FilterState>; relation?: PreviewRelationUi | undefined; selectedBlockIds: string[]; setSelectedBlockIds(ids: string[]): void; deleteBlocks(ids: string[]): void; removeEnvironment(id: string): void; onFigureSelect: ((selection?: FigureSelection) => void) | undefined; onFigureSlotSelect: ((selection: FigureSelection) => void) | undefined; onTableSelect: ((selection?: TableSelection) => void) | undefined; onTableChange: ((selection: TableSelection, source: string) => void) | undefined; onSpellContextMenu(request: SpellContextRequest): void; onDetectedLanguage(language: string): void; onForwardSync(path: string, line: number, column?: number): void };
+
+const deleteMenuHandlers = new Map<string, (event: globalThis.MouseEvent) => void>();
+let deleteMenuDocument: Document | undefined;
+const dispatchDeleteContextMenu = (event: Event) => {
+  const mouseEvent = event as globalThis.MouseEvent;
+  const target = event.target instanceof Element ? event.target : undefined;
+  const button = target?.closest(".preview-block-delete");
+  const ownerId = button?.closest("[data-preview-node-id]")?.getAttribute("data-preview-node-id");
+  if (!ownerId) return;
+  deleteMenuHandlers.get(ownerId)?.(mouseEvent);
+};
+function registerDeleteMenuHandler(id: string, handler: (event: globalThis.MouseEvent) => void): () => void {
+  deleteMenuHandlers.set(id, handler);
+  if (typeof document !== "undefined" && deleteMenuDocument !== document) {
+    deleteMenuDocument?.removeEventListener("contextmenu", dispatchDeleteContextMenu);
+    deleteMenuDocument = document;
+    deleteMenuDocument.addEventListener("contextmenu", dispatchDeleteContextMenu);
+  }
+  return () => {
+    deleteMenuHandlers.delete(id);
+    if (deleteMenuHandlers.size === 0 && deleteMenuDocument) {
+      deleteMenuDocument.removeEventListener("contextmenu", dispatchDeleteContextMenu);
+      deleteMenuDocument = undefined;
+    }
+  };
+}
 interface BoundaryInsertion { targetId: string; position: number; side: "before" | "after" }
 interface PreviewRenderBudget { remaining: number; }
 const previewNodeLimit = 900;
@@ -622,7 +649,7 @@ function ContentRenderer({ node, source, editing, cursorOffset, boundary, beginE
   const activeSearch = services.activeSearchResult ? services.activeSearchResult.matchStart >= node.source.startOffset && services.activeSearchResult.matchEnd <= node.source.endOffset : false;
   const effectiveSearch = services.filterQuery.enabled && filterState !== "match" ? defaultInlineSearch : services.searchQuery;
   const filterClass = services.filterQuery.enabled ? `filter-${filterState} filter-view-${services.filterQuery.viewMode}` : "";
-  const virtualClass = node.contentType === "plain" && node.raw.length === 0 ? " preview-content-virtual" : "";
+  const virtualClass = node.origin === "virtual" && node.raw.length === 0 ? " preview-content-virtual" : "";
   return <Fragment>
     {insertion?.side === "before" && <LocalEditor value="" onApply={(value) => applyBoundary(insertion, value)} onCancel={cancelEdit} {...services}/>}
     {editing ? <LocalEditor value={nodeSource(node, source)} sourceStartLine={node.source.startLine} initialCursorOffset={cursorOffset} onApply={applyEdit} onCancel={cancelEdit} onInsertBefore={(draft) => requestBoundary(node, "before", draft)} onInsertAfter={(draft) => requestBoundary(node, "after", draft)} {...services}/> : <div className={`preview-content-region${virtualClass} ${filterClass} ${activeSearch ? "search-result-active" : ""}`} data-node-id={node.id} data-source-line={node.source.startLine} data-source-start-offset={node.source.startOffset} data-source-end-offset={node.source.endOffset} onClick={(event) => { event.stopPropagation(); if (window.getSelection()?.isCollapsed !== false) beginEdit(sourceOffsetAtPoint(event.currentTarget, event)); }}>{inlineLatex(node.raw, services.mathContext, effectiveSearch, activeSearch, node.source.startOffset)}</div>}
@@ -632,6 +659,21 @@ function ContentRenderer({ node, source, editing, cursorOffset, boundary, beginE
 
 function isMathBlock(node: StructuralBlock): boolean {
   return /equation|align|gather|multline|display-math|aligned|split|cases/.test(node.environmentId);
+}
+
+function countDescendants(node: StructuralBlock): number {
+  return node.children.reduce((count, child) => {
+    if (child.source.endOffset <= child.source.startOffset) return count;
+    return count + 1 + (child.kind === "block" ? countDescendants(child) : 0);
+  }, 0);
+}
+
+function hasEmptyBody(node: StructuralBlock, source: string): boolean {
+  if (node.children.length) return false;
+  return source.slice(node.body.startOffset, node.body.endOffset)
+    .replace(/^\s*%[^\r\n]*/gm, "")
+    .replace(/\\label\s*\{[^}]*\}/g, "")
+    .trim().length === 0;
 }
 
 function BlockRenderer({ node, source, definitions, selectedId, editingId, cursorOffset, boundary, select, edit, applyEdit, applyBoundary, cancelEdit, requestBoundary, services, budget }: { node: StructuralBlock; source: string; definitions: EnvironmentDefinition[]; selectedId?: string | undefined; editingId?: string | undefined; cursorOffset?: number | undefined; boundary?: BoundaryInsertion | undefined; select(id: string): void; edit(id: string, cursorOffset?: number): void; applyEdit(node: PreviewNode, value: string): void; applyBoundary(insertion: BoundaryInsertion, value: string): void; cancelEdit(): void; requestBoundary(node: PreviewNode, side: "before" | "after", draft?: string): void; services: PreviewEditorServices; budget: PreviewRenderBudget }) {
@@ -646,12 +688,51 @@ function BlockRenderer({ node, source, definitions, selectedId, editingId, curso
   const listEnvironment = isListEnvironment(node.environmentId);
   const figureBlock = node.environmentId === "figure" || node.environmentId === "figure-star" || node.environmentId === "custom:figure*" || node.environmentId === "inline-image";
   const tableBlock = ["table", "table-star", "tabular", "tabular-star", "tabularx", "longtable"].includes(node.environmentId);
-  const leafBlock = !node.children.some((child) => child.kind === "block");
+  const contentBlock = node.semanticKind === "content";
+  const emptyBlock = hasEmptyBody(node, source);
+  const emptyStructuralParagraph: ContentRegion | undefined = emptyBlock && !contentBlock ? {
+    id: `ui-empty:${node.id}`,
+    kind: "content",
+    contentType: "paragraph",
+    origin: "virtual",
+    raw: "",
+    source: {
+      ...node.body,
+      endOffset: node.body.startOffset,
+      endLine: node.body.startLine,
+      endColumn: node.body.startColumn
+    } satisfies SourceSpan,
+    parentId: node.id
+  } : undefined;
+  const [deleteMenuOpen, setDeleteMenuOpen] = useState(false);
+  const deleteMenuRef = useRef<HTMLDivElement>(null);
+  const [deleteMenuPosition, setDeleteMenuPosition] = useState({ x: 0, y: 0 });
+  useEffect(() => {
+    return registerDeleteMenuHandler(node.id, (event) => {
+      event.preventDefault();
+      setDeleteMenuPosition({ x: Math.min(event.clientX, window.innerWidth - 220), y: Math.min(event.clientY, window.innerHeight - 100) });
+      setDeleteMenuOpen(true);
+    });
+  }, [node.id]);
+  useEffect(() => {
+    if (!deleteMenuOpen) return;
+    const dismiss = (event: PointerEvent) => { if (!deleteMenuRef.current?.contains(event.target as Node)) setDeleteMenuOpen(false); };
+    const escape = (event: KeyboardEvent) => { if (event.key === "Escape") setDeleteMenuOpen(false); };
+    document.addEventListener("pointerdown", dismiss);
+    document.addEventListener("keydown", escape);
+    return () => { document.removeEventListener("pointerdown", dismiss); document.removeEventListener("keydown", escape); };
+  }, [deleteMenuOpen]);
+  const blockSource = nodeSource(node, source);
+  const canRemoveEnvironment = node.origin === "latex" && unwrapLatexEnvironment(blockSource, node.environmentId) !== undefined;
   const preferences = useSettings();
   const specialized = SpecializedContent({ node, source, services });
-  const specializedContent = listEnvironment
-    ? <ListContent node={node} source={source} mathContext={services.mathContext} searchQuery={effectiveSearch} activeSearch={activeSearch} renderChild={(child) => <PreviewNodeRenderer key={child.id} node={child} source={source} definitions={definitions} selectedId={selectedId} editingId={editingId} boundary={boundary} select={select} edit={edit} applyEdit={applyEdit} applyBoundary={applyBoundary} cancelEdit={cancelEdit} requestBoundary={requestBoundary} services={services} budget={budget}/>} />
-    : specialized;
+  const specializedContent = emptyBlock && contentBlock
+    ? <div className="preview-empty-block-placeholder" onClick={(event) => { event.stopPropagation(); edit(node.id); }}>{t("preview.emptyBlockHint")}</div>
+    : emptyStructuralParagraph
+      ? <PreviewNodeRenderer node={emptyStructuralParagraph} source={source} definitions={definitions} selectedId={selectedId} editingId={editingId} boundary={boundary} select={select} edit={edit} applyEdit={applyEdit} applyBoundary={applyBoundary} cancelEdit={cancelEdit} requestBoundary={requestBoundary} services={services} budget={budget}/>
+      : listEnvironment
+        ? <ListContent node={node} source={source} mathContext={services.mathContext} searchQuery={effectiveSearch} activeSearch={activeSearch} renderChild={(child) => <PreviewNodeRenderer key={child.id} node={child} source={source} definitions={definitions} selectedId={selectedId} editingId={editingId} boundary={boundary} select={select} edit={edit} applyEdit={applyEdit} applyBoundary={applyBoundary} cancelEdit={cancelEdit} requestBoundary={requestBoundary} services={services} budget={budget}/>} />
+        : specialized;
   const cssValue = (value: string | undefined, fallback: string) => value ? (value.startsWith("--") ? `var(${value})` : value) : `var(${fallback})`;
   const insertion = boundary?.targetId === node.id ? boundary : undefined;
   const semanticId = services.relation?.transientToBlockId[node.id];
@@ -679,7 +760,7 @@ function BlockRenderer({ node, source, definitions, selectedId, editingId, curso
        // Figure and table previews stop propagation for their own controls/cell editing.
        // Activate the surrounding block during capture so its boundary actions remain
        // available even when the specialized preview consumes the click afterwards.
-       if (!editing && (figureBlock || tableBlock)) {
+       if (!editing && !emptyBlock && (figureBlock || tableBlock)) {
          select(node.id);
          if (figureBlock) services.onFigureSelect?.({ fileId: services.currentPath, start: node.source.startOffset, end: node.source.endOffset, source: nodeSource(node, source) });
          if (tableBlock) services.onTableSelect?.({ fileId: services.currentPath, start: node.source.startOffset, end: node.source.endOffset, source: nodeSource(node, source), kind: "table" });
@@ -691,15 +772,19 @@ function BlockRenderer({ node, source, definitions, selectedId, editingId, curso
          services.onFigureSelect?.({ fileId: services.currentPath, start: node.source.startOffset, end: node.source.endOffset, source: nodeSource(node, source) });
          return;
        }
-       if ((specializedContent || leafBlock) && (definition?.behavior.inlineEditable ?? true)) { event.stopPropagation(); const offset = sourceOffsetAtPoint(event.currentTarget, event); edit(node.id, offset === undefined ? undefined : offset - node.source.startOffset); }
+       if (contentBlock && (definition?.behavior.inlineEditable ?? true)) { event.stopPropagation(); const offset = sourceOffsetAtPoint(event.currentTarget, event); edit(node.id, offset === undefined ? undefined : offset - node.source.startOffset); }
      }}>
-       {editing ? <LocalEditor value={nodeSource(node, source)} sourceStartLine={node.source.startLine} initialCursorOffset={cursorOffset} mathDraft={isMathBlock(node)} onApply={(value) => applyEdit(node, value)} onCancel={cancelEdit} onInsertBefore={(draft) => requestBoundary(node, "before", draft)} onInsertAfter={(draft) => requestBoundary(node, "after", draft)} {...services}/> : specializedContent ?? <PreviewNodeList nodes={node.children} source={source} definitions={definitions} selectedId={selectedId} editingId={editingId} boundary={boundary} select={select} edit={leafBlock ? (_id, offset) => edit(node.id, offset) : edit} applyEdit={applyEdit} applyBoundary={applyBoundary} cancelEdit={cancelEdit} requestBoundary={requestBoundary} services={services} budget={budget}/> }
+       {editing ? <LocalEditor value={nodeSource(node, source)} sourceStartLine={node.source.startLine} initialCursorOffset={cursorOffset} mathDraft={isMathBlock(node)} onApply={(value) => applyEdit(node, value)} onCancel={cancelEdit} onInsertBefore={(draft) => requestBoundary(node, "before", draft)} onInsertAfter={(draft) => requestBoundary(node, "after", draft)} {...services}/> : specializedContent ?? <PreviewNodeList nodes={node.children} source={source} definitions={definitions} selectedId={selectedId} editingId={editingId} boundary={boundary} select={select} edit={contentBlock ? (_id, offset) => edit(node.id, offset) : edit} applyEdit={applyEdit} applyBoundary={applyBoundary} cancelEdit={cancelEdit} requestBoundary={requestBoundary} services={services} budget={budget}/> }
     </div>
     <div className="preview-block-footer">
       <button className="preview-block-footer-main" title={environmentLabel(definition, node.environmentId)} onClick={(event) => { event.stopPropagation(); select(node.id); }}><span/></button>
       {singleSelected && <div className="preview-block-footer-actions"><button title={t("preview.insertBefore")} onPointerDown={(event) => { event.preventDefault(); event.stopPropagation(); requestBoundary(node, "before"); }} onClick={(event) => { event.stopPropagation(); if (event.detail === 0) requestBoundary(node, "before"); }}>↥＋</button><button title={t("preview.insertAfter")} onPointerDown={(event) => { event.preventDefault(); event.stopPropagation(); requestBoundary(node, "after"); }} onClick={(event) => { event.stopPropagation(); if (event.detail === 0) requestBoundary(node, "after"); }}>↧＋</button><button className="preview-block-delete" title={t("files.delete")} aria-label={t("files.delete")} onClick={(event) => { event.stopPropagation(); services.deleteBlocks([node.id]); }}>×</button></div>}
     </div>
     </section>
+    {deleteMenuOpen && createPortal(<div ref={deleteMenuRef} className="preview-delete-menu" role="menu" style={{ left: deleteMenuPosition.x, top: deleteMenuPosition.y }}>
+      {canRemoveEnvironment && <button role="menuitem" onClick={() => { setDeleteMenuOpen(false); services.removeEnvironment(node.id); }}>{t("preview.removeEnvironment")}</button>}
+      <button role="menuitem" className="danger" onClick={() => { setDeleteMenuOpen(false); services.deleteBlocks([node.id]); }}>{t("preview.deleteEntireBlock")}</button>
+    </div>, document.body)}
     {insertion?.side === "after" && <LocalEditor value="" onApply={(value) => applyBoundary(insertion, value)} onCancel={cancelEdit} {...services}/>}
   </Fragment>;
 }
@@ -875,11 +960,30 @@ export function PreviewPane({ filePath, source, definitions, mathContext = EMPTY
   };
   const deleteBlocks = (ids: string[]) => {
     if (!source || !ids.length) return;
+    const selectedNodes = ids.map((id) => document ? nodeById(document.nodes, id) : undefined).filter((node): node is StructuralBlock => node?.kind === "block");
+    const descendantTotal = selectedNodes.filter((node) => node.semanticKind === "structural").reduce((sum, node) => sum + countDescendants(node), 0);
+    if (descendantTotal > 0 && !window.confirm(t("preview.deleteEntireConfirm", { count: descendantTotal }))) return;
     const ranges = sourceRangesForBlocks(ids).sort((left, right) => right.start - left.start);
     if (!ranges.length) return;
     let next = source;
     for (const range of ranges) next = next.slice(0, range.start) + next.slice(range.end);
     onSourceChange(next);
+    setSelectedId(undefined);
+    setAdditionalSelectedIds([]);
+    setEditingId(undefined);
+    setEditingCursorOffset(undefined);
+    setBoundary(undefined);
+    onFigureSelect?.(undefined);
+    onTableSelect?.(undefined);
+  };
+  const removeEnvironment = (id: string) => {
+    if (!source || !document) return;
+    const node = nodeById(document.nodes, id);
+    if (!node || node.kind !== "block" || node.origin !== "latex") return;
+    const original = nodeSource(node, source);
+    const unwrapped = unwrapLatexEnvironment(original, node.environmentId);
+    if (unwrapped === undefined) return;
+    onSourceChange(source.slice(0, node.source.startOffset) + unwrapped + source.slice(node.source.endOffset));
     setSelectedId(undefined);
     setAdditionalSelectedIds([]);
     setEditingId(undefined);
@@ -940,7 +1044,7 @@ export function PreviewPane({ filePath, source, definitions, mathContext = EMPTY
     onSourceChange(source.slice(0, insertion.position) + replacement + source.slice(insertion.position));
     setBoundary(undefined);
   };
-  const services: PreviewEditorServices = { api, projectId, tree, currentPath: filePath, documentSource: source, definitions, mathContext, searchQuery, activeSearchResult: activeSearchResult?.fileId === filePath ? activeSearchResult : undefined, filterQuery, filterStates: filterEvaluation?.states ?? new Map(), relation, selectedBlockIds: selectedBlockIds(), setSelectedBlockIds: (ids) => { setSelectedId(ids[0]); setAdditionalSelectedIds(ids.slice(1)); }, deleteBlocks, onFigureSelect, onFigureSlotSelect, onTableSelect, onTableChange, onSpellContextMenu, onDetectedLanguage, onForwardSync };
+  const services: PreviewEditorServices = { api, projectId, tree, currentPath: filePath, documentSource: source, definitions, mathContext, searchQuery, activeSearchResult: activeSearchResult?.fileId === filePath ? activeSearchResult : undefined, filterQuery, filterStates: filterEvaluation?.states ?? new Map(), relation, selectedBlockIds: selectedBlockIds(), setSelectedBlockIds: (ids) => { setSelectedId(ids[0]); setAdditionalSelectedIds(ids.slice(1)); }, deleteBlocks, removeEnvironment, onFigureSelect, onFigureSlotSelect, onTableSelect, onTableChange, onSpellContextMenu, onDetectedLanguage, onForwardSync };
   const startBlockMarquee = (event: ReactPointerEvent<HTMLDivElement>) => {
     if (event.button !== 0 || editingId || window.getSelection()?.isCollapsed === false) return;
     const target = event.target;
@@ -1015,6 +1119,7 @@ export function PreviewPane({ filePath, source, definitions, mathContext = EMPTY
     return selection;
   };
   return <div ref={previewRootRef} className={`structured-preview${marqueeRect ? " marquee-selecting" : ""}`} onPointerDown={startBlockMarquee} onPointerMove={moveBlockMarquee} onPointerUp={finishBlockMarquee} onPointerCancel={cancelBlockMarquee} onClickCapture={onPreviewClick} onMouseUp={() => emitSelection()} onKeyUp={() => emitSelection()} onContextMenu={(event) => {
+    if (event.target instanceof Element && event.target.closest(".preview-block-delete")) return;
     const selection = emitSelection();
     if (!selection || !onSelectionContextMenu) return;
     event.preventDefault();

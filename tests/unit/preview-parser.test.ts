@@ -5,6 +5,7 @@ import { DEFAULT_ENVIRONMENTS, environmentWithOverrides } from "../../apps/deskt
 import { parsePreview } from "../../apps/desktop/src/renderer/preview/parser.js";
 import { plainLatex } from "../../apps/desktop/src/renderer/preview/inlineText.js";
 import { previewBlocksForReconciliation } from "../../apps/desktop/src/renderer/preview/reconciliation.js";
+import { unwrapLatexEnvironment } from "../../apps/desktop/src/renderer/preview/sourceOperations.js";
 import type { PreviewNode, StructuralBlock } from "../../apps/desktop/src/renderer/preview/types.js";
 
 function blocks(nodes: PreviewNode[]): StructuralBlock[] {
@@ -63,17 +64,58 @@ describe("v0.2.2 structured Preview parser", () => {
     const numberedList = blocks(document.nodes).find((node) => node.environmentId === "enumerate");
     expect(list?.children.some((node) => node.kind === "block" && node.environmentId === "display-math")).toBe(true);
     expect(numberedList?.children.some((node) => node.kind === "block" && node.environmentId === "equation")).toBe(true);
+    expect(blocks(document.nodes).filter((node) => ["display-math", "equation"].includes(node.environmentId)).every((node) => node.children.length === 0)).toBe(true);
     expect(document.diagnostics).toEqual([]);
   });
 
-  it("creates an editable virtual text region for an empty heading", () => {
+  it("treats the equation body as owned content rather than a virtual paragraph", () => {
+    const source = "\\begin{equation}\n  x^2 + y^2 = z^2\n\\end{equation}";
+    const document = parsePreview(source, "main.tex", DEFAULT_ENVIRONMENTS);
+    const equation = blocks(document.nodes).find((node) => node.environmentId === "equation");
+    const descriptors = previewBlocksForReconciliation(document, source).blocks;
+
+    expect(equation?.children).toEqual([]);
+    expect(descriptors).toHaveLength(1);
+    expect(descriptors[0]).toMatchObject({ role: "equation", kind: "content", origin: "environment" });
+  });
+
+  it("keeps an empty heading structural without inserting a virtual node in the document tree", () => {
     const source = "\\section{Empty}\n\\section{Next}\nContent.";
     const document = parsePreview(source, "main.tex", DEFAULT_ENVIRONMENTS);
     const section = blocks(document.nodes).find((node) => node.environmentId === "section");
-    const virtual = section?.children.find((node) => node.kind === "content");
+    expect(section?.children).toEqual([]);
+    expect(section).toBeDefined();
+    if (section) expect(source.slice(section.body.startOffset, section.body.endOffset).trim()).toBe("");
+  });
 
-    expect(virtual).toMatchObject({ kind: "content", contentType: "plain", raw: "" });
-    expect(virtual?.source.startOffset).toBe(virtual?.source.endOffset);
+  it("keeps empty structural and content blocks free of synthetic child nodes", () => {
+    const source = String.raw`\begin{theorem}\end{theorem}
+\section{Part}
+\begin{lemma}\end{lemma}
+\begin{equation}\end{equation}`;
+    const document = parsePreview(source, "main.tex", DEFAULT_ENVIRONMENTS);
+    const theorem = blocks(document.nodes).find((node) => node.environmentId === "theorem");
+    const section = blocks(document.nodes).find((node) => node.environmentId === "section");
+    const lemma = blocks(document.nodes).find((node) => node.environmentId === "lemma");
+    const equation = blocks(document.nodes).find((node) => node.environmentId === "equation");
+    expect(theorem?.children).toEqual([]);
+    expect(section?.children.some((child) => child.kind === "content" && child.origin === "virtual")).toBe(false);
+    expect(lemma?.children).toEqual([]);
+    expect(equation?.children).toEqual([]);
+    expect(theorem?.body.startOffset).toBe(theorem?.body.endOffset);
+    expect(equation?.body.startOffset).toBe(equation?.body.endOffset);
+  });
+
+  it("unwraps a LaTeX environment and preserves nested same-name environments", () => {
+    const source = String.raw`\begin{theorem}
+Outer text.
+\begin{theorem}Nested text.\end{theorem}
+\end{theorem}`;
+    expect(unwrapLatexEnvironment(source, "theorem")).toBe(String.raw`
+Outer text.
+\begin{theorem}Nested text.\end{theorem}
+`);
+    expect(unwrapLatexEnvironment("plain text", "theorem")).toBeUndefined();
   });
 
   it("omits zero-length virtual text regions from block-graph reconciliation", () => {

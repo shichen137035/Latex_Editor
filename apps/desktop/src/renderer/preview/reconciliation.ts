@@ -1,4 +1,4 @@
-import type { ParsedBlockDescriptor, ReconcileParsedBlocksInput } from "@latex-editor/contracts";
+import { inferBlockKind, type ParsedBlockDescriptor, type ReconcileParsedBlocksInput } from "@latex-editor/contracts";
 import type { PreviewDocument, PreviewNode } from "./types.js";
 
 function normalizedSource(value: string): string {
@@ -40,6 +40,7 @@ function flatten(nodes: PreviewNode[], source: string, output: ParsedBlockDescri
       ...(parentTransientId === undefined ? {} : { parentTransientId }),
       origin,
       role,
+      kind: node.kind === "block" ? node.semanticKind ?? inferBlockKind(role) : inferBlockKind(role),
       fileId: node.source.filePath,
       range: { start: node.source.startOffset, end: node.source.endOffset },
       source: {

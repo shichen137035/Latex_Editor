@@ -1,5 +1,8 @@
 import {
   AppError,
+  inferBlockKind,
+  isKnownBlockType,
+  type AddSemanticBlockInput,
   type BlockGraphSnapshot,
   type BlockReconciliationResult,
   type BlockRangeMappingResult,
@@ -22,13 +25,14 @@ import {
   type SemanticBlock,
   type StructuralDependencyOverlap,
   type StructuralParentEdge,
+  type StructureWarning,
   type UpdateSemanticBlockInput
 } from "@latex-editor/contracts";
 
 type GraphDirection = "incoming" | "outgoing";
 
 export interface IBlockGraphManager {
-  addBlock(block: SemanticBlock): void;
+  addBlock(block: AddSemanticBlockInput): void;
   updateBlock(blockId: BlockId, patch: UpdateSemanticBlockInput): SemanticBlock;
   removeBlock(blockId: BlockId): void;
   validateDependency(prerequisite: BlockId, consequence: BlockId): RelationValidation;
@@ -50,21 +54,24 @@ export interface IBlockGraphManager {
   findStructuralOverlapsInPrerequisites(blockId: BlockId): StructuralDependencyOverlap[];
   findLogicalRelationsWithinPrerequisites(blockId: BlockId): LogicalRelation[];
   validateUserBlock(input: CreateUserBlockInput): BlockCreationValidation;
-  addUserBlock(block: SemanticBlock): void;
+  addUserBlock(block: AddSemanticBlockInput): void;
   deleteUserBlock(blockId: BlockId): void;
   reconcileParsedBlocks(fileId: string, blocks: ParsedBlockDescriptor[], allocateId: () => BlockId): BlockReconciliationResult;
   mapUserBlockRanges(fileId: string, transactions: BlockTextEdit[][]): BlockRangeMappingResult;
   getRelationNeighborhood(focusId: BlockId | null, direction: RelationDirection, depth: number | "all"): RelationNeighborhood;
   validateGraph(): GraphDiagnostic[];
+  validateStructure(): StructureWarning[];
 }
 
 function sorted(values: Iterable<BlockId>): BlockId[] {
   return [...new Set(values)].sort((left, right) => left.localeCompare(right));
 }
 
-function cloneBlock(block: SemanticBlock): SemanticBlock {
+function cloneBlock(block: AddSemanticBlockInput): SemanticBlock {
+  const role = block.role ?? block.type;
   return {
     ...block,
+    kind: block.kind === undefined ? inferBlockKind(role) : block.kind,
     ...(block.range === undefined ? {} : { range: { ...block.range } }),
     ...(block.capabilities === undefined ? {} : { capabilities: { ...block.capabilities } }),
     ...(block.source === undefined ? {} : { source: { ...block.source } }),
@@ -78,13 +85,15 @@ function defaultCapabilities(origin: SemanticBlock["origin"]): BlockCapabilities
   return { connectable: true, deletable: true, renameable: true, retypable: true };
 }
 
-function normalizedBlock(block: SemanticBlock): SemanticBlock {
+function normalizedBlock(block: AddSemanticBlockInput): SemanticBlock {
   const origin = block.origin ?? "user";
+  const role = block.role ?? block.type;
   return {
     ...cloneBlock(block),
     origin,
-    role: block.role ?? block.type,
+    role,
     type: block.type || block.role || "custom",
+    kind: block.kind === undefined ? inferBlockKind(role) : block.kind,
     capabilities: { ...defaultCapabilities(origin), ...block.capabilities },
     state: block.state ?? "active"
   };
@@ -99,6 +108,7 @@ function assertBlockId(id: string): void {
 function assertBlock(block: SemanticBlock): void {
   assertBlockId(block.id);
   if (block.type.trim().length === 0) throw new AppError("INVALID_BLOCK_ID", `Block ${block.id} has no semantic type`);
+  if (block.kind !== "structural" && block.kind !== "content") throw new AppError("GRAPH_SNAPSHOT_INVALID", `Block ${block.id} has an invalid kind`);
   if (block.title !== undefined && typeof block.title !== "string") throw new AppError("GRAPH_SNAPSHOT_INVALID", `Block ${block.id} has an invalid title`);
   if (block.ordinal !== undefined && (!Number.isInteger(block.ordinal) || block.ordinal < 0)) {
     throw new AppError("GRAPH_SNAPSHOT_INVALID", `Block ${block.id} has an invalid ordinal`);
@@ -129,7 +139,7 @@ function asRecord(value: unknown): Record<string, unknown> | undefined {
 
 function parseSnapshot(value: unknown): BlockGraphSnapshot {
   const record = asRecord(value);
-  if (record?.version !== 1 || !Array.isArray(record.blocks) || !Array.isArray(record.dependencies) || !Array.isArray(record.structuralParents)) {
+  if ((record?.version !== 1 && record?.version !== 2) || !Array.isArray(record.blocks) || !Array.isArray(record.dependencies) || !Array.isArray(record.structuralParents)) {
     throw new AppError("GRAPH_SNAPSHOT_INVALID", "Block graph metadata has an unsupported or invalid shape");
   }
 
@@ -138,7 +148,7 @@ function parseSnapshot(value: unknown): BlockGraphSnapshot {
     if (block === undefined || typeof block.id !== "string" || typeof block.type !== "string") {
       throw new AppError("GRAPH_SNAPSHOT_INVALID", "Block graph contains an invalid block record");
     }
-    const parsed = structuredClone(block) as unknown as SemanticBlock;
+    const parsed = normalizedBlock(structuredClone(block) as unknown as AddSemanticBlockInput);
     assertBlock(parsed);
     return parsed;
   });
@@ -160,7 +170,7 @@ function parseSnapshot(value: unknown): BlockGraphSnapshot {
     assertBlockId(edge.child);
     return { parent: edge.parent, child: edge.child };
   });
-  return { version: 1, blocks, dependencies, structuralParents };
+  return { version: 2, blocks, dependencies, structuralParents };
 }
 
 /**
@@ -195,7 +205,7 @@ export class BlockGraphManager implements IBlockGraphManager {
 
   toSnapshot(): BlockGraphSnapshot {
     return {
-      version: 1,
+      version: 2,
       blocks: this.#blockEntries.map(cloneBlock),
       dependencies: this.#dependencies.map((edge) => ({ ...edge })),
       structuralParents: this.#structuralParents.map((edge) => ({ ...edge }))
@@ -210,10 +220,11 @@ export class BlockGraphManager implements IBlockGraphManager {
     return this.#blocks.has(blockId) ? cloneBlock(this.#blocks.get(blockId)!) : undefined;
   }
 
-  addBlock(block: SemanticBlock): void {
-    assertBlock(block);
+  addBlock(block: AddSemanticBlockInput): void {
+    const normalized = normalizedBlock(block);
+    assertBlock(normalized);
     if (this.#blocks.has(block.id)) throw new AppError("BLOCK_ALREADY_EXISTS", `Block already exists: ${block.id}`);
-    const copy = normalizedBlock(block);
+    const copy = normalized;
     this.#blocks.set(block.id, copy);
     this.#blockEntries.push(copy);
   }
@@ -296,11 +307,12 @@ export class BlockGraphManager implements IBlockGraphManager {
     return { status: "valid", parentId };
   }
 
-  addUserBlock(block: SemanticBlock): void {
+  addUserBlock(block: AddSemanticBlockInput): void {
     const input: CreateUserBlockInput = {
       fileId: block.fileId ?? "",
       range: block.range ?? { start: -1, end: -1 },
       role: block.role ?? block.type,
+      ...(block.kind === undefined ? {} : { kind: block.kind }),
       ...(block.name === undefined ? {} : { name: block.name }),
       ...(block.label === undefined ? {} : { label: block.label }),
       ...(block.source === undefined ? {} : { source: block.source })
@@ -331,6 +343,7 @@ export class BlockGraphManager implements IBlockGraphManager {
     for (const descriptor of descriptors) {
       if (descriptor.fileId !== fileId || !descriptor.transientId.trim() || transientIds.has(descriptor.transientId)
         || !descriptor.role.trim() || !descriptor.fingerprint.trim()
+        || (descriptor.kind !== "structural" && descriptor.kind !== "content")
         || !Number.isInteger(descriptor.range.start) || !Number.isInteger(descriptor.range.end)
         || descriptor.range.start < 0 || descriptor.range.end <= descriptor.range.start) {
         throw new AppError("GRAPH_SNAPSHOT_INVALID", "Parser reconciliation contains an invalid or duplicate block descriptor");
@@ -388,6 +401,7 @@ export class BlockGraphManager implements IBlockGraphManager {
       };
       const common: Omit<SemanticBlock, "id"> = {
         type: descriptor.role,
+        kind: descriptor.kind,
         role: descriptor.role,
         origin: descriptor.origin,
         fileId,
@@ -709,6 +723,18 @@ export class BlockGraphManager implements IBlockGraphManager {
       diagnostics.push({ type: "dependency-cycle", severity: "warning", blockIds: cycle.blockIds, message: `Blocks ${cycle.blockIds.join(", ")} form a logical dependency cycle.` });
     }
 
+    for (const warning of this.validateStructure()) {
+      diagnostics.push({
+        type: warning.code === "CONTENT_BLOCK_HAS_CHILDREN" ? "content-block-has-children" : "unknown-block-kind",
+        severity: warning.severity,
+        blockIds: [warning.blockId, ...(warning.details?.childIds ?? [])],
+        blockId: warning.blockId,
+        code: warning.code,
+        ...(warning.details === undefined ? {} : { details: warning.details }),
+        message: warning.message
+      });
+    }
+
     for (const blockId of sorted(this.#blocks.keys())) {
       for (const overlap of this.findStructuralOverlapsInPrerequisites(blockId)) {
         diagnostics.push({
@@ -730,6 +756,22 @@ export class BlockGraphManager implements IBlockGraphManager {
       }
     }
     return diagnostics;
+  }
+
+  validateStructure(): StructureWarning[] {
+    const warnings: StructureWarning[] = [];
+    for (const block of this.#blockEntries) {
+      const type = block.role ?? block.type;
+      if (!isKnownBlockType(type)) {
+        warnings.push({ code: "UNKNOWN_BLOCK_KIND", severity: "info", blockId: block.id, message: `Block type "${type}" is not in the default kind catalog; it is treated as structural.`, details: { type } });
+      }
+      if (block.kind !== "content") continue;
+      const childIds = sorted(this.#structuralParents.filter((edge) => edge.parent === block.id && this.#blocks.has(edge.child)).map((edge) => edge.child));
+      if (childIds.length > 0) {
+        warnings.push({ code: "CONTENT_BLOCK_HAS_CHILDREN", severity: "warning", blockId: block.id, message: "Content blocks should normally be leaf blocks.", details: { childCount: childIds.length, childIds } });
+      }
+    }
+    return warnings;
   }
 
   #requireBlock(blockId: BlockId): SemanticBlock {

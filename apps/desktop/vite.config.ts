@@ -16,6 +16,9 @@ export default defineConfig({
   build: {
     outDir: "../../dist/renderer",
     emptyOutDir: true,
-    target: "es2022"
+    target: "es2022",
+    // The editor, PDF.js, KaTeX, and language services are intentionally bundled
+    // locally for offline desktop use; 5 MB is an acceptable warning threshold.
+    chunkSizeWarningLimit: 6000
   }
 });
