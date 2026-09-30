@@ -94,6 +94,9 @@ export interface PreferenceValues {
   aiModel: string;
   /** Empty delegates model selection to Copilot's default model. */
   aiCopilotModel: string;
+  /** Empty uses the current model's advertised default reasoning effort. */
+  aiReasoningEffort: string;
+  aiCopilotReasoningEffort: string;
   aiDefaultMode: "chat" | "codex";
   aiIncludeCurrentFile: boolean;
   fontSize: number;
@@ -123,7 +126,7 @@ export interface PreferenceValues {
 }
 export type PreferenceKey = keyof PreferenceValues;
 export const preferenceDefaults: PreferenceValues = {
-  locale: "en", theme: "light", themeDirectory: "", aiCodexExecutable: "", aiModel: "", aiCopilotModel: "", aiDefaultMode: "chat", aiIncludeCurrentFile: false, fontSize: 15, tabSize: 2, wordWrap: true,
+  locale: "en", theme: "light", themeDirectory: "", aiCodexExecutable: "", aiModel: "", aiCopilotModel: "", aiReasoningEffort: "", aiCopilotReasoningEffort: "", aiDefaultMode: "chat", aiIncludeCurrentFile: false, fontSize: 15, tabSize: 2, wordWrap: true,
   autoSave: "off", hideBuildArtifacts: true, documentWordCompletion: true, autoPairSymbols: true, autoEnvironmentLabels: true, confirmPreviewEdits: true, warnIncompatibleEnvironmentConversion: true, visibleFilterGroups: ["blockType", "location", "file", "properties"], referenceLinkModifier: "ctrl", spellCheckMode: "auto", spellCheckLanguage: "en-US", spellCheckActiveLanguages: ["en-US"], maximize: true, restoreProject: false,
   lastProject: "", engine: "pdflatex", keybindings: {}, environments: [], layout: {}, images: defaultImagePreferences, tables: defaultTablePreferences
 };
@@ -147,6 +150,7 @@ export function validPreference(key: string, value: unknown): boolean {
     case "spellCheckActiveLanguages": return Array.isArray(value) && value.every((item) => typeof item === "string" && /^[A-Za-z]{2,3}(?:[-_][A-Za-z0-9]{2,8})?$/.test(item));
     case "themeDirectory": case "aiCodexExecutable": case "lastProject": return typeof value === "string";
     case "aiModel": case "aiCopilotModel": return typeof value === "string" && value.length <= 160;
+    case "aiReasoningEffort": case "aiCopilotReasoningEffort": return typeof value === "string" && (value === "" || /^[a-z][a-z0-9_-]{0,31}$/.test(value));
     case "visibleFilterGroups": return Array.isArray(value) && value.every((item) => ["blockType", "location", "file", "properties"].includes(String(item)));
     case "keybindings": return !!value && typeof value === "object" && !Array.isArray(value) && Object.values(value).every((v) => typeof v === "string");
     case "environments": return Array.isArray(value) && value.every((entry) => {

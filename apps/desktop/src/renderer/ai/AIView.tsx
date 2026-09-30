@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import type { AIChangeSet, AIConversation, AIContextSnapshotFile, AIStatus, AIModelOption, AIMode } from "@latex-editor/contracts";
 import { t } from "../i18n/index.js";
 import { useSettings } from "../settings/service.js";
+import { ConversationPicker } from "./ConversationPicker.js";
 import "./ai.css";
 
 type Props = {
@@ -34,13 +35,24 @@ export function AIView(props: Props) {
   const [includeSelection, setIncludeSelection] = useState(Boolean(props.selectedText));
   const [decisions, setDecisions] = useState<Record<string, "pending" | "accepted" | "rejected">>({});
   const [lastApplied, setLastApplied] = useState<AIChangeSet>();
+  const [historyDeleting, setHistoryDeleting] = useState(false);
+  const snapshotRef = useRef(snapshot);
+  snapshotRef.current = snapshot;
   const activeIdRef = useRef(activeId);
   const transcriptRef = useRef<HTMLDivElement>(null);
   const followTranscriptRef = useRef(true);
   activeIdRef.current = activeId;
   const activeConversation = snapshot.conversations.find((item) => item.id === activeId);
   const activeMode = activeConversation?.mode ?? mode;
+  const modeConversations = useMemo(() => snapshot.conversations.filter((item) => item.mode === activeMode), [snapshot.conversations, activeMode]);
   const activeStatus = activeMode === "chat" ? copilotStatus : status;
+  const effortKey = activeMode === "chat" ? "aiCopilotReasoningEffort" : "aiReasoningEffort";
+  const selectedModelId = preferences.global(activeMode === "chat" ? "aiCopilotModel" : "aiModel");
+  const selectedModel = selectedModelId ? models.find((model) => model.id === selectedModelId) : models.find((model) => model.isDefault);
+  const efforts = selectedModel?.supportedReasoningEfforts ?? [];
+  const preferredEffort = preferences.global(effortKey);
+  const selectedEffort = efforts.some((option) => option.effort === preferredEffort) ? preferredEffort : "";
+  const effortLabel = (effort: string) => { const label = t(`ai.effort.${effort}`); return label === `ai.effort.${effort}` ? effort : label; };
   const activeChanges = useMemo(() => snapshot.changeSets.filter((item) => item.conversationId === activeId && (item.status === "pending" || item.status === "partially_accepted")), [snapshot.changeSets, activeId]);
   const latestMessageContent = activeConversation?.messages[activeConversation.messages.length - 1]?.content;
 
@@ -86,6 +98,7 @@ export function AIView(props: Props) {
     if (!api || activeStatus?.auth !== "signed_in") return;
     let active = true;
     setModelsLoading(true);
+    setModels([]);
     const copilot = activeMode === "chat";
     void (copilot ? api.copilotModels() : api.models()).then((available) => {
       if (!active) return;
@@ -209,21 +222,29 @@ export function AIView(props: Props) {
     if (resolved) setSnapshot((current) => ({ ...current, changeSets: current.changeSets.map((item) => item.id === resolved.id ? resolved : item) }));
   };
   const undoLastApply = () => { if (lastApplied) window.dispatchEvent(new CustomEvent("texweave:ai-undo", { detail: lastApplied })); };
-  const removeConversation = async () => {
-    if (!api || !activeConversation || !window.confirm(t("ai.confirmClearChat"))) return;
+  const removeConversations = async (ids: string[]) => {
+    if (!api || historyDeleting) return;
+    const removed = new Set<string>();
+    setHistoryDeleting(true);
     try {
-      await api.removeConversation(activeConversation.id);
-      const conversations = snapshot.conversations.filter((item) => item.id !== activeConversation.id);
-      setSnapshot((current) => ({ conversations, changeSets: current.changeSets.filter((item) => item.conversationId !== activeConversation.id) }));
-      setActiveId(conversations.find((item) => item.mode === activeMode)?.id);
-    } catch (reason) { setError(messageOf(reason)); }
+      for (const id of ids) { await api.removeConversation(id); removed.add(id); }
+    } finally {
+      // Prune only confirmed deletions from the latest state, including when a
+      // later deletion fails or a streaming update arrives during this batch.
+      setSnapshot((current) => ({ conversations: current.conversations.filter((item) => !removed.has(item.id)), changeSets: current.changeSets.filter((item) => !removed.has(item.conversationId)) }));
+      if (activeIdRef.current && removed.has(activeIdRef.current)) {
+        setActiveId(snapshotRef.current.conversations.find((item) => !removed.has(item.id) && item.mode === activeMode)?.id);
+        setMode(activeMode); setDraft("");
+      }
+      setHistoryDeleting(false);
+    }
   };
 
   if (!api) return null;
 
   return <section className="generic-sidebar ai-sidebar">
     <header className="ai-sidebar-heading"><div><span className="ai-kicker">TEXWEAVE AI</span><h2>{t("ai.title")}</h2></div><span className={`ai-status-dot ${activeStatus?.auth === "signed_in" ? "ready" : ""}`} title={t(activeStatus?.auth === "signed_in" ? "ai.signedIn" : "ai.disconnected")}/></header>
-    <div className="ai-mode-switch" role="tablist"><button role="tab" aria-selected={activeMode === "chat"} className={activeMode === "chat" ? "active" : ""} onClick={() => void switchMode("chat")}>{t("ai.copilot")}</button><button role="tab" aria-selected={activeMode === "codex"} className={activeMode === "codex" ? "active" : ""} onClick={() => void switchMode("codex")}>{t("ai.codex")}</button></div>
+    <div className="ai-mode-switch" role="tablist"><button role="tab" aria-selected={activeMode === "chat"} className={activeMode === "chat" ? "active" : ""} disabled={busy || historyDeleting || Boolean(taskId)} onClick={() => void switchMode("chat")}>{t("ai.copilot")}</button><button role="tab" aria-selected={activeMode === "codex"} className={activeMode === "codex" ? "active" : ""} disabled={busy || historyDeleting || Boolean(taskId)} onClick={() => void switchMode("codex")}>{t("ai.codex")}</button></div>
     {!activeStatus && <div className="ai-connect-scroll"><p>{t("ai.checking")}</p></div>}
     {activeStatus && activeStatus.auth !== "signed_in" && <div className="ai-connect-scroll"><div className="ai-connect-card">
       <strong>{activeMode === "chat" ? t(activeStatus.process === "not_detected" ? "ai.copilotRequired" : "ai.copilotConnectTitle") : t(activeStatus.process === "not_detected" ? "ai.codexRequired" : activeStatus.process === "crashed" ? "ai.connectionFailed" : "ai.connectTitle")}</strong>
@@ -231,7 +252,7 @@ export function AIView(props: Props) {
       {activeMode === "codex" && activeStatus.executablePath && <small className="ai-cli-path" title={activeStatus.executablePath}>{t("ai.cliDetected")}<br/>{activeStatus.executablePath}</small>}
       {activeMode === "codex" && (activeStatus.process === "not_detected" || activeStatus.process === "crashed") && <label className="ai-executable-field">{t("ai.executablePath")}<input value={executable} onChange={(event) => setExecutable(event.target.value)} placeholder="codex.exe" spellCheck={false}/><button disabled={busy || !executable.trim()} onClick={() => void runStatus(() => api.setExecutable(executable.trim()), true, "codex")}>{t("ai.savePath")}</button></label>}
       {activeMode === "chat" && activeStatus.process === "not_detected" && <button className="primary-button" disabled={busy} onClick={() => void runStatus(() => api.installCopilot(), false, "chat")}>{t(busy ? "ai.installingCopilot" : "ai.installCopilot")}</button>}
-      {activeMode === "chat" && activeStatus.process === "running" && <button className="primary-button" disabled={busy || activeStatus.auth === "authenticating"} onClick={() => void runStatus(() => api.loginCopilot(), false, "chat")}>{t(activeStatus.auth === "authenticating" ? "ai.signingIn" : "ai.signInGitHub")}</button>}
+      {activeMode === "chat" && activeStatus.executablePath && <button className="primary-button" disabled={busy || activeStatus.auth === "authenticating"} onClick={() => void runStatus(() => api.loginCopilot(), false, "chat")}>{t(activeStatus.auth === "authenticating" ? "ai.signingIn" : "ai.signInGitHub")}</button>}
       {activeMode === "codex" && activeStatus.process === "not_detected" && <button className="primary-button" disabled={busy} onClick={() => void runStatus(() => api.install(), true, "codex")}>{t(busy ? "ai.installing" : "ai.installCodex")}</button>}
       {activeMode === "codex" && activeStatus.process !== "not_detected" && <button className="primary-button" disabled={busy || activeStatus.process === "starting" || activeStatus.auth === "authenticating"} onClick={() => void runStatus(() => api.login(), false, "codex")}>{t(activeStatus.auth === "authenticating" ? "ai.signingIn" : "ai.signIn")}</button>}
       <button className="secondary-button ai-recheck" disabled={busy || (activeMode === "codex" && activeStatus.auth === "authenticating")} onClick={() => void runStatus(() => activeMode === "chat" ? api.copilotStatus() : api.detect(), false, activeMode)}>{t("ai.detectAgain")}</button>
@@ -240,7 +261,8 @@ export function AIView(props: Props) {
       <div className="ai-workspace-controls">
         <div className="ai-account-line"><span className="ai-avatar" aria-hidden="true">{activeMode === "chat" ? "GH" : "C"}</span><span className="ai-account-name" title={activeStatus.accountLabel ?? t("ai.signedIn")}>{activeStatus.accountLabel ?? t(activeMode === "chat" ? "ai.copilotAccount" : "ai.chatgptAccount")}</span><button className="ai-quiet-action" onClick={props.onOpenSettings}>{t("ai.settings")}</button><button className="ai-quiet-action" disabled={busy} onClick={() => void runStatus(() => activeMode === "chat" ? api.logoutCopilot() : api.logout(), false, activeMode)}>{t("ai.signOut")}</button></div>
         <label className="ai-model-picker"><span>{t("ai.model")}</span><select aria-label={t("ai.model")} value={preferences.global(activeMode === "chat" ? "aiCopilotModel" : "aiModel")} disabled={modelsLoading || Boolean(taskId)} onChange={(event) => void preferences.set(activeMode === "chat" ? "aiCopilotModel" : "aiModel", event.target.value)}><option value="">{t("ai.defaultModel")}</option>{models.map((model) => <option key={model.id} value={model.id}>{model.name}{model.isDefault ? ` (${t("ai.recommended")})` : ""}</option>)}</select>{modelsLoading && <small>{t("ai.loadingModels")}</small>}</label>
-        <div className="ai-conversation-toolbar"><select aria-label={t("ai.recentChats")} value={activeId ?? ""} onChange={(event) => { const selected = snapshot.conversations.find((item) => item.id === event.target.value); setActiveId(selected?.id); if (selected) setMode(selected.mode); }}><option value="" disabled>{t("ai.recentChats")}</option>{snapshot.conversations.filter((item) => item.mode === activeMode).map((item) => <option key={item.id} value={item.id}>{item.title}</option>)}</select><button aria-label={t("ai.newChat")} title={t("ai.newChat")} onClick={() => void newConversation(activeMode)}>+</button><button aria-label={t("ai.clearCurrentChat")} disabled={!activeConversation || Boolean(taskId)} onClick={() => void removeConversation()} title={t("ai.clearCurrentChat")}>×</button></div>
+        <label className="ai-model-picker ai-effort-picker"><span>{t("ai.reasoningEffort")}</span><select aria-label={t("ai.reasoningEffort")} title={t(efforts.length ? "ai.reasoningHint" : "ai.reasoningUnavailable")} value={selectedEffort} disabled={modelsLoading || Boolean(taskId) || !efforts.length} onChange={(event) => void preferences.set(effortKey, event.target.value)}><option value="">{t("ai.modelDefault")}{selectedModel?.defaultReasoningEffort && efforts.length ? ` (${effortLabel(selectedModel.defaultReasoningEffort)})` : ""}</option>{efforts.map((option) => <option key={option.effort} value={option.effort}>{effortLabel(option.effort)}</option>)}</select>{!modelsLoading && !efforts.length && <small>{t("ai.reasoningUnavailable")}</small>}</label>
+        <ConversationPicker key={`${props.projectId}:${activeMode}`} conversations={modeConversations} activeId={activeId} disabled={busy || historyDeleting || Boolean(taskId)} protectedId={busy || taskId ? activeId : undefined} onSelect={(id) => { setActiveId(id); setMode(activeMode); }} onNew={() => void newConversation(activeMode)} onDelete={removeConversations}/>
       </div>
       <div ref={transcriptRef} className="ai-conversation-body" aria-live="polite" onScroll={(event) => { const element = event.currentTarget; followTranscriptRef.current = element.scrollHeight - element.scrollTop - element.clientHeight < 80; }}>
         <div className="ai-message-list">{activeConversation?.messages.map((message) => <article key={message.id} className={`ai-message ${message.role} ${message.status ?? ""}`}><small>{message.role === "user" ? t("ai.you") : message.role === "assistant" ? t("ai.assistant") : message.role}</small><div className="ai-message-content">{message.content || (message.status === "streaming" ? t("ai.thinking") : "")}</div></article>)}{!activeConversation?.messages.length && <p className="ai-empty-chat">{t(activeMode === "chat" ? "ai.chatReady" : "ai.codexReady")}</p>}</div>

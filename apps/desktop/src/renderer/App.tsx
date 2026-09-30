@@ -5,7 +5,7 @@ import { Workbench } from "./workbench/Workbench.js";
 import { useSettings, settings } from "./settings/service.js";
 import { SettingsDialog } from "./settings/SettingsDialog.js";
 import { commands, installShortcuts } from "./settings/commands.js";
-import { DEFAULT_ENVIRONMENTS } from "./preview/environments.js";
+import { DEFAULT_ENVIRONMENTS, includeNewBuiltInEnvironments } from "./preview/environments.js";
 import type { EnvironmentDefinition } from "./preview/types.js";
 import { ThemeRuntime } from "./themes/runtime.js";
 import { ReferenceLibraryPage } from "./references/ReferenceLibraryPage.js";
@@ -227,7 +227,7 @@ export function App() {
   const [compilerSettings, setCompilerSettings] = useState(false);
   const [styleResources, setStyleResources] = useState<StyleResource[]>([]);
   const configured = store.global("environments") as EnvironmentDefinition[];
-  const environments = configured.length ? configured : DEFAULT_ENVIRONMENTS;
+  const environments = configured.length ? includeNewBuiltInEnvironments(configured) : DEFAULT_ENVIRONMENTS;
   const refreshStyleResources = async () => { const next = await window.latexEditor!.styleResources.list(); setStyleResources(next); };
   const openProject = async (project: Project) => {
     const opened = await window.latexEditor!.projects.open(project.id);

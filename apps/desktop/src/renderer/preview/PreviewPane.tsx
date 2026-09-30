@@ -186,7 +186,7 @@ async function writePreviewClipboard(value: string): Promise<void> {
 function inlineLatex(value: string | undefined, mathContext: MathContext, searchQuery: SearchQuery = defaultInlineSearch, active = false, sourceStartOffset?: number): ReactNode[] {
   if (!value) return [];
   const clean = value.replace(/^\s*%.*$/gm, "").replace(/%[^\n]*/g, "").trim();
-  const pattern = /\$\$([\s\S]*?)\$\$|\$(?!\$)([^$\n]+?)\$|\\\(([\s\S]*?)\\\)|\\\[([\s\S]*?)\\\]|\\(textbf|textit|emph|texttt)\{([^{}]*)\}|\\([A-Za-z]*cite[A-Za-z]*)\{([^{}]*)\}|\\([A-Za-z]*ref[A-Za-z]*)\{([^{}]*)\}/g;
+  const pattern = /\$\$([\s\S]*?)\$\$|\$(?!\$)([^$\n]+?)\$|\\\(([\s\S]*?)\\\)|\\\[([\s\S]*?)\\\]|\\(textbf|textit|emph|texttt)\{([^{}]*)\}|\\([A-Za-z]*cite[A-Za-z]*)\{([^{}]*)\}|\\([A-Za-z]*ref[A-Za-z]*)\{([^{}]*)\}|\\(IF|ELSE|ELSIF|ENDIF|FOR|ENDFOR|WHILE|ENDWHILE|REPEAT|UNTIL|STATE|RETURN|PRINT|COMMENT|REQUIRE|ENSURE|PROCEDURE|ENDPROCEDURE|FUNCTION|ENDFUNCTION|INPUT|OUTPUT|If|Else|ElsIf|EndIf|For|EndFor|While|EndWhile|Repeat|Until|State|Return|Print|Comment|Require|Ensure|Procedure|EndProcedure|Function|EndFunction|Input|Output)(?:[ \t]*\{([^{}]*)\})?/g;
   const result: ReactNode[] = [];
   let cursor = 0;
   let index = 0;
@@ -202,7 +202,13 @@ function inlineLatex(value: string | undefined, mathContext: MathContext, search
     else if (match[5] === "texttt") result.push(sourceMapped(<code key={index++}>{highlightedText(match[6] ?? "", searchQuery, active, index++)}</code>, base === undefined ? undefined : base + start + match[0].indexOf(match[6] ?? ""), base === undefined ? undefined : base + start + match[0].indexOf(match[6] ?? "") + (match[6]?.length ?? 0)));
     else if (match[5]) result.push(sourceMapped(<em key={index++}>{highlightedText(match[6] ?? "", searchQuery, active, index++)}</em>, base === undefined ? undefined : base + start + match[0].indexOf(match[6] ?? ""), base === undefined ? undefined : base + start + match[0].indexOf(match[6] ?? "") + (match[6]?.length ?? 0)));
     else if (match[7]) result.push(sourceMapped(<span className="preview-citation" key={index++} title={`\\${match[7]}`}>[{match[8]}]</span>, base === undefined ? undefined : base + start, base === undefined ? undefined : base + start + match[0].length));
-    else result.push(sourceMapped(<button type="button" className="preview-reference" data-reference={match[10]} key={index++} title={`\\${match[9]}`}>[{match[10]}]</button>, base === undefined ? undefined : base + start, base === undefined ? undefined : base + start + match[0].length));
+    else if (match[9]) result.push(sourceMapped(<button type="button" className="preview-reference" data-reference={match[10]} key={index++} title={`\\${match[9]}`}>[{match[10]}]</button>, base === undefined ? undefined : base + start, base === undefined ? undefined : base + start + match[0].length));
+    else if (match[11]) {
+      const command = match[11].toUpperCase();
+      const argument = match[12];
+      result.push(sourceMapped(<span className="preview-algorithm-command" data-command={command} key={index++}><strong>{command}</strong>{argument !== undefined && <span className="preview-algorithm-argument">{inlineLatex(argument, mathContext, searchQuery, active)}</span>}</span>, base === undefined ? undefined : base + start, base === undefined ? undefined : base + start + match[0].length));
+    }
+    else result.push(sourceMapped(highlightedText(plainLatex(clean.slice(start, start + match[0].length)), searchQuery, active, index++), base === undefined ? undefined : base + start, base === undefined ? undefined : base + start + match[0].length));
     cursor = start + match[0].length;
   }
   if (cursor < clean.length) {

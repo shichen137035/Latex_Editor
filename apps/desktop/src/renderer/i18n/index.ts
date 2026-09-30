@@ -13,6 +13,42 @@ const catalogs: Record<Locale, Record<string, string>> = {
   ko: korean as Record<string, string>, fr: french as Record<string, string>
 };
 for (const catalog of Object.values(catalogs)) catalog["ai.chat"] = "Copilot";
+const historyMessages: Record<Locale, string[]> = {
+  en: ["Conversations", "Close", "Search chats…", "No conversations found", "Today", "Yesterday", "Last 7 days", "Earlier", "Select {{title}}", "{{count}} messages", "Delete {{title}}", "Delete {{count}} conversations and their local AI changes?", "Cancel", "Deleting…", "Delete", "Select visible", "Delete selected ({{count}})"],
+  ja: ["会話の管理", "閉じる", "会話を検索…", "会話がありません", "今日", "昨日", "過去7日間", "それ以前", "{{title}}を選択", "{{count}}件のメッセージ", "{{title}}を削除", "{{count}}件の会話とローカルのAI変更を削除しますか？", "キャンセル", "削除中…", "削除", "表示中を選択", "選択を削除（{{count}}）"],
+  "zh-CN": ["对话管理", "关闭", "搜索对话…", "没有找到对话", "今天", "昨天", "最近7天", "更早", "选择{{title}}", "{{count}}条消息", "删除{{title}}", "删除这{{count}}个对话及其本地AI修改记录？", "取消", "正在删除…", "删除", "选择当前列表", "删除所选（{{count}}）"],
+  "zh-TW": ["對話管理", "關閉", "搜尋對話…", "找不到對話", "今天", "昨天", "最近7天", "更早", "選取{{title}}", "{{count}}則訊息", "刪除{{title}}", "刪除這{{count}}個對話及其本機AI修改記錄？", "取消", "正在刪除…", "刪除", "選取目前清單", "刪除所選（{{count}}）"],
+  ko: ["대화 관리", "닫기", "대화 검색…", "대화가 없습니다", "오늘", "어제", "최근 7일", "이전", "{{title}} 선택", "메시지 {{count}}개", "{{title}} 삭제", "대화 {{count}}개와 로컬 AI 변경 기록을 삭제할까요?", "취소", "삭제 중…", "삭제", "표시된 항목 선택", "선택 삭제 ({{count}})"],
+  fr: ["Conversations", "Fermer", "Rechercher…", "Aucune conversation", "Aujourd’hui", "Hier", "7 derniers jours", "Plus anciennes", "Sélectionner {{title}}", "{{count}} messages", "Supprimer {{title}}", "Supprimer ces {{count}} conversations et leurs modifications IA locales ?", "Annuler", "Suppression…", "Supprimer", "Sélectionner la liste", "Supprimer la sélection ({{count}})"]
+};
+const historyKeys = ["manage", "close", "search", "empty", "today", "yesterday", "week", "older", "select", "messages", "deleteOne", "confirm", "cancel", "deleting", "delete", "selectAll", "deleteSelected"];
+for (const [language, labels] of Object.entries(historyMessages)) {
+  for (const [index, key] of historyKeys.entries()) catalogs[language as Locale][`ai.history.${key}`] = labels[index]!;
+}
+const reasoningMessages: Record<Locale, string[]> = {
+  en: ["Thinking depth", "Model default", "Applies to the next message.", "Choose a model that supports thinking depth.", "None", "Minimal", "Low", "Medium", "High", "Extra high", "Maximum", "Ultra"],
+  ja: ["思考の深さ", "モデルの既定値", "次のメッセージから適用されます。", "思考の深さを設定できるモデルを選択してください。", "なし", "最小", "低", "中", "高", "非常に高い", "最大", "超高"],
+  "zh-CN": ["思考深度", "模型默认", "从下一条消息开始生效。", "请选择支持调节思考深度的模型。", "无", "极低", "低", "中", "高", "极高", "最大", "超高"],
+  "zh-TW": ["思考深度", "模型預設", "從下一則訊息開始生效。", "請選擇支援調整思考深度的模型。", "無", "極低", "低", "中", "高", "極高", "最大", "超高"],
+  ko: ["사고 깊이", "모델 기본값", "다음 메시지부터 적용됩니다.", "사고 깊이 조절을 지원하는 모델을 선택하세요.", "없음", "최소", "낮음", "중간", "높음", "매우 높음", "최대", "초고"],
+  fr: ["Profondeur de réflexion", "Valeur du modèle", "S’applique au prochain message.", "Choisissez un modèle proposant ce réglage.", "Aucune", "Minimale", "Faible", "Moyenne", "Élevée", "Très élevée", "Maximale", "Ultra"]
+};
+const reasoningKeys = ["ai.reasoningEffort", "ai.modelDefault", "ai.reasoningHint", "ai.reasoningUnavailable", "ai.effort.none", "ai.effort.minimal", "ai.effort.low", "ai.effort.medium", "ai.effort.high", "ai.effort.xhigh", "ai.effort.max", "ai.effort.ultra"];
+for (const [language, labels] of Object.entries(reasoningMessages)) {
+  for (const [index, key] of reasoningKeys.entries()) catalogs[language as Locale][key] = labels[index]!;
+}
+const skillMessages: Record<Locale, string[]> = {
+  en: ["AI skills", "Project skills", "Manage the instructions AI uses for LaTeX projects. Built-in skills are copied to your user data when edited.", "New skill", "No skills are available.", "Skill folder name", "Keep the YAML front matter with name and description; the folder name uses lowercase letters, numbers, and hyphens.", "Skill instructions (SKILL.md)", "Cancel", "Saving…", "Save skill", "Edit", "Select a skill to view or edit its instructions.", "Built-in", "Custom", "Customized"],
+  ja: ["AI スキル", "プロジェクトスキル", "LaTeX プロジェクトで AI が使う指示を管理します。組み込みスキルを編集するとユーザーデータにコピーして保存します。", "新しいスキル", "利用できるスキルはありません。", "スキルフォルダー名", "name と description を含む YAML ヘッダーを残してください。フォルダー名には小文字、数字、ハイフンを使います。", "スキルの指示 (SKILL.md)", "キャンセル", "保存中…", "スキルを保存", "編集", "スキルを選択して指示を表示または編集します。", "組み込み", "カスタム", "編集済み"],
+  "zh-CN": ["AI 技能", "项目技能", "管理 AI 在 LaTeX 项目中使用的指引。编辑内置技能时，会将副本保存到用户数据目录。", "新建技能", "暂无可用技能。", "技能文件夹名称", "请保留包含 name 和 description 的 YAML 头部；文件夹名使用小写字母、数字和连字符。", "技能说明（SKILL.md）", "取消", "保存中…", "保存技能", "编辑", "选择一项技能以查看或编辑说明。", "内置", "自定义", "已自定义"],
+  "zh-TW": ["AI 技能", "專案技能", "管理 AI 在 LaTeX 專案中使用的指引。編輯內建技能時，會將副本儲存到使用者資料目錄。", "新增技能", "目前沒有可用技能。", "技能資料夾名稱", "請保留包含 name 與 description 的 YAML 標頭；資料夾名稱使用小寫字母、數字與連字號。", "技能說明（SKILL.md）", "取消", "儲存中…", "儲存技能", "編輯", "選擇一項技能以檢視或編輯說明。", "內建", "自訂", "已自訂"],
+  ko: ["AI 스킬", "프로젝트 스킬", "LaTeX 프로젝트에서 AI가 사용하는 지침을 관리합니다. 기본 제공 스킬을 편집하면 사용자 데이터 폴더에 복사해 저장합니다.", "새 스킬", "사용 가능한 스킬이 없습니다.", "스킬 폴더 이름", "name과 description이 있는 YAML 머리말을 유지하세요. 폴더 이름에는 소문자, 숫자, 하이픈을 사용합니다.", "스킬 지침 (SKILL.md)", "취소", "저장 중…", "스킬 저장", "편집", "지침을 보거나 편집할 스킬을 선택하세요.", "기본 제공", "사용자 지정", "수정됨"],
+  fr: ["Compétences IA", "Compétences de projet", "Gérez les instructions utilisées par l’IA dans les projets LaTeX. Une compétence intégrée modifiée est copiée dans les données utilisateur.", "Nouvelle compétence", "Aucune compétence disponible.", "Nom du dossier", "Conservez l’en-tête YAML avec name et description ; utilisez des minuscules, chiffres et tirets pour le dossier.", "Instructions (SKILL.md)", "Annuler", "Enregistrement…", "Enregistrer", "Modifier", "Sélectionnez une compétence pour consulter ou modifier ses instructions.", "Intégrée", "Personnalisée", "Modifiée"]
+};
+const skillKeys = ["settings.aiSkills", "settings.aiSkillsTitle", "settings.aiSkillsDescription", "settings.aiSkillsNew", "settings.aiSkillsEmpty", "settings.aiSkillsName", "settings.aiSkillsFormatHint", "settings.aiSkillsContent", "settings.aiSkillsCancel", "settings.aiSkillsSaving", "settings.aiSkillsSave", "settings.aiSkillsEdit", "settings.aiSkillsSelect", "settings.aiSkillSource.built-in", "settings.aiSkillSource.custom", "settings.aiSkillSource.customized"];
+for (const [language, labels] of Object.entries(skillMessages)) {
+  for (const [index, key] of skillKeys.entries()) catalogs[language as Locale][key] = labels[index]!;
+}
 Object.assign(catalogs.ja, {
   "ai.copilot": "Copilot", "ai.copilotAccount": "GitHub Copilot アカウント",
   "ai.installCopilot": "TeXWeave 用 GitHub Copilot CLI をインストール", "ai.installingCopilot": "GitHub Copilot CLI をインストール中…",

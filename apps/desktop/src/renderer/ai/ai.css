@@ -23,6 +23,40 @@
 .ai-conversation-toolbar { display: flex; gap: 6px; margin: 0; }
 .ai-conversation-toolbar select { min-width: 0; flex: 1; height: 34px; padding: 0 9px; border: 1px solid var(--color-border); border-radius: 7px; color: var(--color-text-primary); background: var(--color-bg-panel); font-size: 11px; }
 .ai-conversation-toolbar button { width: 34px; height: 34px; border: 1px solid var(--color-border); border-radius: 7px; color: var(--color-primary-strong); background: var(--color-bg-panel); font-size: 17px; }
+.ai-conversation-toolbar button:disabled { opacity: .45; cursor: default; }
+.ai-conversation-toolbar .ai-history-trigger { flex: 1; min-width: 0; width: auto; display: flex; align-items: center; gap: 8px; padding: 0 10px; color: var(--color-text-primary); font-size: 11px; text-align: left; }
+.ai-history-trigger > span:first-child { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ai-history-trigger small { border-radius: 12px; padding: 2px 6px; background: color-mix(in srgb, var(--color-primary) 9%, var(--color-bg-panel)); color: var(--color-text-muted); font-size: 10px; }
+.ai-history-panel { position: fixed; z-index: 1000; display: flex; flex-direction: column; overflow: hidden; box-sizing: border-box; border: 1px solid var(--color-border); border-radius: 12px; color: var(--color-text-primary); background: var(--color-bg-panel); box-shadow: 0 12px 36px color-mix(in srgb, var(--color-text-primary) 16%, transparent); font-size: 12px; }
+.ai-history-panel > header { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 8px 12px 4px; }
+.ai-history-panel > header strong { font-size: 12px; font-weight: 650; }
+.ai-history-panel button { font-family: inherit; cursor: pointer; }
+.ai-history-panel button:disabled { opacity: .4; cursor: default; }
+.ai-history-close { width: 26px; height: 26px; border: 0; border-radius: 6px; color: var(--color-text-muted); background: transparent; font-size: 18px; }
+.ai-history-search { flex: 0 0 auto; min-width: 0; margin: 4px 10px 8px; padding: 8px 10px; border: 1px solid var(--color-border); border-radius: 7px; color: var(--color-text-primary); background: var(--color-bg-subtle); font: inherit; }
+.ai-history-search::placeholder { color: var(--color-text-muted); }
+.ai-history-list { flex: 1; min-height: 0; overflow: auto; overscroll-behavior: contain; padding: 0 6px 8px; }
+.ai-history-group h3 { margin: 8px 6px 5px; color: var(--color-text-muted); font-size: 10px; font-weight: 600; }
+.ai-history-row { display: flex; align-items: center; gap: 6px; padding: 3px 6px; border-radius: 7px; }
+.ai-history-row:hover { background: var(--color-bg-subtle); }
+.ai-history-row.active { background: color-mix(in srgb, var(--color-primary) 10%, var(--color-bg-panel)); }
+.ai-history-panel input[type="checkbox"] { flex-shrink: 0; width: 13px; height: 13px; margin: 0; accent-color: var(--color-primary); cursor: pointer; }
+.ai-history-open { flex: 1; display: grid; min-width: 0; gap: 3px; padding: 6px 3px; border: 0; color: var(--color-text-primary); background: transparent; text-align: left; }
+.ai-history-open strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; font-weight: 600; }
+.ai-history-open > span { color: var(--color-text-muted); font-size: 10px; }
+.ai-history-delete { display: grid; place-items: center; flex: 0 0 28px; width: 28px; height: 28px; padding: 0; border: 0; border-radius: 6px; color: var(--color-text-muted); background: transparent; }
+.ai-history-delete:hover:not(:disabled) { color: var(--color-danger, #b54747); background: color-mix(in srgb, var(--color-danger, #b54747) 9%, transparent); }
+.ai-history-panel > footer, .ai-history-confirm { flex: 0 0 auto; padding: 9px 10px; border-top: 1px solid var(--color-border); background: var(--color-bg-subtle); }
+.ai-history-panel > footer { display: flex; flex-wrap: wrap; gap: 8px; justify-content: space-between; align-items: center; font-size: 10px; }
+.ai-history-panel > footer label { display: flex; align-items: center; gap: 6px; color: var(--color-text-secondary); }
+.ai-history-panel > footer button, .ai-history-confirm button { min-height: 28px; padding: 5px 9px; border: 0; border-radius: 6px; font-size: 11px; color: var(--color-text-secondary); background: var(--color-bg-panel); }
+.ai-history-panel .ai-history-danger { color: var(--color-danger, #b54747); background: color-mix(in srgb, var(--color-danger, #b54747) 9%, var(--color-bg-panel)); }
+.ai-history-panel .ai-history-danger:hover:not(:disabled) { background: color-mix(in srgb, var(--color-danger, #b54747) 16%, var(--color-bg-panel)); }
+.ai-history-confirm p { margin: 0 0 8px; line-height: 1.5; font-size: 11px; }
+.ai-history-confirm > div { display: flex; justify-content: flex-end; gap: 6px; }
+.ai-history-empty { margin: 16px 8px; color: var(--color-text-muted); text-align: center; font-size: 11px; }
+.ai-history-error { margin: 5px 10px; color: var(--color-danger, #b54747); font-size: 11px; overflow-wrap: anywhere; }
+.ai-history-panel button:focus-visible, .ai-history-panel input:focus-visible { outline: 2px solid var(--color-primary); outline-offset: 1px; }
 
 /* Transcript and proposed diffs scroll together; the composer never scrolls away. */
 .ai-conversation-body { min-height: 0; flex: 1 1 auto; overflow: auto; overscroll-behavior: contain; padding: 9px 14px 14px; scrollbar-gutter: stable; }

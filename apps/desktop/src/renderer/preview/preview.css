@@ -91,6 +91,14 @@
 .preview-code { overflow: auto; margin: 6px 0; padding: 15px; border-radius: 6px; color: #263849; background: #edf2f6; font: 13px/1.55 Consolas, monospace; }
 .preview-list { margin: 6px 0; padding-left: 28px; }
 .preview-list li { margin: 4px 0; padding-left: 4px; }
+.preview-block[data-environment="algorithm"] { margin-block: 12px; border-color: color-mix(in srgb, var(--block-accent) 34%, var(--color-border)); background: color-mix(in srgb, var(--block-accent) 3%, var(--color-bg-panel)); }
+.preview-block[data-environment="algorithm"] > .preview-block-header { border-bottom: 1px solid color-mix(in srgb, var(--block-accent) 20%, transparent); }
+.preview-block[data-environment="algorithmic"] { margin: 3px 8px 7px; border-inline-start-width: 2px; background: color-mix(in srgb, var(--block-accent) 3%, transparent); }
+.preview-algorithm-command { display: inline-flex; align-items: baseline; gap: .35em; margin-inline: .08em; color: var(--color-text-primary); font-family: "Space Grotesk", sans-serif; font-size: .9em; white-space: nowrap; }
+.preview-algorithm-command > strong { padding: 0 .32em; border-radius: 4px; color: var(--color-primary-strong); background: color-mix(in srgb, var(--color-primary) 11%, var(--color-bg-panel)); font-size: .82em; font-weight: 700; letter-spacing: .025em; }
+.preview-algorithm-command[data-command="ELSE"] > strong, .preview-algorithm-command[data-command="ELSIF"] > strong { color: var(--color-accent); background: color-mix(in srgb, var(--color-accent) 12%, var(--color-bg-panel)); }
+.preview-algorithm-command[data-command^="END"] > strong { color: var(--color-text-muted); background: var(--color-bg-subtle); }
+.preview-algorithm-argument { color: var(--color-text-primary); font: inherit; }
 .preview-media { min-height: 110px; display: grid; place-items: center; border: 1px dashed var(--color-border-strong); border-radius: 7px; color: var(--color-text-secondary); background: rgba(255,255,255,.68); font: 500 12px "Space Grotesk", sans-serif; }
 .preview-figure { margin: 5px 0; text-align: center; }.preview-figure figcaption { margin-top: 8px; font-size: 13px; }
 .preview-figure img,.preview-figure canvas { display:block; max-width:100%; max-height:62vh; margin:0 auto; object-fit:contain; border-radius:6px; }

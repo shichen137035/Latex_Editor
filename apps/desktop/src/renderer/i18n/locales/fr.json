@@ -201,6 +201,8 @@
   "preview.yes": "Oui (Y)",
   "preview.no": "Non (N)",
   "environment.manager": "Blocs d’environnement",
+  "environment.algorithm": "Algorithme",
+  "environment.algorithmic": "Étapes de l’algorithme",
   "environment.builtIn": "Intégré",
   "environment.customGroup": "Personnalisé",
   "environment.on": "Activé",

@@ -50,6 +50,8 @@
     { "id": "remark", "family": "remark", "match": { "kind": "latex-environment", "name": "remark" } },
     { "id": "example", "family": "example", "match": { "kind": "latex-environment", "name": "example" } },
     { "id": "proof", "family": "proof", "match": { "kind": "latex-environment", "name": "proof" } },
+    { "id": "algorithm", "family": "code", "match": { "kind": "latex-environment", "name": "algorithm" }, "behavior": { "addToOutline": true } },
+    { "id": "algorithmic", "family": "code", "match": { "kind": "latex-environment", "name": "algorithmic" }, "behavior": { "showHeader": false, "showLabel": false } },
     { "id": "equation", "family": "equation", "match": { "kind": "latex-environment", "name": "equation" }, "behavior": { "allowChildren": false } },
     { "id": "equation-star", "family": "equation", "match": { "kind": "latex-environment", "name": "equation*" }, "behavior": { "allowChildren": false } },
     { "id": "align", "family": "equation", "match": { "kind": "latex-environment", "name": "align" }, "behavior": { "allowChildren": false } },

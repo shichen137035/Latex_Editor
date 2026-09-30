@@ -5,11 +5,13 @@ import { dirname, join } from "node:path";
 import type { ChildProcessWithoutNullStreams } from "node:child_process";
 import type { AIModelOption, AIStatus } from "@latex-editor/contracts" with { "resolution-mode": "import" };
 import { findCodexExecutable, findExecutableOnPath, getManagedCodexExecutable } from "./codex-discovery.js";
-import { isWorkspacePath } from "./ai-approvals.js";
+import { isLatexCompilerCommand, isWorkspacePath } from "./ai-approvals.js";
+import { resolveReasoningEffort } from "./reasoning-effort.js";
 
 type JsonRecord = Record<string, unknown>;
 type PendingRequest = { resolve(value: unknown): void; reject(reason: Error): void; timer: NodeJS.Timeout };
 type MutableAIStatus = { auth: AIStatus["auth"]; process: AIStatus["process"]; executablePath?: string | undefined; accountLabel?: string | undefined; error?: string | undefined };
+type DynamicTool = { name: string; description: string; inputSchema: Record<string, unknown> };
 
 /** Owns a lazy Codex App Server process and keeps credentials in app user data, never in Renderer or a project. */
 export class CodexAppServer {
@@ -28,6 +30,8 @@ export class CodexAppServer {
   #eventListeners = new Set<(event: { method: string; params: JsonRecord }) => void>();
   #threadWorkspaces = new Map<string, string>();
   #fileChangePaths = new Map<string, string[]>();
+  #models: AIModelOption[] | undefined;
+  #dynamicToolHandlers = new Map<string, (arguments_: JsonRecord) => Promise<string>>();
 
   constructor(options: { userDataPath: string; executable: () => string; version: string; onStatus?: (status: AIStatus) => void; onApprovalDecision?: (event: { method: string; command?: string; approved: boolean }) => void }) {
     this.#userDataPath = options.userDataPath;
@@ -51,13 +55,19 @@ export class CodexAppServer {
         const model = asRecord(value);
         if (typeof model.model !== "string" || !model.model) continue;
         models.push({ id: model.model, name: typeof model.displayName === "string" && model.displayName ? model.displayName : model.model,
-          ...(typeof model.description === "string" && model.description ? { description: model.description } : {}), isDefault: model.isDefault === true });
+          ...(typeof model.description === "string" && model.description ? { description: model.description } : {}), isDefault: model.isDefault === true,
+          supportedReasoningEfforts: (Array.isArray(model.supportedReasoningEfforts) ? model.supportedReasoningEfforts : []).flatMap((value) => {
+            const option = asRecord(value);
+            return typeof option.reasoningEffort === "string" ? [{ effort: option.reasoningEffort, ...(typeof option.description === "string" ? { description: option.description } : {}) }] : [];
+          }),
+          ...(typeof model.defaultReasoningEffort === "string" ? { defaultReasoningEffort: model.defaultReasoningEffort } : {}) });
       }
       const next = typeof response.nextCursor === "string" && response.nextCursor ? response.nextCursor : undefined;
       if (!next || seenCursors.has(next)) break;
       seenCursors.add(next);
       cursor = next;
     } while (models.length < 500);
+    this.#models = models;
     return models;
   }
 
@@ -67,8 +77,11 @@ export class CodexAppServer {
   }
 
   /** Starts a project-editing turn in the app-owned workspace; the UI reviews its diff before applying it. */
-  async startTurn(input: { cwd: string; prompt: string; threadId?: string; mode: "chat" | "codex"; model?: string }): Promise<{ threadId: string; turnId: string }> {
+  async startTurn(input: { cwd: string; prompt: string; threadId?: string; mode: "chat" | "codex"; model?: string; reasoningEffort?: string; dynamicTools?: DynamicTool[]; toolHandlers?: Record<string, (arguments_: JsonRecord) => Promise<string>>; skills?: Array<{ name: string; path: string }> }): Promise<{ threadId: string; turnId: string }> {
     await this.#ensureStarted();
+    const models = this.#models ?? await this.listModels();
+    const model = input.model ? models.find((item) => item.id === input.model) : models.find((item) => item.isDefault);
+    const effort = resolveReasoningEffort(model, input.reasoningEffort);
     const sandbox = "workspace-write";
     const threadResult = input.threadId
       ? asRecord(await this.#request("thread/resume", { threadId: input.threadId, cwd: input.cwd }))
@@ -76,19 +89,24 @@ export class CodexAppServer {
         cwd: input.cwd,
         approvalPolicy: "on-request",
         sandbox,
-        experimentalRawEvents: false
+        experimentalRawEvents: false,
+        ...(input.dynamicTools?.length ? { dynamicTools: input.dynamicTools } : {})
       }));
     const thread = asRecord(threadResult.thread);
     const threadId = typeof thread.id === "string" ? thread.id : input.threadId;
     if (!threadId) throw new Error("Codex did not return a conversation thread id.");
     this.#threadWorkspaces.set(threadId, input.cwd);
+    for (const [name, handler] of Object.entries(input.toolHandlers ?? {})) this.#dynamicToolHandlers.set(`${threadId}:${name}`, handler);
+    const turnInput: Array<Record<string, unknown>> = [{ type: "text", text: input.prompt }];
+    for (const skill of input.skills ?? []) turnInput.push({ type: "skill", name: skill.name, path: skill.path });
     const turnResult = asRecord(await this.#request("turn/start", {
       threadId,
-      input: [{ type: "text", text: input.prompt }],
+      input: turnInput,
       cwd: input.cwd,
       approvalPolicy: "on-request",
       sandbox,
-      ...(input.model ? { model: input.model } : {})
+      ...(input.model ? { model: input.model } : {}),
+      ...(effort ? { effort } : {})
     }));
     const turn = asRecord(turnResult.turn);
     if (typeof turn.id !== "string") throw new Error("Codex did not return a turn id.");
@@ -163,6 +181,7 @@ export class CodexAppServer {
   }
 
   async stop(): Promise<void> {
+    this.#models = undefined;
     const child = this.#child;
     this.#child = undefined;
     if (child && child.exitCode === null) child.kill();
@@ -212,7 +231,7 @@ export class CodexAppServer {
         this.#rejectPending(new Error(`Codex App Server exited (${code ?? "signal"}).`));
         this.#setStatus({ ...this.#status, process: code === 0 ? "stopped" : "crashed", auth: "unknown", error: code === 0 ? undefined : "Codex App Server stopped unexpectedly." });
       });
-      await this.#request("initialize", { clientInfo: { name: "texweave", title: "TeXWeave", version: this.#clientVersion }, capabilities: { experimentalApi: false } });
+      await this.#request("initialize", { clientInfo: { name: "texweave", title: "TeXWeave", version: this.#clientVersion }, capabilities: { experimentalApi: true } });
       this.#notify("initialized", {});
       this.#setStatus({ ...this.#status, process: "running", error: undefined });
       await this.#readAccount();
@@ -239,6 +258,10 @@ export class CodexAppServer {
     try { message = JSON.parse(line) as JsonRecord; } catch { return; }
     if ((typeof message.id === "number" || typeof message.id === "string") && typeof message.method === "string") {
       const params = asRecord(message.params);
+      if (message.method === "item/tool/call") {
+        void this.#handleDynamicToolCall(message.id, params);
+        return;
+      }
       const workspace = typeof params.threadId === "string" ? this.#threadWorkspaces.get(params.threadId) : undefined;
       const commandIsInWorkspace = workspace && typeof params.cwd === "string" && isWorkspacePath(params.cwd, workspace);
       // The model may edit its private snapshot through either native file patches or shell
@@ -247,7 +270,8 @@ export class CodexAppServer {
       const workspaceCommandApproved = message.method === "item/commandExecution/requestApproval"
         && commandIsInWorkspace
         && (params.kind === undefined || params.kind === "command" || params.kind === "writeStdin")
-        && !params.networkApprovalContext;
+        && !params.networkApprovalContext
+        && !(typeof params.command === "string" && isLatexCompilerCommand(params.command));
       const fileChangeApproved = message.method === "item/fileChange/requestApproval"
         && workspace
         && (typeof params.grantRoot !== "string" || isWorkspacePath(params.grantRoot, workspace))
@@ -279,6 +303,7 @@ export class CodexAppServer {
       for (const listener of this.#eventListeners) listener(event);
       if (message.method === "turn/completed" && typeof event.params.threadId === "string") {
         this.#threadWorkspaces.delete(event.params.threadId);
+        for (const key of this.#dynamicToolHandlers.keys()) if (key.startsWith(`${event.params.threadId}:`)) this.#dynamicToolHandlers.delete(key);
         for (const key of this.#fileChangePaths.keys()) if (key.startsWith(`${event.params.threadId}:`)) this.#fileChangePaths.delete(key);
       }
     }
@@ -290,6 +315,24 @@ export class CodexAppServer {
       if (params.success === false) this.#setStatus({ ...this.#status, auth: "error", error: typeof params.error === "string" ? params.error : "ChatGPT sign-in failed." });
       else void this.#readAccount().catch(() => undefined);
     }
+  }
+
+  async #handleDynamicToolCall(requestId: string | number, params: JsonRecord): Promise<void> {
+    const threadId = typeof params.threadId === "string" ? params.threadId : "";
+    const toolName = typeof params.tool === "string" ? params.tool : "";
+    const handler = this.#dynamicToolHandlers.get(`${threadId}:${toolName}`);
+    let text: string;
+    let success = false;
+    try {
+      if (!handler) throw new Error(`TeXWeave tool '${toolName || "unknown"}' is unavailable for this conversation. Start a new AI conversation to load current project tools.`);
+      const arguments_ = params.arguments && typeof params.arguments === "object" ? params.arguments as JsonRecord : {};
+      text = await handler(arguments_);
+      success = true;
+    } catch (error) {
+      text = error instanceof Error ? error.message : String(error);
+    }
+    if (!this.#child || this.#child.exitCode !== null) return;
+    this.#child.stdin.write(`${JSON.stringify({ id: requestId, result: { contentItems: [{ type: "inputText", text }], success } })}\n`);
   }
 
   #request(method: string, params: JsonRecord): Promise<unknown> {

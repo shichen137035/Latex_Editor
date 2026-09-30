@@ -201,6 +201,8 @@
   "preview.yes": "是（Y）",
   "preview.no": "否（N）",
   "environment.manager": "環境區塊",
+  "environment.algorithm": "演算法",
+  "environment.algorithmic": "演算法步驟",
   "environment.builtIn": "內建",
   "environment.customGroup": "自訂",
   "environment.on": "啟用",

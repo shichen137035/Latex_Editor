@@ -292,6 +292,8 @@
   "preview.yes": "是（Y）",
   "preview.no": "否（N）",
   "environment.manager": "环境块",
+  "environment.algorithm": "算法",
+  "environment.algorithmic": "算法步骤",
   "environment.builtIn": "内置",
   "environment.customGroup": "自定义",
   "environment.on": "启用",

@@ -1,15 +1,15 @@
 import { useEffect, useState } from "react";
-import { preferenceDefaults, projectPreferenceKeys, type DictionaryPackage, type ImagePreferences, type LatexToolchain, type PreferenceKey, type StyleResource, type TablePreferences, type TableStylePreset, type ThemeDefinition } from "@latex-editor/contracts";
+import { preferenceDefaults, projectPreferenceKeys, type AIProjectSkill, type DictionaryPackage, type ImagePreferences, type LatexToolchain, type PreferenceKey, type StyleResource, type TablePreferences, type TableStylePreset, type ThemeDefinition } from "@latex-editor/contracts";
 import type { SpellCheckStatus } from "@latex-editor/contracts";
 import { t } from "../i18n/index.js";
 import { EnvironmentManager } from "../preview/EnvironmentManager.js";
-import { DEFAULT_ENVIRONMENTS } from "../preview/environments.js";
+import { DEFAULT_ENVIRONMENTS, includeNewBuiltInEnvironments } from "../preview/environments.js";
 import type { EnvironmentDefinition } from "../preview/types.js";
 import { useSettings } from "./service.js";
 import { bindings, commandContexts, commandLabels, defaultBindings, displayBinding, eventBinding, validBinding, type CommandId } from "./commands.js";
 import "./settings.css";
 
-const sections = ["general", "appearance", "editor", "images", "tables", "searchFilter", "language", "shortcuts", "environment", "compiler", "spellcheck", "ai", "environments", "styleResources"] as const;
+const sections = ["general", "appearance", "editor", "images", "tables", "searchFilter", "language", "shortcuts", "environment", "compiler", "spellcheck", "ai", "aiSkills", "environments", "styleResources"] as const;
 export type SettingsSection = typeof sections[number];
 type Section = SettingsSection;
 
@@ -212,6 +212,63 @@ function ThemeSettingsPanel({ store }: { store: ReturnType<typeof useSettings> }
   </div>;
 }
 
+function AISkillsSettingsPanel() {
+  const [skills, setSkills] = useState<AIProjectSkill[]>([]);
+  const [selectedName, setSelectedName] = useState("");
+  const [name, setName] = useState("");
+  const [draft, setDraft] = useState("");
+  const [editing, setEditing] = useState(false);
+  const [creating, setCreating] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  const selected = skills.find((skill) => skill.name === selectedName);
+  const reload = async () => {
+    const next = await window.latexEditor!.ai.skills() ?? [];
+    setSkills(next);
+    setSelectedName((current) => next.some((skill) => skill.name === current) ? current : next[0]?.name ?? "");
+  };
+  useEffect(() => { void reload().catch((reason) => setError(reason instanceof Error ? reason.message : String(reason))); }, []);
+  const startEdit = () => {
+    if (!selected) return;
+    setName(selected.name); setDraft(selected.content); setCreating(false); setEditing(true); setError("");
+  };
+  const startCreate = () => {
+    setSelectedName("");
+    setName("my-skill");
+    setDraft("---\nname: my-skill\ndescription: Instructions for a TeXWeave project workflow.\n---\n\n# My skill\n\n- Add focused guidance for this workflow.\n");
+    setCreating(true); setEditing(true); setError("");
+  };
+  const save = async () => {
+    setBusy(true); setError("");
+    try {
+      const next = await window.latexEditor!.ai.saveSkill({ name, content: draft, create: creating }) ?? [];
+      setSkills(next); setSelectedName(name); setEditing(false); setCreating(false);
+    } catch (reason) { setError(reason instanceof Error ? reason.message : String(reason)); }
+    finally { setBusy(false); }
+  };
+  return <div className="ai-skills-settings">
+    <div className="ai-skills-header"><div><h2>{t("settings.aiSkillsTitle")}</h2><p>{t("settings.aiSkillsDescription")}</p></div><button type="button" disabled={busy} onClick={startCreate}>＋ {t("settings.aiSkillsNew")}</button></div>
+    <div className="ai-skills-layout">
+      <nav className="ai-skills-list" aria-label={t("settings.aiSkillsTitle")}>
+        {skills.map((skill) => <button type="button" key={skill.name} className={selectedName === skill.name ? "active" : ""} onClick={() => { setSelectedName(skill.name); setEditing(false); setError(""); }}><strong>{skill.name}</strong><small>{t(`settings.aiSkillSource.${skill.source}`)}</small></button>)}
+        {!skills.length && <p>{t("settings.aiSkillsEmpty")}</p>}
+      </nav>
+      <section className="ai-skills-editor">
+        {editing ? <>
+          <label><span>{t("settings.aiSkillsName")}</span><input value={name} disabled={!creating} onChange={(event) => setName(event.target.value)} spellCheck={false}/></label>
+          <p className="ai-skills-hint">{t("settings.aiSkillsFormatHint")}</p>
+          <textarea aria-label={t("settings.aiSkillsContent")} value={draft} onChange={(event) => setDraft(event.target.value)} spellCheck={false}/>
+          <div className="ai-skills-actions"><button type="button" disabled={busy} onClick={() => { setEditing(false); setError(""); }}>{t("settings.aiSkillsCancel")}</button><button type="button" className="primary" disabled={busy} onClick={() => void save()}>{busy ? t("settings.aiSkillsSaving") : t("settings.aiSkillsSave")}</button></div>
+        </> : selected ? <>
+          <div className="ai-skills-detail-head"><div><span>{t(`settings.aiSkillSource.${selected.source}`)}</span><h3>{selected.name}</h3></div><button type="button" onClick={startEdit}>{t("settings.aiSkillsEdit")}</button></div>
+          <pre>{selected.content}</pre>
+        </> : <p>{t("settings.aiSkillsSelect")}</p>}
+      </section>
+    </div>
+    {error && <p role="alert" className="inline-error">{error}</p>}
+  </div>;
+}
+
 export function SettingsDialog({ onClose, initial = "general" }: { onClose(): void; initial?: Section }) {
   const store = useSettings();
   const [section, setSection] = useState<Section>(initial);
@@ -258,7 +315,7 @@ export function SettingsDialog({ onClose, initial = "general" }: { onClose(): vo
     if (section === "compiler") return key === "engine";
     if (section === "shortcuts") return key === "keybindings";
     if (section === "spellcheck") return ["spellCheckMode", "spellCheckLanguage", "spellCheckActiveLanguages"].includes(key);
-    if (section === "ai") return key === "aiDefaultMode";
+    if (section === "ai") return key === "aiDefaultMode" || key === "aiReasoningEffort" || key === "aiCopilotReasoningEffort";
     if (section === "images") return key === "images";
     if (section === "tables") return key === "tables";
     if (section === "environments") return key === "environments";
@@ -266,7 +323,7 @@ export function SettingsDialog({ onClose, initial = "general" }: { onClose(): vo
   }) as PreferenceKey[]);
   const resetAll = () => void resetKeys(scope === "project" ? projectPreferenceKeys : Object.keys(preferenceDefaults) as PreferenceKey[]);
   return <div className="settings-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose(); }}><section className="preferences-dialog" role="dialog" aria-modal="true" aria-label={t("activity.settings")}>
-    <header><h1>{t("activity.settings")}</h1><select aria-label={t("settings.scope")} value={scope} onChange={(event) => setScope(event.target.value as "global" | "project")}><option value="global">{t("settings.global")}</option>{projectScopeAvailable && <option value="project">{t("settings.project")}</option>}</select><div className="settings-header-actions"><button type="button" onClick={resetSection}>{t("settings.resetSection")}</button><button type="button" onClick={resetAll}>{t("settings.resetAll")}</button><button aria-label={t("common.close")} onClick={onClose}>×</button></div></header>
+    <header><h1>{t("activity.settings")}</h1><select aria-label={t("settings.scope")} value={scope} onChange={(event) => setScope(event.target.value as "global" | "project")}><option value="global">{t("settings.global")}</option>{projectScopeAvailable && <option value="project">{t("settings.project")}</option>}</select><div className="settings-header-actions">{section !== "aiSkills" && <><button type="button" onClick={resetSection}>{t("settings.resetSection")}</button><button type="button" onClick={resetAll}>{t("settings.resetAll")}</button></>}<button aria-label={t("common.close")} onClick={onClose}>×</button></div></header>
     <div className="preferences-body"><nav>{sections.map((item) => <button data-section={item} className={section === item ? "active" : ""} key={item} onClick={() => setSection(item)}>{item === "images" ? "Images" : item === "tables" ? "Tables" : t(item === "environments" ? "environment.manager" : item === "styleResources" ? "settings.styleResources" : `settings.${item}`)}</button>)}</nav><main>
       {section === "general" && <><h2>{t("settings.general")}</h2>{row("autoSave", "settings.autoSave", [["off", "settings.off"], ["afterDelay", "settings.afterDelay"]])}{row("hideBuildArtifacts", "settings.hideBuildArtifacts")}{row("restoreProject", "settings.restore")}{row("maximize", "settings.maximize")}</>}
       {section === "appearance" && <ThemeSettingsPanel store={store}/>} 
@@ -281,7 +338,8 @@ export function SettingsDialog({ onClose, initial = "general" }: { onClose(): vo
       {section === "compiler" && <><h2>{t("settings.localToolchain")}</h2><p>{t("settings.globalOnly")}</p><div className="toolchain-actions"><button disabled={detecting} onClick={() => void detect()}>{t("settings.detect")}</button><button disabled={detecting} onClick={() => void detect("directory")}>{t("settings.locate")}</button><button disabled={detecting} onClick={() => void detect("executable")}>{t("settings.executable")}</button></div><p>{store.snapshot().toolchain?.distribution ?? "unknown"}</p>{(["latexmk", "pdflatex", "xelatex", "lualatex", "bibtex", "biber"] as const).map((tool) => <div className="toolchain-row" key={tool}><strong>{tool}</strong><span>{t(store.snapshot().toolchain?.[tool] ? "settings.found" : "settings.notFound")}</span><code>{store.snapshot().toolchain?.[tool] ?? "—"}</code></div>)}{row("engine", "settings.engine", [["pdflatex", "pdfLaTeX"], ["xelatex", "XeLaTeX"], ["lualatex", "LuaLaTeX"]])}<p>{t("settings.mainFileHint")}</p><p>{t("settings.buildUnavailable")}</p></>}
       {section === "spellcheck" && <SpellCheckSettingsPanel store={store}/>}
       {section === "ai" && <><h2>{t("settings.ai")}</h2><p>{t("settings.aiPrivacyHint")}</p>{row("aiDefaultMode", "settings.aiDefaultMode", [["chat", "ai.chat"], ["codex", "ai.codex"]])}<div className="ai-phase-card"><strong>{t("settings.aiChangeReview")}</strong><p>{t("settings.aiChangeReviewDetails")}</p></div></>}
-      {section === "environments" && <div className="settings-environments"><button onClick={() => void store.reset("environments", scope)}>{t("settings.reset")}</button><EnvironmentManager definitions={configured.length ? configured : DEFAULT_ENVIRONMENTS} onChange={(next) => void store.set("environments", next, scope)}/></div>}
+      {section === "aiSkills" && <AISkillsSettingsPanel/>}
+      {section === "environments" && <div className="settings-environments"><button onClick={() => void store.reset("environments", scope)}>{t("settings.reset")}</button><EnvironmentManager definitions={configured.length ? includeNewBuiltInEnvironments(configured) : DEFAULT_ENVIRONMENTS} onChange={(next) => void store.set("environments", next, scope)}/></div>}
       {section === "styleResources" && <StyleResourcesPanel/>}
       {store.error() && <p role="alert">{t("settings.saveFailed")} {store.error()}</p>}
     </main></div><footer>{t("settings.saved")}</footer>

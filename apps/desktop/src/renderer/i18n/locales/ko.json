@@ -201,6 +201,8 @@
   "preview.yes": "예 (Y)",
   "preview.no": "아니요 (N)",
   "environment.manager": "환경 블록",
+  "environment.algorithm": "알고리즘",
+  "environment.algorithmic": "알고리즘 단계",
   "environment.builtIn": "기본 제공",
   "environment.customGroup": "사용자 지정",
   "environment.on": "사용",

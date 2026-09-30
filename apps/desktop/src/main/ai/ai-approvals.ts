@@ -9,6 +9,11 @@ export function isWorkspacePath(path: string, workspace: string): boolean {
   return normalizedTarget === normalizedRoot || normalizedTarget.startsWith(`${normalizedRoot}${sep}`);
 }
 
+/** Keep AI shell tools from launching independent TeX build utilities. */
+export function isLatexCompilerCommand(...commands: string[]): boolean {
+  return commands.some((command) => /\b(?:latexmk|pdflatex|xelatex|lualatex|tectonic|arara|bibtex|biber|makeindex|xindy)(?:\.exe)?\b/i.test(command));
+}
+
 export function isReadOnlyWorkspaceCommand(command: string): boolean {
   // On Windows Codex normally invokes powershell.exe -Command '<script>'.
   const shellScript = /(?:^|\s)-Command\s+(['"])([\s\S]*)\1\s*$/i.exec(command)?.[2];

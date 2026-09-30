@@ -1,8 +1,8 @@
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { createWriteStream, existsSync, readdirSync } from "node:fs";
-import { access, mkdir } from "node:fs/promises";
-import { basename, dirname, extname, isAbsolute, resolve } from "node:path";
+import { access, mkdir, realpath } from "node:fs/promises";
+import { basename, dirname, extname, isAbsolute, relative, resolve, sep } from "node:path";
 import {
   AppError, type CompileInput, type CompileResult, type CompilerProfile, type Project, type ToolchainStatus, type LatexToolchain, type ToolStatus
 } from "@latex-editor/contracts";
@@ -224,12 +224,39 @@ export class LatexmkCompilerService {
   }
 
   async compile(input: CompileInput): Promise<CompileResult> {
-    // profile 的普通参数已在 ResourceCatalog 校验，这里仍再次拒绝 shell escape 作为纵深防御。
     const project = this.#projects.getProject(input.projectId);
     if (project.missing) throw new AppError("PROJECT_PATH_MISSING", `Project folder is missing: ${project.canonicalPath}`);
     const mainFile = input.mainFile ?? project.mainFile;
     if (mainFile === undefined) throw new AppError("MAIN_FILE_NOT_SET", "No LaTeX main file is configured");
     await this.#files.resolveFilePath(project.id, mainFile, true);
+    return this.#compileAtRoot(project.canonicalPath, mainFile, input);
+  }
+
+  /** Compile an AI snapshot with the same configured engine and diagnostics, without registering it as a user project. */
+  async compileWorkspace(input: { workspaceRoot: string; mainFile: string; engine?: CompileInput["engine"]; timeoutMs?: number }): Promise<CompileResult> {
+    const root = resolve(input.workspaceRoot);
+    const mainFile = input.mainFile.replaceAll("\\", "/");
+    const sourcePath = resolve(root, mainFile);
+    const relativePath = relative(root, sourcePath);
+    if (!mainFile || isAbsolute(mainFile) || relativePath === ".." || relativePath.startsWith(`..${sep}`) || isAbsolute(relativePath)) {
+      throw new AppError("INVALID_RELATIVE_PATH", "The main TeX file must be inside the AI working copy.");
+    }
+    if (extname(sourcePath).toLowerCase() !== ".tex") throw new AppError("MAIN_FILE_NOT_SET", "The AI working-copy main file must be a .tex file.");
+    try {
+      const [rootPath, sourceRealPath] = await Promise.all([realpath(root), realpath(sourcePath)]);
+      const realRelative = relative(rootPath, sourceRealPath);
+      if (!realRelative || realRelative === ".." || realRelative.startsWith(`..${sep}`) || isAbsolute(realRelative)) {
+        throw new AppError("INVALID_RELATIVE_PATH", "The main TeX file resolves outside the AI working copy.");
+      }
+    } catch (error) {
+      if (error instanceof AppError) throw error;
+      throw new AppError("FILE_NOT_FOUND", `Could not open the AI working-copy main file: ${mainFile}`, { cause: error });
+    }
+    return this.#compileAtRoot(root, mainFile, input);
+  }
+
+  async #compileAtRoot(root: string, mainFile: string, input: { engine?: CompileInput["engine"]; timeoutMs?: number }): Promise<CompileResult> {
+    // Reject shell escape even if a profile was edited outside the resource manager.
 
     const profile = this.#profiles.getCompilerProfile();
     if (profile.arguments.some((argument) => argument === "-shell-escape" || argument === "--shell-escape")) {
@@ -244,14 +271,14 @@ export class LatexmkCompilerService {
 
     const compilationId = this.#ids.next();
     const started = this.#clock.now();
-    const buildLogDirectory = resolve(project.canonicalPath, ".latex-editor", "build");
+    const buildLogDirectory = resolve(root, ".latex-editor", "build");
     await mkdir(buildLogDirectory, { recursive: true });
     const logPath = resolve(buildLogDirectory, `${compilationId}.log`);
     const logStream = createWriteStream(logPath, { encoding: "utf8", flags: "w" });
     const engineFlag = input.engine === "xelatex" ? "-xelatex" : input.engine === "lualatex" ? "-lualatex" : "-pdf";
     const args = [...profile.arguments.filter((arg) => !["-pdf", "-xelatex", "-lualatex"].includes(arg)), engineFlag, mainFile];
     const child = spawn(profile.executable, args, {
-      cwd: project.canonicalPath,
+      cwd: root,
       shell: false,
       windowsHide: true,
       env: profileEnvironment(profile.executable)
@@ -288,11 +315,11 @@ export class LatexmkCompilerService {
     });
 
     const finished = this.#clock.now();
-    const pdfPath = resolve(project.canonicalPath, `${basename(mainFile, extname(mainFile))}.pdf`);
+    const pdfPath = resolve(root, `${basename(mainFile, extname(mainFile))}.pdf`);
     let pdfExists = true;
     try { await access(pdfPath); } catch { pdfExists = false; }
     const status = active.requestedState ?? (exitCode === 0 && pdfExists ? "succeeded" : "failed");
-    const diagnostics = parseLatexDiagnostics(`${stdoutTail}\n${stderrTail}`, project.canonicalPath, mainFile);
+    const diagnostics = parseLatexDiagnostics(`${stdoutTail}\n${stderrTail}`, root, mainFile);
     if (status === "failed" && diagnostics.every((item) => item.severity !== "error")) {
       diagnostics.push({
         severity: "error", source: "latexmk", code: "COMPILATION_FAILED",

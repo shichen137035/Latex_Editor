@@ -39,7 +39,7 @@ interface DesktopContext {
     importEntry(projectId: string, sourcePath: string, destinationRelativePath: string): Promise<void>;
     removeEntry(projectId: string, relativePath: string): Promise<void>;
   };
-  compiler: { compile(input: CompileInput): Promise<CompileResult> };
+  compiler: { compile(input: CompileInput): Promise<CompileResult>; compileWorkspace(input: { workspaceRoot: string; mainFile: string; engine?: CompileInput["engine"] }): Promise<CompileResult> };
   resources: { searchCommands(query: string): CommandMetadata[] };
   blockGraph: ProjectBlockGraphService;
   styleResources: StyleResourceRepository;
@@ -129,6 +129,15 @@ async function createContext(): Promise<DesktopContext> {
     copilot,
     projectFiles: files,
     projectExists: (id) => Boolean(registry.get(id) && !registry.get(id)?.missing),
+    builtInSkillsRoot: resolve(resourceRoot, "ai", "skills"),
+    compileWorkspace: async ({ projectId, workspaceRoot, mainFile }) => {
+      const project = registry.get(projectId);
+      if (!project || project.missing) throw new Error("The source project is no longer available.");
+      const preferences = await settings.snapshot(projectId);
+      const configuredMain = mainFile ?? project.mainFile;
+      if (!configuredMain) throw new Error("Set a main TeX file in the project before asking TeXWeave AI to compile it.");
+      return compiler.compileWorkspace({ workspaceRoot, mainFile: configuredMain, engine: preferences.project.engine ?? preferences.global.engine ?? "pdflatex" });
+    },
     onUpdate: (kind, payload) => BrowserWindow.getAllWindows().forEach((window) => window.webContents.send("ai:update", { kind, payload }))
   });
   await aiWorkspaces.initialize();
@@ -490,6 +499,11 @@ function registerIpcHandlers(): void {
   });
   ipcMain.handle("ai:status", () => context?.ai.refresh());
   ipcMain.handle("ai:models", () => context?.aiWorkspaces.listModels());
+  ipcMain.handle("ai:skills", () => context?.aiWorkspaces.listSkills());
+  ipcMain.handle("ai:skill:save", (_event, input: { name: string; content: string; create?: boolean }) => {
+    if (!context) throw new Error("Application context is not ready");
+    return context.aiWorkspaces.saveSkill(input);
+  });
   ipcMain.handle("ai:login", () => context?.ai.login());
   ipcMain.handle("ai:logout", () => context?.ai.logout());
   ipcMain.handle("ai:copilot:status", () => context?.copilot.status());
@@ -523,7 +537,8 @@ function registerIpcHandlers(): void {
       for (const [path, content] of overrideMap) if (!snapshot.some((file) => file.path === path)) snapshot.push({ path, content });
     }
     const model = conversation.mode === "chat" ? settings.global.aiCopilotModel : settings.global.aiModel;
-    return context.aiWorkspaces.send({ conversationId: input.conversationId, content: input.content, ...(model ? { model } : {}), ...(snapshot.length ? { snapshot } : {}), ...(input.contextText ? { contextText: input.contextText } : {}) });
+    const reasoningEffort = conversation.mode === "chat" ? settings.global.aiCopilotReasoningEffort : settings.global.aiReasoningEffort;
+    return context.aiWorkspaces.send({ conversationId: input.conversationId, content: input.content, ...(model ? { model } : {}), ...(reasoningEffort ? { reasoningEffort } : {}), ...(snapshot.length ? { snapshot } : {}), ...(input.contextText ? { contextText: input.contextText } : {}) });
   });
   ipcMain.handle("ai:cancel", (_event, taskId: string) => context?.aiWorkspaces.cancel(taskId));
   ipcMain.handle("ai:set-executable", async (_event, path: string) => {

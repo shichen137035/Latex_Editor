@@ -437,6 +437,8 @@
   "environment.remark": "Remark",
   "environment.example": "Example",
   "environment.proof": "Proof",
+  "environment.algorithm": "Algorithm",
+  "environment.algorithmic": "Algorithm steps",
   "environment.equation": "Equation",
   "environment.equation-star": "Equation",
   "environment.align": "Align",

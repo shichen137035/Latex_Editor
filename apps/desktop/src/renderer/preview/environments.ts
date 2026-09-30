@@ -43,6 +43,15 @@ function loadConfiguredDefaults(): EnvironmentDefinition[] {
 
 export const DEFAULT_ENVIRONMENTS: EnvironmentDefinition[] = loadConfiguredDefaults();
 
+/** Preserve saved overrides while appending built-ins introduced by later releases. */
+export function includeNewBuiltInEnvironments(definitions: EnvironmentDefinition[]): EnvironmentDefinition[] {
+  const existing = new Set(definitions.map((definition) => definition.id));
+  return cloneEnvironmentDefinitions([
+    ...definitions,
+    ...DEFAULT_ENVIRONMENTS.filter((definition) => definition.builtIn && !existing.has(definition.id))
+  ]);
+}
+
 export function cloneEnvironmentDefinitions(definitions: EnvironmentDefinition[] = DEFAULT_ENVIRONMENTS): EnvironmentDefinition[] {
   return definitions.map((definition) => ({
     ...definition,

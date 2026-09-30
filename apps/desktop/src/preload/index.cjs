@@ -141,6 +141,8 @@ contextBridge.exposeInMainWorld("latexEditor", {
     loginCopilot: () => ipcRenderer.invoke("ai:copilot:login"),
     logoutCopilot: () => ipcRenderer.invoke("ai:copilot:logout"),
     copilotModels: () => ipcRenderer.invoke("ai:copilot:models"),
+    skills: () => ipcRenderer.invoke("ai:skills"),
+    saveSkill: (input) => ipcRenderer.invoke("ai:skill:save", input),
     conversations: (projectId) => ipcRenderer.invoke("ai:conversations", projectId),
     createConversation: (mode, projectId) => ipcRenderer.invoke("ai:conversation:create", mode, projectId),
     setConversationMode: (id, mode) => ipcRenderer.invoke("ai:conversation:mode", id, mode),

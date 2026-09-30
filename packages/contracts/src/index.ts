@@ -13,7 +13,16 @@ export interface AIStatus {
   accountLabel?: string | undefined;
   error?: string | undefined;
 }
-export interface AIModelOption { id: string; name: string; description?: string; isDefault: boolean }
+export interface AIProjectSkill {
+  name: string;
+  content: string;
+  source: "built-in" | "custom" | "customized";
+}
+export interface AIModelOption {
+  id: string; name: string; description?: string; isDefault: boolean;
+  supportedReasoningEfforts?: Array<{ effort: string; description?: string }>;
+  defaultReasoningEffort?: string;
+}
 export type AIMode = "chat" | "codex";
 export type AIMessageRole = "user" | "assistant" | "system" | "tool";
 export interface AIMessage {
@@ -31,6 +40,7 @@ export interface AIConversation {
   updatedAt: number;
   projectId?: string;
   threadId?: string;
+  codexToolsVersion?: number;
   copilotSessionId?: string;
   messages: AIMessage[];
 }
