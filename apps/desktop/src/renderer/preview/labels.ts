@@ -43,19 +43,35 @@ export function nextAutomaticEnvironmentLabel(source: string, definition: Enviro
   return definition.match.kind === "latex-environment" ? nextAutomaticLabel(source, definition) : undefined;
 }
 
-export function isAutomaticLabel(source: string, startOffset: number, definition: EnvironmentDefinition, label: string): boolean {
+/** One linear scan per source revision, shared by every environment/heading. */
+export function automaticLabelOccurrences(source: string): ReadonlyMap<number, number> {
+  const counts = new Map<string, number>();
+  const occurrences = new Map<number, number>();
+  for (const match of source.matchAll(/\\begin\{([^}]+)\}|\\([A-Za-z@]+)\*?\{/g)) {
+    const name = match[1] ?? match[2];
+    if (!name) continue;
+    // Keep command and environment occurrence domains independent.
+    const key = `${match[1] ? "env" : "command"}:${name}`;
+    const count = (counts.get(key) ?? 0) + 1;
+    counts.set(key, count);
+    occurrences.set(match.index, count);
+  }
+  return occurrences;
+}
+
+export function isAutomaticLabel(source: string, startOffset: number, definition: EnvironmentDefinition, label: string, occurrences?: ReadonlyMap<number, number>): boolean {
   const name = definition.match.kind === "latex-environment" ? definition.match.name : definition.match.kind === "command" ? definition.match.command : undefined;
   if (!name) return false;
   const markerEnd = source.indexOf("}", startOffset);
-  const occurrence = markerEnd >= 0
+  const occurrence = occurrences ? occurrences.get(startOffset) ?? 0 : markerEnd >= 0
     ? definition.match.kind === "latex-environment" ? environmentOccurrence(source, name, markerEnd + 1) : commandOccurrence(source, name, markerEnd + 1)
     : 0;
   return occurrence > 0 && label === `${environmentLabelStem(name)}:${occurrence}`;
 }
 
-export function isAutomaticEnvironmentLabel(source: string, startOffset: number, environmentName: string, label: string): boolean {
+export function isAutomaticEnvironmentLabel(source: string, startOffset: number, environmentName: string, label: string, occurrences?: ReadonlyMap<number, number>): boolean {
   const definition = { match: { kind: "latex-environment", name: environmentName } } as EnvironmentDefinition;
-  return isAutomaticLabel(source, startOffset, definition, label);
+  return isAutomaticLabel(source, startOffset, definition, label, occurrences);
 }
 
 /** Insert the label just inside the environment so the body remains editable. */

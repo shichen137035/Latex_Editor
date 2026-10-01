@@ -12,6 +12,34 @@ const catalogs: Record<Locale, Record<string, string>> = {
   "zh-CN": simplifiedChinese as Record<string, string>, "zh-TW": traditionalChinese as Record<string, string>,
   ko: korean as Record<string, string>, fr: french as Record<string, string>
 };
+const aiComposerMessages: Record<Locale, string[]> = {
+  en: ["Add attachments", "Remove {{name}}", "Please examine the attached files.", "Thought summary", "Working…", "Responding…"],
+  ja: ["添付ファイルを追加", "{{name}} を削除", "添付ファイルを確認してください。", "思考の概要", "作業中…", "回答中…"],
+  "zh-CN": ["添加附件", "移除 {{name}}", "请查看附加的文件。", "思考摘要", "处理中…", "回答中…"],
+  "zh-TW": ["新增附件", "移除 {{name}}", "請查看附加的檔案。", "思考摘要", "處理中…", "回答中…"],
+  ko: ["첨부 파일 추가", "{{name}} 제거", "첨부 파일을 확인해 주세요.", "생각 요약", "작업 중…", "응답 중…"],
+  fr: ["Ajouter des pièces jointes", "Retirer {{name}}", "Veuillez examiner les fichiers joints.", "Résumé de réflexion", "Travail en cours…", "Réponse en cours…"]
+};
+const aiComposerKeys = ["ai.addAttachment", "ai.removeAttachment", "ai.attachmentPrompt", "ai.thoughtSummary", "ai.working", "ai.responding"];
+for (const [language, labels] of Object.entries(aiComposerMessages)) {
+  for (const [index, key] of aiComposerKeys.entries()) catalogs[language as Locale][key] = labels[index]!;
+}
+const aiLongInputMessages: Record<Locale, [string, string]> = {
+  en: ["Long message will be saved as a project .txt file when sent.", "Read the full request in {{path}} before replying."],
+  ja: ["長いメッセージは送信時にプロジェクト内の .txt ファイルとして保存されます。", "返信する前に {{path}} を読み、全文を依頼内容として扱ってください。"],
+  "zh-CN": ["发送时，超长内容会自动保存为项目中的 .txt 文件。", "请先读取 {{path}} 中的完整内容，并将其作为我的完整请求处理。"],
+  "zh-TW": ["送出時，過長內容會自動儲存為專案中的 .txt 檔案。", "請先讀取 {{path}} 中的完整內容，並將其視為我的完整請求。"],
+  ko: ["긴 메시지는 전송할 때 프로젝트의 .txt 파일로 저장됩니다.", "답변하기 전에 {{path}}의 전체 내용을 읽고 요청으로 처리하세요."],
+  fr: ["Le long message sera enregistré dans un fichier .txt du projet à l’envoi.", "Lisez {{path}} en entier avant de répondre et traitez-le comme ma demande complète."]
+};
+for (const [language, [hint, prompt]] of Object.entries(aiLongInputMessages)) {
+  catalogs[language as Locale]["ai.longMessageHint"] = hint;
+  catalogs[language as Locale]["ai.longMessagePrompt"] = prompt;
+}
+const aiCopyPathLabels: Record<Locale, string> = {
+  en: "Copy file path", ja: "ファイルパスをコピー", "zh-CN": "复制文件路径", "zh-TW": "複製檔案路徑", ko: "파일 경로 복사", fr: "Copier le chemin"
+};
+for (const [language, label] of Object.entries(aiCopyPathLabels)) catalogs[language as Locale]["ai.copyPath"] = label;
 for (const catalog of Object.values(catalogs)) catalog["ai.chat"] = "Copilot";
 const historyMessages: Record<Locale, string[]> = {
   en: ["Conversations", "Close", "Search chats…", "No conversations found", "Today", "Yesterday", "Last 7 days", "Earlier", "Select {{title}}", "{{count}} messages", "Delete {{title}}", "Delete {{count}} conversations and their local AI changes?", "Cancel", "Deleting…", "Delete", "Select visible", "Delete selected ({{count}})"],

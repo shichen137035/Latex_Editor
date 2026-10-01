@@ -21,3 +21,40 @@
 .bib-fields > div { display: grid; grid-template-columns: minmax(72px, 100px) minmax(0, 1fr); gap: 5px 12px; padding: 4px 0; }
 .bib-fields dd, .bib-occurrences button { min-width: 0; max-width: 100%; overflow-wrap: anywhere; word-break: normal; white-space: normal; }
 .bib-warning-card span { min-width: 0; overflow-wrap: anywhere; }
+.bib-preview-notice { max-width: 1100px; margin: 0 auto 12px; padding: 9px 12px; border: 1px solid color-mix(in srgb, var(--color-primary) 28%, var(--color-border)); border-radius: 8px; color: var(--color-text-secondary); background: color-mix(in srgb, var(--color-primary) 7%, var(--color-bg-panel)); font-size: 12px; }
+.bib-entry-source-editor { display: grid; gap: 8px; margin-top: 12px; padding: 12px; border: 1px solid var(--color-border); border-radius: 9px; background: var(--color-bg-subtle); }
+.bib-entry-source-editor label { display: flex; justify-content: space-between; gap: 12px; color: var(--color-text-primary); font-size: 12px; font-weight: 700; }
+.bib-entry-source-editor label small { overflow-wrap: anywhere; color: var(--color-text-secondary); font-weight: 400; }
+.bib-entry-source-editor textarea { width: 100%; min-height: 150px; resize: vertical; padding: 10px 12px; border: 1px solid var(--color-border); border-radius: 7px; color: var(--color-text-primary); background: var(--color-bg-panel); font: 13px/1.55 Consolas, "Cascadia Code", monospace; tab-size: 2; }
+.bib-entry-source-editor > p { margin: 0; color: var(--color-error); font-size: 12px; }
+.bib-entry-source-editor > div { display: flex; justify-content: flex-end; gap: 8px; }
+.bib-entry-source-editor button { padding: 7px 11px; border: 1px solid var(--color-border); border-radius: 7px; color: var(--color-text-primary); background: var(--color-bg-panel); font: 600 12px "Space Grotesk", sans-serif; }
+.bib-entry-source-editor button.primary { border-color: var(--color-primary); color: white; background: var(--color-primary); }
+.bib-entry-row button.active { color: var(--color-primary-strong); border-color: var(--color-primary); background: color-mix(in srgb, var(--color-primary) 10%, var(--color-bg-panel)); }
+.bib-entry-row button.danger { color: var(--color-error); }
+.bib-entry-duplicate-warning { margin: 8px 0; padding: 7px 9px; border-radius: 7px; color: var(--color-warning); background: color-mix(in srgb, var(--color-warning) 9%, var(--color-bg-panel)); font-size: 12px; }
+.bib-library-picker { max-width: 1100px; margin: 0 auto 14px; padding: 14px; border: 1px solid var(--color-border); border-radius: 12px; background: var(--color-bg-panel); box-shadow: 0 8px 24px color-mix(in srgb, var(--color-primary) 8%, transparent); }
+.bib-library-picker > header { display: flex; justify-content: space-between; align-items: center; gap: 12px; margin-bottom: 10px; }
+.bib-library-picker > header > div { display: grid; gap: 3px; }
+.bib-library-picker > header strong { color: var(--color-text-primary); }
+.bib-library-picker > header span, .bib-library-picker-empty { color: var(--color-text-secondary); font-size: 12px; }
+.bib-library-picker input { width: 100%; padding: 9px 11px; border: 1px solid var(--color-border); border-radius: 8px; color: var(--color-text-primary); background: var(--color-bg-subtle); font: inherit; }
+.bib-library-picker-list { display: grid; gap: 6px; max-height: 260px; overflow: auto; margin-top: 8px; }
+.bib-library-picker-list article { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 9px; border-bottom: 1px solid var(--color-border); }
+.bib-library-picker-list article > div { display: grid; gap: 3px; min-width: 0; }
+.bib-library-picker-list article strong, .bib-library-picker-list article span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.bib-library-picker-list article span { color: var(--color-text-secondary); font-size: 11px; }
+.bib-library-picker-list article em { margin-left: 8px; color: var(--color-warning); font-style: normal; }
+.bib-library-picker-list button, .bib-library-picker > header button { flex: 0 0 auto; padding: 7px 10px; border: 1px solid var(--color-border); border-radius: 7px; color: var(--color-primary-strong); background: var(--color-bg-subtle); font: 600 12px "Space Grotesk", sans-serif; }
+.bib-library-picker-empty { margin: 14px 2px 4px; }
+.bib-operation-backdrop { position: fixed; z-index: 1500; inset: 0; display: grid; place-items: center; padding: 20px; background: color-mix(in srgb, var(--color-text-primary) 28%, transparent); backdrop-filter: blur(4px); }
+.bib-operation-dialog { width: min(440px, 100%); padding: 22px; border: 1px solid var(--color-border); border-radius: 14px; color: var(--color-text-primary); background: var(--color-bg-panel); box-shadow: 0 20px 60px #102b4a33; }
+.bib-operation-dialog h2 { margin: 0 0 9px; font-size: 18px; }
+.bib-operation-dialog p { color: var(--color-text-secondary); line-height: 1.55; }
+.bib-operation-dialog p.bib-operation-error { margin: 5px 0; color: var(--color-error); font-size: 12px; }
+.bib-operation-dialog label { display: grid; gap: 6px; margin: 14px 0; font-size: 12px; font-weight: 700; }
+.bib-operation-dialog input { padding: 9px 10px; border: 1px solid var(--color-border); border-radius: 8px; color: var(--color-text-primary); background: var(--color-bg-subtle); font: inherit; }
+.bib-operation-dialog > div { display: flex; justify-content: flex-end; gap: 8px; margin-top: 16px; }
+.bib-operation-dialog button { padding: 8px 11px; border: 1px solid var(--color-border); border-radius: 7px; color: var(--color-text-primary); background: var(--color-bg-subtle); font: 600 12px "Space Grotesk", sans-serif; }
+.bib-operation-dialog button.primary { border-color: var(--color-primary); color: #fff; background: var(--color-primary); }
+.bib-operation-dialog button.danger { border-color: var(--color-error); color: #fff; background: var(--color-error); }

@@ -182,6 +182,7 @@ export class CopilotChatService {
     }
     const config = {
       workingDirectory,
+      streaming: true,
       onPermissionRequest: async (request: PermissionRequest) => request.kind === "shell" && isLatexCompilerCommand(request.fullCommandText, ...request.commands.map((command) => command.identifier))
         ? { kind: "reject" as const, feedback: "Use TeXWeave's texweave_compile tool; independent LaTeX compiler commands are disabled." }
         : { kind: "approve-once" as const },

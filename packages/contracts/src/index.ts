@@ -25,12 +25,18 @@ export interface AIModelOption {
 }
 export type AIMode = "chat" | "codex";
 export type AIMessageRole = "user" | "assistant" | "system" | "tool";
+export interface AIAttachment { id: string; name: string; size: number }
+/** Provider-returned, displayable reasoning summaries, separate from the answer. */
+export interface AIReasoningPart { id: string; text: string; complete: boolean }
 export interface AIMessage {
   id: string;
   role: AIMessageRole;
   content: string;
   createdAt: number;
   status?: "streaming" | "complete" | "error";
+  activity?: "thinking" | "responding" | "working";
+  reasoning?: AIReasoningPart[];
+  attachments?: AIAttachment[];
 }
 export interface AIConversation {
   id: string;

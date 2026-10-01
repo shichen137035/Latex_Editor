@@ -274,6 +274,7 @@ export function Workbench({ project, projects, environments, onHome, onSwitch, o
   const [activeSearchResult, setActiveSearchResult] = useState<SearchResult>();
   const [pendingSearchResult, setPendingSearchResult] = useState<SearchResult>();
   const editorRef = useRef<Parameters<OnMount>[0] | null>(null);
+  const aiFileNavigationRef = useRef<(path: string, line?: number) => void>(() => undefined);
   const workbenchRef = useRef<HTMLDivElement | null>(null);
   const completionController = useRef<CompletionController | null>(null);
   const spellCheckController = useRef<SpellCheckController | null>(null);
@@ -293,11 +294,13 @@ export function Workbench({ project, projects, environments, onHome, onSwitch, o
   const aiUndoRef = useRef<{ changes: AIChangeSet; activePath?: string; priorDirty: Map<string, boolean> } | undefined>(undefined);
   const rangeMappingTimers = useRef(new Map<string, number>());
   const previewViewportAnchor = useRef<{ fileId: string; offset: number } | undefined>(undefined);
+  const previewClickAnchor = useRef<{ fileId: string; offset: number } | undefined>(undefined);
   const previewInsertionAnchor = useRef<{ fileId: string; offset: number } | undefined>(undefined);
   const pendingVisualToCodeAnchor = useRef<{ fileId: string; offset: number } | undefined>(undefined);
   useEffect(() => () => resizeCleanup.current?.(), []);
 
   const activeTab = tabs.find((tab) => tab.path === activePath);
+  useEffect(() => { previewClickAnchor.current = undefined; }, [activePath, activeTab?.content]);
   const aiReviewFile = useMemo(() => activePath ? aiReviewChanges.flatMap((changeSet) => changeSet.files).find((file) => file.path === activePath && file.hunks.some((hunk) => hunk.decision === "pending")) : undefined, [activePath, aiReviewChanges]);
   const pdfFile = project.mainFile?.replace(/\.tex$/i, ".pdf");
   const sourceEditorVisible = layout.mode === "single" ? layout.singlePane === "source" : layout.leftPane === "source";
@@ -734,9 +737,18 @@ export function Workbench({ project, projects, environments, onHome, onSwitch, o
   const trackPreviewViewport = useCallback((anchor: { fileId: string; offset: number }) => {
     previewViewportAnchor.current = anchor;
   }, []);
+  const trackPreviewClick = useCallback((anchor: { fileId: string; offset: number }) => {
+    previewClickAnchor.current = anchor;
+  }, []);
   const trackPreviewInsertion = useCallback((anchor?: { fileId: string; offset: number }) => {
     previewInsertionAnchor.current = anchor;
   }, []);
+  const previewToCodeAnchor = () => {
+    const clicked = previewClickAnchor.current;
+    if (clicked?.fileId === activePath) return clicked;
+    const viewport = previewViewportAnchor.current;
+    return viewport?.fileId === activePath ? viewport : undefined;
+  };
   const refreshRelationState = async () => {
     if (!api) return;
     const [snapshot, history] = await Promise.all([api.blockGraph.snapshot(project.id), api.blockGraph.historyState(project.id)]);
@@ -1136,17 +1148,37 @@ export function Workbench({ project, projects, environments, onHome, onSwitch, o
       setEditorContent(activeTab.content.slice(0, anchor) + prefix + snippet + suffix + activeTab.content.slice(anchor));
     }
   };
-  const revealPendingVisualPosition = (editor = editorRef.current) => {
+  const revealPendingVisualPosition = (editor = editorRef.current): boolean => {
     const pending = pendingVisualToCodeAnchor.current;
     const model = editor?.getModel();
-    if (!pending || !editor || !model || pending.fileId !== activePathRef.current) return;
+    if (!pending || !editor || !model || pending.fileId !== activePathRef.current) return false;
     pendingVisualToCodeAnchor.current = undefined;
     const offset = Math.min(Math.max(0, pending.offset), model.getValueLength());
-    editor.revealPositionInCenter(model.getPositionAt(offset));
+    const position = model.getPositionAt(offset);
+    editor.setPosition(position);
+    editor.revealPositionInCenter(position);
+    editor.focus();
+    return true;
   };
+  useEffect(() => {
+    if (!sourceEditorVisible || !pendingVisualToCodeAnchor.current) return;
+    let attempts = 0;
+    let frame = 0;
+    const applyWhenReady = () => {
+      if (revealPendingVisualPosition() || attempts++ >= 8) return;
+      frame = requestAnimationFrame(applyWhenReady);
+    };
+    frame = requestAnimationFrame(applyWhenReady);
+    return () => cancelAnimationFrame(frame);
+  }, [sourceEditorVisible, activePath, activeTab?.content]);
   const onEditorMount: OnMount = (editor, monaco) => {
     editorRef.current = editor;
-    requestAnimationFrame(() => revealPendingVisualPosition(editor));
+    let attempts = 0;
+    const applyWhenReady = () => {
+      if (revealPendingVisualPosition(editor) || attempts++ >= 8) return;
+      requestAnimationFrame(applyWhenReady);
+    };
+    requestAnimationFrame(applyWhenReady);
     searchDecorationsRef.current?.clear();
     searchDecorationsRef.current = editor.createDecorationsCollection();
     completionController.current?.dispose();
@@ -1345,6 +1377,19 @@ export function Workbench({ project, projects, environments, onHome, onSwitch, o
   };
 
   const navigateToOutline = (line: number) => navigateToLocation(line);
+  const openAIFileReference = async (path: string, line?: number) => {
+    await openFile(path);
+    if (line) requestAnimationFrame(() => requestAnimationFrame(() => { if (activePathRef.current === path) navigateToLocation(line); }));
+  };
+  aiFileNavigationRef.current = openAIFileReference;
+  useEffect(() => {
+    const openAIFile = (event: Event) => {
+      const detail = (event as CustomEvent<{ path?: string; line?: number }>).detail;
+      if (typeof detail?.path === "string") aiFileNavigationRef.current(detail.path, detail.line);
+    };
+    window.addEventListener("texweave:ai-open-file", openAIFile);
+    return () => window.removeEventListener("texweave:ai-open-file", openAIFile);
+  }, []);
 
   useEffect(() => {
     const editor = editorRef.current;
@@ -1516,14 +1561,13 @@ export function Workbench({ project, projects, environments, onHome, onSwitch, o
   const menuItems = (menu: Exclude<MenuName, "projects">) => {
     if (menu === "file") return [{ label: t("menu.newFile"), action: () => void createEntry(false, "") }, { label: t("menu.openFile"), disabled: true }, { label: t("menu.save"), action: () => { commands.execute("file.save"); } }, { label: t("menu.saveAll"), action: () => { commands.execute("file.saveAll"); } }, { label: "", divider: true }, { label: t("menu.export"), disabled: true }, { label: t("menu.closeProject"), action: onHome }];
     if (menu === "edit") return [{ label: t("menu.undo"), action: () => editorRef.current?.trigger("menu", "undo", null) }, { label: t("menu.redo"), action: () => editorRef.current?.trigger("menu", "redo", null) }, { label: t("menu.find"), action: () => { commands.execute("edit.find"); } }, { label: t("menu.replace"), action: () => { commands.execute("edit.replace"); } }];
-    if (menu === "view") return [{ label: t("menu.source"), action: () => { const anchor = previewViewportAnchor.current; if ((layout.mode === "single" ? layout.singlePane === "preview" : layout.leftPane === "preview") && anchor?.fileId === activePath) pendingVisualToCodeAnchor.current = anchor; setLayout((value) => ({ ...value, mode: "single", singlePane: "source" })); } }, { label: t("menu.preview"), action: () => setLayout((value) => ({ ...value, mode: "single", singlePane: "preview" })) }, { label: t("menu.pdf"), action: () => setLayout((value) => ({ ...value, mode: "single", singlePane: "pdf" })) }, { label: "", divider: true }, { label: t("menu.single"), action: () => setLayout((value) => ({ ...value, mode: "single" })) }, { label: t("menu.split"), action: () => setLayout((value) => ({ ...value, mode: "split" })) }];
+    if (menu === "view") return [{ label: t("menu.source"), action: () => { if ((layout.mode === "single" ? layout.singlePane === "preview" : layout.leftPane === "preview")) pendingVisualToCodeAnchor.current = previewToCodeAnchor(); setLayout((value) => ({ ...value, mode: "single", singlePane: "source" })); } }, { label: t("menu.preview"), action: () => setLayout((value) => ({ ...value, mode: "single", singlePane: "preview" })) }, { label: t("menu.pdf"), action: () => setLayout((value) => ({ ...value, mode: "single", singlePane: "pdf" })) }, { label: "", divider: true }, { label: t("menu.single"), action: () => setLayout((value) => ({ ...value, mode: "single" })) }, { label: t("menu.split"), action: () => setLayout((value) => ({ ...value, mode: "split" })) }];
     return [{ label: t("menu.automaticHistory"), action: () => { setBottomTab("versions"); setBottomVisible(true); } }, { label: t("menu.namedVersions"), action: () => { setBottomTab("versions"); setBottomVisible(true); } }];
   };
 
   const switchTextView = (target: "source" | "preview", single: boolean) => {
     const switchingFromPreview = target === "source" && (single ? layout.singlePane === "preview" : layout.leftPane === "preview");
-    const anchor = previewViewportAnchor.current;
-    if (switchingFromPreview && anchor?.fileId === activePath) pendingVisualToCodeAnchor.current = anchor;
+    if (switchingFromPreview) pendingVisualToCodeAnchor.current = previewToCodeAnchor();
     setLayout((value) => single ? { ...value, singlePane: target } : { ...value, leftPane: target });
   };
   const viewSwitch = (active: "source" | "preview", single = false) => <div className="view-switch"><button className={active === "source" ? "active" : ""} onClick={() => switchTextView("source", single)}>{t("menu.code")}</button><button className={active === "preview" ? "active" : ""} onClick={() => switchTextView("preview", single)}>{t("menu.visual")}</button></div>;
@@ -1543,22 +1587,17 @@ export function Workbench({ project, projects, environments, onHome, onSwitch, o
   const outputToolbar = <div className="output-toolbar"><button className="compile-button" onClick={() => { commands.execute("latex.compile"); }} disabled={compileState === "running"}><Icon name="play"/><span>{t(compileState === "running" ? "build.compiling" : "build.compile")}</span></button>{enginePicker}<button onClick={() => { setBottomTab("compileLog"); setBottomVisible(true); }}>{t("build.log")}</button><div className="toolbar-spacer"/><button className={layout.rightPane === "pdf" ? "active" : ""} onClick={() => setLayout((value) => ({ ...value, rightPane: value.rightPane === "pdf" ? "preview" : "pdf" }))}>{layout.rightPane === "pdf" ? t("menu.preview") : t("menu.pdf")}</button></div>;
   const sourcePaneContent = <section className="work-pane source-pane">{sourceTabs}{sourceEditor}</section>;
   const sourcePane = <section className="work-pane source-pane">{sourceTabs}{sourceToolbar}{sourceEditor}</section>;
-  const previewProps = { filePath: activeTab?.path, source: activeTab?.content, definitions: previewEnvironments, mathContext, filterQuery, searchQuery, activeSearchResult, highlightRange: createdBlockHighlight, relation: blockSnapshot ? { active: relationModeActive, snapshot: blockSnapshot, transientToBlockId: previewSemanticIds, focusId: relationFocusId, direction: relationDirection, matchIds: relationProjection.matchIds, contextIds: relationProjection.contextIds, unmatchedBehavior: relationUnmatched, locateRequest: relationLocateRequest, onFocus: focusRelationBlock, onToggle: toggleRelation } : undefined, onSourceChange: setEditorContent, onSelectionChange: setPreviewSelection, onSelectionContextMenu: (selection: DocumentSelection, x: number, y: number) => { setPreviewSelection(selection); setBlockContext({ selection, x, y }); }, onViewportAnchorChange: trackPreviewViewport, onFigureSelect: (selection?: FigureSelection) => { if (selection) { setInspectorBlock(undefined); setTableSelection(undefined); } setFigureSelection(selection); }, onFigureSlotSelect: (selection: FigureSelection) => { setInspectorBlock(undefined); setTableSelection(undefined); setFigureSelection(selection); setImageDialog({ kind: "replace", selection, imageIndex: selection.imageIndex ?? 0 }); }, onTableSelect: (selection?: TableSelection) => { if (selection) { setInspectorBlock(undefined); setFigureSelection(undefined); } setTableSelection(selection); }, onTableChange: applyPreviewTableChange, api, projectId: project.id, tree, onSpellContextMenu: setSpellContextMenu, onDetectedLanguage: setDetectedSpellLanguage, onForwardSync: forwardSyncToPdf };
+  const previewProps = { filePath: activeTab?.path, source: activeTab?.content, definitions: previewEnvironments, mathContext, filterQuery, searchQuery, activeSearchResult, highlightRange: createdBlockHighlight, relation: blockSnapshot ? { active: relationModeActive, snapshot: blockSnapshot, transientToBlockId: previewSemanticIds, focusId: relationFocusId, direction: relationDirection, matchIds: relationProjection.matchIds, contextIds: relationProjection.contextIds, unmatchedBehavior: relationUnmatched, locateRequest: relationLocateRequest, onFocus: focusRelationBlock, onToggle: toggleRelation } : undefined, onSourceChange: setEditorContent, onSelectionChange: setPreviewSelection, onSelectionContextMenu: (selection: DocumentSelection, x: number, y: number) => { setPreviewSelection(selection); setBlockContext({ selection, x, y }); }, onViewportAnchorChange: trackPreviewViewport, onClickSourcePosition: trackPreviewClick, onFigureSelect: (selection?: FigureSelection) => { if (selection) { setInspectorBlock(undefined); setTableSelection(undefined); } setFigureSelection(selection); }, onFigureSlotSelect: (selection: FigureSelection) => { setInspectorBlock(undefined); setTableSelection(undefined); setFigureSelection(selection); setImageDialog({ kind: "replace", selection, imageIndex: selection.imageIndex ?? 0 }); }, onTableSelect: (selection?: TableSelection) => { if (selection) { setInspectorBlock(undefined); setFigureSelection(undefined); } setTableSelection(selection); }, onTableChange: applyPreviewTableChange, api, projectId: project.id, tree, onSpellContextMenu: setSpellContextMenu, onDetectedLanguage: setDetectedSpellLanguage, onForwardSync: forwardSyncToPdf };
   const anchoredPreviewProps = { ...previewProps, onInsertionAnchorChange: trackPreviewInsertion };
-  const bibPreview = activeTab?.path.toLocaleLowerCase().endsWith(".bib") ? <BibtexPreviewPane source={activeTab.content} filePath={activeTab.path} projectId={project.id} documents={projectSearchDocuments} onLocate={({ filePath, offset, line, column }) => {
-    if (filePath !== activePath) {
-      const document = projectSearchDocuments.find((item) => item.fileId === filePath);
-      const fallbackLine = document ? document.content.slice(0, offset).split("\n").length : 1;
-      setPendingDiagnostic({ path: filePath, line: line ?? fallbackLine, ...(column ? { column } : {}) });
-      void openFile(filePath);
-      return;
-    }
-    const model = editorRef.current?.getModel();
-    if (!model || !editorRef.current) return;
-    const position = model.getPositionAt(offset);
-    editorRef.current.setPosition(position);
-    editorRef.current.revealPositionInCenter(position);
-    editorRef.current.focus();
+  const bibPreview = activeTab?.path.toLocaleLowerCase().endsWith(".bib") ? <BibtexPreviewPane source={activeTab.content} filePath={activeTab.path} projectId={project.id} documents={projectSearchDocuments} onSourceChange={setEditorContent} onLocate={({ filePath, offset, line, column }) => {
+    const document = projectSearchDocuments.find((item) => item.fileId === filePath);
+    const content = filePath === activePath ? activeTab?.content : document?.content;
+    const lineStart = content && offset > 0 ? content.lastIndexOf("\n", offset - 1) : -1;
+    const targetLine = line ?? (content ? content.slice(0, offset).split("\n").length : 1);
+    const targetColumn = column ?? offset - lineStart;
+    setPendingDiagnostic({ path: filePath, line: targetLine, column: targetColumn });
+    setLayout((value) => value.mode === "single" ? { ...value, singlePane: "source" } : { ...value, leftPane: "source" });
+    if (filePath !== activePath) void openFile(filePath);
   }} /> : <PreviewPane {...anchoredPreviewProps}/>;
   const previewContent = <section className="work-pane" onDragOver={(event) => { if (event.dataTransfer.types.includes("Files")) event.preventDefault(); }} onDrop={dropImages}>{bibPreview}</section>;
   const previewPane = <section className="work-pane" onDragOver={(event) => { if (event.dataTransfer.types.includes("Files")) event.preventDefault(); }} onDrop={dropImages}>{previewToolbar}{bibPreview}</section>;

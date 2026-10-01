@@ -15,15 +15,37 @@ describe("reference library", () => {
     expect(parsed.entries[0]?.start).toBe(source.indexOf("@article"));
   });
 
+  it("parses parenthesized BibTeX entries and ignores entry-like comment or field text", () => {
+    const source = `% @article{commented, title={Not an entry}}
+@article(key, title={A (nested), useful title}, author="Doe, Jane", note={literal @book{not-a-record}})
+`;
+    const parsed = parseBibtex(source);
+    expect(parsed.invalid).toHaveLength(0);
+    expect(parsed.entries).toHaveLength(1);
+    expect(parsed.entries[0]).toMatchObject({
+      citationKey: "key",
+      fields: { title: "A (nested), useful title", author: "Doe, Jane" }
+    });
+  });
+
   it("indexes multi-key citations and persists imported entries locally", async () => {
     const root = await mkdtemp(join(tmpdir(), "texweave-reference-library-"));
     try {
       const path = join(root, "references.bib");
-      await writeFile(path, "@book{one, title={One}}\n@article{two, title={Two}}", "utf8");
+      await writeFile(path, "@book(one, title={One (first), continued})\n@article(two, title={Two})", "utf8");
       const repository = new ReferenceLibraryRepository(root);
       await repository.initialize();
       const result = await repository.importBibFile(path);
       expect(result.entries.map((entry) => entry.citationKey)).toEqual(["one", "two"]);
+      expect(repository.snapshot().entries).toHaveLength(2);
+      const originalId = result.entries.find((entry) => entry.citationKey === "one")?.id;
+      const sameEntry = await repository.saveEntry({ citationKey: "one", entryType: "book", fields: { title: "Replacement" } });
+      expect(sameEntry.id).toBe(originalId);
+      expect(sameEntry.fields.title).toBe("One (first), continued");
+      repository.removeEntry(sameEntry.id);
+      const restored = await repository.saveEntry({ citationKey: "one", entryType: "book", fields: { title: "Restored" } });
+      expect(restored.id).toBe(originalId);
+      expect(restored.fields.title).toBe("Restored");
       expect(repository.snapshot().entries).toHaveLength(2);
       expect(citationOccurrences([{ filePath: "main.tex", content: "Text \\cite{one,two}." }])).toHaveLength(2);
       repository.close();

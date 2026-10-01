@@ -77,7 +77,7 @@ export class CodexAppServer {
   }
 
   /** Starts a project-editing turn in the app-owned workspace; the UI reviews its diff before applying it. */
-  async startTurn(input: { cwd: string; prompt: string; threadId?: string; mode: "chat" | "codex"; model?: string; reasoningEffort?: string; dynamicTools?: DynamicTool[]; toolHandlers?: Record<string, (arguments_: JsonRecord) => Promise<string>>; skills?: Array<{ name: string; path: string }> }): Promise<{ threadId: string; turnId: string }> {
+  async startTurn(input: { cwd: string; prompt: string; threadId?: string; mode: "chat" | "codex"; model?: string; reasoningEffort?: string; imagePaths?: string[]; onThreadReady?(threadId: string): void; dynamicTools?: DynamicTool[]; toolHandlers?: Record<string, (arguments_: JsonRecord) => Promise<string>>; skills?: Array<{ name: string; path: string }> }): Promise<{ threadId: string; turnId: string }> {
     await this.#ensureStarted();
     const models = this.#models ?? await this.listModels();
     const model = input.model ? models.find((item) => item.id === input.model) : models.find((item) => item.isDefault);
@@ -98,13 +98,17 @@ export class CodexAppServer {
     this.#threadWorkspaces.set(threadId, input.cwd);
     for (const [name, handler] of Object.entries(input.toolHandlers ?? {})) this.#dynamicToolHandlers.set(`${threadId}:${name}`, handler);
     const turnInput: Array<Record<string, unknown>> = [{ type: "text", text: input.prompt }];
+    for (const path of input.imagePaths ?? []) turnInput.push({ type: "localImage", path });
     for (const skill of input.skills ?? []) turnInput.push({ type: "skill", name: skill.name, path: skill.path });
+    // Register the receiver before turn/start so the first streamed events are retained.
+    input.onThreadReady?.(threadId);
     const turnResult = asRecord(await this.#request("turn/start", {
       threadId,
       input: turnInput,
       cwd: input.cwd,
       approvalPolicy: "on-request",
       sandbox,
+      summary: "auto",
       ...(input.model ? { model: input.model } : {}),
       ...(effort ? { effort } : {})
     }));

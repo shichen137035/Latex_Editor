@@ -150,6 +150,7 @@ contextBridge.exposeInMainWorld("latexEditor", {
     removeConversation: (id) => ipcRenderer.invoke("ai:conversation:remove", id),
     resolveChangeSet: (id, decisions, applied) => ipcRenderer.invoke("ai:change-set:resolve", id, decisions, applied),
     send: (input) => ipcRenderer.invoke("ai:send", input),
+    pickAttachments: (projectId) => ipcRenderer.invoke("ai:attachments:pick", projectId),
     cancel: (taskId) => ipcRenderer.invoke("ai:cancel", taskId),
     onUpdate: (listener) => {
       const handler = (_event, update) => listener(update);

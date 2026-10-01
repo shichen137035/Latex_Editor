@@ -27,6 +27,7 @@
     "desktop:test-ai": "npm run desktop:build && node apps/desktop/scripts/run-ai-connection-check.cjs",
     "desktop:test-ui": "npm run desktop:build && node apps/desktop/scripts/run-file-menu-check.mjs",
     "desktop:test-preview": "npm run desktop:build && node apps/desktop/scripts/run-preview-check.mjs",
+    "desktop:test-preview-caret": "npm run desktop:build && node apps/desktop/scripts/run-preview-caret-check.mjs",
     "desktop:test-preview-startup": "npm run desktop:build && node apps/desktop/scripts/run-preview-startup-check.mjs",
     "desktop:test-preview-large": "npm run desktop:build && node apps/desktop/scripts/run-preview-large-check.mjs",
     "desktop:test-compiler-path": "npm run desktop:build && node apps/desktop/scripts/run-compile-path-check.mjs",

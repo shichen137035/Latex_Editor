@@ -1,7 +1,7 @@
 import type { ContentRegion, EnvironmentDefinition, PreviewDocument, PreviewNode, SourceSpan, StructuralBlock } from "./types.js";
 
 import { inferBlockKind, type BlockKind } from "@latex-editor/contracts";
-import { isAutomaticEnvironmentLabel, isAutomaticLabel } from "./labels.js";
+import { automaticLabelOccurrences, isAutomaticEnvironmentLabel, isAutomaticLabel } from "./labels.js";
 
 interface RawBlock {
   start: number;
@@ -144,6 +144,7 @@ export function parsePreview(source: string, filePath: string, definitions: Envi
   const open: OpenBlock[] = [];
   const environmentByName = environmentLookup(definitions);
   const positionAt = positionResolver(source);
+  const labelOccurrences = automaticLabelOccurrences(source);
   let documentStart = 0;
   let documentEnd = source.length;
 
@@ -165,7 +166,7 @@ export function parsePreview(source: string, filePath: string, definitions: Envi
       if (definition?.enabled === false) continue;
       const value = source.slice(entry.start, offset + match[0].length);
       const latexLabel = labelIn(value);
-      const autoLabel = latexLabel ? isAutomaticEnvironmentLabel(source, entry.start, entry.name, latexLabel) : false;
+      const autoLabel = latexLabel ? isAutomaticEnvironmentLabel(source, entry.start, entry.name, latexLabel, labelOccurrences) : false;
       rawBlocks.push({ start: entry.start, end: offset + match[0].length, bodyStart: entry.bodyStart, bodyEnd: offset, environmentId: definition?.id ?? `custom:${entry.name}`, origin: "latex", ...(entry.title ? { title: entry.title } : {}), ...(latexLabel ? { latexLabel } : {}), ...(autoLabel ? { autoLabel: true } : {}) });
       continue;
     }
@@ -227,7 +228,7 @@ export function parsePreview(source: string, filePath: string, definitions: Envi
     const bodyStart = start + match[0].length;
     const labelMatch = /^\s*\\label\s*\{([^}\n]+)\}/.exec(source.slice(bodyStart));
     const latexLabel = labelMatch?.[1]?.trim();
-    headings.push({ start, bodyStart, command: definition?.id ?? commandName, title: match[2] ?? "", level: headingLevel[commandName] ?? 3, ...(latexLabel && definition ? { latexLabel, autoLabel: isAutomaticLabel(source, start, definition, latexLabel) } : latexLabel ? { latexLabel } : {}) });
+    headings.push({ start, bodyStart, command: definition?.id ?? commandName, title: match[2] ?? "", level: headingLevel[commandName] ?? 3, ...(latexLabel && definition ? { latexLabel, autoLabel: isAutomaticLabel(source, start, definition, latexLabel, labelOccurrences) } : latexLabel ? { latexLabel } : {}) });
   }
   const nearestHeadingAtLevel: Array<number | undefined> = [];
   headings.slice().reverse().forEach((heading) => {
@@ -308,7 +309,6 @@ export function parsePreview(source: string, filePath: string, definitions: Envi
     for (const block of direct) {
       addContent(cursor, block.start);
       const id = `block:${filePath}:${block.start}:${block.end}:${block.environmentId}`;
-      const definition = definitions.find((item) => item.id === block.environmentId);
       const semanticKind = semanticKindFor(block);
       const node: StructuralBlock = {
         id, kind: "block", semanticKind, origin: block.origin, environmentId: block.environmentId,

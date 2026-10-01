@@ -522,7 +522,12 @@ function registerIpcHandlers(): void {
   ipcMain.handle("ai:conversation:mode", (_event, id: string, mode: "chat" | "codex") => context?.aiWorkspaces.setMode(id, mode));
   ipcMain.handle("ai:conversation:remove", (_event, id: string) => context?.aiWorkspaces.remove(id));
   ipcMain.handle("ai:change-set:resolve", (_event, id: string, decisions: Record<string, "accepted" | "rejected">, applied: boolean) => context?.aiWorkspaces.resolveChangeSet(id, decisions, applied));
-  ipcMain.handle("ai:send", async (_event, input: { conversationId: string; projectId?: string; content: string; contextText?: string; overrides?: AIContextSnapshotFile[] }) => {
+  ipcMain.handle("ai:attachments:pick", async (_event, projectId: string) => {
+    if (!context) throw new Error("Application context is not ready");
+    const selected = await dialog.showOpenDialog({ properties: ["openFile", "multiSelections"] });
+    return selected.canceled ? [] : context.aiWorkspaces.selectAttachments(projectId, selected.filePaths);
+  });
+  ipcMain.handle("ai:send", async (_event, input: { conversationId: string; projectId?: string; content: string; contextText?: string; overrides?: AIContextSnapshotFile[]; attachmentIds?: string[] }) => {
     if (!context) throw new Error("Application context is not ready");
     const conversation = context.aiWorkspaces.snapshot(input.projectId).conversations.find((item) => item.id === input.conversationId);
     if (!conversation) throw new Error("AI conversation was not found for this project.");
@@ -541,7 +546,7 @@ function registerIpcHandlers(): void {
     }
     const model = conversation.mode === "chat" ? settings.global.aiCopilotModel : settings.global.aiModel;
     const reasoningEffort = conversation.mode === "chat" ? settings.global.aiCopilotReasoningEffort : settings.global.aiReasoningEffort;
-    return context.aiWorkspaces.send({ conversationId: input.conversationId, content: input.content, ...(model ? { model } : {}), ...(reasoningEffort ? { reasoningEffort } : {}), ...(snapshot.length ? { snapshot } : {}), ...(input.contextText ? { contextText: input.contextText } : {}) });
+    return context.aiWorkspaces.send({ conversationId: input.conversationId, content: input.content, attachmentIds: input.attachmentIds ?? [], ...(model ? { model } : {}), ...(reasoningEffort ? { reasoningEffort } : {}), ...(snapshot.length ? { snapshot } : {}), ...(input.contextText ? { contextText: input.contextText } : {}) });
   });
   ipcMain.handle("ai:cancel", (_event, taskId: string) => context?.aiWorkspaces.cancel(taskId));
   ipcMain.handle("ai:set-executable", async (_event, path: string) => {

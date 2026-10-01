@@ -15,14 +15,17 @@ function splitTopLevel(value: string, separator = ","): string[] {
   const result: string[] = [];
   let cursor = 0;
   let depth = 0;
+  let parenDepth = 0;
   let quoted = false;
   for (let index = 0; index < value.length; index += 1) {
     const character = value[index];
-    if (character === "\\" && quoted) { index += 1; continue; }
+    if (character === "\\") { index += 1; continue; }
     if (character === '"') quoted = !quoted;
     else if (!quoted && character === "{") depth += 1;
     else if (!quoted && character === "}") depth = Math.max(0, depth - 1);
-    else if (!quoted && depth === 0 && character === separator) { result.push(value.slice(cursor, index)); cursor = index + 1; }
+    else if (!quoted && depth === 0 && character === "(") parenDepth += 1;
+    else if (!quoted && depth === 0 && character === ")") parenDepth = Math.max(0, parenDepth - 1);
+    else if (!quoted && depth === 0 && parenDepth === 0 && character === separator) { result.push(value.slice(cursor, index)); cursor = index + 1; }
   }
   result.push(value.slice(cursor));
   return result;
@@ -31,23 +34,49 @@ function splitTopLevel(value: string, separator = ","): string[] {
 function parseBibtex(source: string): { entries: ParsedBibEntry[]; invalid: ReferenceImportResult["invalid"] } {
   const entries: ParsedBibEntry[] = [];
   const invalid: ReferenceImportResult["invalid"] = [];
-  const marker = /@([A-Za-z][\w-]*)\s*([({])/g;
-  for (const match of source.matchAll(marker)) {
-    const start = match.index ?? 0;
+  const marker = /@([A-Za-z][\w-]*)\s*([({])/;
+  let cursor = 0;
+  while (cursor < source.length) {
+    let start = cursor;
+    let match: RegExpMatchArray | null = null;
+    while (start < source.length) {
+      if (source[start] === "%") {
+        const newline = source.indexOf("\n", start);
+        start = newline < 0 ? source.length : newline + 1;
+        continue;
+      }
+      if (source[start] === "@") {
+        match = source.slice(start).match(marker);
+        if (match) break;
+      }
+      start += 1;
+    }
+    if (!match || !match[1]) break;
     const opener = match[2];
-    if (!opener || !match[1]) continue;
+    if (!opener) { cursor = start + 1; continue; }
     const closer = opener === "{" ? "}" : ")";
-    let depth = 1;
+    let braceDepth = opener === "{" ? 1 : 0;
+    let parenDepth = opener === "(" ? 1 : 0;
     let quoted = false;
     let end = start + match[0].length;
+    let closed = false;
     for (let index = end; index < source.length; index += 1) {
       const character = source[index];
-      if (character === "\\" && quoted) { index += 1; continue; }
+      if (character === "\\") { index += 1; continue; }
       if (character === '"') quoted = !quoted;
-      if (!quoted && character === opener) depth += 1;
-      if (!quoted && character === closer) { depth -= 1; if (depth === 0) { end = index + 1; break; } }
+      if (quoted) continue;
+      if (character === "{") braceDepth += 1;
+      else if (character === "}" && braceDepth > 0) {
+        braceDepth -= 1;
+        if (opener === "{" && braceDepth === 0) { end = index + 1; closed = true; break; }
+      } else if (opener === "(" && braceDepth === 0 && character === "(") parenDepth += 1;
+      else if (opener === "(" && braceDepth === 0 && character === closer) {
+        parenDepth -= 1;
+        if (parenDepth === 0) { end = index + 1; closed = true; break; }
+      }
     }
-    if (depth !== 0) { invalid.push({ raw: source.slice(start), message: `Unclosed @${match[1]} entry.`, start, end: source.length }); break; }
+    if (!closed) { invalid.push({ raw: source.slice(start), message: `Unclosed @${match[1]} entry.`, start, end: source.length }); break; }
+    cursor = end;
     const raw = source.slice(start, end);
     const body = raw.slice(match[0].length, -1);
     if (["comment", "preamble", "string"].includes(match[1].toLocaleLowerCase())) continue;
@@ -120,6 +149,20 @@ export class ReferenceLibraryRepository {
 
   async saveEntry(input: Partial<ReferenceLibraryEntry> & Pick<ReferenceLibraryEntry, "citationKey" | "entryType" | "fields">): Promise<ReferenceLibraryEntry> {
     const timestamp = now();
+    if (!input.id) {
+      const keyed = this.db.prepare("SELECT id, deleted_at FROM library_entries WHERE citation_key = ?").get(input.citationKey) as { id: string; deleted_at?: string | null } | undefined;
+      if (keyed && !keyed.deleted_at) {
+        const existing = this.snapshot().entries.find((entry) => entry.id === keyed.id);
+        if (existing) return existing;
+      }
+      // A soft-deleted row still owns its unique citation key; restore it instead
+      // of letting an add-from-preview action fail with a SQLite constraint error.
+      if (keyed?.deleted_at) {
+        this.db.prepare("UPDATE library_entries SET entry_type = ?, fields_json = ?, raw_bibtex = ?, source_file = ?, updated_at = ?, deleted_at = NULL WHERE id = ?")
+          .run(input.entryType, JSON.stringify(input.fields), input.rawBibtex ?? null, input.sourceFile ?? null, timestamp, keyed.id);
+        return this.snapshot().entries.find((entry) => entry.id === keyed.id)!;
+      }
+    }
     const id = input.id ?? randomUUID();
     const existing = this.db.prepare("SELECT id FROM library_entries WHERE id = ?").get(id);
     if (existing) this.db.prepare("UPDATE library_entries SET citation_key = ?, entry_type = ?, fields_json = ?, raw_bibtex = ?, updated_at = ?, deleted_at = NULL WHERE id = ?").run(input.citationKey, input.entryType, JSON.stringify(input.fields), input.rawBibtex ?? null, timestamp, id);

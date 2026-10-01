@@ -165,7 +165,8 @@ declare global {
         setConversationMode(id: string, mode: AIMode): Promise<AIConversation | undefined>;
         removeConversation(id: string): Promise<void>;
         resolveChangeSet(id: string, decisions: Record<string, "accepted" | "rejected">, applied: boolean): Promise<AIChangeSet | undefined>;
-        send(input: { conversationId: string; projectId?: string; content: string; contextText?: string; overrides?: AIContextSnapshotFile[] }): Promise<{ conversation: AIConversation; taskId: string } | undefined>;
+        send(input: { conversationId: string; projectId?: string; content: string; contextText?: string; overrides?: AIContextSnapshotFile[]; attachmentIds?: string[] }): Promise<{ conversation: AIConversation; taskId: string } | undefined>;
+        pickAttachments(projectId: string): Promise<import("@latex-editor/contracts").AIAttachment[]>;
         cancel(taskId: string): Promise<void>;
         onUpdate(listener: (update: { kind: "conversation" | "changes"; payload: AIConversation | AIChangeSet }) => void): () => void;
         onStatus(listener: (status: AIStatus) => void): () => void;
