@@ -3,6 +3,7 @@ import {
   type AddSemanticBlockInput,
   inferBlockKind,
   type BlockGraphSnapshot,
+  type DocumentStructure,
   type BlockReconciliationResult,
   type BlockRangeMappingResult,
   type BlockCreationValidation,
@@ -35,6 +36,8 @@ const legacyGraphMetadataPath = ".texweave/block-graph.json";
 interface HistoryEntry {
   before: BlockGraphSnapshot;
   after: BlockGraphSnapshot;
+  beforeStructure?: DocumentStructure;
+  afterStructure?: DocumentStructure;
 }
 
 export interface BlockGraphFilePort {
@@ -60,6 +63,21 @@ export class ProjectBlockGraphService {
 
   async snapshot(projectId: string): Promise<BlockGraphSnapshot> {
     return (await this.#load(projectId)).toSnapshot();
+  }
+
+  /** Shared serialization boundary for source-aware APIs and existing graph operations. */
+  async withDocumentGraph<T>(projectId: string, action: (graph: BlockGraphManager) => Promise<T>): Promise<T> {
+    return this.#withMutationLock(projectId, async () => {
+      const graph = await this.#load(projectId);
+      const before = graph.getDocumentStructure();
+      const revision = before?.structureRevision;
+      const result = await action(graph);
+      const after = graph.getDocumentStructure();
+      // Structure API refreshes replace the index or advance its revision.
+      // Pure reads should not serialize and compare thousands of nodes twice.
+      if (after !== before || after?.structureRevision !== revision) await this.#save(projectId, graph);
+      return result;
+    });
   }
 
   async createBlock(projectId: string, input: CreateSemanticBlockInput): Promise<SemanticBlock> {
@@ -223,10 +241,12 @@ export class ProjectBlockGraphService {
   async undo(projectId: string): Promise<BlockGraphSnapshot> {
     return this.#withMutationLock(projectId, async () => {
       const history = this.#history(projectId);
-      const entry = history.undo.pop();
+      const entry = history.undo.at(-1);
       if (!entry) return (await this.#load(projectId)).toSnapshot();
       const graph = new BlockGraphManager(entry.before);
+      if (entry.beforeStructure) graph.setDocumentStructure(structuredClone(entry.beforeStructure));
       await this.#save(projectId, graph);
+      history.undo.pop();
       history.redo.push(entry);
       return graph.toSnapshot();
     });
@@ -235,10 +255,12 @@ export class ProjectBlockGraphService {
   async redo(projectId: string): Promise<BlockGraphSnapshot> {
     return this.#withMutationLock(projectId, async () => {
       const history = this.#history(projectId);
-      const entry = history.redo.pop();
+      const entry = history.redo.at(-1);
       if (!entry) return (await this.#load(projectId)).toSnapshot();
       const graph = new BlockGraphManager(entry.after);
+      if (entry.afterStructure) graph.setDocumentStructure(structuredClone(entry.afterStructure));
       await this.#save(projectId, graph);
+      history.redo.pop();
       history.undo.push(entry);
       return graph.toSnapshot();
     });
@@ -277,20 +299,22 @@ export class ProjectBlockGraphService {
   }
 
   async #save(projectId: string, graph: BlockGraphManager): Promise<void> {
-    await this.#files.writeText(projectId, graphMetadataPath, `${JSON.stringify(graph.toSnapshot(), null, 2)}\n`);
+    await this.#files.writeText(projectId, graphMetadataPath, `${JSON.stringify(graph.toPersistenceSnapshot(), null, 2)}\n`);
   }
 
   async #mutate<T>(projectId: string, action: (graph: BlockGraphManager) => T | Promise<T>, options: { recordHistory?: boolean } = {}): Promise<T> {
     return this.#withMutationLock(projectId, async () => {
       const graph = await this.#load(projectId);
       const before = graph.toSnapshot();
+      const beforeStructure = graph.getDocumentStructure();
       const result = await action(graph);
       const after = graph.toSnapshot();
       const changed = JSON.stringify(before) !== JSON.stringify(after);
       if (changed) await this.#save(projectId, graph);
       if (options.recordHistory !== false && changed) {
         const history = this.#history(projectId);
-        history.undo.push({ before, after });
+        const afterStructure = graph.getDocumentStructure();
+        history.undo.push({ before, after, ...(beforeStructure ? { beforeStructure: structuredClone(beforeStructure) } : {}), ...(afterStructure ? { afterStructure: structuredClone(afterStructure) } : {}) });
         history.redo.length = 0;
         if (history.undo.length > 100) history.undo.shift();
       }

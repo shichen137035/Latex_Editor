@@ -189,6 +189,15 @@ export class NodeProjectFileService {
     return this.#listDirectory(project.canonicalPath, project.canonicalPath);
   }
 
+  /** Cheap cache token. Checked resolution preserves normal symlink/path policy. */
+  async getFileVersion(projectId: string, relativePath: string): Promise<string> {
+    const project = this.#projects.getProject(projectId);
+    const filePath = await resolveSafeProjectPath(project.canonicalPath, relativePath, true);
+    const metadata = await stat(filePath, { bigint: true });
+    if (!metadata.isFile()) throw new AppError("FILE_NOT_FOUND", `Not a regular file: ${relativePath}`);
+    return `${metadata.mtimeNs}:${metadata.ctimeNs}:${metadata.size}`;
+  }
+
   async readText(projectId: string, relativePath: string): Promise<TextFileContent> {
     const project = this.#projects.getProject(projectId);
     const filePath = await resolveSafeProjectPath(project.canonicalPath, relativePath, true);

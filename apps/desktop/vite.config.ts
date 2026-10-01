@@ -7,9 +7,8 @@ const rootPackage = JSON.parse(readFileSync(fileURLToPath(new URL("../../package
 
 export default defineConfig({
   root: "apps/desktop/src/renderer",
-  // Electron loads the renderer with file:// via BrowserWindow.loadFile().
-  // Relative asset URLs are required; an absolute /assets URL points at the
-  // filesystem root and results in a blank window.
+  // Relative asset URLs work both with Vite's dev server and Electron's
+  // production file:// load, where absolute /assets URLs resolve incorrectly.
   base: "./",
   define: { __APP_VERSION__: JSON.stringify(rootPackage.version) },
   plugins: [react()],

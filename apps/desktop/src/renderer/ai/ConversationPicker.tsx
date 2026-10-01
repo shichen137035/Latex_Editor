@@ -10,6 +10,7 @@ type Props = {
   protectedId?: string | undefined;
   onSelect(id: string): void;
   onNew(): void;
+  onRename(id: string, title: string): Promise<void>;
   onDelete(ids: string[]): Promise<void>;
 };
 
@@ -20,6 +21,9 @@ export function ConversationPicker(props: Props) {
   const [confirmIds, setConfirmIds] = useState<string[]>([]);
   const [deleting, setDeleting] = useState(false);
   const [error, setError] = useState("");
+  const [renaming, setRenaming] = useState(false);
+  const [name, setName] = useState("");
+  const [saving, setSaving] = useState(false);
   const [placement, setPlacement] = useState({ left: 0, top: 0, width: 0, maxHeight: 380 });
   const root = useRef<HTMLDivElement>(null);
   const panel = useRef<HTMLElement>(null);
@@ -94,12 +98,23 @@ export function ConversationPicker(props: Props) {
     { key: "older", items: filtered.filter((item) => item.updatedAt < week.getTime()) }
   ];
   const title = (item: AIConversation) => item.title === "New chat" ? t("ai.newChat") : item.title;
+  const rename = async () => {
+    if (!active || !name.trim() || saving) return;
+    setSaving(true); setError("");
+    try { await props.onRename(active.id, name.trim()); setRenaming(false); }
+    catch (reason) { setError(reason instanceof Error ? reason.message : String(reason)); }
+    finally { setSaving(false); }
+  };
 
-  return <div className="ai-conversation-toolbar" ref={root}>
+  return <div className="ai-conversation-management" ref={root}>
+    <div className="ai-conversation-toolbar">
     <button ref={trigger} className="ai-history-trigger" type="button" aria-label={t("ai.history.manage")} aria-expanded={open} aria-haspopup="dialog" disabled={deleting} onClick={() => { setConfirmIds([]); setError(""); setOpen(!open); }}>
       <span>{active ? title(active) : t("ai.recentChats")}</span><small>{props.conversations.length}</small><span aria-hidden="true">⌄</span>
     </button>
-    <button type="button" aria-label={t("ai.newChat")} title={t("ai.newChat")} disabled={props.disabled || deleting} onClick={() => { setOpen(false); props.onNew(); }}>+</button>
+    <button className="ai-rename-chat" type="button" aria-label={t("ai.renameChat")} title={t("ai.renameChat")} disabled={props.disabled || deleting || !active} onClick={() => { setOpen(false); setName(active?.title ?? ""); setError(""); setRenaming(!renaming); }}><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="m16 3 5 5-12 12-6 1 1-6Z M13 6l5 5"/></svg></button>
+    <button className="ai-new-chat" type="button" aria-label={t("ai.newChat")} title={t("ai.newChat")} disabled={props.disabled || deleting} onClick={() => { setOpen(false); setRenaming(false); props.onNew(); }}><span aria-hidden="true">+</span> {t("ai.newConversationShort")}</button>
+    </div>
+    {renaming && <form className="ai-rename-form" onSubmit={event => { event.preventDefault(); void rename(); }}><input autoFocus maxLength={120} aria-label={t("ai.conversationName")} value={name} onFocus={event => event.target.select()} onChange={event => setName(event.target.value)} onKeyDown={event => { if (event.key === "Escape") { event.stopPropagation(); setRenaming(false); } }}/><button type="submit" disabled={saving || !name.trim()} title={t("common.save")} aria-label={t("common.save")}>✓</button><button type="button" disabled={saving} aria-label={t("project.cancel")} onClick={() => setRenaming(false)}>×</button>{error && <small role="alert">{error}</small>}</form>}
     {open && createPortal(<section ref={panel} className="ai-history-panel" role="dialog" aria-label={t("ai.history.manage")} style={placement}>
       <header><strong>{t("ai.history.manage")}</strong><button type="button" className="ai-history-close" aria-label={t("ai.history.close")} onClick={() => { setOpen(false); trigger.current?.focus(); }}>×</button></header>
       <input ref={search} type="search" className="ai-history-search" placeholder={t("ai.history.search")} aria-label={t("ai.history.search")} value={query} onChange={(event) => { setQuery(event.target.value); setConfirmIds([]); }}/>

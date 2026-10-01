@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { useUnsavedChanges } from "../lifecycle/unsavedChanges.js";
 import { parseTable } from "./parser.js";
 import { deleteTableColumn, deleteTableRow, insertTableColumn, insertTableRow, mergeTableCells, patchTableSource, splitTableCells } from "./patch.js";
 import type { TableCell } from "./model.js";
@@ -44,6 +45,7 @@ export function TablePreview({ source, renderCell, onChange, onSelect }: { sourc
     onChange(next);
   };
   const commit = () => publish(flush());
+  useUnsavedChanges({ hasChanges: () => !!draft.current && patchTableSource(currentSource.current, { cell: { ...draft.current, content: draft.current.value } }) !== currentSource.current, commit });
   useEffect(() => {
     input.current?.focus();
   }, [editing?.row, editing?.column]);

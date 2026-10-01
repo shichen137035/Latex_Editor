@@ -98,6 +98,7 @@ export interface PreferenceValues {
   aiReasoningEffort: string;
   aiCopilotReasoningEffort: string;
   aiDefaultMode: "chat" | "codex";
+  aiPermissionMode: "ask" | "auto" | "full";
   aiIncludeCurrentFile: boolean;
   fontSize: number;
   tabSize: number;
@@ -126,7 +127,7 @@ export interface PreferenceValues {
 }
 export type PreferenceKey = keyof PreferenceValues;
 export const preferenceDefaults: PreferenceValues = {
-  locale: "en", theme: "light", themeDirectory: "", aiCodexExecutable: "", aiModel: "", aiCopilotModel: "", aiReasoningEffort: "", aiCopilotReasoningEffort: "", aiDefaultMode: "chat", aiIncludeCurrentFile: false, fontSize: 15, tabSize: 2, wordWrap: true,
+  locale: "en", theme: "light", themeDirectory: "", aiCodexExecutable: "", aiModel: "", aiCopilotModel: "", aiReasoningEffort: "", aiCopilotReasoningEffort: "", aiDefaultMode: "chat", aiPermissionMode: "auto", aiIncludeCurrentFile: false, fontSize: 15, tabSize: 2, wordWrap: true,
   autoSave: "off", hideBuildArtifacts: true, documentWordCompletion: true, autoPairSymbols: true, autoEnvironmentLabels: true, confirmPreviewEdits: true, warnIncompatibleEnvironmentConversion: true, visibleFilterGroups: ["blockType", "location", "file", "properties"], referenceLinkModifier: "ctrl", spellCheckMode: "auto", spellCheckLanguage: "en-US", spellCheckActiveLanguages: ["en-US"], maximize: true, restoreProject: false,
   lastProject: "", engine: "pdflatex", keybindings: {}, environments: [], layout: {}, images: defaultImagePreferences, tables: defaultTablePreferences
 };
@@ -146,6 +147,7 @@ export function validPreference(key: string, value: unknown): boolean {
     case "autoSave": return value === "off" || value === "afterDelay";
     case "wordWrap": case "hideBuildArtifacts": case "documentWordCompletion": case "autoPairSymbols": case "autoEnvironmentLabels": case "confirmPreviewEdits": case "warnIncompatibleEnvironmentConversion": case "maximize": case "restoreProject": case "aiIncludeCurrentFile": return typeof value === "boolean";
     case "aiDefaultMode": return value === "chat" || value === "codex";
+    case "aiPermissionMode": return value === "ask" || value === "auto" || value === "full";
     case "referenceLinkModifier": return value === "ctrl" || value === "alt" || value === "shift" || value === "meta";
     case "spellCheckActiveLanguages": return Array.isArray(value) && value.every((item) => typeof item === "string" && /^[A-Za-z]{2,3}(?:[-_][A-Za-z0-9]{2,8})?$/.test(item));
     case "themeDirectory": case "aiCodexExecutable": case "lastProject": return typeof value === "string";

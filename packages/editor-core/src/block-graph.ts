@@ -4,6 +4,7 @@ import {
   isKnownBlockType,
   type AddSemanticBlockInput,
   type BlockGraphSnapshot,
+  type DocumentStructure,
   type BlockReconciliationResult,
   type BlockRangeMappingResult,
   type BlockTextEdit,
@@ -28,6 +29,7 @@ import {
   type StructureWarning,
   type UpdateSemanticBlockInput
 } from "@latex-editor/contracts";
+import { assertDocumentStructure, mergeGraphStructure, structureToGraph } from "./document-structure.js";
 
 type GraphDirection = "incoming" | "outgoing";
 
@@ -184,12 +186,13 @@ export class BlockGraphManager implements IBlockGraphManager {
   readonly #blockEntries: SemanticBlock[] = [];
   #dependencies: DependencyEdge[] = [];
   #structuralParents: StructuralParentEdge[] = [];
+  #documentStructure: DocumentStructure | undefined;
 
   constructor(snapshot?: BlockGraphSnapshot) {
     for (const block of snapshot?.blocks ?? []) {
       const normalized = normalizedBlock(block);
       this.#blockEntries.push(normalized);
-      if (!this.#blocks.has(block.id)) this.#blocks.set(block.id, cloneBlock(normalized));
+      if (!this.#blocks.has(block.id)) this.#blocks.set(block.id, normalized);
     }
     this.#dependencies = (snapshot?.dependencies ?? []).map((edge) => ({ ...edge }));
     this.#structuralParents = (snapshot?.structuralParents ?? []).map((edge) => ({ ...edge }));
@@ -200,7 +203,21 @@ export class BlockGraphManager implements IBlockGraphManager {
   }
 
   static fromUnknown(value: unknown): BlockGraphManager {
+    const record = asRecord(value);
+    if (record?.schemaVersion === 2 && asRecord(record.blocks) && asRecord(record.files) && Array.isArray(record.roots)) {
+      const structure = structuredClone(value) as DocumentStructure;
+      assertDocumentStructure(structure);
+      const graph = new BlockGraphManager(parseSnapshot(structureToGraph(structure)));
+      graph.#documentStructure = structure;
+      return graph;
+    }
     return new BlockGraphManager(parseSnapshot(value));
+  }
+
+  getDocumentStructure(): DocumentStructure | undefined { return this.#documentStructure; }
+  setDocumentStructure(structure: DocumentStructure): void { this.#documentStructure = structure; }
+  toPersistenceSnapshot(): BlockGraphSnapshot | DocumentStructure {
+    return this.#documentStructure ? mergeGraphStructure(this.toSnapshot(), this.#documentStructure) : this.toSnapshot();
   }
 
   toSnapshot(): BlockGraphSnapshot {
@@ -358,8 +375,22 @@ export class BlockGraphManager implements IBlockGraphManager {
     const created: BlockId[] = [];
     const descriptorByTransient = new Map(descriptors.map((descriptor) => [descriptor.transientId, descriptor]));
 
-    const uniqueCandidate = (predicate: (block: SemanticBlock) => boolean): SemanticBlock | undefined => {
-      const candidates = [...unmatched.values()].filter(predicate);
+    const indexBy = (key: (block: SemanticBlock) => string | undefined) => {
+      const index = new Map<string, SemanticBlock[]>();
+      for (const block of previous) {
+        const value = key(block);
+        if (value !== undefined) { const bucket = index.get(value) ?? []; bucket.push(block); index.set(value, bucket); }
+      }
+      return index;
+    };
+    const bindings = indexBy((block) => typeof block.metadata?.parserBindingId === "string" ? block.metadata.parserBindingId : block.id);
+    const labels = indexBy((block) => block.label);
+    const fingerprints = indexBy((block) => `${block.origin}\0${block.role ?? block.type}\0${String(block.metadata?.parserFingerprint)}`);
+    const roles = indexBy((block) => `${block.origin}\0${block.role ?? block.type}`);
+    const positions = indexBy((block) => `${block.origin}\0${block.role ?? block.type}\0${block.range?.start}\0${block.range?.end}\0${String(block.metadata?.parserParentFingerprint)}`);
+    const entryIndices = new Map(this.#blockEntries.map((block, index) => [block.id, index]));
+    const uniqueCandidate = (bucket: SemanticBlock[] | undefined): SemanticBlock | undefined => {
+      const candidates = (bucket ?? []).filter((block) => unmatched.has(block.id));
       return candidates.length === 1 ? candidates[0] : undefined;
     };
     const descriptorLabelCounts = new Map<string, number>();
@@ -373,18 +404,18 @@ export class BlockGraphManager implements IBlockGraphManager {
     for (const descriptor of descriptors) {
       const parentFingerprint = descriptor.parentTransientId ? descriptorByTransient.get(descriptor.parentTransientId)?.fingerprint : undefined;
       let existing = descriptor.bindingId
-        ? uniqueCandidate((block) => block.id === descriptor.bindingId || block.metadata?.parserBindingId === descriptor.bindingId)
+        ? unmatched.get(descriptor.bindingId) ?? uniqueCandidate(bindings.get(descriptor.bindingId))
         : undefined;
       if (!existing && descriptor.label && descriptorLabelCounts.get(descriptor.label) === 1) {
-        existing = uniqueCandidate((block) => block.label === descriptor.label);
+        existing = uniqueCandidate(labels.get(descriptor.label));
       }
       const fingerprintKey = `${descriptor.origin}\0${descriptor.role}\0${descriptor.fingerprint}`;
       if (!existing && descriptorFingerprintCounts.get(fingerprintKey) === 1) {
-        existing = uniqueCandidate((block) => block.origin === descriptor.origin && (block.role ?? block.type) === descriptor.role
-          && block.metadata?.parserFingerprint === descriptor.fingerprint);
+        existing = uniqueCandidate(fingerprints.get(fingerprintKey));
       }
+      if (!existing) existing = uniqueCandidate(positions.get(`${descriptor.origin}\0${descriptor.role}\0${descriptor.range.start}\0${descriptor.range.end}\0${String(parentFingerprint)}`));
       if (!existing) {
-        const contextual = [...unmatched.values()].filter((block) => block.origin === descriptor.origin && (block.role ?? block.type) === descriptor.role);
+        const contextual = (roles.get(`${descriptor.origin}\0${descriptor.role}`) ?? []).filter((block) => unmatched.has(block.id));
         const scored = contextual.map((block) => ({
           block,
           score: Math.abs((block.range?.start ?? descriptor.range.start) - descriptor.range.start)
@@ -422,7 +453,7 @@ export class BlockGraphManager implements IBlockGraphManager {
         if (descriptor.source === undefined) delete refreshed.source;
         assertBlock(refreshed);
         this.#blocks.set(id, refreshed);
-        const index = this.#blockEntries.findIndex((block) => block.id === id);
+        const index = entryIndices.get(id) ?? -1;
         if (index >= 0) this.#blockEntries[index] = refreshed;
         unmatched.delete(id);
         matched.push(id);
@@ -794,19 +825,27 @@ export class BlockGraphManager implements IBlockGraphManager {
   }
 
   #rebuildRangeContainment(fileId: string): void {
-    const ranged = this.#blockEntries.filter((block) => block.fileId === fileId && block.range && block.state === "active");
+    const ranged = this.#blockEntries.filter((block) => block.fileId === fileId && block.range && block.state === "active")
+      .sort((left, right) => left.range!.start - right.range!.start || right.range!.end - left.range!.end || Number(right.origin === "user") - Number(left.origin === "user"));
     const fileBlockIds = new Set(this.#blockEntries.filter((block) => block.fileId === fileId && block.range).map((block) => block.id));
     this.#structuralParents = this.#structuralParents.filter((edge) => !fileBlockIds.has(edge.child));
+    // A laminar tree is a sorted interval stack, not an all-pairs search.
+    // Crossings are already classified as conflicted by reconciliation.
+    const stack: SemanticBlock[] = [];
     for (const child of ranged) {
       let parent: SemanticBlock | undefined;
-      for (const candidate of ranged) {
+      while (stack.length && stack.at(-1)!.range!.end <= child.range!.start) stack.pop();
+      for (let index = stack.length - 1; index >= 0; index--) {
+        const candidate = stack[index]!;
         if (candidate.id === child.id || !candidate.range || !child.range) continue;
         if (candidate.range.start <= child.range.start && child.range.end <= candidate.range.end
-          && (candidate.range.start < child.range.start || child.range.end < candidate.range.end)) {
-          if (!parent || (candidate.range.end - candidate.range.start) < (parent.range!.end - parent.range!.start)) parent = candidate;
+          && (candidate.range.start < child.range.start || child.range.end < candidate.range.end || (candidate.origin === "user" && child.origin !== "user"))) {
+          parent = candidate;
+          break;
         }
       }
       if (parent) this.#structuralParents.push({ parent: parent.id, child: child.id });
+      stack.push(child);
     }
   }
 

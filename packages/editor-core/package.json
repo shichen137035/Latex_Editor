@@ -2,5 +2,9 @@
   "name": "@latex-editor/editor-core",
   "private": true,
   "type": "module",
-  "exports": { ".": { "types": "./dist/index.d.ts", "import": "./dist/index.js" } }
+  "exports": {
+    ".": { "types": "./dist/index.d.ts", "import": "./dist/index.js" },
+    "./bibtex": { "types": "./dist/bibtex.d.ts", "import": "./dist/bibtex.js" },
+    "./preview/*": { "types": "./dist/preview/*.d.ts", "import": "./dist/preview/*.js" }
+  }
 }

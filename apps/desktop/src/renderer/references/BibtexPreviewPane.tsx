@@ -1,11 +1,10 @@
 import { useEffect, useMemo, useState } from "react";
+import { useUnsavedChanges } from "../lifecycle/unsavedChanges.js";
 import type { ReferenceLibraryEntry, ReferenceLibrarySnapshot } from "@latex-editor/contracts";
-import { citationOccurrences, field, parseBibtex, type BibEntryPreview, type CitationOccurrence } from "./bibtex.js";
+import { bibtexEntryWithKey, citationKeyIdentity, citationOccurrences, field, isValidCitationKey, parseBibtex, type BibEntry as BibEntryPreview, type CitationOccurrence } from "./bibtex.js";
 import "./references.css";
 
 export interface ReferenceSourceLocation { filePath: string; offset: number; line?: number; column?: number; }
-
-function isValidCitationKey(key: string): boolean { return Boolean(key.trim()) && !/[\s,{}()]/.test(key); }
 
 export function BibtexPreviewPane({ source, filePath, projectId, documents, onLocate, onSourceChange }: { source: string; filePath: string; projectId: string; documents: Array<{ fileId: string; content: string }>; onLocate?(location: ReferenceSourceLocation): void; onSourceChange?(source: string): void }) {
   const api = window.latexEditor;
@@ -30,37 +29,31 @@ export function BibtexPreviewPane({ source, filePath, projectId, documents, onLo
 
   const entries = parsed.entries.filter((entry) => {
     const haystack = [entry.entryType, entry.citationKey, ...Object.values(entry.fields)].join(" ").toLocaleLowerCase();
-    return (!query.trim() || haystack.includes(query.trim().toLocaleLowerCase())) && (!onlyCited || occurrences.some((item) => item.key === entry.citationKey));
+    return (!query.trim() || haystack.includes(query.trim().toLocaleLowerCase())) && (!onlyCited || occurrences.some((item) => citationKeyIdentity(item.key) === citationKeyIdentity(entry.citationKey)));
   });
   const keyCounts = new Map<string, number>();
-  for (const entry of parsed.entries) keyCounts.set(entry.citationKey.toLocaleLowerCase(), (keyCounts.get(entry.citationKey.toLocaleLowerCase()) ?? 0) + 1);
+  for (const entry of parsed.entries) keyCounts.set(citationKeyIdentity(entry.citationKey), (keyCounts.get(citationKeyIdentity(entry.citationKey)) ?? 0) + 1);
   const duplicateKeys = [...keyCounts].filter(([, count]) => count > 1).map(([key]) => key);
   const duplicateKeySet = new Set(duplicateKeys);
-  const duplicateStarts = new Set(parsed.entries.filter((entry) => duplicateKeySet.has(entry.citationKey.toLocaleLowerCase())).map((entry) => entry.start));
+  const duplicateStarts = new Set(parsed.entries.filter((entry) => duplicateKeySet.has(citationKeyIdentity(entry.citationKey))).map((entry) => entry.start));
   const availableLibraryEntries = (snapshot?.entries ?? []).filter((entry) => {
     const search = [entry.citationKey, entry.entryType, ...Object.values(entry.fields)].join(" ").toLocaleLowerCase();
     return !libraryQuery.trim() || search.includes(libraryQuery.trim().toLocaleLowerCase());
   });
 
   const uniqueKeyFor = (base: string) => {
-    const used = new Set(parsed.entries.map((entry) => entry.citationKey.toLocaleLowerCase()));
+    const used = new Set(parsed.entries.map((entry) => citationKeyIdentity(entry.citationKey)));
     const safeBase = base.replace(/[\s,{}()]+/g, "_").replace(/^_+|_+$/g, "") || "reference";
     let suffix = 2;
     let candidate = `${safeBase}_${suffix}`;
-    while (used.has(candidate.toLocaleLowerCase())) { suffix += 1; candidate = `${safeBase}_${suffix}`; }
+    while (used.has(citationKeyIdentity(candidate))) { suffix += 1; candidate = `${safeBase}_${suffix}`; }
     return candidate;
   };
   const writeLibraryEntryToProject = (entry: ReferenceLibraryEntry, key = entry.citationKey) => {
     if (!onSourceChange) { setNotice("This BibTeX source is read-only."); return; }
-    const existing = parsed.entries.some((item) => item.citationKey.toLocaleLowerCase() === key.toLocaleLowerCase());
+    const existing = parsed.entries.some((item) => citationKeyIdentity(item.citationKey) === citationKeyIdentity(key));
     if (existing) { setNotice(`Citation key “${key}” already exists in this file.`); return; }
-    let raw = entry.rawBibtex;
-    if (raw) {
-      raw = raw.replace(/^(@[A-Za-z][\w-]*\s*[({]\s*)[^,})\s]+/, (_match, prefix: string) => `${prefix}${key}`);
-    } else {
-      const fields = Object.entries(entry.fields).map(([name, value]) => `  ${name} = {${value}}`).join(",\n");
-      raw = `@${entry.entryType}{${key}${fields ? `,\n${fields}\n` : ""}}`;
-    }
+    const raw = bibtexEntryWithKey(entry, key);
     const prefix = source.length === 0 || source.endsWith("\n\n") ? "" : source.endsWith("\n") ? "\n" : "\n\n";
     const suffix = source.length && !source.endsWith("\n") ? "\n" : "";
     onSourceChange(`${source}${prefix}${raw}${suffix}`);
@@ -69,7 +62,7 @@ export function BibtexPreviewPane({ source, filePath, projectId, documents, onLo
     setLibraryPickerOpen(false);
   };
   const selectLibraryEntry = (entry: ReferenceLibraryEntry) => {
-    const collision = parsed.entries.some((item) => item.citationKey.toLocaleLowerCase() === entry.citationKey.toLocaleLowerCase());
+    const collision = parsed.entries.some((item) => citationKeyIdentity(item.citationKey) === citationKeyIdentity(entry.citationKey));
     if (!collision) { writeLibraryEntryToProject(entry); return; }
     setPendingDuplicate(entry);
     setDuplicateKey(uniqueKeyFor(entry.citationKey));
@@ -91,13 +84,13 @@ export function BibtexPreviewPane({ source, filePath, projectId, documents, onLo
     if (!api || busy) return;
     setBusy(true);
     setNotice("");
-    const known = new Set(snapshot?.entries.map((item) => item.citationKey.toLocaleLowerCase()) ?? []);
+    const known = new Set(snapshot?.entries.map((item) => citationKeyIdentity(item.citationKey)) ?? []);
     const handled = new Set<string>();
     let added = 0;
     let skipped = 0;
     try {
       for (const entry of parsed.entries.filter((item) => item.valid)) {
-        const normalizedKey = entry.citationKey.toLocaleLowerCase();
+        const normalizedKey = citationKeyIdentity(entry.citationKey);
         if (known.has(normalizedKey) || handled.has(normalizedKey)) { skipped += 1; continue; }
         await api.references.saveEntry({ citationKey: entry.citationKey, entryType: entry.entryType, fields: entry.fields, rawBibtex: entry.rawBibtex, sourceFile: filePath });
         handled.add(normalizedKey);
@@ -118,31 +111,37 @@ export function BibtexPreviewPane({ source, filePath, projectId, documents, onLo
     const parsedDraft = parseBibtex(sourceDraft);
     if (parsedDraft.entries.length !== 1 || parsedDraft.invalid.length || !parsedDraft.entries[0]?.valid) {
       setSourceError("Enter exactly one complete, valid BibTeX entry.");
-      return;
+      return false;
     }
     const updated = parsedDraft.entries[0];
     if (!isValidCitationKey(updated.citationKey)) {
       setSourceError("Citation keys cannot contain spaces, commas, or BibTeX delimiters.");
-      return;
+      return false;
     }
-    if (parsed.entries.some((item) => item.start !== entry.start && item.citationKey.toLocaleLowerCase() === updated.citationKey.toLocaleLowerCase())) {
+    if (parsed.entries.some((item) => item.start !== entry.start && citationKeyIdentity(item.citationKey) === citationKeyIdentity(updated.citationKey))) {
       setSourceError(`Citation key “${updated.citationKey}” is already used in this file.`);
-      return;
+      return false;
     }
     if (!onSourceChange) {
       setSourceError("This BibTeX source is read-only.");
-      return;
+      return false;
     }
     onSourceChange(source.slice(0, entry.start) + sourceDraft + source.slice(entry.end));
     setEditingSourceStart(undefined);
     setSourceError("");
     setNotice(`Updated “${updated.citationKey}” in ${filePath}.`);
+    return true;
   };
+  const editingEntry = parsed.entries.find((entry) => entry.start === editingSourceStart);
+  useUnsavedChanges({
+    hasChanges: () => !!onSourceChange && !!editingEntry && sourceDraft !== editingEntry.rawBibtex,
+    commit: () => { if (editingEntry && !saveSourceEdit(editingEntry)) throw new Error(`Could not save the BibTeX draft in ${filePath}. Please fix its syntax or duplicate citation key first.`); }
+  });
   const confirmDuplicateAdd = () => {
     if (!pendingDuplicate) return;
     const key = duplicateKey.trim();
     if (!isValidCitationKey(key)) { setDuplicateKeyError("Use a key without spaces, commas, or BibTeX delimiters."); return; }
-    if (parsed.entries.some((item) => item.citationKey.toLocaleLowerCase() === key.toLocaleLowerCase())) {
+    if (parsed.entries.some((item) => citationKeyIdentity(item.citationKey) === citationKeyIdentity(key))) {
       setDuplicateKeyError(`Citation key “${key}” is still duplicated. Choose a different key.`);
       return;
     }
@@ -156,7 +155,7 @@ export function BibtexPreviewPane({ source, filePath, projectId, documents, onLo
     else if (source[end] === "\n" || source[end] === "\r") end += 1;
     else if (source.slice(Math.max(0, start - 2), start) === "\r\n") start -= 2;
     else if (source[start - 1] === "\n" || source[start - 1] === "\r") start -= 1;
-    const references = occurrences.filter((item) => item.key.toLocaleLowerCase() === removeRequest.citationKey.toLocaleLowerCase()).length;
+    const references = occurrences.filter((item) => citationKeyIdentity(item.key) === citationKeyIdentity(removeRequest.citationKey)).length;
     onSourceChange(source.slice(0, start) + source.slice(end));
     setNotice(references ? `Removed “${removeRequest.citationKey}” from this .bib; ${references} citation occurrence${references === 1 ? " remains" : "s remain"} in project files.` : `Removed “${removeRequest.citationKey}” from this .bib.`);
     setRemoveRequest(undefined);
@@ -168,11 +167,11 @@ export function BibtexPreviewPane({ source, filePath, projectId, documents, onLo
     <div className="bib-preview-toolbar"><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search citation key, title, author..."/><span>{entries.length} shown</span></div>
     {notice && <p className="bib-preview-notice" role="status">{notice}</p>}
     {duplicateKeys.length > 0 && <div className="bib-warning-card bib-duplicate-warning" role="alert"><strong>Duplicate citation keys</strong><span>This file contains repeated keys: {duplicateKeys.join(", ")}. Imports will not add another entry with those keys.</span></div>}
-    {libraryPickerOpen && <section className="bib-library-picker" aria-label="Add a reference from the Library"><header><div><strong>Add from Library</strong><span>Choose an entry to append to this project’s .bib file.</span></div><button onClick={() => setLibraryPickerOpen(false)} aria-label="Close">×</button></header><input value={libraryQuery} onChange={(event) => setLibraryQuery(event.target.value)} placeholder="Search title, author, or citation key..."/>{availableLibraryEntries.length ? <div className="bib-library-picker-list">{availableLibraryEntries.map((entry) => { const duplicate = parsed.entries.some((item) => item.citationKey.toLocaleLowerCase() === entry.citationKey.toLocaleLowerCase()); return <article key={entry.id}><div><strong>{field(entry, "title") || "Untitled reference"}</strong><span>{entry.citationKey} · {field(entry, "author") || entry.entryType} {duplicate && <em>Key already exists</em>}</span></div><button onClick={() => selectLibraryEntry(entry)}>{duplicate ? "Resolve duplicate…" : "Add to .bib"}</button></article>; })}</div> : <p className="bib-library-picker-empty">{snapshot ? "No matching references in the Library." : "Loading Library…"}</p>}</section>}
+    {libraryPickerOpen && <section className="bib-library-picker" aria-label="Add a reference from the Library"><header><div><strong>Add from Library</strong><span>Choose an entry to append to this project’s .bib file.</span></div><button onClick={() => setLibraryPickerOpen(false)} aria-label="Close">×</button></header><input value={libraryQuery} onChange={(event) => setLibraryQuery(event.target.value)} placeholder="Search title, author, or citation key..."/>{availableLibraryEntries.length ? <div className="bib-library-picker-list">{availableLibraryEntries.map((entry) => { const duplicate = parsed.entries.some((item) => citationKeyIdentity(item.citationKey) === citationKeyIdentity(entry.citationKey)); return <article key={entry.id}><div><strong>{field(entry, "title") || "Untitled reference"}</strong><span>{entry.citationKey} · {field(entry, "author") || entry.entryType} {duplicate && <em>Key already exists</em>}</span></div><button onClick={() => selectLibraryEntry(entry)}>{duplicate ? "Resolve duplicate…" : "Add to .bib"}</button></article>; })}</div> : <p className="bib-library-picker-empty">{snapshot ? "No matching references in the Library." : "Loading Library…"}</p>}</section>}
     {parsed.invalid.map((item, index) => <div className="bib-warning-card" key={`${item.start}-${index}`}><strong>Parse warning</strong><span>{item.message}</span><button onClick={() => onLocate?.({ filePath, offset: item.start })}>Open source</button></div>)}
     <div className="bib-entry-list">{entries.map((entry) => <BibEntryCard key={`${entry.citationKey}:${entry.start}`} entry={entry} inLibrary={Boolean(snapshot?.entries.some((item) => item.citationKey === entry.citationKey))} duplicateInFile={duplicateStarts.has(entry.start)} canEditProject={Boolean(onSourceChange)} usage={occurrences.filter((item) => item.key === entry.citationKey)} onAdd={() => void add(entry)} onRemoveFromProject={() => setRemoveRequest(entry)} onLocate={onLocate} filePath={filePath} busy={busy} sourceEditing={editingSourceStart === entry.start} sourceDraft={sourceDraft} sourceError={sourceError} onBeginSourceEdit={() => beginSourceEdit(entry)} onSourceDraftChange={setSourceDraft} onSaveSource={() => saveSourceEdit(entry)} onCancelSource={() => { setEditingSourceStart(undefined); setSourceError(""); }}/>)}</div>
     {pendingDuplicate && <div className="bib-operation-backdrop"><section className="bib-operation-dialog" role="alertdialog" aria-modal="true" aria-labelledby="bib-duplicate-title"><h2 id="bib-duplicate-title">Citation key already exists</h2><p><code>{pendingDuplicate.citationKey}</code> is already present in this .bib file. Choose a new key to add this Library entry as a separate reference.</p><label>New citation key<input autoFocus value={duplicateKey} onChange={(event) => { setDuplicateKey(event.target.value); setDuplicateKeyError(""); }} onKeyDown={(event) => { if (event.key === "Enter") confirmDuplicateAdd(); if (event.key === "Escape") setPendingDuplicate(undefined); }}/></label>{duplicateKeyError && <p className="bib-operation-error" role="alert">{duplicateKeyError}</p>}<div><button onClick={() => setPendingDuplicate(undefined)}>Cancel</button><button className="primary" onClick={confirmDuplicateAdd}>Add with new key</button></div></section></div>}
-    {removeRequest && <div className="bib-operation-backdrop"><section className="bib-operation-dialog" role="alertdialog" aria-modal="true" aria-labelledby="bib-remove-title"><h2 id="bib-remove-title">Remove from this .bib file?</h2><p>Remove <code>{removeRequest.citationKey}</code> from this project file?{occurrences.some((item) => item.key.toLocaleLowerCase() === removeRequest.citationKey.toLocaleLowerCase()) && <> It is cited in {occurrences.filter((item) => item.key.toLocaleLowerCase() === removeRequest.citationKey.toLocaleLowerCase()).length} project location(s); those citations may become unresolved.</>}</p><div><button onClick={() => setRemoveRequest(undefined)}>Cancel</button><button className="danger" onClick={removeCurrentEntry}>Remove entry</button></div></section></div>}
+    {removeRequest && <div className="bib-operation-backdrop"><section className="bib-operation-dialog" role="alertdialog" aria-modal="true" aria-labelledby="bib-remove-title"><h2 id="bib-remove-title">Remove from this .bib file?</h2><p>Remove <code>{removeRequest.citationKey}</code> from this project file?{occurrences.some((item) => citationKeyIdentity(item.key) === citationKeyIdentity(removeRequest.citationKey)) && <> It is cited in {occurrences.filter((item) => citationKeyIdentity(item.key) === citationKeyIdentity(removeRequest.citationKey)).length} project location(s); those citations may become unresolved.</>}</p><div><button onClick={() => setRemoveRequest(undefined)}>Cancel</button><button className="danger" onClick={removeCurrentEntry}>Remove entry</button></div></section></div>}
   </section>;
 }
 

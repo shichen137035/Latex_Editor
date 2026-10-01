@@ -25,6 +25,17 @@ describe("v0.3.1 project math context", () => {
 });
 
 describe("v0.3.1 math node index", () => {
+  it("ignores commented delimiters, including closing delimiters inside active math", () => {
+    expect(parseMathNodes(String.raw`% \[x=y\]
+% \begin{equation}x=y\end{equation}`)).toEqual([]);
+    for (const [open, close] of [["\\[", "\\]"], ["\\(", "\\)"], ["$$", "$$"]]) {
+      const source = `${open}x=y\n% ${close}\nz=w${close}`;
+      const nodes = parseMathNodes(source);
+      expect(nodes).toHaveLength(1);
+      expect(nodes[0]?.end).toBe(source.length);
+    }
+  });
+
   it("detects inline, display, and environment formulas and locates by offset", () => {
     const source = "Text $x+y$ and \\(z\\).\n\\[a+b\\]\n\\begin{align}c&=d\\end{align}";
     const nodes = parseMathNodes(source);

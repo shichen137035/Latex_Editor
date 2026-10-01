@@ -5,97 +5,6 @@ import { dirname, join } from "node:path";
 import { mkdir } from "node:fs/promises";
 import type { ProjectReferenceLink, ReferenceCollection, ReferenceImportResult, ReferenceLibraryEntry, ReferenceLibrarySnapshot, ReferenceTag } from "@latex-editor/contracts" with { "resolution-mode": "import" };
 
-interface ParsedBibEntry { entryType: string; citationKey: string; fields: Record<string, string>; rawBibtex: string; start: number; end: number; }
-
-function valueWithoutBraces(value: string): string {
-  return value.trim().replace(/^\{([\s\S]*)\}$/, "$1").replace(/^"([\s\S]*)"$/, "$1").replace(/\s+/g, " ").trim();
-}
-
-function splitTopLevel(value: string, separator = ","): string[] {
-  const result: string[] = [];
-  let cursor = 0;
-  let depth = 0;
-  let parenDepth = 0;
-  let quoted = false;
-  for (let index = 0; index < value.length; index += 1) {
-    const character = value[index];
-    if (character === "\\") { index += 1; continue; }
-    if (character === '"') quoted = !quoted;
-    else if (!quoted && character === "{") depth += 1;
-    else if (!quoted && character === "}") depth = Math.max(0, depth - 1);
-    else if (!quoted && depth === 0 && character === "(") parenDepth += 1;
-    else if (!quoted && depth === 0 && character === ")") parenDepth = Math.max(0, parenDepth - 1);
-    else if (!quoted && depth === 0 && parenDepth === 0 && character === separator) { result.push(value.slice(cursor, index)); cursor = index + 1; }
-  }
-  result.push(value.slice(cursor));
-  return result;
-}
-
-function parseBibtex(source: string): { entries: ParsedBibEntry[]; invalid: ReferenceImportResult["invalid"] } {
-  const entries: ParsedBibEntry[] = [];
-  const invalid: ReferenceImportResult["invalid"] = [];
-  const marker = /@([A-Za-z][\w-]*)\s*([({])/;
-  let cursor = 0;
-  while (cursor < source.length) {
-    let start = cursor;
-    let match: RegExpMatchArray | null = null;
-    while (start < source.length) {
-      if (source[start] === "%") {
-        const newline = source.indexOf("\n", start);
-        start = newline < 0 ? source.length : newline + 1;
-        continue;
-      }
-      if (source[start] === "@") {
-        match = source.slice(start).match(marker);
-        if (match) break;
-      }
-      start += 1;
-    }
-    if (!match || !match[1]) break;
-    const opener = match[2];
-    if (!opener) { cursor = start + 1; continue; }
-    const closer = opener === "{" ? "}" : ")";
-    let braceDepth = opener === "{" ? 1 : 0;
-    let parenDepth = opener === "(" ? 1 : 0;
-    let quoted = false;
-    let end = start + match[0].length;
-    let closed = false;
-    for (let index = end; index < source.length; index += 1) {
-      const character = source[index];
-      if (character === "\\") { index += 1; continue; }
-      if (character === '"') quoted = !quoted;
-      if (quoted) continue;
-      if (character === "{") braceDepth += 1;
-      else if (character === "}" && braceDepth > 0) {
-        braceDepth -= 1;
-        if (opener === "{" && braceDepth === 0) { end = index + 1; closed = true; break; }
-      } else if (opener === "(" && braceDepth === 0 && character === "(") parenDepth += 1;
-      else if (opener === "(" && braceDepth === 0 && character === closer) {
-        parenDepth -= 1;
-        if (parenDepth === 0) { end = index + 1; closed = true; break; }
-      }
-    }
-    if (!closed) { invalid.push({ raw: source.slice(start), message: `Unclosed @${match[1]} entry.`, start, end: source.length }); break; }
-    cursor = end;
-    const raw = source.slice(start, end);
-    const body = raw.slice(match[0].length, -1);
-    if (["comment", "preamble", "string"].includes(match[1].toLocaleLowerCase())) continue;
-    const parts = splitTopLevel(body);
-    const citationKey = parts.shift()?.trim();
-    if (!citationKey) { invalid.push({ raw, message: `@${match[1]} is missing a citation key.`, start, end }); continue; }
-    const fields: Record<string, string> = {};
-    for (const part of parts) {
-      const equal = part.indexOf("=");
-      if (equal < 0) { if (part.trim()) invalid.push({ raw: part.trim(), message: `Invalid field in ${citationKey}.`, start, end }); continue; }
-      const name = part.slice(0, equal).trim().toLocaleLowerCase();
-      if (!name) continue;
-      fields[name] = valueWithoutBraces(part.slice(equal + 1));
-    }
-    entries.push({ entryType: match[1].toLocaleLowerCase(), citationKey, fields, rawBibtex: raw, start, end });
-  }
-  return { entries, invalid };
-}
-
 function now(): string { return new Date().toISOString(); }
 
 export class ReferenceLibraryRepository {
@@ -130,17 +39,27 @@ export class ReferenceLibraryRepository {
   }
 
   async importBibFile(path: string): Promise<ReferenceImportResult> {
+    const { parseBibtex, citationKeyIdentity } = await import("@latex-editor/editor-core/bibtex");
     const source = await readFile(path, "utf8");
     const parsed = parseBibtex(source);
     const duplicates: string[] = [];
     const insert = this.db.prepare("INSERT INTO library_entries (id, citation_key, entry_type, fields_json, raw_bibtex, source_file, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)");
     const timestamp = now();
+    const knownKeys = new Map((this.db.prepare("SELECT id, citation_key, deleted_at FROM library_entries").all() as Array<{ id: string; citation_key: string; deleted_at?: string | null }>).map((row) => [citationKeyIdentity(row.citation_key), row]));
     this.db.exec("BEGIN");
     try {
-      for (const entry of parsed.entries) {
-        const existing = this.db.prepare("SELECT id FROM library_entries WHERE citation_key = ? AND deleted_at IS NULL").get(entry.citationKey) as { id?: string } | undefined;
-        if (existing?.id) { duplicates.push(entry.citationKey); continue; }
+      for (const entry of parsed.entries.filter((item) => item.valid)) {
+        const identity = citationKeyIdentity(entry.citationKey);
+        const existing = knownKeys.get(identity);
+        if (existing && !existing.deleted_at) { duplicates.push(entry.citationKey); continue; }
+        if (existing) {
+          this.db.prepare("UPDATE library_entries SET citation_key = ?, entry_type = ?, fields_json = ?, raw_bibtex = ?, source_file = ?, updated_at = ?, deleted_at = NULL WHERE id = ?")
+            .run(entry.citationKey, entry.entryType, JSON.stringify(entry.fields), entry.rawBibtex, path, timestamp, existing.id);
+          knownKeys.set(identity, { id: existing.id, citation_key: entry.citationKey, deleted_at: null });
+          continue;
+        }
         insert.run(randomUUID(), entry.citationKey, entry.entryType, JSON.stringify(entry.fields), entry.rawBibtex, path, timestamp, timestamp);
+        knownKeys.set(identity, { id: "", citation_key: entry.citationKey, deleted_at: null });
       }
       this.db.exec("COMMIT");
     } catch (error) { this.db.exec("ROLLBACK"); throw error; }
@@ -148,9 +67,14 @@ export class ReferenceLibraryRepository {
   }
 
   async saveEntry(input: Partial<ReferenceLibraryEntry> & Pick<ReferenceLibraryEntry, "citationKey" | "entryType" | "fields">): Promise<ReferenceLibraryEntry> {
+    const { citationKeyIdentity } = await import("@latex-editor/editor-core/bibtex");
     const timestamp = now();
+    const keyedRows = this.db.prepare("SELECT id, citation_key, deleted_at FROM library_entries").all() as Array<{ id: string; citation_key: string; deleted_at?: string | null }>;
+    const identity = citationKeyIdentity(input.citationKey);
+    const keyed = keyedRows.find((row) => citationKeyIdentity(row.citation_key) === identity);
+    const conflictingKey = input.id ? keyedRows.find((row) => row.id !== input.id && citationKeyIdentity(row.citation_key) === identity) : undefined;
+    if (conflictingKey) throw new Error(`Citation key already exists: ${input.citationKey}`);
     if (!input.id) {
-      const keyed = this.db.prepare("SELECT id, deleted_at FROM library_entries WHERE citation_key = ?").get(input.citationKey) as { id: string; deleted_at?: string | null } | undefined;
       if (keyed && !keyed.deleted_at) {
         const existing = this.snapshot().entries.find((entry) => entry.id === keyed.id);
         if (existing) return existing;

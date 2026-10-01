@@ -273,6 +273,33 @@ class MemoryGraphFiles implements BlockGraphFilePort {
 }
 
 describe("project block graph persistence", () => {
+  it("retains undo and redo entries when metadata persistence fails", async () => {
+    const memory = new MemoryGraphFiles();
+    let fail = false;
+    const files: BlockGraphFilePort = {
+      readText: (project, path) => memory.readText(project, path),
+      writeText: async (project, path, content) => {
+        if (fail) throw new Error("Disk is read-only");
+        await memory.writeText(project, path, content);
+      }
+    };
+    const service = new ProjectBlockGraphService(files, { next: () => "unused" });
+    await service.addBlock("project", { id: "A", type: "theorem" });
+    await service.addBlock("project", { id: "B", type: "theorem" });
+    await service.addDependency("project", "A", "B");
+    fail = true;
+    await expect(service.undo("project")).rejects.toThrow("read-only");
+    expect(service.historyState("project")).toEqual({ canUndo: true, canRedo: false });
+    expect((await service.snapshot("project")).dependencies).toHaveLength(1);
+    fail = false;
+    expect((await service.undo("project")).dependencies).toEqual([]);
+    fail = true;
+    await expect(service.redo("project")).rejects.toThrow("read-only");
+    expect(service.historyState("project").canRedo).toBe(true);
+    expect((await service.snapshot("project")).dependencies).toEqual([]);
+    fail = false;
+    expect((await service.redo("project")).dependencies).toEqual([{ from: "A", to: "B" }]);
+  });
   it("assigns stable ids, serializes concurrent mutations, and reloads the project graph", async () => {
     const files = new MemoryGraphFiles();
     const ids = ["block-a", "block-b"];

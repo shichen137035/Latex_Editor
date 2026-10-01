@@ -1,30 +1,22 @@
 import { Fragment, memo, useEffect, useMemo, useRef, useState, type CSSProperties, type MouseEvent, type PointerEvent as ReactPointerEvent, type ReactNode } from "react";
-import { Editor, type OnMount } from "@monaco-editor/react";
-import { createPortal } from "react-dom";
+import { createPortal, flushSync } from "react-dom";
 import type { BlockGraphSnapshot, BlockId, ProjectTreeNode, RelationDirection } from "@latex-editor/contracts";
 import { t, type MessageKey } from "../i18n/index.js";
 import { definitionForId } from "./environments.js";
 import { parsePreview } from "./parser.js";
 import type { ContentRegion, EnvironmentDefinition, PreviewNode, SourceSpan, StructuralBlock } from "./types.js";
 import "./preview.css";
+import type { SpellContextRequest } from "../spellcheck/SpellCheckController.js";
 import { useSettings } from "../settings/service.js";
-import { CompletionController } from "../completion/CompletionController.js";
-import { SpellCheckController, type SpellContextRequest } from "../spellcheck/SpellCheckController.js";
-import { installEditorContextActions } from "../workbench/editorContextActions.js";
 import { MathRenderer } from "./MathRenderer.js";
-import { commands } from "../settings/commands.js";
-import { MathPreviewPopover } from "../math/MathPreviewPopover.js";
-import { extractMathExpression } from "../math/MathRenderService.js";
-import { MathNodeIndex } from "../math/MathNodeLocator.js";
+import { bindings, commands, eventBinding } from "../settings/commands.js";
 import { EMPTY_MATH_CONTEXT, type MathContext } from "../math/types.js";
 import { searchPattern } from "../search/SearchEngine.js";
 import type { SearchQuery, SearchResult } from "../search/types.js";
 import { FilterEngine } from "../filter/FilterEngine.js";
 import { defaultFilterQuery, type FilterQuery, type FilterState } from "../filter/types.js";
-import { editorThemeName } from "../themes/runtime.js";
 import type { DocumentSelection } from "../custom-blocks/selection.js";
 import { candidateRelationState, type UnmatchedBehavior } from "../relations/model.js";
-import { installSymbolPairing } from "../editor/symbolPairing.js";
 import { convertBlockEnvironmentSource, definitionConversionGroup, environmentDefinitionsCompatible, environmentDisplayName, EnvironmentPickerPanel, environmentConversionGroup } from "./EnvironmentPicker.js";
 import { unwrapLatexEnvironment } from "./sourceOperations.js";
 import { FigurePreview } from "../figure/FigurePreview.js";
@@ -34,6 +26,8 @@ import type { TableSelection } from "../table/model.js";
 import { tokenizeInlineSource, type InlineSourceToken } from "./inlineSource.js";
 import { sourceOffsetAtPoint } from "./sourceMapping.js";
 import { upsertBlockLabel } from "./labels.js";
+import { PreviewLocalEditor } from "./PreviewLocalEditor.js";
+import { useUnsavedChanges } from "../lifecycle/unsavedChanges.js";
 
 type EditorApi = NonNullable<Window["latexEditor"]>;
 export interface PreviewRelationUi {
@@ -385,17 +379,25 @@ function BlockEnvironmentSelector({ node, source, definition, definitions, disab
 function LabelEditor({ label, auto, onCommit }: { label: string; auto: boolean; onCommit(value: string): void }) {
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(label);
+  const editingRef = useRef(false);
   useEffect(() => { if (!editing) setDraft(label); }, [editing, label]);
+  useUnsavedChanges({ hasChanges: () => editingRef.current && draft !== label, commit: () => commit() });
   const commit = () => {
+    if (!editingRef.current) return;
+    editingRef.current = false;
     const next = draft.replace(/[{}\r\n]/g, "").trim();
     if (next && next !== label) onCommit(next);
     setEditing(false);
   };
-  if (editing) return <input className="preview-block-label-editor" autoFocus value={draft} aria-label={t("preview.editLabel")} onClick={(event) => event.stopPropagation()} onChange={(event) => setDraft(event.target.value)} onBlur={commit} onKeyDown={(event) => {
-    if (event.key === "Enter") { event.preventDefault(); commit(); }
-    if (event.key === "Escape") { event.preventDefault(); setDraft(label); setEditing(false); }
+  if (editing) return <input className="preview-block-label-editor" data-shortcut-capture autoFocus value={draft} aria-label={t("preview.editLabel")} onClick={(event) => event.stopPropagation()} onChange={(event) => setDraft(event.target.value)} onBlur={commit} onKeyDown={(event) => {
+    if (event.nativeEvent.isComposing || event.nativeEvent.keyCode === 229) return;
+    const key = eventBinding(event.nativeEvent), configured = bindings();
+    const save = configured["file.save"] === key ? "file.save" : configured["file.saveAll"] === key ? "file.saveAll" : undefined;
+    if (save) { event.preventDefault(); event.stopPropagation(); flushSync(commit); commands.execute(save); return; }
+    if (event.key === "Enter") { event.preventDefault(); event.stopPropagation(); commit(); }
+    if (event.key === "Escape") { event.preventDefault(); event.stopPropagation(); editingRef.current = false; setDraft(label); setEditing(false); }
   }}/>;
-  return <button type="button" className={`preview-block-label${auto ? " auto" : ""}${label ? "" : " empty"}`} title={t(label ? (auto ? "preview.autoLabelHint" : "preview.editLabel") : "preview.addLabel")} onClick={(event) => { event.stopPropagation(); setDraft(label); setEditing(true); }}>{label || t("preview.addLabel")}</button>;
+  return <button type="button" className={`preview-block-label${auto ? " auto" : ""}${label ? "" : " empty"}`} title={t(label ? (auto ? "preview.autoLabelHint" : "preview.editLabel") : "preview.addLabel")} onClick={(event) => { event.stopPropagation(); editingRef.current = true; setDraft(label); setEditing(true); }}>{label || t("preview.addLabel")}</button>;
 }
 
 function SpecializedContent({ node, source, services }: { node: StructuralBlock; source: string; services: PreviewEditorServices }) {
@@ -447,159 +449,7 @@ function ListContent({ node, source, mathContext, searchQuery, activeSearch, ren
   return <Tag className="preview-list">{items.map(renderItem)}</Tag>;
 }
 
-function LocalEditor({ value, onApply, onCancel, onInsertBefore, onInsertAfter, mathDraft = false, sourceStartLine = 1, initialCursorOffset, api, projectId, tree, currentPath, definitions, mathContext, onSpellContextMenu, onDetectedLanguage, onForwardSync }: { value: string; onApply(value: string): void; onCancel(): void; onInsertBefore?(draft: string): void; onInsertAfter?(draft: string): void; mathDraft?: boolean; sourceStartLine?: number; initialCursorOffset?: number | undefined; api: EditorApi | undefined; projectId: string; tree: ProjectTreeNode[]; currentPath: string; definitions: EnvironmentDefinition[]; mathContext: MathContext; onSpellContextMenu(request: SpellContextRequest): void; onDetectedLanguage(language: string): void; onForwardSync(path: string, line: number, column?: number): void }) {
-  const preferences = useSettings();
-  const [draft, setDraft] = useState(value);
-  const [cursorMath, setCursorMath] = useState<{ expression: string; displayMode: boolean; start: number; end: number }>();
-  const [mathAnchor, setMathAnchor] = useState<DOMRect>();
-  const [confirmLeave, setConfirmLeave] = useState(false);
-  const editorShellRef = useRef<HTMLDivElement | null>(null);
-  const localEditorRef = useRef<Parameters<OnMount>[0] | null>(null);
-  const draftRef = useRef(value);
-  const applyRef = useRef(onApply);
-  const cancelRef = useRef(onCancel);
-  const completionController = useRef<CompletionController | null>(null);
-  const spellCheckController = useRef<SpellCheckController | null>(null);
-  const contextActions = useRef<{ dispose(): void } | null>(null);
-  const symbolPairing = useRef<{ dispose(): void } | null>(null);
-  const mode = preferences.get("spellCheckMode");
-  const language = preferences.get("spellCheckLanguage");
-  draftRef.current = draft;
-  applyRef.current = onApply;
-  cancelRef.current = onCancel;
-  useEffect(() => () => { completionController.current?.dispose(); spellCheckController.current?.dispose(); contextActions.current?.dispose(); symbolPairing.current?.dispose(); }, []);
-  useEffect(() => { spellCheckController.current?.refresh(); }, [mode, language]);
-  useEffect(() => {
-    const registrations = [
-      commands.register("preview.applyDraft", { execute: () => applyRef.current(draftRef.current) }),
-      commands.register("preview.cancelDraft", { execute: () => cancelRef.current() }),
-      commands.register("block.insertBefore", { when: () => !!onInsertBefore, execute: () => onInsertBefore?.(draftRef.current) }),
-      commands.register("block.insertAfter", { when: () => !!onInsertAfter, execute: () => onInsertAfter?.(draftRef.current) })
-    ];
-    return () => registrations.forEach((dispose) => dispose());
-  }, []);
-  const onMount: OnMount = (editor, monaco) => {
-    localEditorRef.current = editor;
-    const model = editor.getModel();
-    if (model && initialCursorOffset !== undefined) {
-      const offset = Math.max(0, Math.min(initialCursorOffset, model.getValueLength()));
-      // The wrapper may finish syncing the initial model just after onMount.
-      // Apply the clicked source position after Monaco's first layout so that
-      // its initial selection cannot reset the caret to the start of the block.
-      requestAnimationFrame(() => requestAnimationFrame(() => {
-        const currentModel = editor.getModel();
-        if (!currentModel) return;
-        const position = currentModel.getPositionAt(Math.min(offset, currentModel.getValueLength()));
-        editor.setPosition(position);
-        editor.revealPositionInCenter(position);
-        editor.focus();
-      }));
-    }
-    editor.focus();
-    completionController.current?.dispose();
-    spellCheckController.current?.dispose();
-    contextActions.current?.dispose();
-    symbolPairing.current?.dispose();
-    symbolPairing.current = installSymbolPairing(editor, () => preferences.get("autoPairSymbols"));
-    const globalPosition = (line: number, column: number) => ({ line: sourceStartLine + line - 1, column });
-    contextActions.current = installEditorContextActions(editor, (line, column) => { const position = globalPosition(line, column); onForwardSync(currentPath, position.line, position.column); });
-    editor.onMouseDown((event) => {
-      if (event.event.detail !== 2 || !event.target.position) return;
-      const position = globalPosition(event.target.position.lineNumber, event.target.position.column);
-      onForwardSync(currentPath, position.line, position.column);
-    });
-    let indexedVersion = -1;
-    let mathIndex = new MathNodeIndex([]);
-    const updateCursorMath = () => {
-      const model = editor.getModel();
-      const position = editor.getPosition();
-      if (!model || !position) { setCursorMath(undefined); return; }
-      if (editorShellRef.current) editorShellRef.current.dataset.cursorOffset = String(model.getOffsetAt(position));
-      if (model.getVersionId() !== indexedVersion) {
-        indexedVersion = model.getVersionId();
-        mathIndex = MathNodeIndex.fromSource(model.getValue());
-      }
-      const node = mathIndex.findMathNodeAtOffset(model.getOffsetAt(position));
-      if (!node) { setCursorMath(undefined); return; }
-      const extracted = extractMathExpression(model.getValue().slice(node.start, node.end));
-      setCursorMath({ ...extracted, start: node.start, end: node.end });
-    };
-    editor.onDidChangeCursorPosition(updateCursorMath);
-    editor.onDidChangeModelContent(() => { indexedVersion = -1; updateCursorMath(); });
-    editor.onDidBlurEditorWidget(() => setCursorMath(undefined));
-    updateCursorMath();
-    if (!api) return;
-    completionController.current = new CompletionController({ monaco, api, projectId, getTree: () => tree, getCurrentPath: () => currentPath, getEnvironments: () => definitions, isDocumentWordCompletionEnabled: () => preferences.get("documentWordCompletion") });
-    spellCheckController.current = new SpellCheckController({ editor, api, getCurrentPath: () => currentPath, getMode: () => preferences.get("spellCheckMode"), getManualLanguage: () => preferences.get("spellCheckLanguage"), onDetectedLanguage, onContextMenu: onSpellContextMenu });
-  };
-  const blockMath = useMemo(() => mathDraft ? extractMathExpression(draft) : undefined, [draft, mathDraft]);
-  const activeMath = cursorMath ?? blockMath;
-  useEffect(() => {
-    if (!activeMath) { setMathAnchor(undefined); return; }
-    let frame = 0;
-    const updateAnchor = () => {
-      window.cancelAnimationFrame(frame);
-      frame = window.requestAnimationFrame(() => {
-        const editor = localEditorRef.current;
-        const model = editor?.getModel();
-        const bounds = editor?.getDomNode()?.getBoundingClientRect();
-        if (cursorMath && editor && model && bounds) {
-          const start = editor.getScrolledVisiblePosition(model.getPositionAt(cursorMath.start));
-          const end = editor.getScrolledVisiblePosition(model.getPositionAt(cursorMath.end));
-          if (!start && !end) { setMathAnchor(undefined); return; }
-          const top = Math.max(bounds.top, bounds.top + (start?.top ?? 0));
-          const bottom = Math.min(bounds.bottom, bounds.top + (end?.top ?? bounds.height) + (end?.height ?? 1));
-          if (bottom <= bounds.top || top >= bounds.bottom) { setMathAnchor(undefined); return; }
-          setMathAnchor(new DOMRect(bounds.left + (start?.left ?? end?.left ?? 12), top, 1, Math.max(1, bottom - top)));
-          return;
-        }
-        const rect = editorShellRef.current?.getBoundingClientRect();
-        setMathAnchor(rect && rect.bottom > 0 && rect.top < window.innerHeight ? rect : undefined);
-      });
-    };
-    const scrollRoot = editorShellRef.current?.closest(".structured-preview");
-    const editorScroll = localEditorRef.current?.onDidScrollChange(updateAnchor);
-    const editorLayout = localEditorRef.current?.onDidLayoutChange(updateAnchor);
-    updateAnchor();
-    scrollRoot?.addEventListener("scroll", updateAnchor, { passive: true });
-    window.addEventListener("resize", updateAnchor);
-    return () => {
-      window.cancelAnimationFrame(frame);
-      editorScroll?.dispose();
-      editorLayout?.dispose();
-      scrollRoot?.removeEventListener("scroll", updateAnchor);
-      window.removeEventListener("resize", updateAnchor);
-    };
-  }, [activeMath, cursorMath]);
-  useEffect(() => {
-    const outside = (event: PointerEvent) => {
-      const target = event.target as Element;
-      if (editorShellRef.current?.contains(target)) return;
-      if (target.closest(".latex-toolbar, .math-preview-popover, .suggest-widget, .monaco-hover, .context-view, .spell-context-menu, .menu-popover, .environment-picker, [role=dialog]")) return;
-      if (draftRef.current === value) { cancelRef.current(); return; }
-      if (!preferences.get("confirmPreviewEdits")) { applyRef.current(draftRef.current); return; }
-      event.preventDefault();
-      event.stopImmediatePropagation();
-      setConfirmLeave(true);
-    };
-    document.addEventListener("pointerdown", outside, true);
-    return () => document.removeEventListener("pointerdown", outside, true);
-  }, [preferences, value]);
-  useEffect(() => {
-    if (!confirmLeave) return;
-    const choose = (event: KeyboardEvent) => {
-      if (event.key.toLocaleLowerCase() === "y") { event.preventDefault(); setConfirmLeave(false); applyRef.current(draftRef.current); }
-      else if (event.key.toLocaleLowerCase() === "n" || event.key === "Escape") { event.preventDefault(); setConfirmLeave(false); cancelRef.current(); }
-    };
-    window.addEventListener("keydown", choose, true);
-    return () => window.removeEventListener("keydown", choose, true);
-  }, [confirmLeave]);
-  return <><div ref={editorShellRef} className="preview-local-editor" onClick={(event) => event.stopPropagation()}>
-    {activeMath && mathAnchor && <MathPreviewPopover source={activeMath.expression} displayMode={activeMath.displayMode} context={mathContext} anchor={mathAnchor} className="preview-draft-math"/>}
-    <Editor height="150px" language="latex" value={draft} onChange={(next) => { const value = next ?? ""; draftRef.current = value; setDraft(value); }} theme={editorThemeName(preferences.get("theme"))} options={{ minimap: { enabled: false }, lineNumbers: "off", folding: false, fontSize: preferences.get("fontSize"), tabSize: preferences.get("tabSize"), wordWrap: preferences.get("wordWrap") ? "on" : "off", lineHeight: 23, automaticLayout: true, scrollBeyondLastLine: false, padding: { top: 10 }, quickSuggestions: { other: true, comments: true, strings: true }, suggestOnTriggerCharacters: true, autoClosingBrackets: "never", autoClosingQuotes: "always", autoSurround: "never" }} onMount={onMount} />
-    <div className="preview-local-editor-actions"><span>{t("preview.editHint")}</span>{onInsertBefore && onInsertAfter && <div className="preview-line-actions"><button title={t("preview.insertLineBefore")} onClick={() => onInsertBefore(draftRef.current)}>↥＋</button><button title={t("preview.insertLineAfter")} onClick={() => onInsertAfter(draftRef.current)}>↧＋</button></div>}<button onClick={onCancel}>{t("preview.cancel")}</button><button className="primary" onClick={() => onApply(draft)}>{t("preview.apply")}</button></div>
-  </div>{confirmLeave && createPortal(<div className="preview-confirm-backdrop"><section className="preview-confirm-dialog" role="dialog" aria-modal="true" aria-label={t("preview.unsavedTitle")}><h2>{t("preview.unsavedTitle")}</h2><p>{t("preview.unsavedMessage")}</p><div><button autoFocus className="primary" onClick={() => { setConfirmLeave(false); applyRef.current(draftRef.current); }}>{t("preview.yes")}</button><button onClick={() => { setConfirmLeave(false); cancelRef.current(); }}>{t("preview.no")}</button></div></section></div>, document.body)}</>;
-}
+const LocalEditor = PreviewLocalEditor;
 
 function ContentRenderer({ node, source, editing, cursorOffset, boundary, beginEdit, applyEdit, applyBoundary, cancelEdit, requestBoundary, services }: { node: ContentRegion; source: string; editing: boolean; cursorOffset?: number | undefined; boundary?: BoundaryInsertion | undefined; beginEdit(offset?: number): void; applyEdit(value: string): void; applyBoundary(insertion: BoundaryInsertion, value: string): void; cancelEdit(): void; requestBoundary(node: PreviewNode, side: "before" | "after", draft?: string): void; services: PreviewEditorServices }) {
   const insertion = boundary?.targetId === node.id ? boundary : undefined;
@@ -711,7 +561,8 @@ function BlockRenderer({ node, source, definitions, selectedId, editingId, curso
   const filterClass = services.filterQuery.enabled ? `filter-${filterState} filter-view-${services.filterQuery.viewMode}` : "";
   const applyLabel = (label: string) => {
     const blockSource = nodeSource(node, source);
-    const replacement = upsertBlockLabel(blockSource, label);
+    const ownedRange = node.labelSource ? { startOffset: node.labelSource.startOffset - node.source.startOffset, endOffset: node.labelSource.endOffset - node.source.startOffset } : null;
+    const replacement = upsertBlockLabel(blockSource, label, ownedRange);
     if (replacement !== blockSource) applyEdit(node, replacement);
   };
   return <Fragment>
@@ -817,6 +668,15 @@ export function PreviewPane({ filePath, source, definitions, mathContext = EMPTY
   const marqueeGesture = useRef<{ pointerId: number; startX: number; startY: number; currentX: number; currentY: number; moved: boolean } | undefined>(undefined);
   const marqueeJustCompleted = useRef(false);
   const pendingBoundaryRef = useRef<{ startOffset: number; position: number; side: "before" | "after"; kind: PreviewNode["kind"] } | undefined>(undefined);
+  useEffect(() => {
+    const reset = () => {
+      setSelectedId(undefined); setAdditionalSelectedIds([]);
+      setEditingId(undefined); setEditingCursorOffset(undefined); setBoundary(undefined);
+      pendingBoundaryRef.current = undefined;
+    };
+    window.addEventListener("texweave:history-replayed", reset);
+    return () => window.removeEventListener("texweave:history-replayed", reset);
+  }, []);
   const document = useMemo(() => filePath && source !== undefined ? parsePreview(source, filePath, definitions) : undefined, [filePath, source, definitions]);
   const nodeRanges = useMemo(() => {
     const index = new Map<string, SourceSpan>();

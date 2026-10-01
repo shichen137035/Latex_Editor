@@ -9,6 +9,8 @@ import { DEFAULT_ENVIRONMENTS, includeNewBuiltInEnvironments } from "./preview/e
 import type { EnvironmentDefinition } from "./preview/types.js";
 import { ThemeRuntime } from "./themes/runtime.js";
 import { ReferenceLibraryPage } from "./references/ReferenceLibraryPage.js";
+import { flushSync } from "react-dom";
+import { resolveExit, unsavedChanges } from "./lifecycle/unsavedChanges.js";
 
 function Icon({ children, size = 20 }: { children: ReactNode; size?: number }) {
   return <svg aria-hidden="true" className="icon" width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">{children}</svg>;
@@ -248,6 +250,17 @@ export function App() {
   }, []);
   useEffect(() => { void refreshStyleResources(); }, []);
   useEffect(installShortcuts, []);
+  useEffect(() => {
+    const lifecycle = window.latexEditor?.lifecycle;
+    if (!lifecycle) return;
+    return lifecycle.onCloseRequested((requestId) => {
+      void resolveExit(unsavedChanges, {
+        confirm: () => lifecycle.confirmClose({ title: t("exit.title"), message: t("exit.message"), detail: t("exit.detail"), buttons: [t("exit.save"), t("exit.discard"), t("exit.cancel")] }),
+        flush: flushSync,
+        reportError: (error) => lifecycle.showSaveError(t("exit.failedTitle"), `${t("exit.failedMessage")}\n\n${error instanceof Error ? error.message : String(error)}`)
+      }).then((allow) => lifecycle.completeClose(requestId, allow)).catch(() => lifecycle.completeClose(requestId, false));
+    });
+  }, []);
   const onHome = () => { void settings.load().then(() => setActiveProject(undefined)); };
   return <><ThemeRuntime />{activeProject && <div style={{ position: "fixed", inset: 0, overflow: "hidden", display: libraryOpen ? "none" : undefined }}><Workbench key={activeProject.id} project={activeProject} projects={projects} environments={environments} onHome={onHome} onSwitch={(project) => void openProject(project)} onOpenLibrary={() => setLibraryOpen(true)}/></div>}
     {!activeProject && !libraryOpen && <ProjectDirectory projects={projects} onProjectsChange={setProjects} onOpen={(project) => void openProject(project)} onOpenLibrary={() => setLibraryOpen(true)} styleResources={styleResources} onRefreshResources={refreshStyleResources}/>}

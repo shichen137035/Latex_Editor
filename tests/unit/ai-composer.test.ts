@@ -5,6 +5,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { AIWorkspaceService } from "../../apps/desktop/src/main/ai/ai-workspace.js";
 import type { CodexAppServer } from "../../apps/desktop/src/main/ai/codex-app-server.js";
 import type { CopilotChatService } from "../../apps/desktop/src/main/ai/copilot-chat.js";
+import { createWorkspaceBlockApi } from "../../apps/desktop/src/main/ai/workspace-block-api.js";
 
 describe("AI composer attachments and reasoning", () => {
   const roots: string[] = [];
@@ -31,6 +32,7 @@ describe("AI composer attachments and reasoning", () => {
       projectExists: () => true,
       builtInSkillsRoot: join(root, "skills"),
       compileWorkspace: async () => { throw new Error("Unexpected compile"); },
+      createBlockApi: ({ projectId, workspaceRoot }) => createWorkspaceBlockApi({ id: projectId, name: "Test", canonicalPath: workspaceRoot, createdAt: "", registeredAt: "", writable: true, missing: false }, workspaceRoot),
       onUpdate: (kind, payload) => {
         if (kind === "conversation" && (payload as { messages: Array<{ status?: string }> }).messages.at(-1)?.status === "complete") completed = true;
       }
@@ -58,6 +60,31 @@ describe("AI composer attachments and reasoning", () => {
     await f.service.dispose();
   });
 
+  it("persists renamed conversations and distinguishes provisional edits from explicitly accepted ones", async () => {
+    const f = await fixture();
+    await f.service.renameConversation(f.conversation.id, "My paper edits");
+    await expect(f.service.renameConversation(f.conversation.id, "  ")).rejects.toThrow("conversation name");
+    const source = "\\documentclass{article}\n\\begin{document}\nOriginal text.\n\\end{document}\n";
+    await f.service.send({ conversationId: f.conversation.id, content: "Edit", permissionMode: "auto", snapshot: [{ path: "main.tex", content: source }] });
+    expect(f.input().permissionMode).toBe("auto");
+    await writeFile(join(f.input().cwd, "main.tex"), source.replace("Original", "Revised"));
+    f.emit("turn/completed", { turn: { status: "completed" } });
+    await vi.waitFor(() => expect(f.finished()).toBe(true));
+    const changes = f.service.snapshot("project").changeSets[0]!;
+    expect(changes.permissionMode).toBe("auto");
+    const ids = changes.files.flatMap(file => file.hunks.map(hunk => hunk.id));
+    const provisional = await f.service.markChangeSetApplied(changes.id, ids);
+    expect(provisional.status).toBe("pending");
+    expect(provisional.files.flatMap(file => file.hunks).every(hunk => hunk.applied && hunk.decision === "pending")).toBe(true);
+    const accepted = await f.service.resolveChangeSet(changes.id, Object.fromEntries(ids.map(id => [id, "accepted" as const])), true);
+    expect(accepted.status).toBe("accepted");
+    const unchanged = await f.service.resolveChangeSet(changes.id, Object.fromEntries(ids.map(id => [id, "rejected" as const])), false);
+    expect(unchanged.status).toBe("accepted");
+    const saved = JSON.parse(await readFile(join(f.root, "ai", "conversations.json"), "utf8"));
+    expect(saved.conversations[0].title).toBe("My paper edits");
+    await f.service.dispose();
+  });
+
   it("copies same-name attachments independently, attaches images, and excludes attachment edits from project diffs", async () => {
     const f = await fixture();
     await mkdir(join(f.root, "other"));
@@ -82,6 +109,39 @@ describe("AI composer attachments and reasoning", () => {
     expect(await readFile(text, "utf8")).toBe("first");
     const foreign = await f.service.create({ projectId: "different", mode: "codex" });
     await expect(f.service.send({ conversationId: foreign.id, content: "Read", attachmentIds: [attachments[0]!.id] })).rejects.toThrow("this project");
+    await f.service.dispose();
+  });
+
+  it("routes block-tool edits into the same source diff review without touching the original project", async () => {
+    const f = await fixture();
+    const source = "\\begin{document}\nOriginal paragraph.\n\\end{document}";
+    await f.service.send({ conversationId: f.conversation.id, content: "Improve prose", snapshot: [{ path: "main.tex", content: source }] });
+    const tools = f.input().toolHandlers!;
+    const found = JSON.parse(await tools.find_blocks!({ type: "paragraph" }));
+    const block = JSON.parse(await tools.get_block_source!({ blockId: found.data[0].id }));
+    const result = JSON.parse(await tools.replace_block_content!({ blockId: block.data.blockId, expectedRevision: block.data.revision, content: "Improved paragraph." }));
+    expect(result.ok).toBe(true);
+    f.emit("turn/completed", { turn: { status: "completed" } });
+    await vi.waitFor(() => expect(f.finished()).toBe(true));
+    const change = f.service.snapshot("project").changeSets[0]!.files.find((file) => file.path === "main.tex")!;
+    expect(change.originalContent).toBe(source);
+    expect(change.proposedContent).toContain("Improved paragraph.");
+    expect(change.status).toBe("pending");
+    await expect(readFile(join(f.root, "project", "main.tex"), "utf8")).rejects.toMatchObject({ code: "ENOENT" });
+    await f.service.dispose();
+  });
+
+  it("preserves large structure metadata so AI can inspect user-defined blocks", async () => {
+    const f = await fixture();
+    const source = "Selected prose.";
+    const structure = JSON.stringify({ version: 2, blocks: [{ id: "user-selected", type: "custom", kind: "structural", origin: "user", name: "Important prose", fileId: "main.tex", range: { start: 0, end: source.length }, state: "active", metadata: { compatibilityPadding: "x".repeat(2 * 1024 * 1024) } }], dependencies: [], structuralParents: [] });
+    await f.service.send({ conversationId: f.conversation.id, content: "Inspect my custom block", snapshot: [{ path: "main.tex", content: source }, { path: ".texweave/structure.json", content: structure }] });
+    const result = JSON.parse(await f.input().toolHandlers!.get_block!({ blockId: "user-selected" }));
+    expect(result.ok).toBe(true);
+    expect(result.data.children.map((block: { type: string }) => block.type)).toEqual(["paragraph"]);
+    expect(f.input().prompt).not.toContain("compatibilityPadding");
+    f.emit("turn/completed", { turn: { status: "completed" } });
+    await vi.waitFor(() => expect(f.finished()).toBe(true));
     await f.service.dispose();
   });
 });

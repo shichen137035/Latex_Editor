@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import type { Project, ProjectTreeNode, ReferenceLibraryEntry, ReferenceLibrarySnapshot } from "@latex-editor/contracts";
-import { field } from "./bibtex.js";
+import { field, renderBibtexEntry } from "./bibtex.js";
 import "./reference-quick-panel.css";
 
 function flatten(nodes: ProjectTreeNode[], result: ProjectTreeNode[] = []): ProjectTreeNode[] {
@@ -57,7 +57,7 @@ export function ReferenceLibraryPanel({ project, onOpenLibrary, onReturnToEditor
     const content = latest.projectLinks.filter((link) => link.mode === "link")
       .map((link) => latest.entries.find((entry) => entry.id === link.libraryEntryId))
       .filter((entry): entry is ReferenceLibraryEntry => Boolean(entry))
-      .map(renderBibtex).join("\n\n");
+      .map((entry) => renderBibtexEntry(entry)).join("\n\n");
     await api.files.write(project.id, bibPath, content ? `${content}\n` : "");
   };
 
@@ -137,9 +137,4 @@ export function ReferenceLibraryPanel({ project, onOpenLibrary, onReturnToEditor
     {notice && <div className="reference-quick-notice" role="status">{notice}<button onClick={() => setNotice("")} aria-label="Dismiss">×</button></div>}
     <button className="reference-quick-open-library" onClick={onOpenLibrary}>Manage library and references <span>↗</span></button>
   </section>;
-}
-
-function renderBibtex(entry: ReferenceLibraryEntry): string {
-  const fields = Object.entries(entry.fields).filter(([, value]) => value.trim()).map(([key, value]) => `  ${key} = {${value}}`).join(",\n");
-  return `@${entry.entryType}{${entry.citationKey},\n${fields}\n}`;
 }

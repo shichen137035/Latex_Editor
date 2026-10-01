@@ -1,6 +1,6 @@
 {
   "name": "latex-editor",
-  "version": "0.5.2",
+  "version": "0.5.3",
   "main": "apps/desktop/dist/main/index.js",
   "private": true,
   "description": "Local-first LaTeX editor foundation",
@@ -22,9 +22,13 @@
     "cli": "tsx apps/cli/src/index.ts",
     "desktop:typecheck": "npm exec tsc -- -p apps/desktop/tsconfig.json --noEmit --pretty false",
     "desktop:build": "npm run typecheck && npm run desktop:typecheck && vite build --config apps/desktop/vite.config.ts && tsc -p apps/desktop/tsconfig.main.json",
-    "desktop:dist:win": "npm run desktop:build && electron-builder --win nsis portable --publish never",
-    "desktop:dev": "npm run desktop:build && node apps/desktop/scripts/launch.cjs",
+    "desktop:dist:win": "npm run desktop:build && node apps/desktop/scripts/build-distribution.cjs",
+    "desktop:verify:package": "node apps/desktop/scripts/verify-package.cjs",
+    "desktop:dev": "node apps/desktop/scripts/dev.cjs",
+    "desktop:dev:build": "npm run desktop:build && node apps/desktop/scripts/launch.cjs",
     "desktop:test-ai": "npm run desktop:build && node apps/desktop/scripts/run-ai-connection-check.cjs",
+    "desktop:test-ai-review": "npm run desktop:build && node apps/desktop/scripts/run-ai-review-check.mjs",
+    "desktop:test-structure": "npm run desktop:build && node apps/desktop/scripts/run-structure-check.mjs",
     "desktop:test-ui": "npm run desktop:build && node apps/desktop/scripts/run-file-menu-check.mjs",
     "desktop:test-preview": "npm run desktop:build && node apps/desktop/scripts/run-preview-check.mjs",
     "desktop:test-preview-caret": "npm run desktop:build && node apps/desktop/scripts/run-preview-caret-check.mjs",
@@ -36,6 +40,7 @@
     "verify": "npm run typecheck && npm run desktop:typecheck && npm run lint && npm run resources:validate && npm run test"
   },
   "devDependencies": {
+    "@electron/asar": "^3.2.18",
     "@eslint/js": "^9.35.0",
     "@monaco-editor/react": "^4.7.0",
     "@types/node": "^24.3.0",

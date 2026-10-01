@@ -2,7 +2,7 @@ import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { parseBibtex, citationOccurrences } from "../../apps/desktop/src/renderer/references/bibtex.js";
+import { citationKeyIdentity, citationOccurrences, isValidCitationKey, parseBibtex, renderBibtexEntry } from "../../apps/desktop/src/renderer/references/bibtex.js";
 import { ReferenceLibraryRepository } from "../../apps/desktop/src/main/references.js";
 
 describe("reference library", () => {
@@ -28,6 +28,17 @@ describe("reference library", () => {
     });
   });
 
+  it("shares validation, key identity, and serialization across BibTeX surfaces", () => {
+    const parsed = parseBibtex("@article{bad, not-a-field}\n@book{GoodKey, title={A title}}");
+    expect(parsed.entries.map((entry) => entry.valid)).toEqual([false, true]);
+    expect(parsed.invalid).toHaveLength(1);
+    expect(citationKeyIdentity(" GoodKey ")).toBe(citationKeyIdentity("goodkey"));
+    expect(isValidCitationKey("good-key")).toBe(true);
+    expect(isValidCitationKey("bad,key")).toBe(false);
+    expect(renderBibtexEntry({ entryType: "book", citationKey: "GoodKey", fields: { title: "A title" } }))
+      .toBe("@book{GoodKey,\n  title = {A title}\n}");
+  });
+
   it("indexes multi-key citations and persists imported entries locally", async () => {
     const root = await mkdtemp(join(tmpdir(), "texweave-reference-library-"));
     try {
@@ -48,6 +59,22 @@ describe("reference library", () => {
       expect(restored.fields.title).toBe("Restored");
       expect(repository.snapshot().entries).toHaveLength(2);
       expect(citationOccurrences([{ filePath: "main.tex", content: "Text \\cite{one,two}." }])).toHaveLength(2);
+      repository.close();
+    } finally { await rm(root, { recursive: true, force: true }); }
+  });
+
+  it("imports only valid entries and treats duplicate keys consistently regardless of case", async () => {
+    const root = await mkdtemp(join(tmpdir(), "texweave-bibtex-rules-"));
+    try {
+      const path = join(root, "references.bib");
+      await writeFile(path, "@article{Key, title={First}}\n@article{key, title={Duplicate}}\n@book{invalid, missing-equals}", "utf8");
+      const repository = new ReferenceLibraryRepository(root);
+      await repository.initialize();
+      const result = await repository.importBibFile(path);
+      expect(result.entries.map((entry) => entry.citationKey)).toEqual(["Key"]);
+      expect(result.duplicates).toEqual(["key"]);
+      expect(result.invalid).toHaveLength(1);
+      expect(repository.snapshot().entries).toHaveLength(1);
       repository.close();
     } finally { await rm(root, { recursive: true, force: true }); }
   });

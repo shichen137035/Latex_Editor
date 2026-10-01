@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import type { Project, ReferenceLibraryEntry, ReferenceLibrarySnapshot } from "@latex-editor/contracts";
-import { field, parseBibtex } from "./bibtex.js";
+import { citationKeyIdentity, field, parseBibtex, renderBibtexEntry } from "./bibtex.js";
 import "./reference-library-page.css";
 
 type LibraryFilter = "all" | "cited" | "unlinked" | "favorites";
@@ -83,12 +83,12 @@ export function ReferenceLibraryPage({ projects, onBack, returnToProject = false
         const parsed = parseBibtex(draft.source);
         const valid = parsed.entries.filter((entry) => entry.valid);
         if (!valid.length) { setNotice(parsed.invalid[0]?.message ?? "Paste at least one valid BibTeX entry."); return; }
-        const existingKeys = new Set((snapshot?.entries ?? []).map((entry) => entry.citationKey.toLocaleLowerCase()));
+        const existingKeys = new Set((snapshot?.entries ?? []).map((entry) => citationKeyIdentity(entry.citationKey)));
         const seen = new Set<string>();
         let added = 0;
         let duplicates = 0;
         for (const entry of valid) {
-          const key = entry.citationKey.toLocaleLowerCase();
+          const key = citationKeyIdentity(entry.citationKey);
           if (existingKeys.has(key) || seen.has(key)) { duplicates += 1; continue; }
           await api.references.saveEntry({ citationKey: entry.citationKey, entryType: entry.entryType, fields: entry.fields, rawBibtex: entry.rawBibtex });
           seen.add(key);
@@ -159,9 +159,9 @@ function LibraryDetail({ entry, links, projectNames, mode, onMode, onClose, onSa
   const [citationKey, setCitationKey] = useState(entry.citationKey);
   const [entryType, setEntryType] = useState(entry.entryType);
   const [fieldsText, setFieldsText] = useState(JSON.stringify(entry.fields, null, 2));
-  const [sourceText, setSourceText] = useState(entry.rawBibtex ?? renderBibtex(entry));
+  const [sourceText, setSourceText] = useState(entry.rawBibtex ?? renderBibtexEntry(entry));
   const [saving, setSaving] = useState(false);
-  useEffect(() => { setCitationKey(entry.citationKey); setEntryType(entry.entryType); setFieldsText(JSON.stringify(entry.fields, null, 2)); setSourceText(entry.rawBibtex ?? renderBibtex(entry)); }, [entry]);
+  useEffect(() => { setCitationKey(entry.citationKey); setEntryType(entry.entryType); setFieldsText(JSON.stringify(entry.fields, null, 2)); setSourceText(entry.rawBibtex ?? renderBibtexEntry(entry)); }, [entry]);
   const saveFields = async () => {
     if (!api) return;
     setSaving(true);
@@ -178,9 +178,4 @@ function LibraryDetail({ entry, links, projectNames, mode, onMode, onClose, onSa
     finally { setSaving(false); }
   };
   return <div className="library-detail-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose(); }}><aside className="library-detail" role="dialog" aria-modal="true"><header className="library-detail-header"><div><span className="reference-entry-type">{entry.entryType}</span><h2>{field(entry, "title") || "Untitled entry"}</h2><p>{entry.citationKey}</p></div><button onClick={onClose}>×</button></header><nav className="library-detail-tabs"><button className={mode === "details" ? "active" : ""} onClick={() => onMode("details")}>Details</button><button className={mode === "source" ? "active" : ""} onClick={() => onMode("source")}>BibTeX source</button><button className={mode === "edit" ? "active" : ""} onClick={() => onMode("edit")}>Edit</button></nav>{mode === "details" && <div className="library-detail-content"><div className="library-detail-lead"><strong>{field(entry, "author") || "Unknown author"}</strong><span>{field(entry, "year") || "Year not specified"}</span></div><dl>{Object.entries(entry.fields).map(([key, value]) => <div key={key}><dt>{key}</dt><dd>{value}</dd></div>)}</dl><div className="library-detail-block"><span className="library-rail-label">TAGS</span><div className="library-row-tags">{entry.tags.length ? entry.tags.map((tag) => <em key={tag}>{tag}</em>) : <small>No tags</small>}</div></div><div className="library-detail-block"><span className="library-rail-label">PROJECT USAGE</span>{links.length ? <ul>{links.map((link) => <li key={link.projectId}><strong>{projectNames.get(link.projectId) ?? link.projectId}</strong><span>{link.mode} · {link.targetBibPath ?? "—"}</span></li>)}</ul> : <p>Not linked to any project yet.</p>}</div>{entry.sourceFile && <p className="library-source-note">Imported from <code>{entry.sourceFile}</code></p>}</div>}{mode === "source" && <div className="library-detail-content"><textarea className="library-source-editor" value={sourceText} onChange={(event) => setSourceText(event.target.value)} spellCheck={false} /><button className="library-button primary library-save-button" onClick={() => void saveSource()} disabled={saving}>Save source</button></div>}{mode === "edit" && <div className="library-detail-content"><label className="library-edit-field">Citation Key<input value={citationKey} onChange={(event) => setCitationKey(event.target.value)} /></label><label className="library-edit-field">Entry Type<input value={entryType} onChange={(event) => setEntryType(event.target.value)} /></label><label className="library-edit-field">Fields <small>JSON object; existing BibTeX fields are preserved when you edit them here.</small><textarea className="library-fields-editor" value={fieldsText} onChange={(event) => setFieldsText(event.target.value)} spellCheck={false} /></label><button className="library-button primary library-save-button" onClick={() => void saveFields()} disabled={saving}>Save changes</button></div>}</aside></div>;
-}
-
-function renderBibtex(entry: ReferenceLibraryEntry): string {
-  const fields = Object.entries(entry.fields).filter(([, value]) => value.trim()).map(([key, value]) => `  ${key} = {${value}}`).join(",\n");
-  return `@${entry.entryType}{${entry.citationKey},\n${fields}\n}`;
 }

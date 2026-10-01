@@ -3,9 +3,9 @@ import { access, mkdir } from "node:fs/promises";
 import { createInterface } from "node:readline";
 import { dirname, join } from "node:path";
 import type { ChildProcessWithoutNullStreams } from "node:child_process";
-import type { AIModelOption, AIStatus } from "@latex-editor/contracts" with { "resolution-mode": "import" };
+import type { AIModelOption, AIStatus, AIPermissionMode } from "@latex-editor/contracts" with { "resolution-mode": "import" };
 import { findCodexExecutable, findExecutableOnPath, getManagedCodexExecutable } from "./codex-discovery.js";
-import { isLatexCompilerCommand, isWorkspacePath } from "./ai-approvals.js";
+import { codexPermissionPolicy, isLatexCompilerCommand, isReadOnlyPermissionRequest, isWorkspacePath, requiresAIApproval, type AIToolApproval } from "./ai-approvals.js";
 import { resolveReasoningEffort } from "./reasoning-effort.js";
 
 type JsonRecord = Record<string, unknown>;
@@ -25,10 +25,10 @@ export class CodexAppServer {
   #pending = new Map<number, PendingRequest>();
   #status: AIStatus = { auth: "unknown", process: "stopped" };
   #startPromise: Promise<void> | undefined;
-  #account: JsonRecord | undefined;
   #loginId: string | undefined;
   #eventListeners = new Set<(event: { method: string; params: JsonRecord }) => void>();
   #threadWorkspaces = new Map<string, string>();
+  #threadPermissions = new Map<string, { mode: AIPermissionMode; request?: (action: AIToolApproval) => Promise<boolean> }>();
   #fileChangePaths = new Map<string, string[]>();
   #models: AIModelOption[] | undefined;
   #dynamicToolHandlers = new Map<string, (arguments_: JsonRecord) => Promise<string>>();
@@ -76,19 +76,20 @@ export class CodexAppServer {
     return () => this.#eventListeners.delete(listener);
   }
 
-  /** Starts a project-editing turn in the app-owned workspace; the UI reviews its diff before applying it. */
-  async startTurn(input: { cwd: string; prompt: string; threadId?: string; mode: "chat" | "codex"; model?: string; reasoningEffort?: string; imagePaths?: string[]; onThreadReady?(threadId: string): void; dynamicTools?: DynamicTool[]; toolHandlers?: Record<string, (arguments_: JsonRecord) => Promise<string>>; skills?: Array<{ name: string; path: string }> }): Promise<{ threadId: string; turnId: string }> {
+  /** Start an editing turn; the selected mode controls application and diff review. */
+  async startTurn(input: { cwd: string; prompt: string; threadId?: string; mode: "chat" | "codex"; permissionMode?: AIPermissionMode; requestApproval?: (action: AIToolApproval) => Promise<boolean>; model?: string; reasoningEffort?: string; imagePaths?: string[]; onThreadReady?(threadId: string): void; dynamicTools?: DynamicTool[]; toolHandlers?: Record<string, (arguments_: JsonRecord) => Promise<string>>; skills?: Array<{ name: string; path: string }> }): Promise<{ threadId: string; turnId: string }> {
     await this.#ensureStarted();
     const models = this.#models ?? await this.listModels();
     const model = input.model ? models.find((item) => item.id === input.model) : models.find((item) => item.isDefault);
     const effort = resolveReasoningEffort(model, input.reasoningEffort);
-    const sandbox = "workspace-write";
+    const permissionMode = input.permissionMode ?? "auto";
+    const policy = codexPermissionPolicy(permissionMode, input.cwd);
     const threadResult = input.threadId
-      ? asRecord(await this.#request("thread/resume", { threadId: input.threadId, cwd: input.cwd }))
+      ? asRecord(await this.#request("thread/resume", { threadId: input.threadId, cwd: input.cwd, approvalPolicy: policy.approvalPolicy, sandbox: policy.sandbox }))
       : asRecord(await this.#request("thread/start", {
         cwd: input.cwd,
-        approvalPolicy: "on-request",
-        sandbox,
+        approvalPolicy: policy.approvalPolicy,
+        sandbox: policy.sandbox,
         experimentalRawEvents: false,
         ...(input.dynamicTools?.length ? { dynamicTools: input.dynamicTools } : {})
       }));
@@ -96,6 +97,7 @@ export class CodexAppServer {
     const threadId = typeof thread.id === "string" ? thread.id : input.threadId;
     if (!threadId) throw new Error("Codex did not return a conversation thread id.");
     this.#threadWorkspaces.set(threadId, input.cwd);
+    this.#threadPermissions.set(threadId, { mode: permissionMode, ...(input.requestApproval ? { request: input.requestApproval } : {}) });
     for (const [name, handler] of Object.entries(input.toolHandlers ?? {})) this.#dynamicToolHandlers.set(`${threadId}:${name}`, handler);
     const turnInput: Array<Record<string, unknown>> = [{ type: "text", text: input.prompt }];
     for (const path of input.imagePaths ?? []) turnInput.push({ type: "localImage", path });
@@ -106,8 +108,9 @@ export class CodexAppServer {
       threadId,
       input: turnInput,
       cwd: input.cwd,
-      approvalPolicy: "on-request",
-      sandbox,
+      approvalPolicy: policy.approvalPolicy,
+      // turn/start uses sandboxPolicy, not thread/start's sandbox field.
+      sandboxPolicy: policy.sandboxPolicy,
       summary: "auto",
       ...(input.model ? { model: input.model } : {}),
       ...(effort ? { effort } : {})
@@ -178,7 +181,6 @@ export class CodexAppServer {
   async logout(): Promise<AIStatus> {
     await this.#ensureStarted();
     await this.#request("account/logout", {});
-    this.#account = undefined;
     this.#loginId = undefined;
     this.#setStatus({ ...this.#status, auth: "signed_out", accountLabel: undefined, error: undefined });
     return this.getStatus();
@@ -192,6 +194,7 @@ export class CodexAppServer {
     for (const pending of this.#pending.values()) { clearTimeout(pending.timer); pending.reject(new Error("Codex connection closed.")); }
     this.#pending.clear();
     this.#threadWorkspaces.clear();
+    this.#threadPermissions.clear();
     this.#fileChangePaths.clear();
     this.#setStatus({ ...this.#status, process: "stopped" });
   }
@@ -250,7 +253,6 @@ export class CodexAppServer {
   async #readAccount(): Promise<void> {
     const response = asRecord(await this.#request("account/read", {}));
     const account = asRecord(response.account);
-    this.#account = account;
     const type = typeof account.type === "string" ? account.type : undefined;
     const auth = type === "chatgpt" ? "signed_in" : type === "apiKey" ? "signed_out" : "signed_out";
     const label = typeof account.email === "string" ? account.email : typeof account.planType === "string" && auth === "signed_in" ? `ChatGPT · ${account.planType}` : undefined;
@@ -266,24 +268,7 @@ export class CodexAppServer {
         void this.#handleDynamicToolCall(message.id, params);
         return;
       }
-      const workspace = typeof params.threadId === "string" ? this.#threadWorkspaces.get(params.threadId) : undefined;
-      const commandIsInWorkspace = workspace && typeof params.cwd === "string" && isWorkspacePath(params.cwd, workspace);
-      // The model may edit its private snapshot through either native file patches or shell
-      // commands. Allow both command and stdin approvals only inside that snapshot; the
-      // App Server's workspace-write sandbox prevents writes to the original project.
-      const workspaceCommandApproved = message.method === "item/commandExecution/requestApproval"
-        && commandIsInWorkspace
-        && (params.kind === undefined || params.kind === "command" || params.kind === "writeStdin")
-        && !params.networkApprovalContext
-        && !(typeof params.command === "string" && isLatexCompilerCommand(params.command));
-      const fileChangeApproved = message.method === "item/fileChange/requestApproval"
-        && workspace
-        && (typeof params.grantRoot !== "string" || isWorkspacePath(params.grantRoot, workspace))
-        && typeof params.itemId === "string"
-        && (this.#fileChangePaths.get(`${params.threadId}:${params.itemId}`)?.length ?? 0) > 0
-        && this.#fileChangePaths.get(`${params.threadId}:${params.itemId}`)!.every((path) => isWorkspacePath(path, workspace));
-      this.#onApprovalDecision?.({ method: message.method, ...(typeof params.command === "string" ? { command: params.command } : {}), approved: Boolean(workspaceCommandApproved || fileChangeApproved) });
-      this.#child?.stdin.write(`${JSON.stringify({ id: message.id, result: { decision: workspaceCommandApproved || fileChangeApproved ? "accept" : "decline" } })}\n`);
+      void this.#handleApproval(message.id, message.method, params);
       return;
     }
     if (typeof message.id === "number") {
@@ -307,6 +292,7 @@ export class CodexAppServer {
       for (const listener of this.#eventListeners) listener(event);
       if (message.method === "turn/completed" && typeof event.params.threadId === "string") {
         this.#threadWorkspaces.delete(event.params.threadId);
+        this.#threadPermissions.delete(event.params.threadId);
         for (const key of this.#dynamicToolHandlers.keys()) if (key.startsWith(`${event.params.threadId}:`)) this.#dynamicToolHandlers.delete(key);
         for (const key of this.#fileChangePaths.keys()) if (key.startsWith(`${event.params.threadId}:`)) this.#fileChangePaths.delete(key);
       }
@@ -319,6 +305,39 @@ export class CodexAppServer {
       if (params.success === false) this.#setStatus({ ...this.#status, auth: "error", error: typeof params.error === "string" ? params.error : "ChatGPT sign-in failed." });
       else void this.#readAccount().catch(() => undefined);
     }
+  }
+
+  async #handleApproval(id: string | number, method: string, params: JsonRecord): Promise<void> {
+    const child = this.#child;
+    const threadId = typeof params.threadId === "string" ? params.threadId : "";
+    const workspace = this.#threadWorkspaces.get(threadId);
+    const permission = this.#threadPermissions.get(threadId);
+    const command = typeof params.command === "string" ? params.command : undefined;
+    const paths = method === "item/fileChange/requestApproval"
+      ? this.#fileChangePaths.get(`${threadId}:${params.itemId}`) ?? [] : [];
+    const supported = ["item/commandExecution/requestApproval", "item/fileChange/requestApproval", "item/permissions/requestApproval"].includes(method);
+    const external = !workspace || (typeof params.cwd === "string" && !isWorkspacePath(params.cwd, workspace))
+      || paths.some(path => !isWorkspacePath(path, workspace))
+      || (typeof params.grantRoot === "string" && !isWorkspacePath(params.grantRoot, workspace))
+      || Boolean(params.additionalPermissions) || method === "item/permissions/requestApproval";
+    const action: AIToolApproval = {
+      description: typeof params.reason === "string" ? params.reason : method,
+      ...(command ? { command } : {}), paths, external,
+      // Normal web lookups are available in every mode, not silently declined.
+      readOnly: !command && (Boolean(params.networkApprovalContext) || isReadOnlyPermissionRequest(params.permissions))
+    };
+    let approved = false;
+    try {
+      if (supported && permission && !(command && isLatexCompilerCommand(command))) {
+        approved = !requiresAIApproval(permission.mode, action) || await permission.request?.(action) === true;
+      }
+    } catch { /* An interrupted/failed approval leaves the tool unapproved. */ }
+    this.#onApprovalDecision?.({ method, ...(command ? { command } : {}), approved });
+    if (child !== this.#child || !child?.stdin.writable) return;
+    const result = method === "item/permissions/requestApproval"
+      ? { permissions: approved ? asRecord(params.permissions) : {}, scope: "turn" }
+      : { decision: approved ? "accept" : "decline" };
+    child.stdin.write(`${JSON.stringify({ id, result })}\n`);
   }
 
   async #handleDynamicToolCall(requestId: string | number, params: JsonRecord): Promise<void> {

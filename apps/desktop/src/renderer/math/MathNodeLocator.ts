@@ -42,7 +42,8 @@ export function parseMathNodes(source: string): MathNode[] {
     let cursor = 0;
     while ((cursor = source.indexOf(open, cursor)) >= 0) {
       if (commented(source, cursor) || escaped(source, cursor)) { cursor += open.length; continue; }
-      const end = source.indexOf(close, cursor + open.length);
+      let end = source.indexOf(close, cursor + open.length);
+      while (end >= 0 && (commented(source, end) || escaped(source, end))) end = source.indexOf(close, end + close.length);
       if (end < 0) break;
       candidates.push(node(cursor, end + close.length, cursor + open.length, end, kind, display));
       cursor = end + close.length;
@@ -55,7 +56,7 @@ export function parseMathNodes(source: string): MathNode[] {
     if (source[cursor] !== "$" || escaped(source, cursor) || commented(source, cursor)) { cursor += 1; continue; }
     const delimiter = source[cursor + 1] === "$" ? "$$" : "$";
     let end = cursor + delimiter.length;
-    while ((end = source.indexOf(delimiter, end)) >= 0 && escaped(source, end)) end += delimiter.length;
+    while ((end = source.indexOf(delimiter, end)) >= 0 && (escaped(source, end) || commented(source, end))) end += delimiter.length;
     if (end < 0) break;
     candidates.push(node(cursor, end + delimiter.length, cursor + delimiter.length, end, delimiter === "$$" ? "display-dollar" : "inline-dollar", delimiter === "$$"));
     cursor = end + delimiter.length;

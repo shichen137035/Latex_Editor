@@ -3,21 +3,21 @@ import { access, mkdir, readFile, unlink, writeFile } from "node:fs/promises";
 import { randomUUID } from "node:crypto";
 import { join } from "node:path";
 import type { CopilotClient, CopilotSession, GetAuthStatusResponse, ModelInfo, PermissionRequest, Tool } from "@github/copilot-sdk" with { "resolution-mode": "import" };
-import type { AIModelOption, AIStatus } from "@latex-editor/contracts" with { "resolution-mode": "import" };
+import type { AIModelOption, AIStatus, AIPermissionMode } from "@latex-editor/contracts" with { "resolution-mode": "import" };
 import { createCopilotLoginLaunchCommand, createCopilotLoginScript, type CopilotLoginResult } from "./copilot-login.js";
-import { isLatexCompilerCommand } from "./ai-approvals.js";
+import { isLatexCompilerCommand, isWorkspacePath, requiresAIApproval, type AIToolApproval } from "./ai-approvals.js";
 import { resolveReasoningEffort } from "./reasoning-effort.js";
 
 type LoginAttempt = { startedAt: number; scriptPath?: string; resultPath?: string; result?: CopilotLoginResult };
 type ReasoningEffort = NonNullable<ModelInfo["defaultReasoningEffort"]>;
 
-export async function createTeXWeaveCompileTool(handler: (arguments_: { mainFile?: string }) => Promise<string>): Promise<Tool<{ mainFile?: string }>> {
+export async function createTeXWeaveCompileTool(handler: (arguments_: { mainFile?: string }) => Promise<string>): Promise<Tool<Record<string, unknown>>> {
   const { defineTool } = await import("@github/copilot-sdk");
-  return defineTool<{ mainFile?: string }>("texweave_compile", {
+  return defineTool<Record<string, unknown>>("texweave_compile", {
     description: "Compile the current TeXWeave AI working copy with the project's configured LaTeX compiler. Returns status and diagnostics. Use this instead of running a LaTeX compiler in a shell.",
     parameters: { type: "object", properties: { mainFile: { type: "string", description: "Optional project-relative main .tex path; defaults to the project's configured main file." } }, additionalProperties: false },
     skipPermission: true,
-    handler: handler
+    handler: (input) => handler(typeof input.mainFile === "string" ? { mainFile: input.mainFile } : {})
   });
 }
 
@@ -28,6 +28,7 @@ export class CopilotChatService {
   #client: CopilotClient | undefined;
   readonly #sessions = new Map<string, CopilotSession>();
   readonly #sessionModels = new Map<string, string>();
+  readonly #workspacePermissions = new Map<string, { mode: AIPermissionMode; request?: (action: AIToolApproval) => Promise<boolean> }>();
   #auth?: GetAuthStatusResponse;
   #installing: Promise<void> | undefined;
   #statusPending: Promise<AIStatus> | undefined;
@@ -155,7 +156,10 @@ export class CopilotChatService {
     return this.#models;
   }
 
-  async session(sessionId: string | undefined, model: string | undefined, newSessionId: string, workingDirectory: string, preference?: string, tools: Tool<{ mainFile?: string }>[] = []): Promise<CopilotSession> {
+  async session(sessionId: string | undefined, model: string | undefined, newSessionId: string, workingDirectory: string, preference?: string, tools: Tool<Record<string, unknown>>[] = [], permissionMode: AIPermissionMode = "auto", requestApproval?: (action: AIToolApproval) => Promise<boolean>): Promise<CopilotSession> {
+    // Cached sessions consult this mutable policy on each tool call. A new turn
+    // must not retain the previous permission level or approval callback.
+    this.#workspacePermissions.set(workingDirectory, { mode: permissionMode, ...(requestApproval ? { request: requestApproval } : {}) });
     const client = await this.#getClient();
     const nextModel = model ?? "auto";
     const models = this.#models ?? await this.listModels();
@@ -183,16 +187,28 @@ export class CopilotChatService {
     const config = {
       workingDirectory,
       streaming: true,
-      onPermissionRequest: async (request: PermissionRequest) => request.kind === "shell" && isLatexCompilerCommand(request.fullCommandText, ...request.commands.map((command) => command.identifier))
-        ? { kind: "reject" as const, feedback: "Use TeXWeave's texweave_compile tool; independent LaTeX compiler commands are disabled." }
-        : { kind: "approve-once" as const },
+      onPermissionRequest: async (request: PermissionRequest) => {
+        const command = request.kind === "shell" ? request.fullCommandText : undefined;
+        if (command && isLatexCompilerCommand(command)) return { kind: "reject" as const, feedback: "Use TeXWeave's texweave_compile tool." };
+        const paths = request.kind === "shell" ? request.possiblePaths : request.kind === "write" ? [request.fileName] : request.kind === "read" ? [request.path] : [];
+        const action: AIToolApproval = {
+          description: "intention" in request ? request.intention : request.kind,
+          ...(command ? { command } : {}), paths,
+          external: paths.some(path => !isWorkspacePath(path, workingDirectory)) || request.kind === "mcp" || ("requestSandboxBypass" in request && request.requestSandboxBypass === true),
+          readOnly: request.kind === "url" || request.kind === "read" || (request.kind === "shell" && request.commands.length > 0 && request.commands.every(item => item.readOnly)),
+          managed: request.managedApprovalRequired === true
+        };
+        const policy = this.#workspacePermissions.get(workingDirectory)!;
+        const approved = !requiresAIApproval(policy.mode, action) || await policy.request?.(action) === true;
+        return approved ? { kind: "approve-once" as const } : { kind: "reject" as const, feedback: "The user did not approve this action." };
+      },
       hooks: {
         onPreToolUse: async (input: { toolName: string; toolArgs?: unknown }) => {
-          if (!["bash", "powershell", "shell", "run_command", "run_in_terminal"].includes(input.toolName)) return { permissionDecision: "allow" as const };
+          if (!["bash", "powershell", "shell", "run_command", "run_in_terminal"].includes(input.toolName)) return {};
           const command = typeof input.toolArgs === "string" ? input.toolArgs : JSON.stringify(input.toolArgs ?? {}) ?? "";
           return isLatexCompilerCommand(command)
             ? { permissionDecision: "deny" as const, permissionDecisionReason: "Use TeXWeave's texweave_compile tool; independent LaTeX compiler commands are disabled." }
-            : { permissionDecision: "allow" as const };
+            : {};
         }
       },
       ...(model ? { model } : {}),
@@ -229,6 +245,7 @@ export class CopilotChatService {
     this.#models = undefined;
     this.#sessions.clear();
     this.#sessionModels.clear();
+    this.#workspacePermissions.clear();
     if (!this.#client) return;
     await this.#client.stop().catch(() => undefined);
     this.#client = undefined;

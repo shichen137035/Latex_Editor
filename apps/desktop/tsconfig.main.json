@@ -16,6 +16,7 @@
     { "path": "../../packages/domain" },
     { "path": "../../packages/filesystem-node" },
     { "path": "../../packages/registry-sqlite" },
-    { "path": "../../packages/resource-catalog" }
+    { "path": "../../packages/resource-catalog" },
+    { "path": "../../packages/compiler-latexmk" }
   ]
 }

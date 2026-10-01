@@ -2,8 +2,11 @@ import { app, BrowserWindow, clipboard, dialog, ipcMain, Menu, shell } from "ele
 import { randomUUID } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import { resolve } from "node:path";
-import type { AIStatus, AIContextSnapshotFile, AddSemanticBlockInput, CommandMetadata, CompileResult, CompileInput, GraphTraversalOptions, PreferenceKey, CreateSemanticBlockInput, CreateUserBlockInput, UpdateSemanticBlockInput, LatexToolchain, MapUserBlockRangesInput, ReconcileParsedBlocksInput, RelationDirection, ProjectReferenceLink, ReferenceLibraryEntry, Project, ProjectTreeNode } from "@latex-editor/contracts" with { "resolution-mode": "import" };
-import type { ProjectBlockGraphService } from "@latex-editor/application" with { "resolution-mode": "import" };
+import type { AIStatus, AddSemanticBlockInput, CompileResult, GraphTraversalOptions, PreferenceKey, CreateSemanticBlockInput, CreateUserBlockInput, UpdateSemanticBlockInput, LatexToolchain, MapUserBlockRangesInput, ReconcileParsedBlocksInput, RelationDirection, ProjectReferenceLink, ReferenceLibraryEntry, Project } from "@latex-editor/contracts" with { "resolution-mode": "import" };
+import type { DocumentBlockApi } from "@latex-editor/contracts" with { "resolution-mode": "import" };
+import type { EnvironmentCatalog } from "@latex-editor/editor-core/preview/catalog" with { "resolution-mode": "import" };
+import type { EnvironmentDefinition } from "@latex-editor/editor-core/preview/types" with { "resolution-mode": "import" };
+import type { DesktopContext } from "./desktopContext.js";
 import { SettingsRepository } from "./settings.js";
 import { StyleResourceRepository } from "./style-resources.js";
 import { ThemeRepository } from "./themes.js";
@@ -15,46 +18,13 @@ import { ReferenceLibraryRepository } from "./references.js";
 import { CodexAppServer } from "./ai/codex-app-server.js";
 import { CopilotChatService } from "./ai/copilot-chat.js";
 import { AIWorkspaceService } from "./ai/ai-workspace.js";
-
-interface DesktopContext {
-  registry: { initialize(): void; close(): void; get(id: string): Project | undefined; update(project: Project): void };
-  projects: {
-    listProjects(): Promise<unknown>;
-    createProject(input: { name: string; parentPath: string; styleResourceIds?: string[] }): Promise<unknown>;
-    registerExistingFolder(folderPath: string): Promise<Project>;
-    openProject(projectId: string): Promise<unknown>;
-    setMainFile(projectId: string, relativePath: string): Promise<unknown>;
-    remove(request: { projectId: string; mode: "registryOnly" }): Promise<unknown>;
-  };
-  environment: { isUnsafeDeleteTarget(path: string): boolean };
-  files: {
-    listTree(projectId: string): Promise<unknown>;
-    readText(projectId: string, relativePath: string): Promise<unknown>;
-    writeText(projectId: string, relativePath: string, content: string): Promise<unknown>;
-    resolveFilePath(projectId: string, relativePath: string, mustExist?: boolean): Promise<string>;
-    createFile(projectId: string, relativePath: string, content?: string): Promise<void>;
-    createDirectory(projectId: string, relativePath: string): Promise<void>;
-    renameEntry(projectId: string, fromRelativePath: string, toRelativePath: string): Promise<void>;
-    copyEntry(projectId: string, fromRelativePath: string, toRelativePath: string): Promise<void>;
-    importEntry(projectId: string, sourcePath: string, destinationRelativePath: string): Promise<void>;
-    removeEntry(projectId: string, relativePath: string): Promise<void>;
-  };
-  compiler: { compile(input: CompileInput): Promise<CompileResult>; compileWorkspace(input: { workspaceRoot: string; mainFile: string; engine?: CompileInput["engine"] }): Promise<CompileResult> };
-  resources: { searchCommands(query: string): CommandMetadata[] };
-  blockGraph: ProjectBlockGraphService;
-  styleResources: StyleResourceRepository;
-  themes: ThemeRepository;
-  spellcheck: OfflineSpellCheckService;
-  installation: InstallationStateService;
-  images: ProjectImageService;
-  references: ReferenceLibraryRepository;
-  ai: CodexAppServer;
-  copilot: CopilotChatService;
-  aiWorkspaces: AIWorkspaceService;
-}
+import { createWorkspaceBlockApi } from "./ai/workspace-block-api.js";
+import { registerAiIpcHandlers } from "./ai/ipc.js";
 
 let context: DesktopContext | undefined;
 let settings: SettingsRepository;
+const closeStates = new Map<number, { pending: string | undefined; approved: boolean; ready: boolean }>();
+let quitRequested = false;
 
 // Keep Electron's per-user data and Windows AppUserModel identity aligned with
 // the product name used by the installer. This also makes the documented
@@ -67,7 +37,7 @@ async function createContext(): Promise<DesktopContext> {
   const packageInfo = JSON.parse(await readFile(resolve(__dirname, "../../../../package.json"), "utf8")) as { version?: unknown };
   const appVersion = typeof packageInfo.version === "string" ? packageInfo.version : app.getVersion();
   // Backend packages are ESM; dynamic import keeps this Electron entry CommonJS-compatible.
-  const [{ ProjectService, ProjectBlockGraphService }, { systemClock }, { NodeProjectEnvironment, NodeProjectFileService }, { SQLiteProjectRegistry }, { FileResourceCatalog }, { LatexmkCompilerService }] = await Promise.all([
+  const [{ ProjectService, ProjectBlockGraphService, ProjectDocumentStructureService }, { systemClock }, { NodeProjectEnvironment, NodeProjectFileService }, { SQLiteProjectRegistry }, { FileResourceCatalog }, { LatexmkCompilerService }] = await Promise.all([
     import("@latex-editor/application"),
     import("@latex-editor/domain"),
     import("@latex-editor/filesystem-node"),
@@ -103,6 +73,15 @@ async function createContext(): Promise<DesktopContext> {
   const blockGraph = new ProjectBlockGraphService(files, { next: randomUUID });
   settings = new SettingsRepository(app.getPath("userData"), async (id) => files.resolveFilePath(id, ".texweave/settings.json", false));
   await settings.initialize();
+  const { environmentsFromCatalog } = await import("@latex-editor/editor-core/preview/catalog");
+  const environmentCatalog = JSON.parse(await readFile(resolve(resourceRoot, "environments", "preview-environments.json"), "utf8")) as EnvironmentCatalog;
+  const environmentDefinitions = async (projectId: string): Promise<EnvironmentDefinition[]> => {
+    const preferences = await settings.snapshot(projectId);
+    const configured = (preferences.project.environments ?? preferences.global.environments) as EnvironmentDefinition[] | undefined;
+    const defaults = environmentsFromCatalog(environmentCatalog);
+    return configured?.length ? [...configured, ...defaults.filter((entry) => !configured.some((custom) => custom.id === entry.id))] : defaults;
+  };
+  const structure = new ProjectDocumentStructureService(files, blockGraph, { next: randomUUID }, environmentDefinitions);
   await themes.setDirectory(settings.global.themeDirectory ?? "");
   const { discoverToolchain } = await import("@latex-editor/compiler-latexmk");
   let detected = await discoverToolchain(settings.toolchain?.latexmk ?? settings.toolchain?.binDirectory);
@@ -132,6 +111,12 @@ async function createContext(): Promise<DesktopContext> {
     projectFiles: files,
     projectExists: (id) => Boolean(registry.get(id) && !registry.get(id)?.missing),
     builtInSkillsRoot: resolve(resourceRoot, "ai", "skills"),
+    createBlockApi: async ({ projectId, workspaceRoot }) => {
+      const project = registry.get(projectId);
+      if (!project || project.missing) throw new Error("The source project is no longer available.");
+      // Block tools and shell edits share the same diff-reviewed working copy.
+      return createWorkspaceBlockApi(project, workspaceRoot, () => environmentDefinitions(projectId));
+    },
     compileWorkspace: async ({ projectId, workspaceRoot, mainFile }) => {
       const project = registry.get(projectId);
       if (!project || project.missing) throw new Error("The source project is no longer available.");
@@ -143,10 +128,34 @@ async function createContext(): Promise<DesktopContext> {
     onUpdate: (kind, payload) => BrowserWindow.getAllWindows().forEach((window) => window.webContents.send("ai:update", { kind, payload }))
   });
   await aiWorkspaces.initialize();
-  return { registry, projects, environment, files, compiler, resources, blockGraph, styleResources, themes, spellcheck, installation, images, references, ai, copilot, aiWorkspaces };
+  return { registry, projects, environment, files, compiler, resources, blockGraph, structure, styleResources, themes, spellcheck, installation, images, references, ai, copilot, aiWorkspaces };
 }
 
 function registerIpcHandlers(): void {
+  ipcMain.on("window:close-ready", (event) => {
+    const window = BrowserWindow.fromWebContents(event.sender);
+    const state = window && closeStates.get(window.id);
+    if (state) state.ready = true;
+  });
+  ipcMain.on("window:close-response", (event, requestId: string, allow: boolean) => {
+    const window = BrowserWindow.fromWebContents(event.sender);
+    const state = window && closeStates.get(window.id);
+    if (!window || !state || !state.pending || state.pending !== requestId) return;
+    state.pending = undefined;
+    if (allow !== true) { quitRequested = false; return; }
+    state.approved = true;
+    if (quitRequested) app.quit(); else window.close();
+  });
+  ipcMain.handle("window:confirm-close", async (event, labels: { title: string; message: string; detail: string; buttons: [string, string, string] }) => {
+    const window = BrowserWindow.fromWebContents(event.sender);
+    if (!window || !closeStates.get(window.id)?.pending) return "cancel";
+    const result = await dialog.showMessageBox(window, { type: "warning", ...labels, defaultId: 0, cancelId: 2, noLink: true });
+    return ["save", "discard", "cancel"][result.response] ?? "cancel";
+  });
+  ipcMain.handle("window:save-error", async (event, title: string, message: string) => {
+    const window = BrowserWindow.fromWebContents(event.sender);
+    if (window) await dialog.showMessageBox(window, { type: "error", title, message });
+  });
   ipcMain.handle("settings:get", (_event, projectId?: string) => settings.snapshot(projectId));
   ipcMain.handle("settings:set", async (_event, key: PreferenceKey, value: unknown, projectId?: string) => {
     const snapshot = await settings.set(key, value, projectId);
@@ -201,6 +210,13 @@ function registerIpcHandlers(): void {
     return context.references.removeProjectLink(projectId, entryId);
   });
   ipcMain.handle("block-graph:snapshot", (_event, projectId: string) => context?.blockGraph.snapshot(projectId));
+  const blockMethods: Array<keyof DocumentBlockApi> = ["list_blocks", "find_blocks", "get_block", "get_blocks", "get_block_source", "replace_block_content", "insert_block", "delete_block", "set_block_semantic"];
+  for (const method of blockMethods) ipcMain.handle(`structure:${method}`, (_event, projectId: string, input: unknown) => {
+    if (!context) throw new Error("The application is not ready.");
+    const api = context.structure.api(projectId);
+    return (api[method] as (input: unknown) => Promise<unknown>)(input);
+  });
+  ipcMain.handle("structure:snapshot", (_event, projectId: string) => context?.structure.snapshot(projectId));
   ipcMain.handle("block-graph:create-block", (_event, projectId: string, input: CreateSemanticBlockInput) => context?.blockGraph.createBlock(projectId, input));
   ipcMain.handle("block-graph:validate-user-block", (_event, projectId: string, input: CreateUserBlockInput) => context?.blockGraph.validateUserBlock(projectId, input));
   ipcMain.handle("block-graph:create-user-block", (_event, projectId: string, input: CreateUserBlockInput) => context?.blockGraph.createUserBlock(projectId, input));
@@ -493,67 +509,7 @@ function registerIpcHandlers(): void {
     const pdfDataUrl = `data:application/pdf;base64,${(await readFile(result.pdfPath)).toString("base64")}`;
     return { ...result, pdfDataUrl };
   });
-  ipcMain.handle("ai:detect", () => context?.ai.detect());
-  ipcMain.handle("ai:install", async () => {
-    if (context === undefined) throw new Error("Application context is not ready");
-    const status = await context.ai.install();
-    if (status.executablePath) await settings.set("aiCodexExecutable", status.executablePath);
-    return status;
-  });
-  ipcMain.handle("ai:status", () => context?.ai.refresh());
-  ipcMain.handle("ai:models", () => context?.aiWorkspaces.listModels());
-  ipcMain.handle("ai:skills", () => context?.aiWorkspaces.listSkills());
-  ipcMain.handle("ai:skill:save", (_event, input: { name: string; content: string; create?: boolean }) => {
-    if (!context) throw new Error("Application context is not ready");
-    return context.aiWorkspaces.saveSkill(input);
-  });
-  ipcMain.handle("ai:login", () => context?.ai.login());
-  ipcMain.handle("ai:logout", () => context?.ai.logout());
-  ipcMain.handle("ai:copilot:status", () => context?.copilot.status());
-  ipcMain.handle("ai:copilot:install", () => context?.copilot.installCli());
-  ipcMain.handle("ai:copilot:login", () => context?.copilot.login());
-  ipcMain.handle("ai:copilot:logout", () => context?.copilot.logout());
-  ipcMain.handle("ai:copilot:models", () => context?.aiWorkspaces.listCopilotModels());
-  ipcMain.handle("ai:conversations", (_event, projectId?: string) => context?.aiWorkspaces.snapshot(projectId));
-  ipcMain.handle("ai:conversation:create", (_event, mode: "chat" | "codex", projectId?: string) => {
-    if (!context) throw new Error("Application context is not ready");
-    return context.aiWorkspaces.create({ mode, ...(projectId ? { projectId } : {}) });
-  });
-  ipcMain.handle("ai:conversation:mode", (_event, id: string, mode: "chat" | "codex") => context?.aiWorkspaces.setMode(id, mode));
-  ipcMain.handle("ai:conversation:remove", (_event, id: string) => context?.aiWorkspaces.remove(id));
-  ipcMain.handle("ai:change-set:resolve", (_event, id: string, decisions: Record<string, "accepted" | "rejected">, applied: boolean) => context?.aiWorkspaces.resolveChangeSet(id, decisions, applied));
-  ipcMain.handle("ai:attachments:pick", async (_event, projectId: string) => {
-    if (!context) throw new Error("Application context is not ready");
-    const selected = await dialog.showOpenDialog({ properties: ["openFile", "multiSelections"] });
-    return selected.canceled ? [] : context.aiWorkspaces.selectAttachments(projectId, selected.filePaths);
-  });
-  ipcMain.handle("ai:send", async (_event, input: { conversationId: string; projectId?: string; content: string; contextText?: string; overrides?: AIContextSnapshotFile[]; attachmentIds?: string[] }) => {
-    if (!context) throw new Error("Application context is not ready");
-    const conversation = context.aiWorkspaces.snapshot(input.projectId).conversations.find((item) => item.id === input.conversationId);
-    if (!conversation) throw new Error("AI conversation was not found for this project.");
-    if (conversation.projectId !== input.projectId) throw new Error("AI conversations can only access their associated project.");
-    let snapshot: AIContextSnapshotFile[] = [];
-    if (input.projectId) {
-      const collect = (nodes: ProjectTreeNode[]): string[] => nodes.flatMap((node) => node.kind === "file" ? [node.relativePath] : node.children ? collect(node.children) : []);
-      const paths = collect(await context.files.listTree(input.projectId) as ProjectTreeNode[]).filter((path) => /\.(?:tex|bib|sty|cls|txt|md|cfg|def|ltx|ts|tsx|js|jsx|mjs|cjs|json|css|scss|html|yml|yaml|toml|xml|svg)$/i.test(path) || path.replaceAll("\\", "/").toLocaleLowerCase() === ".texweave/settings.json");
-      snapshot = (await Promise.all(paths.map(async (path) => {
-        const value = await context!.files.readText(input.projectId!, path) as { content?: unknown };
-        return typeof value?.content === "string" ? { path, content: value.content } : undefined;
-      }))).filter((item): item is AIContextSnapshotFile => Boolean(item));
-      const overrideMap = new Map((input.overrides ?? []).map((file) => [file.path.replaceAll("\\", "/"), file.content]));
-      snapshot = snapshot.map((file) => overrideMap.has(file.path) ? { ...file, content: overrideMap.get(file.path)! } : file);
-      for (const [path, content] of overrideMap) if (!snapshot.some((file) => file.path === path)) snapshot.push({ path, content });
-    }
-    const model = conversation.mode === "chat" ? settings.global.aiCopilotModel : settings.global.aiModel;
-    const reasoningEffort = conversation.mode === "chat" ? settings.global.aiCopilotReasoningEffort : settings.global.aiReasoningEffort;
-    return context.aiWorkspaces.send({ conversationId: input.conversationId, content: input.content, attachmentIds: input.attachmentIds ?? [], ...(model ? { model } : {}), ...(reasoningEffort ? { reasoningEffort } : {}), ...(snapshot.length ? { snapshot } : {}), ...(input.contextText ? { contextText: input.contextText } : {}) });
-  });
-  ipcMain.handle("ai:cancel", (_event, taskId: string) => context?.aiWorkspaces.cancel(taskId));
-  ipcMain.handle("ai:set-executable", async (_event, path: string) => {
-    await settings.set("aiCodexExecutable", path);
-    await context?.ai.stop();
-    return context?.ai.detect();
-  });
+  registerAiIpcHandlers(context, settings);
   ipcMain.handle("synctex:forward", async (_event, projectId: string, sourceFile: string, pdfFile: string, line: number, column: number) => {
     if (context === undefined) throw new Error("Application context is not ready");
     const project = await context.projects.openProject(projectId) as { canonicalPath: string };
@@ -581,6 +537,9 @@ function registerIpcHandlers(): void {
 }
 
 function createWindow(): BrowserWindow {
+  // Isolated UI regression tests need an active compositor without opening a
+  // visible helper window. Normal launches retain the native window behavior.
+  const offscreenTest = process.env.TEXWEAVE_UI_TEST_OFFSCREEN === "1";
   const window = new BrowserWindow({
     show: false,
     width: 1280,
@@ -593,16 +552,31 @@ function createWindow(): BrowserWindow {
       preload: resolve(__dirname, "../../src/preload/index.cjs"),
       contextIsolation: true,
       nodeIntegration: false,
-      sandbox: false
+      sandbox: false,
+      ...(offscreenTest ? { offscreen: true, backgroundThrottling: false } : {})
     }
   });
+  const closeState = { pending: undefined as string | undefined, approved: false, ready: false };
+  closeStates.set(window.id, closeState);
+  window.on("close", (event) => {
+    if (closeState.approved || !closeState.ready || window.webContents.isLoadingMainFrame()) return;
+    event.preventDefault();
+    if (closeState.pending) return;
+    closeState.pending = randomUUID();
+    window.webContents.send("window:close-requested", closeState.pending);
+  });
+  window.once("closed", () => closeStates.delete(window.id));
+
   // The workbench is intentionally dense; opening maximized keeps the mode
   // switch and both editing panes available from the first frame.
   window.once("ready-to-show", () => {
+    if (offscreenTest) return;
     if (settings.global.maximize !== false) window.maximize();
     window.show();
   });
-  window.loadFile(resolve(__dirname, "../renderer/index.html"));
+  const rendererUrl = process.env.TEXWEAVE_RENDERER_URL;
+  if (rendererUrl) void window.loadURL(rendererUrl);
+  else void window.loadFile(resolve(__dirname, "../renderer/index.html"));
   return window;
 }
 
@@ -625,6 +599,7 @@ app.whenReady().then(() => {
   });
 });
 
+app.on("before-quit", () => { quitRequested = true; });
 app.on("window-all-closed", () => {
   void context?.ai.stop();
   void context?.copilot.dispose();

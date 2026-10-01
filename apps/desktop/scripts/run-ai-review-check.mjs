@@ -1,0 +1,10 @@
+import { spawn } from "node:child_process";
+import console from "node:console";
+import process from "node:process";
+import electron from "electron";
+const env = { ...process.env };
+env.TEXWEAVE_UI_TEST_OFFSCREEN = "1";
+delete env.ELECTRON_RUN_AS_NODE;
+const child = spawn(electron.trim(), ["apps/desktop/scripts/check-ai-review.cjs"], { env, stdio: "inherit" });
+child.on("error", error => { console.error(error); process.exit(1); });
+child.on("exit", code => process.exit(code ?? 1));

@@ -1,6 +1,29 @@
 const { contextBridge, ipcRenderer, webUtils } = require("electron");
 
 contextBridge.exposeInMainWorld("latexEditor", {
+  structure: {
+    snapshot: (projectId) => ipcRenderer.invoke("structure:snapshot", projectId),
+    list_blocks: (projectId, input) => ipcRenderer.invoke("structure:list_blocks", projectId, input),
+    find_blocks: (projectId, input) => ipcRenderer.invoke("structure:find_blocks", projectId, input),
+    get_block: (projectId, input) => ipcRenderer.invoke("structure:get_block", projectId, input),
+    get_blocks: (projectId, input) => ipcRenderer.invoke("structure:get_blocks", projectId, input),
+    get_block_source: (projectId, input) => ipcRenderer.invoke("structure:get_block_source", projectId, input),
+    replace_block_content: (projectId, input) => ipcRenderer.invoke("structure:replace_block_content", projectId, input),
+    insert_block: (projectId, input) => ipcRenderer.invoke("structure:insert_block", projectId, input),
+    delete_block: (projectId, input) => ipcRenderer.invoke("structure:delete_block", projectId, input),
+    set_block_semantic: (projectId, input) => ipcRenderer.invoke("structure:set_block_semantic", projectId, input)
+  },
+  lifecycle: {
+    onCloseRequested: (listener) => {
+      const handler = (_event, requestId) => listener(requestId);
+      ipcRenderer.on("window:close-requested", handler);
+      ipcRenderer.send("window:close-ready");
+      return () => ipcRenderer.removeListener("window:close-requested", handler);
+    },
+    completeClose: (requestId, allow) => ipcRenderer.send("window:close-response", requestId, allow),
+    confirmClose: (labels) => ipcRenderer.invoke("window:confirm-close", labels),
+    showSaveError: (title, message) => ipcRenderer.invoke("window:save-error", title, message)
+  },
   settings: {
     get: (projectId) => ipcRenderer.invoke("settings:get", projectId),
     set: (key, value, projectId) => ipcRenderer.invoke("settings:set", key, value, projectId),
@@ -147,8 +170,12 @@ contextBridge.exposeInMainWorld("latexEditor", {
     conversations: (projectId) => ipcRenderer.invoke("ai:conversations", projectId),
     createConversation: (mode, projectId) => ipcRenderer.invoke("ai:conversation:create", mode, projectId),
     setConversationMode: (id, mode) => ipcRenderer.invoke("ai:conversation:mode", id, mode),
+    renameConversation: (id, title) => ipcRenderer.invoke("ai:conversation:rename", id, title),
     removeConversation: (id) => ipcRenderer.invoke("ai:conversation:remove", id),
     resolveChangeSet: (id, decisions, applied) => ipcRenderer.invoke("ai:change-set:resolve", id, decisions, applied),
+    markChangeSetApplied: (id, hunkIds, error) => ipcRenderer.invoke("ai:change-set:applied", id, hunkIds, error),
+    approvals: (projectId) => ipcRenderer.invoke("ai:approvals", projectId),
+    resolveApproval: (id, allow) => ipcRenderer.invoke("ai:approval:resolve", id, allow),
     send: (input) => ipcRenderer.invoke("ai:send", input),
     pickAttachments: (projectId) => ipcRenderer.invoke("ai:attachments:pick", projectId),
     cancel: (taskId) => ipcRenderer.invoke("ai:cancel", taskId),

@@ -2,6 +2,7 @@
 export * from "./settings.js";
 export * from "./spellcheck.js";
 export * from "./block-graph.js";
+export * from "./document-structure.js";
 
 export type AIAuthState = "unknown" | "signed_out" | "authenticating" | "signed_in" | "expired" | "error";
 export type AICodexProcessState = "not_detected" | "stopped" | "starting" | "running" | "crashed";
@@ -24,6 +25,15 @@ export interface AIModelOption {
   defaultReasoningEffort?: string;
 }
 export type AIMode = "chat" | "codex";
+export type AIPermissionMode = "ask" | "auto" | "full";
+export interface AIApprovalRequest {
+  id: string;
+  conversationId: string;
+  description: string;
+  command?: string;
+  paths: string[];
+  status: "pending" | "approved" | "denied";
+}
 export type AIMessageRole = "user" | "assistant" | "system" | "tool";
 export interface AIAttachment { id: string; name: string; size: number }
 /** Provider-returned, displayable reasoning summaries, separate from the answer. */
@@ -48,6 +58,7 @@ export interface AIConversation {
   threadId?: string;
   codexToolsVersion?: number;
   copilotSessionId?: string;
+  copilotToolsVersion?: number;
   messages: AIMessage[];
 }
 export interface AIContextSnapshotFile { path: string; content: string }
@@ -60,6 +71,8 @@ export interface AIChangeHunk {
   oldText: string;
   newText: string;
   decision: "pending" | "accepted" | "rejected";
+  /** Applied in the editor, but not necessarily explicitly kept by the user. */
+  applied?: boolean;
 }
 export interface AIFileChange {
   path: string;
@@ -75,6 +88,9 @@ export interface AIChangeSet {
   createdAt: number;
   files: AIFileChange[];
   status: "pending" | "partially_accepted" | "accepted" | "rejected";
+  /** Captured when the turn starts, not inferred from a later settings change. */
+  permissionMode?: AIPermissionMode;
+  autoApplyError?: string;
 }
 export interface AIConversationSnapshot { conversations: AIConversation[]; changeSets: AIChangeSet[] }
 export const errorCodes = [

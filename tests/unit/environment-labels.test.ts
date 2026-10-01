@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { addCommandLabel, addEnvironmentLabel, isAutomaticEnvironmentLabel, nextAutomaticEnvironmentLabel, nextAutomaticLabel } from "../../apps/desktop/src/renderer/preview/labels.js";
+import { addCommandLabel, addEnvironmentLabel, findBlockLabel, isAutomaticEnvironmentLabel, nextAutomaticEnvironmentLabel, nextAutomaticLabel, upsertBlockLabel } from "../../apps/desktop/src/renderer/preview/labels.js";
 import { parsePreview } from "../../apps/desktop/src/renderer/preview/parser.js";
 import { DEFAULT_ENVIRONMENTS } from "../../apps/desktop/src/renderer/preview/environments.js";
 
@@ -44,5 +44,56 @@ B
     const document = parsePreview(String.raw`\section{Introduction}\label{section:1}
 Text`, "main.tex", DEFAULT_ENVIRONMENTS);
     expect(document.nodes[0]).toMatchObject({ latexLabel: "section:1", autoLabel: true });
+  });
+});
+
+describe("Preview label commit ownership", () => {
+  it("adds labels to compact one-line environments", () => {
+    const result = upsertBlockLabel(String.raw`\begin{equation}x=y\end{equation}`, "eq:new", null);
+    expect(result).toContain(String.raw`\label{eq:new}`);
+    expect(parsePreview(result, "main.tex", DEFAULT_ENVIRONMENTS).nodes[0]).toMatchObject({ latexLabel: "eq:new" });
+  });
+
+  it("keeps required environment arguments before inserted labels", () => {
+    expect(addEnvironmentLabel(String.raw`\begin{tabular}{>{\bfseries}ll}A&B\\\end{tabular}`, "tab:new"))
+      .toContain(String.raw`\begin{tabular}{>{\bfseries}ll}` + "\n  \\label{tab:new}\n");
+  });
+
+  it("round-trips bracketed display math labels", () => {
+    const result = upsertBlockLabel(String.raw`\[x=y\]`, "eq:display", null);
+    expect(parsePreview(result, "main.tex", DEFAULT_ENVIRONMENTS).nodes[0]).toMatchObject({ latexLabel: "eq:display", labelSource: { startOffset: result.indexOf("\\label{") } });
+  });
+
+  it("does not inherit or overwrite a descendant's label", () => {
+    const source = String.raw`\section{Parent}
+\begin{theorem}
+\label{thm:child}
+Text.
+\end{theorem}`;
+    const section = parsePreview(source, "main.tex", DEFAULT_ENVIRONMENTS).nodes[0];
+    expect(section).not.toHaveProperty("latexLabel");
+    const edited = upsertBlockLabel(source, "sec:parent", null);
+    expect(edited).toContain(String.raw`\label{thm:child}`);
+    expect(parsePreview(edited, "main.tex", DEFAULT_ENVIRONMENTS).nodes[0]).toMatchObject({ latexLabel: "sec:parent" });
+  });
+
+  it("ignores comments and escaped label-like text, but accepts label whitespace", () => {
+    const source = String.raw`\begin{theorem}
+% \label{comment}
+\\label{escaped}
+\label {real:label}
+\end{theorem}`;
+    expect(findBlockLabel(source)?.label).toBe("real:label");
+    expect(parsePreview(source, "main.tex", DEFAULT_ENVIRONMENTS).nodes[0]).toMatchObject({ latexLabel: "real:label" });
+  });
+
+  it("keeps labels inside an equation's aligned body owned by that equation", () => {
+    const source = String.raw`\begin{equation}\begin{aligned}x&=y\label{eq:aligned}\end{aligned}\end{equation}`;
+    expect(parsePreview(source, "main.tex", DEFAULT_ENVIRONMENTS).nodes[0]).toMatchObject({ latexLabel: "eq:aligned" });
+  });
+
+  it("treats label contents as literal replacement text", () => {
+    expect(upsertBlockLabel(String.raw`\begin{equation}\label{old}x=y\end{equation}`, "eq:$&")).toContain(String.raw`\label{eq:$&}`);
+    expect(upsertBlockLabel(String.raw`\[x=y\]`, "eq:$&", null)).toContain(String.raw`\label{eq:$&}`);
   });
 });

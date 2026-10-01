@@ -13,6 +13,60 @@ function blocks(nodes: PreviewNode[]): StructuralBlock[] {
 }
 
 describe("v0.2.2 structured Preview parser", () => {
+  it("does not construct formula blocks from a commented-out array", () => {
+    const source = String.raw`% \[
+% \begin{array}{c|c|c}
+% \text{Mode}
+% &
+% \text{candidate/search mechanism}
+% &
+% \text{role}
+% \\ \hline
+% \mathsf{standard}
+% &
+% \text{SSI + full-space local refinement}
+% &
+% \text{default practical estimator}
+% \\
+% \mathsf{complete}
+% &
+% \delta_n\text{-net + optional local refinement}
+% &
+% \text{numerically certified reference}
+% \\
+% \mathsf{fast}
+% &
+% \text{SSI + adaptive low-dimensional subspace}
+% &
+% \text{large-}d\text{ computation}
+% \end{array}
+% \]`;
+    const document = parsePreview(source, "main.tex", DEFAULT_ENVIRONMENTS);
+    expect(document.nodes).toEqual([]);
+    expect(document.diagnostics).toEqual([]);
+  });
+
+  it("ignores commented opening/closing delimiters inside active display math", () => {
+    const source = String.raw`\[
+x=y
+% \]
+% \[
+z=w
+\]`;
+    const document = parsePreview(source, "main.tex", DEFAULT_ENVIRONMENTS);
+    expect(blocks(document.nodes)).toHaveLength(1);
+    expect(document.nodes[0]?.source.endOffset).toBe(source.length);
+    expect(document.diagnostics).toEqual([]);
+  });
+
+  it("distinguishes literal escaped percent from an actual comment", () => {
+    const source = String.raw`\% literal percent \begin{equation}x=y\end{equation}
+\% followed by % \[commented\]`;
+    const document = parsePreview(source, "main.tex", DEFAULT_ENVIRONMENTS);
+    expect(blocks(document.nodes).map(block => block.environmentId)).toEqual(["equation"]);
+    expect(document.diagnostics).toEqual([]);
+  });
+
   it("preserves spaces around inline text commands", () => {
     expect(plainLatex("Before ")).toBe("Before ");
     expect(plainLatex(" after")).toBe(" after");

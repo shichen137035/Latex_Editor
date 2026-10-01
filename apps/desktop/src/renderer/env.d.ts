@@ -1,4 +1,7 @@
-import type { AIStatus, AIModelOption, AIConversation, AIChangeSet, AIContextSnapshotFile, AIProjectSkill, AIMode, AIMessage, AddSemanticBlockInput, BlockCreationValidation, BlockGraphSnapshot, BlockId, BlockRangeMappingResult, BlockReconciliationResult, CommandMetadata, CompileResult, CreateSemanticBlockInput, CreateUserBlockInput, DependencyCycle, DictionaryPackage, FileWriteResult, GraphDiagnostic, GraphTraversalOptions, GraphTraversalResult, ImportedImage, LogicalRelation, MapUserBlockRangesInput, Project, ProjectTreeNode, ReconcileParsedBlocksInput, RelationDirection, RelationMutationResult, RelationNeighborhood, RelationValidation, ResolvedGraphic, SemanticBlock, SettingsSnapshot, PreferenceKey, LatexToolchain, StyleResource, ThemeDefinition, SpellCheckMode, SpellCheckStatus, StructuralDependencyOverlap, StructuralHistoryState, StructureWarning, SyncTexPdfPosition, SyncTexSourcePosition, TextFileContent, UpdateSemanticBlockInput, ProjectReferenceLink, ReferenceLibraryEntry, ReferenceLibrarySnapshot, ReferenceImportResult } from "@latex-editor/contracts";
+import type { AIStatus, AIModelOption, AIConversation, AIChangeSet, AIContextSnapshotFile, AIProjectSkill, AIMode, AIAttachment, AddSemanticBlockInput, BlockCreationValidation, BlockGraphSnapshot, BlockId, BlockRangeMappingResult, BlockReconciliationResult, CommandMetadata, CompileResult, CreateSemanticBlockInput, CreateUserBlockInput, DependencyCycle, DictionaryPackage, FileWriteResult, GraphDiagnostic, GraphTraversalOptions, GraphTraversalResult, ImportedImage, LogicalRelation, MapUserBlockRangesInput, Project, ProjectTreeNode, ReconcileParsedBlocksInput, RelationDirection, RelationMutationResult, RelationNeighborhood, RelationValidation, ResolvedGraphic, SemanticBlock, SettingsSnapshot, PreferenceKey, LatexToolchain, StyleResource, ThemeDefinition, SpellCheckMode, SpellCheckStatus, StructuralDependencyOverlap, StructuralHistoryState, StructureWarning, SyncTexPdfPosition, SyncTexSourcePosition, TextFileContent, UpdateSemanticBlockInput, ProjectReferenceLink, ReferenceLibraryEntry, ReferenceLibrarySnapshot, ReferenceImportResult } from "@latex-editor/contracts";
+
+import type { BlockApiResult, DocumentBlockApi, DocumentStructure, AIApprovalRequest } from "@latex-editor/contracts";
+type DesktopBlockApi = { [K in keyof DocumentBlockApi]: (projectId: string, ...args: Parameters<DocumentBlockApi[K]>) => ReturnType<DocumentBlockApi[K]> };
 
 type InstallationState = {
   schemaVersion: 1;
@@ -17,6 +20,13 @@ declare global {
   const __APP_VERSION__: string;
   interface Window {
     latexEditor?: {
+      structure: DesktopBlockApi & { snapshot(projectId: string): Promise<BlockApiResult<DocumentStructure>> };
+      lifecycle: {
+        onCloseRequested(listener: (requestId: string) => void): () => void;
+        completeClose(requestId: string, allow: boolean): void;
+        confirmClose(labels: { title: string; message: string; detail: string; buttons: [string, string, string] }): Promise<"save" | "discard" | "cancel">;
+        showSaveError(title: string, message: string): Promise<void>;
+      };
       settings: {
         get(projectId?: string): Promise<SettingsSnapshot>;
         set(key: PreferenceKey, value: unknown, projectId?: string): Promise<SettingsSnapshot>;
@@ -163,12 +173,16 @@ declare global {
         conversations(projectId?: string): Promise<{ conversations: AIConversation[]; changeSets: AIChangeSet[] } | undefined>;
         createConversation(mode: AIMode, projectId?: string): Promise<AIConversation | undefined>;
         setConversationMode(id: string, mode: AIMode): Promise<AIConversation | undefined>;
+        renameConversation(id: string, title: string): Promise<AIConversation | undefined>;
         removeConversation(id: string): Promise<void>;
         resolveChangeSet(id: string, decisions: Record<string, "accepted" | "rejected">, applied: boolean): Promise<AIChangeSet | undefined>;
+        markChangeSetApplied(id: string, hunkIds: string[], error?: string): Promise<AIChangeSet | undefined>;
+        approvals(projectId?: string): Promise<AIApprovalRequest[]>;
+        resolveApproval(id: string, allow: boolean): Promise<void>;
         send(input: { conversationId: string; projectId?: string; content: string; contextText?: string; overrides?: AIContextSnapshotFile[]; attachmentIds?: string[] }): Promise<{ conversation: AIConversation; taskId: string } | undefined>;
-        pickAttachments(projectId: string): Promise<import("@latex-editor/contracts").AIAttachment[]>;
+        pickAttachments(projectId: string): Promise<AIAttachment[]>;
         cancel(taskId: string): Promise<void>;
-        onUpdate(listener: (update: { kind: "conversation" | "changes"; payload: AIConversation | AIChangeSet }) => void): () => void;
+        onUpdate(listener: (update: { kind: "conversation" | "changes" | "approval"; payload: AIConversation | AIChangeSet | AIApprovalRequest }) => void): () => void;
         onStatus(listener: (status: AIStatus) => void): () => void;
       };
       synctex: {

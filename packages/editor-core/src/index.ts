@@ -213,3 +213,7 @@ export function scanLatex(text: string): LatexReference[] {
   });
   return references;
 }
+export * from "./document-structure.js";
+export * from "./source-index.js";
+export * from "./block-query-index.js";
+export * from "./bibtex.js";

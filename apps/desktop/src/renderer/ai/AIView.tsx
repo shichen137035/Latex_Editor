@@ -6,6 +6,11 @@ import { ConversationPicker } from "./ConversationPicker.js";
 import { AIMessageContent } from "./AIMessageContent.js";
 import { AIReasoning } from "./AIReasoning.js";
 import "./ai.css";
+import type { AIApprovalRequest } from "@latex-editor/contracts";
+import { PermissionPicker } from "./PermissionPicker.js";
+import { ChangesCard } from "./ChangesCard.js";
+import { isHunkApplied } from "./changeOperations.js";
+import { ReasoningEffortPicker } from "./ReasoningEffortPicker.js";
 
 const AI_LONG_INPUT_THRESHOLD = 12_000;
 const AI_COMPOSER_MAX_HEIGHT = 320;
@@ -17,7 +22,9 @@ type Props = {
   currentFile?: string;
   currentFileContent?: string;
   selectedText?: string;
-  onApplyChanges(changes: AIChangeSet): Promise<void>;
+  onApplyChanges(changes: AIChangeSet, hunkIds: string[]): Promise<void>;
+  onUndoChanges(changes: AIChangeSet, hunkIds: string[]): Promise<void>;
+  onViewChanges(changes: AIChangeSet, path: string): void;
   onReviewChanges?(changes: AIChangeSet[]): void;
   onOpenSettings(): void;
   onOpenFile?(path: string, line?: number): void;
@@ -44,8 +51,8 @@ export function AIView(props: Props) {
   const longDraftFileRef = useRef<{ content: string; path: string } | undefined>(undefined);
   const [taskId, setTaskId] = useState<string>();
   const [includeSelection, setIncludeSelection] = useState(Boolean(props.selectedText));
-  const [decisions, setDecisions] = useState<Record<string, "pending" | "accepted" | "rejected">>({});
-  const [lastApplied, setLastApplied] = useState<AIChangeSet>();
+  const [changesBusy, setChangesBusy] = useState(false);
+  const [approvals, setApprovals] = useState<AIApprovalRequest[]>([]);
   const [historyDeleting, setHistoryDeleting] = useState(false);
   const snapshotRef = useRef(snapshot);
   snapshotRef.current = snapshot;
@@ -63,8 +70,7 @@ export function AIView(props: Props) {
   const efforts = selectedModel?.supportedReasoningEfforts ?? [];
   const preferredEffort = preferences.global(effortKey);
   const selectedEffort = efforts.some((option) => option.effort === preferredEffort) ? preferredEffort : "";
-  const effortLabel = (effort: string) => { const label = t(`ai.effort.${effort}`); return label === `ai.effort.${effort}` ? effort : label; };
-  const activeChanges = useMemo(() => snapshot.changeSets.filter((item) => item.conversationId === activeId && (item.status === "pending" || item.status === "partially_accepted")), [snapshot.changeSets, activeId]);
+  const activeChanges = useMemo(() => snapshot.changeSets.filter(item => item.conversationId === activeId && item.files.some(file => file.hunks.some(hunk => hunk.decision === "pending"))), [snapshot.changeSets, activeId]);
   const latestMessageContent = activeConversation?.messages[activeConversation.messages.length - 1]?.content;
   const latestReasoning = activeConversation?.messages.at(-1)?.reasoning?.map((part) => part.text).join("\n");
   const responseRunning = Boolean(taskId) || Boolean(activeConversation?.messages.some((message) => message.status === "streaming"));
@@ -79,9 +85,12 @@ export function AIView(props: Props) {
         const conversation = update.payload as AIConversation;
         setSnapshot((current) => ({ ...current, conversations: [conversation, ...current.conversations.filter((item) => item.id !== conversation.id)].sort((a, b) => b.updatedAt - a.updatedAt) }));
         if (conversation.id === activeIdRef.current && !conversation.messages.some((message) => message.status === "streaming")) setTaskId(undefined);
-      } else {
+      } else if (update.kind === "changes") {
         const changeSet = update.payload as AIChangeSet;
         setSnapshot((current) => ({ ...current, changeSets: [changeSet, ...current.changeSets.filter((item) => item.id !== changeSet.id)] }));
+      } else {
+        const approval = update.payload as AIApprovalRequest;
+        setApprovals(current => [...current.filter(item => item.id !== approval.id), ...(approval.status === "pending" ? [approval] : [])]);
       }
     });
     void api.detect().then(async (detected) => {
@@ -96,6 +105,7 @@ export function AIView(props: Props) {
   useEffect(() => {
     if (!api) return;
     let active = true;
+    void api.approvals(props.projectId).then(value => { if (active) setApprovals(value); }).catch((reason: unknown) => { if (active) setError(messageOf(reason)); });
     void api.conversations(props.projectId).then((value) => {
       if (!active || !value) return;
       setSnapshot(value);
@@ -159,11 +169,6 @@ export function AIView(props: Props) {
     if (transcript && followTranscriptRef.current) transcript.scrollTop = transcript.scrollHeight;
   }, [activeId, activeConversation?.messages.length, latestMessageContent, latestReasoning, activeChanges.length, sending]);
   useEffect(() => { props.onReviewChanges?.(snapshot.changeSets.filter((item) => item.status === "pending" || item.status === "partially_accepted")); }, [snapshot.changeSets, props.onReviewChanges]);
-  useEffect(() => {
-    const listener = (event: Event) => { const id = (event as CustomEvent<string>).detail; setLastApplied((current) => current?.id === id ? undefined : current); };
-    window.addEventListener("texweave:ai-undo-complete", listener);
-    return () => window.removeEventListener("texweave:ai-undo-complete", listener);
-  }, []);
 
   const runStatus = async (action: () => Promise<AIStatus | undefined>, connectAfter = false, provider: AIMode = activeMode) => {
     setBusy(true); setError("");
@@ -249,36 +254,28 @@ export function AIView(props: Props) {
     try { await api.cancel(taskId); } catch (reason) { setError(messageOf(reason)); }
   };
 
-  const applyChanges = async (changeSet: AIChangeSet, decisionOverrides: Record<string, "accepted" | "rejected"> = {}) => {
-    const selectedSet: AIChangeSet = {
-      ...changeSet,
-      files: changeSet.files.map((file) => ({ ...file, hunks: file.hunks.filter((hunk) => hunk.decision === "pending").map((hunk) => ({ ...hunk, decision: decisionOverrides[hunk.id] ?? decisions[hunk.id] ?? hunk.decision })) })).filter((file) => file.hunks.some((hunk) => hunk.decision === "accepted")),
-      status: "accepted"
-    };
-    if (!selectedSet.files.length) { setError(t("ai.acceptOneChange")); return; }
+  const reviewChanges = async (changeSet: AIChangeSet, ids: string[], keep: boolean) => {
+    if (!api || changesBusy) return;
+    setChangesBusy(true); setError("");
     try {
-      await props.onApplyChanges(selectedSet);
-      setLastApplied(selectedSet);
-      const resolvedDecisions = Object.fromEntries(changeSet.files.flatMap((file) => file.hunks.flatMap((hunk) => {
-        const decision = decisionOverrides[hunk.id] ?? decisions[hunk.id] ?? hunk.decision;
-        return decision === "pending" ? [] : [[hunk.id, decision] as const];
-      })));
-      const resolved = await api?.resolveChangeSet(changeSet.id, resolvedDecisions, true);
-      if (resolved) setSnapshot((current) => ({ ...current, changeSets: current.changeSets.map((item) => item.id === resolved.id ? resolved : item) }));
-      setError("");
+      if (keep) {
+        const unapplied = changeSet.files.flatMap(file => file.hunks.filter(hunk => ids.includes(hunk.id) && hunk.decision === "pending" && !isHunkApplied(hunk)).map(hunk => hunk.id));
+        if (unapplied.length) await props.onApplyChanges(changeSet, unapplied);
+      } else await props.onUndoChanges(changeSet, ids);
+      const decisions = Object.fromEntries(ids.map(id => [id, keep ? "accepted" as const : "rejected" as const]));
+      const resolved = await api.resolveChangeSet(changeSet.id, decisions, keep);
+      if (resolved) setSnapshot(current => ({ ...current, changeSets: current.changeSets.map(item => item.id === resolved.id ? resolved : item) }));
     } catch (reason) { setError(messageOf(reason)); }
+    finally { setChangesBusy(false); }
   };
-
-  const acceptAllChanges = (changeSet: AIChangeSet) => {
-    const accepted = Object.fromEntries(changeSet.files.flatMap((file) => file.hunks.filter((hunk) => hunk.decision === "pending").map((hunk) => [hunk.id, "accepted" as const])));
-    void applyChanges(changeSet, accepted);
+  const renameConversation = async (id: string, title: string) => {
+    const renamed = await api?.renameConversation(id, title);
+    if (renamed) setSnapshot(current => ({ ...current, conversations: current.conversations.map(item => item.id === id ? renamed : item) }));
   };
-  const rejectChanges = async (changeSet: AIChangeSet) => {
-    const rejected = Object.fromEntries(changeSet.files.flatMap((file) => file.hunks.map((hunk) => [hunk.id, "rejected"]))) as Record<string, "rejected">;
-    const resolved = await api?.resolveChangeSet(changeSet.id, rejected, false);
-    if (resolved) setSnapshot((current) => ({ ...current, changeSets: current.changeSets.map((item) => item.id === resolved.id ? resolved : item) }));
+  const resolveApproval = async (id: string, allow: boolean) => {
+    try { await api?.resolveApproval(id, allow); }
+    catch (reason) { setError(messageOf(reason)); }
   };
-  const undoLastApply = () => { if (lastApplied) window.dispatchEvent(new CustomEvent("texweave:ai-undo", { detail: lastApplied })); };
   const removeConversations = async (ids: string[]) => {
     if (!api || historyDeleting) return;
     const removed = new Set<string>();
@@ -299,8 +296,10 @@ export function AIView(props: Props) {
 
   if (!api) return null;
 
-  return <section className="generic-sidebar ai-sidebar">
-    <header className="ai-sidebar-heading"><div><span className="ai-kicker">TEXWEAVE AI</span><h2>{t("ai.title")}</h2></div><span className={`ai-status-dot ${activeStatus?.auth === "signed_in" ? "ready" : ""}`} title={t(activeStatus?.auth === "signed_in" ? "ai.signedIn" : "ai.disconnected")}/></header>
+  return <section className="ai-sidebar" aria-label={t("ai.title")}>
+    <div className="ai-workspace-controls ai-conversation-heading">
+      <ConversationPicker key={`${props.projectId}:${activeMode}`} conversations={modeConversations} activeId={activeId} disabled={busy || historyDeleting || Boolean(taskId)} protectedId={busy || taskId ? activeId : undefined} onSelect={(id) => { setActiveId(id); setMode(activeMode); }} onNew={() => void newConversation(activeMode)} onRename={renameConversation} onDelete={removeConversations}/>
+    </div>
     <div className="ai-mode-switch" role="tablist"><button role="tab" aria-selected={activeMode === "chat"} className={activeMode === "chat" ? "active" : ""} disabled={busy || historyDeleting || Boolean(taskId)} onClick={() => void switchMode("chat")}>{t("ai.copilot")}</button><button role="tab" aria-selected={activeMode === "codex"} className={activeMode === "codex" ? "active" : ""} disabled={busy || historyDeleting || Boolean(taskId)} onClick={() => void switchMode("codex")}>{t("ai.codex")}</button></div>
     {!activeStatus && <div className="ai-connect-scroll"><p>{t("ai.checking")}</p></div>}
     {activeStatus && activeStatus.auth !== "signed_in" && <div className="ai-connect-scroll"><div className="ai-connect-card">
@@ -316,8 +315,7 @@ export function AIView(props: Props) {
     </div>{(error || activeStatus.error) && <div className="inline-error ai-error" role="alert">{error || activeStatus.error}</div>}</div>}
     {activeStatus?.auth === "signed_in" && <>
       <div className="ai-workspace-controls">
-        <div className="ai-account-line"><span className="ai-avatar" aria-hidden="true">{activeMode === "chat" ? "GH" : "C"}</span><span className="ai-account-name" title={activeStatus.accountLabel ?? t("ai.signedIn")}>{activeStatus.accountLabel ?? t(activeMode === "chat" ? "ai.copilotAccount" : "ai.chatgptAccount")}</span><button className="ai-quiet-action" onClick={props.onOpenSettings}>{t("ai.settings")}</button><button className="ai-quiet-action" disabled={busy} onClick={() => void runStatus(() => activeMode === "chat" ? api.logoutCopilot() : api.logout(), false, activeMode)}>{t("ai.signOut")}</button></div>
-        <ConversationPicker key={`${props.projectId}:${activeMode}`} conversations={modeConversations} activeId={activeId} disabled={busy || historyDeleting || Boolean(taskId)} protectedId={busy || taskId ? activeId : undefined} onSelect={(id) => { setActiveId(id); setMode(activeMode); }} onNew={() => void newConversation(activeMode)} onDelete={removeConversations}/>
+        <div className="ai-account-line"><span className="ai-status-dot ready" title={t("ai.signedIn")}/><span className="ai-account-name" title={activeStatus.accountLabel ?? t("ai.signedIn")}>{activeStatus.accountLabel ?? t(activeMode === "chat" ? "ai.copilotAccount" : "ai.chatgptAccount")}</span><button className="ai-quiet-action" onClick={props.onOpenSettings}>{t("ai.settings")}</button><button className="ai-quiet-action ai-sign-out" title={t("ai.signOut")} aria-label={t("ai.signOut")} disabled={busy || responseRunning} onClick={() => void runStatus(() => activeMode === "chat" ? api.logoutCopilot() : api.logout(), false, activeMode)}><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M9 4H4v16h5m5-13 5 5-5 5m-5-5h10"/></svg></button></div>
       </div>
       <div ref={transcriptRef} className="ai-conversation-body" aria-live="polite" onScroll={(event) => { const element = event.currentTarget; followTranscriptRef.current = element.scrollHeight - element.scrollTop - element.clientHeight < 80; }}>
         <div className="ai-message-list">{activeConversation?.messages.map((message) => <article key={message.id} className={`ai-message ${message.role} ${message.status ?? ""}`}>
@@ -327,10 +325,10 @@ export function AIView(props: Props) {
           {!!message.attachments?.length && <div className="ai-message-attachments">{message.attachments.map((attachment) => <span key={attachment.id} title={attachment.name}>▧ {attachment.name}</span>)}</div>}
         </article>)}{!activeConversation?.messages.length && !sending && <p className="ai-empty-chat">{t(activeMode === "chat" ? "ai.chatReady" : "ai.codexReady")}</p>}
         {sending && !activeConversation?.messages.some((message) => message.status === "streaming") && <div className="ai-task-status" role="status"><span className="ai-thinking-spinner" aria-hidden="true"/>{t("ai.thinking")}</div>}</div>
-        {lastApplied && <div className="ai-undo-row"><span>{t("ai.changesApplied")}</span><button onClick={undoLastApply}>{t("ai.undoChanges")}</button></div>}
-        {activeChanges.map((changeSet) => <section className="ai-change-set" key={changeSet.id}><header><strong>{t("ai.proposedChanges", { count: changeSet.files.length })}</strong><div><button onClick={() => acceptAllChanges(changeSet)}>{t("ai.acceptAll")}</button><button onClick={() => void rejectChanges(changeSet)}>{t("ai.rejectAll")}</button><button disabled={!changeSet.files.some((file) => file.hunks.some((hunk) => hunk.decision === "pending" && (decisions[hunk.id] ?? "pending") === "accepted"))} onClick={() => void applyChanges(changeSet)}>{t("ai.applyAccepted")}</button></div></header>{changeSet.files.map((file) => <div className="ai-file-change" key={file.path}><strong>{file.type.toUpperCase()} · {file.path}</strong>{file.hunks.map((hunk) => <div className="ai-hunk" key={hunk.id}><pre className="old">{hunk.oldText || "—"}</pre><pre className="new">{hunk.newText || "—"}</pre><div><button disabled={hunk.decision !== "pending"} className={decisions[hunk.id] === "accepted" || hunk.decision === "accepted" ? "selected" : ""} onClick={() => setDecisions((value) => ({ ...value, [hunk.id]: "accepted" }))}>{t("ai.accept")}</button><button disabled={hunk.decision !== "pending"} className={decisions[hunk.id] === "rejected" || hunk.decision === "rejected" ? "selected" : ""} onClick={() => setDecisions((value) => ({ ...value, [hunk.id]: "rejected" }))}>{t("ai.reject")}</button></div></div>)}</div>)}</section>)}
+        {activeChanges.map(changeSet => <ChangesCard key={changeSet.id} changes={changeSet} busy={changesBusy || responseRunning} onKeep={ids => void reviewChanges(changeSet, ids, true)} onDiscard={ids => void reviewChanges(changeSet, ids, false)} onView={path => props.onViewChanges(changeSet, path)}/>)}
       </div>
       <footer className="ai-composer-dock">
+        {approvals.filter(request => request.conversationId === activeId).map(request => <section className="ai-approval-card" key={request.id} role="alert"><strong>{t("ai.approvalRequired")}</strong><p>{request.description}</p>{request.command && <pre>{request.command}</pre>}{request.paths.length > 0 && <small>{request.paths.join("\n")}</small>}<div><button onClick={() => void resolveApproval(request.id, false)}>{t("ai.denyAction")}</button><button onClick={() => void resolveApproval(request.id, true)}>{t("ai.allowAction")}</button></div></section>)}
         {props.selectedText && <div className="ai-context-options"><label><input type="checkbox" checked={includeSelection} onChange={(event) => setIncludeSelection(event.target.checked)}/>{t("ai.includeSelection")}</label></div>}
         {(error || activeStatus.error) && <div className="inline-error ai-error" role="alert">{error || activeStatus.error}</div>}
         {draft.trim().length > AI_LONG_INPUT_THRESHOLD && <div className="ai-long-input-note">{t("ai.longMessageHint")}</div>}
@@ -339,8 +337,9 @@ export function AIView(props: Props) {
           {attachments.length > 0 && <div className="ai-draft-attachments">{attachments.map((attachment) => <span className="ai-attachment-chip" key={attachment.id} title={`${attachment.name} · ${(attachment.size / 1024).toFixed(1)} KB`}><span>▧ {attachment.name}</span><button aria-label={t("ai.removeAttachment", { name: attachment.name })} disabled={sending} onClick={() => setAttachments((current) => current.filter((item) => item.id !== attachment.id))}>×</button></span>)}</div>}
           <div className="ai-composer-actions">
             <button className="ai-add-attachment" title={t("ai.addAttachment")} aria-label={t("ai.addAttachment")} disabled={busy || attachmentsLoading || responseRunning} onClick={() => void addAttachments()}><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg></button>
+            <PermissionPicker value={preferences.global("aiPermissionMode")} disabled={busy || responseRunning} onChange={mode => void preferences.set("aiPermissionMode", mode)}/>
             <select className="ai-composer-model" aria-label={t("ai.model")} title={t("ai.model")} value={selectedModelId} disabled={modelsLoading || busy || responseRunning} onChange={(event) => void preferences.set(activeMode === "chat" ? "aiCopilotModel" : "aiModel", event.target.value)}><option value="">{t(modelsLoading ? "ai.loadingModels" : "ai.defaultModel")}</option>{models.map((model) => <option key={model.id} value={model.id}>{model.name}{model.isDefault ? ` (${t("ai.recommended")})` : ""}</option>)}</select>
-            <select className="ai-composer-effort" aria-label={t("ai.reasoningEffort")} title={t(efforts.length ? "ai.reasoningEffort" : "ai.reasoningUnavailable")} value={selectedEffort} disabled={modelsLoading || busy || responseRunning || !efforts.length} onChange={(event) => void preferences.set(effortKey, event.target.value)}><option value="">{t("ai.modelDefault")}</option>{efforts.map((option) => <option key={option.effort} value={option.effort}>{effortLabel(option.effort)}</option>)}</select>
+            <ReasoningEffortPicker value={selectedEffort} defaultEffort={selectedModel?.defaultReasoningEffort} efforts={efforts} modelName={selectedModel?.name ?? t("ai.defaultModel")} disabled={modelsLoading || busy || responseRunning} onChange={effort => void preferences.set(effortKey, effort)}/>
             {responseRunning ? <button className="ai-send-button stopping" title={t("ai.stop")} aria-label={t("ai.stop")} disabled={!taskId} onClick={() => void cancel()}><svg width="16" height="16" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true"><rect x="4" y="4" width="12" height="12" rx="2"/></svg></button> : <button className="ai-send-button" title={t("ai.send")} aria-label={t("ai.send")} disabled={busy || attachmentsLoading || (!draft.trim() && !attachments.length)} onClick={() => void send()}><svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M12 19V5m-6 6 6-6 6 6"/></svg></button>}
           </div>
         </div>
