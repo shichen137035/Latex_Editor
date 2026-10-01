@@ -51,6 +51,12 @@ Body paragraph.
   assert.equal(snapshot.schemaVersion, 2);
   assert(!Array.isArray(snapshot.blocks));
   assert(Object.values(snapshot.blocks).some((block) => block.placeholder));
+  const legacyGraph = await evaluate(`window.latexEditor.blockGraph.snapshot(${JSON.stringify(project.id)})`);
+  assert(legacyGraph.blocks.some((block) => block.id === theorem.id));
+  const structuralChildren = await evaluate(`window.latexEditor.blockGraph.getStructuralChildren(${JSON.stringify(project.id)}, ${JSON.stringify(theorem.id)})`);
+  assert.deepEqual(structuralChildren, snapshot.blocks[theorem.id].childIds);
+  const neighborhood = await evaluate(`window.latexEditor.blockGraph.getRelationNeighborhood(${JSON.stringify(project.id)}, ${JSON.stringify(theorem.id)}, "both", 1)`);
+  assert(neighborhood);
   const persisted = readFileSync(resolve(project.canonicalPath, ".texweave", "structure.json"), "utf8");
   assert(!persisted.includes("Edited body paragraph."));
 

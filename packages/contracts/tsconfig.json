@@ -1,5 +1,12 @@
 {
   "extends": "../../tsconfig.base.json",
-  "compilerOptions": { "rootDir": "src", "outDir": "dist" },
-  "include": ["src/**/*.ts"]
+  "compilerOptions": {
+    "rootDir": "src",
+    "outDir": "dist",
+    "verbatimModuleSyntax": false
+  },
+  "include": [
+    "src/**/*.ts",
+    "src/**/*.cts"
+  ]
 }

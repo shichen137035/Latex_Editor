@@ -1,0 +1,10 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "rootDir": "../..",
+    "composite": false,
+    "noEmit": true,
+    "verbatimModuleSyntax": false
+  },
+  "include": ["desktop-ipc.ts"]
+}

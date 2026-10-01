@@ -1,5 +1,3 @@
-/* eslint-disable @typescript-eslint/no-require-imports */
-/* global require, console, setTimeout, clearTimeout */
 // Isolated Electron UI check: no real chats, credentials, or AI requests are used.
 const { app, BrowserWindow, ipcMain } = require("electron");
 const { mkdtempSync, mkdirSync, writeFileSync, readFileSync } = require("node:fs");

@@ -1,4 +1,3 @@
-/* eslint-disable @typescript-eslint/no-require-imports, no-undef */
 // Isolated renderer regression: never opens or modifies a user's project.
 const { app, BrowserWindow } = require("electron");
 const { mkdtempSync, mkdirSync } = require("node:fs");

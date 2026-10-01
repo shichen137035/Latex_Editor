@@ -29,7 +29,7 @@ export class AIWorkspaceService {
   readonly #copilot: CopilotChatService;
   readonly #projectFiles: { resolveFilePath(projectId: string, relativePath: string, mustExist?: boolean): Promise<string> };
   readonly #projectExists: (projectId: string) => boolean;
-  readonly #onUpdate: (kind: "conversation" | "changes" | "approval", payload: unknown) => void;
+  readonly #onUpdate: (kind: "conversation" | "changes" | "approval", payload: AIConversation | AIChangeSet | AIApprovalRequest) => void;
   readonly approvals: AIApprovalRequests;
   readonly #builtInSkillsRoot: string;
   readonly #userSkillsRoot: string;
@@ -53,7 +53,7 @@ export class AIWorkspaceService {
     builtInSkillsRoot: string;
     compileWorkspace: AICompileWorkspace;
     createBlockApi: (input: { projectId: string; workspaceRoot: string }) => Promise<DocumentBlockApi>;
-    onUpdate?: (kind: "conversation" | "changes" | "approval", payload: unknown) => void;
+    onUpdate?: (kind: "conversation" | "changes" | "approval", payload: AIConversation | AIChangeSet | AIApprovalRequest) => void;
   }) {
     this.#root = join(options.userDataPath, "ai", "workspaces");
     this.#storePath = join(options.userDataPath, "ai", "conversations.json");

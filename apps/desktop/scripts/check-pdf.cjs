@@ -1,4 +1,3 @@
-/* eslint-disable @typescript-eslint/no-require-imports, no-undef */
 const { app, BrowserWindow } = require("electron");
 const { mkdtempSync, mkdirSync, writeFileSync } = require("node:fs");
 const { tmpdir } = require("node:os");

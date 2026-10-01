@@ -3,10 +3,23 @@
   "compilerOptions": {
     "noEmit": true,
     "jsx": "react-jsx",
-    "lib": ["ES2022", "DOM"],
+    "lib": [
+      "ES2022",
+      "DOM"
+    ],
     "resolveJsonModule": true,
     "verbatimModuleSyntax": false,
-    "types": ["node", "vite/client"]
+    "types": [
+      "node",
+      "vite/client"
+    ],
+    "allowJs": true,
+    "checkJs": true
   },
-  "include": ["src/main/**/*.ts", "src/renderer/**/*.ts", "src/renderer/**/*.tsx"]
+  "include": [
+    "src/main/**/*.ts",
+    "src/renderer/**/*.ts",
+    "src/renderer/**/*.tsx",
+    "src/preload/**/*.cjs"
+  ]
 }

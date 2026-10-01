@@ -2,5 +2,15 @@
   "name": "@latex-editor/contracts",
   "private": true,
   "type": "module",
-  "exports": { ".": { "types": "./dist/index.d.ts", "import": "./dist/index.js" } }
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    },
+    "./desktop-ipc": {
+      "types": "./dist/desktop-ipc.d.cts",
+      "import": "./dist/desktop-ipc.cjs",
+      "require": "./dist/desktop-ipc.cjs"
+    }
+  }
 }

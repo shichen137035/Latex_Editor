@@ -10,39 +10,8 @@ import type { LatexToolchain } from "@latex-editor/contracts" with { "resolution
  * user data and therefore has an explicit lifetime. In particular, a project
  * is never stored below this root and is never removed by this service.
  */
-export type ComponentOwnership = "external" | "installed-by-texweave" | "user-managed";
-export type ComponentId = "core" | "language-packs" | "spellcheck" | "latex-runtime" | "themes" | "templates";
-
-export interface InstalledComponent {
-  id: ComponentId;
-  version: string;
-  ownership: ComponentOwnership;
-  installedAt: string;
-  path?: string;
-  source?: string;
-}
-
-export interface InstallationState {
-  schemaVersion: 1;
-  product: "TeXWeave";
-  appVersion: string;
-  installMode: "recommended" | "custom";
-  installDirectory?: string;
-  installerLanguage?: string;
-  requestedComponents: ComponentId[];
-  components: InstalledComponent[];
-  lastEnvironmentCheck?: string;
-  environment?: LatexToolchain;
-}
-
-export interface RemoveUserDataOptions {
-  settings: boolean;
-  themes: boolean;
-  languages: boolean;
-  spellcheck: boolean;
-  templates: boolean;
-  cache: boolean;
-}
+export type { ComponentOwnership, ComponentId, InstalledComponent, InstallationState, RemoveUserDataOptions } from "@latex-editor/contracts" with { "resolution-mode": "import" };
+import type { ComponentOwnership, InstalledComponent, InstallationState, RemoveUserDataOptions } from "@latex-editor/contracts" with { "resolution-mode": "import" };
 
 const defaultState = (appVersion: string): InstallationState => ({
   schemaVersion: 1,

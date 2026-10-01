@@ -1,9 +1,12 @@
-import { app, BrowserWindow, clipboard, dialog, ipcMain, Menu, shell } from "electron";
+import { registerBlockGraphIpc } from "./block-graph-ipc.js";
+import { registerStructureIpc } from "./structure-ipc.js";
+import { desktopInvoke, desktopEvents } from "@latex-editor/contracts/desktop-ipc";
+import { handleIpc, onIpc, sendIpc } from "./ipc.js";
+import { app, BrowserWindow, clipboard, dialog, Menu, shell } from "electron";
 import { randomUUID } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import { resolve } from "node:path";
-import type { AIStatus, AddSemanticBlockInput, CompileResult, GraphTraversalOptions, PreferenceKey, CreateSemanticBlockInput, CreateUserBlockInput, UpdateSemanticBlockInput, LatexToolchain, MapUserBlockRangesInput, ReconcileParsedBlocksInput, RelationDirection, ProjectReferenceLink, ReferenceLibraryEntry, Project } from "@latex-editor/contracts" with { "resolution-mode": "import" };
-import type { DocumentBlockApi } from "@latex-editor/contracts" with { "resolution-mode": "import" };
+import type { AIStatus, CompileResult, Project } from "@latex-editor/contracts" with { "resolution-mode": "import" };
 import type { EnvironmentCatalog } from "@latex-editor/editor-core/preview/catalog" with { "resolution-mode": "import" };
 import type { EnvironmentDefinition } from "@latex-editor/editor-core/preview/types" with { "resolution-mode": "import" };
 import type { DesktopContext } from "./desktopContext.js";
@@ -101,7 +104,7 @@ async function createContext(): Promise<DesktopContext> {
     userDataPath: app.getPath("userData"),
     executable: () => settings.global.aiCodexExecutable ?? "",
     version: appVersion,
-    onStatus: (status: AIStatus) => BrowserWindow.getAllWindows().forEach((window) => window.webContents.send("ai:status", status))
+    onStatus: (status: AIStatus) => BrowserWindow.getAllWindows().forEach((window) => sendIpc(window.webContents, desktopEvents.toRenderer.aiStatus, status))
   });
   const copilot = new CopilotChatService(app.getPath("userData"));
   const aiWorkspaces = new AIWorkspaceService({
@@ -125,19 +128,24 @@ async function createContext(): Promise<DesktopContext> {
       if (!configuredMain) throw new Error("Set a main TeX file in the project before asking TeXWeave AI to compile it.");
       return compiler.compileWorkspace({ workspaceRoot, mainFile: configuredMain, engine: preferences.project.engine ?? preferences.global.engine ?? "pdflatex" });
     },
-    onUpdate: (kind, payload) => BrowserWindow.getAllWindows().forEach((window) => window.webContents.send("ai:update", { kind, payload }))
+    onUpdate: (kind, payload) => BrowserWindow.getAllWindows().forEach((window) => sendIpc(window.webContents, desktopEvents.toRenderer.aiUpdate, { kind, payload }))
   });
   await aiWorkspaces.initialize();
   return { registry, projects, environment, files, compiler, resources, blockGraph, structure, styleResources, themes, spellcheck, installation, images, references, ai, copilot, aiWorkspaces };
 }
 
+function requireContext(): DesktopContext {
+  if (!context) throw new Error("Application context is not ready");
+  return context;
+}
+
 function registerIpcHandlers(): void {
-  ipcMain.on("window:close-ready", (event) => {
+  onIpc(desktopEvents.toMain.closeReady, (event) => {
     const window = BrowserWindow.fromWebContents(event.sender);
     const state = window && closeStates.get(window.id);
     if (state) state.ready = true;
   });
-  ipcMain.on("window:close-response", (event, requestId: string, allow: boolean) => {
+  onIpc(desktopEvents.toMain.closeResponse, (event, requestId, allow) => {
     const window = BrowserWindow.fromWebContents(event.sender);
     const state = window && closeStates.get(window.id);
     if (!window || !state || !state.pending || state.pending !== requestId) return;
@@ -146,181 +154,139 @@ function registerIpcHandlers(): void {
     state.approved = true;
     if (quitRequested) app.quit(); else window.close();
   });
-  ipcMain.handle("window:confirm-close", async (event, labels: { title: string; message: string; detail: string; buttons: [string, string, string] }) => {
+  handleIpc(desktopInvoke.lifecycle.confirmClose, async (event, labels) => {
     const window = BrowserWindow.fromWebContents(event.sender);
     if (!window || !closeStates.get(window.id)?.pending) return "cancel";
     const result = await dialog.showMessageBox(window, { type: "warning", ...labels, defaultId: 0, cancelId: 2, noLink: true });
-    return ["save", "discard", "cancel"][result.response] ?? "cancel";
+    return (["save", "discard", "cancel"] as const)[result.response] ?? "cancel";
   });
-  ipcMain.handle("window:save-error", async (event, title: string, message: string) => {
+  handleIpc(desktopInvoke.lifecycle.showSaveError, async (event, title, message) => {
     const window = BrowserWindow.fromWebContents(event.sender);
     if (window) await dialog.showMessageBox(window, { type: "error", title, message });
   });
-  ipcMain.handle("settings:get", (_event, projectId?: string) => settings.snapshot(projectId));
-  ipcMain.handle("settings:set", async (_event, key: PreferenceKey, value: unknown, projectId?: string) => {
+  handleIpc(desktopInvoke.settings.get, (_event, projectId) => settings.snapshot(projectId));
+  handleIpc(desktopInvoke.settings.set, async (_event, key, value, projectId) => {
     const snapshot = await settings.set(key, value, projectId);
     if (key === "themeDirectory" && projectId === undefined && context) await context.themes.setDirectory(typeof value === "string" ? value : "");
     return snapshot;
   });
-  ipcMain.handle("installation:state", () => context?.installation.snapshot());
-  ipcMain.handle("installation:set-mode", (_event, mode: "recommended" | "custom", installDirectory?: string) => {
+  handleIpc(desktopInvoke.installation.state, () => context?.installation.snapshot());
+  handleIpc(desktopInvoke.installation.setMode, (_event, mode, installDirectory) => {
     if (context === undefined) throw new Error("Application context is not ready");
     return context.installation.setInstallMode(mode, installDirectory);
   });
-  ipcMain.handle("installation:record-component", (_event, component: { id: "core" | "language-packs" | "spellcheck" | "latex-runtime" | "themes" | "templates"; version: string; ownership: "external" | "installed-by-texweave" | "user-managed"; path?: string; source?: string }) => {
+  handleIpc(desktopInvoke.installation.recordComponent, (_event, component) => {
     if (context === undefined) throw new Error("Application context is not ready");
     return context.installation.recordComponent(component);
   });
-  ipcMain.handle("installation:record-environment", (_event, toolchain: LatexToolchain) => {
+  handleIpc(desktopInvoke.installation.recordEnvironment, (_event, toolchain) => {
     if (context === undefined) throw new Error("Application context is not ready");
     return context.installation.recordEnvironment(toolchain);
   });
-  ipcMain.handle("installation:remove-user-data", (_event, options: { settings: boolean; themes: boolean; languages: boolean; spellcheck: boolean; templates: boolean; cache: boolean }) => {
+  handleIpc(desktopInvoke.installation.removeUserData, (_event, options) => {
     if (context === undefined) throw new Error("Application context is not ready");
     return context.installation.removeUserData(options);
   });
-  ipcMain.handle("resources:commands", (_event, query: string) => context?.resources.searchCommands(query) ?? []);
-  ipcMain.handle("references:snapshot", (_event, projectId?: string) => context?.references.snapshot(projectId));
-  ipcMain.handle("references:import-file", (_event, path: string) => {
+  handleIpc(desktopInvoke.resources.searchCommands, (_event, query) => context?.resources.searchCommands(query) ?? []);
+  handleIpc(desktopInvoke.references.snapshot, (_event, projectId) => context?.references.snapshot(projectId));
+  handleIpc(desktopInvoke.references.importFile, (_event, path) => {
     if (!context) throw new Error("Application context is not ready");
     return context.references.importBibFile(path);
   });
-  ipcMain.handle("references:save-entry", (_event, input: Partial<ReferenceLibraryEntry> & Pick<ReferenceLibraryEntry, "citationKey" | "entryType" | "fields">) => {
+  handleIpc(desktopInvoke.references.saveEntry, (_event, input) => {
     if (!context) throw new Error("Application context is not ready");
     return context.references.saveEntry(input);
   });
-  ipcMain.handle("references:remove-entry", (_event, id: string) => {
+  handleIpc(desktopInvoke.references.removeEntry, (_event, id) => {
     if (!context) throw new Error("Application context is not ready");
     return context.references.removeEntry(id);
   });
-  ipcMain.handle("references:set-favorite", (_event, id: string, favorite: boolean) => {
+  handleIpc(desktopInvoke.references.setFavorite, (_event, id, favorite) => {
     if (!context) throw new Error("Application context is not ready");
     return context.references.setFavorite(id, favorite);
   });
-  ipcMain.handle("references:create-collection", (_event, name: string, parentId?: string) => {
+  handleIpc(desktopInvoke.references.createCollection, (_event, name, parentId) => {
     if (!context) throw new Error("Application context is not ready");
     return context.references.createCollection(name, parentId);
   });
-  ipcMain.handle("references:set-project-link", (_event, link: ProjectReferenceLink) => {
+  handleIpc(desktopInvoke.references.setProjectLink, (_event, link) => {
     if (!context) throw new Error("Application context is not ready");
     return context.references.setProjectLink(link);
   });
-  ipcMain.handle("references:remove-project-link", (_event, projectId: string, entryId: string) => {
+  handleIpc(desktopInvoke.references.removeProjectLink, (_event, projectId, entryId) => {
     if (!context) throw new Error("Application context is not ready");
     return context.references.removeProjectLink(projectId, entryId);
   });
-  ipcMain.handle("block-graph:snapshot", (_event, projectId: string) => context?.blockGraph.snapshot(projectId));
-  const blockMethods: Array<keyof DocumentBlockApi> = ["list_blocks", "find_blocks", "get_block", "get_blocks", "get_block_source", "replace_block_content", "insert_block", "delete_block", "set_block_semantic"];
-  for (const method of blockMethods) ipcMain.handle(`structure:${method}`, (_event, projectId: string, input: unknown) => {
-    if (!context) throw new Error("The application is not ready.");
-    const api = context.structure.api(projectId);
-    return (api[method] as (input: unknown) => Promise<unknown>)(input);
-  });
-  ipcMain.handle("structure:snapshot", (_event, projectId: string) => context?.structure.snapshot(projectId));
-  ipcMain.handle("block-graph:create-block", (_event, projectId: string, input: CreateSemanticBlockInput) => context?.blockGraph.createBlock(projectId, input));
-  ipcMain.handle("block-graph:validate-user-block", (_event, projectId: string, input: CreateUserBlockInput) => context?.blockGraph.validateUserBlock(projectId, input));
-  ipcMain.handle("block-graph:create-user-block", (_event, projectId: string, input: CreateUserBlockInput) => context?.blockGraph.createUserBlock(projectId, input));
-  ipcMain.handle("block-graph:delete-user-block", (_event, projectId: string, blockId: string) => context?.blockGraph.deleteUserBlock(projectId, blockId));
-  ipcMain.handle("block-graph:reconcile-parsed", (_event, projectId: string, input: ReconcileParsedBlocksInput) => context?.blockGraph.reconcileParsedBlocks(projectId, input));
-  ipcMain.handle("block-graph:map-user-ranges", (_event, projectId: string, input: MapUserBlockRangesInput) => context?.blockGraph.mapUserBlockRanges(projectId, input));
-  ipcMain.handle("block-graph:add-block", (_event, projectId: string, block: AddSemanticBlockInput & { id: string }) => context?.blockGraph.addBlock(projectId, block));
-  ipcMain.handle("block-graph:update-block", (_event, projectId: string, blockId: string, patch: UpdateSemanticBlockInput) => context?.blockGraph.updateBlock(projectId, blockId, patch));
-  ipcMain.handle("block-graph:remove-block", (_event, projectId: string, blockId: string) => context?.blockGraph.removeBlock(projectId, blockId));
-  ipcMain.handle("block-graph:add-dependency", (_event, projectId: string, prerequisite: string, consequence: string) => context?.blockGraph.addDependency(projectId, prerequisite, consequence));
-  ipcMain.handle("block-graph:validate-dependency", (_event, projectId: string, prerequisite: string, consequence: string) => context?.blockGraph.validateDependency(projectId, prerequisite, consequence));
-  ipcMain.handle("block-graph:remove-dependency", (_event, projectId: string, prerequisite: string, consequence: string) => context?.blockGraph.removeDependency(projectId, prerequisite, consequence));
-  ipcMain.handle("block-graph:has-direct-dependency", (_event, projectId: string, prerequisite: string, consequence: string) => context?.blockGraph.hasDirectDependency(projectId, prerequisite, consequence));
-  ipcMain.handle("block-graph:set-structural-parent", (_event, projectId: string, child: string, parent: string | null) => context?.blockGraph.setStructuralParent(projectId, child, parent));
-  ipcMain.handle("block-graph:direct-prerequisites", (_event, projectId: string, blockId: string) => context?.blockGraph.getDirectPrerequisites(projectId, blockId));
-  ipcMain.handle("block-graph:direct-consequences", (_event, projectId: string, blockId: string) => context?.blockGraph.getDirectConsequences(projectId, blockId));
-  ipcMain.handle("block-graph:prerequisite-closure", (_event, projectId: string, blockId: string, options?: GraphTraversalOptions) => context?.blockGraph.getPrerequisiteClosure(projectId, blockId, options));
-  ipcMain.handle("block-graph:consequence-closure", (_event, projectId: string, blockId: string, options?: GraphTraversalOptions) => context?.blockGraph.getConsequenceClosure(projectId, blockId, options));
-  ipcMain.handle("block-graph:is-prerequisite-of", (_event, projectId: string, prerequisite: string, consequence: string) => context?.blockGraph.isPrerequisiteOf(projectId, prerequisite, consequence));
-  ipcMain.handle("block-graph:structural-parent", (_event, projectId: string, blockId: string) => context?.blockGraph.getStructuralParent(projectId, blockId));
-  ipcMain.handle("block-graph:structural-children", (_event, projectId: string, blockId: string) => context?.blockGraph.getStructuralChildren(projectId, blockId));
-  ipcMain.handle("block-graph:structural-ancestors", (_event, projectId: string, blockId: string) => context?.blockGraph.getStructuralAncestors(projectId, blockId));
-  ipcMain.handle("block-graph:structural-descendants", (_event, projectId: string, blockId: string) => context?.blockGraph.getStructuralDescendants(projectId, blockId));
-  ipcMain.handle("block-graph:is-structural-ancestor", (_event, projectId: string, ancestor: string, descendant: string) => context?.blockGraph.isStructuralAncestor(projectId, ancestor, descendant));
-  ipcMain.handle("block-graph:scc", (_event, projectId: string) => context?.blockGraph.getStronglyConnectedComponents(projectId));
-  ipcMain.handle("block-graph:cycles", (_event, projectId: string) => context?.blockGraph.detectDependencyCycles(projectId));
-  ipcMain.handle("block-graph:prerequisite-overlaps", (_event, projectId: string, blockId: string) => context?.blockGraph.findStructuralOverlapsInPrerequisites(projectId, blockId));
-  ipcMain.handle("block-graph:consequence-overlaps", (_event, projectId: string, blockId: string) => context?.blockGraph.findStructuralOverlapsInConsequences(projectId, blockId));
-  ipcMain.handle("block-graph:prerequisite-relations", (_event, projectId: string, blockId: string) => context?.blockGraph.findLogicalRelationsWithinPrerequisites(projectId, blockId));
-  ipcMain.handle("block-graph:between", (_event, projectId: string, start: string, end: string) => context?.blockGraph.getBlocksBetween(projectId, start, end));
-  ipcMain.handle("block-graph:neighborhood", (_event, projectId: string, focusId: string | null, direction: RelationDirection, depth: number | "all") => context?.blockGraph.getRelationNeighborhood(projectId, focusId, direction, depth));
-  ipcMain.handle("block-graph:history-state", (_event, projectId: string) => context?.blockGraph.historyState(projectId));
-  ipcMain.handle("block-graph:undo", (_event, projectId: string) => context?.blockGraph.undo(projectId));
-  ipcMain.handle("block-graph:redo", (_event, projectId: string) => context?.blockGraph.redo(projectId));
-  ipcMain.handle("block-graph:validate", (_event, projectId: string) => context?.blockGraph.validate(projectId));
-  ipcMain.handle("block-graph:validate-structure", (_event, projectId: string) => context?.blockGraph.validateStructure(projectId));
-  ipcMain.handle("spellcheck:status", () => context?.spellcheck.status());
-  ipcMain.handle("spellcheck:check-text", (_event, text: string, language: string) => context?.spellcheck.checkText(text, language) ?? []);
-  ipcMain.handle("spellcheck:check-words", (_event, words: string[], language: string) => context?.spellcheck.checkWords(words, language) ?? []);
-  ipcMain.handle("spellcheck:suggestions", (_event, word: string, language: string) => context?.spellcheck.suggestions(word, language) ?? []);
-  ipcMain.handle("spellcheck:configure", (_event, mode: "auto" | "manual" | "disabled", language: string) => {
+  registerStructureIpc(() => requireContext().structure);
+  registerBlockGraphIpc(() => requireContext().blockGraph);
+  handleIpc(desktopInvoke.spellcheck.status, () => context?.spellcheck.status());
+  handleIpc(desktopInvoke.spellcheck.checkText, (_event, text, language) => context?.spellcheck.checkText(text, language) ?? []);
+  handleIpc(desktopInvoke.spellcheck.checkWords, (_event, words, language) => context?.spellcheck.checkWords(words, language) ?? []);
+  handleIpc(desktopInvoke.spellcheck.suggestions, (_event, word, language) => context?.spellcheck.suggestions(word, language) ?? []);
+  handleIpc(desktopInvoke.spellcheck.configure, (_event, mode, language) => {
     if (context === undefined) throw new Error("Application context is not ready");
     return context.spellcheck.configure(mode, language);
   });
-  ipcMain.handle("spellcheck:add-word", (_event, word: string) => {
+  handleIpc(desktopInvoke.spellcheck.addToDictionary, (_event, word) => {
     if (context === undefined) throw new Error("Application context is not ready");
     return context.spellcheck.addToDictionary(word);
   });
-  ipcMain.handle("spellcheck:dictionary-words", () => context?.spellcheck.dictionaryWords() ?? []);
-  ipcMain.handle("spellcheck:list-dictionaries", (_event, query = "") => context?.spellcheck.listDictionaries(query) ?? []);
-  ipcMain.handle("spellcheck:refresh-dictionaries", () => context?.spellcheck.refreshDictionaries() ?? []);
-  ipcMain.handle("spellcheck:install-dictionary", async (_event, id: string) => {
+  handleIpc(desktopInvoke.spellcheck.dictionaryWords, () => context?.spellcheck.dictionaryWords() ?? []);
+  handleIpc(desktopInvoke.spellcheck.listDictionaries, (_event, query = "") => context?.spellcheck.listDictionaries(query) ?? []);
+  handleIpc(desktopInvoke.spellcheck.refreshDictionaries, () => context?.spellcheck.refreshDictionaries() ?? []);
+  handleIpc(desktopInvoke.spellcheck.installDictionary, async (_event, id) => {
     if (context === undefined) throw new Error("Application context is not ready");
     return context.spellcheck.installDictionary(id);
   });
-  ipcMain.handle("spellcheck:remove-dictionary", async (_event, id: string) => {
+  handleIpc(desktopInvoke.spellcheck.removeDictionary, async (_event, id) => {
     if (context === undefined) throw new Error("Application context is not ready");
     await context.spellcheck.removeDictionary(id);
     return context.spellcheck.status();
   });
-  ipcMain.handle("style-resources:list", () => context?.styleResources.list() ?? []);
-  ipcMain.handle("style-resources:create", (_event, name: string) => {
+  handleIpc(desktopInvoke.styleResources.list, () => context?.styleResources.list() ?? []);
+  handleIpc(desktopInvoke.styleResources.create, (_event, name) => {
     if (context === undefined) throw new Error("Application context is not ready");
     return context.styleResources.createResource(name);
   });
-  ipcMain.handle("style-resources:import-files", (_event, paths: string[], name?: string) => {
+  handleIpc(desktopInvoke.styleResources.importFiles, (_event, paths, name) => {
     if (context === undefined) throw new Error("Application context is not ready");
     return context.styleResources.importFiles(paths, name);
   });
-  ipcMain.handle("style-resources:import-folder", (_event, folderPath: string) => {
+  handleIpc(desktopInvoke.styleResources.importFolder, (_event, folderPath) => {
     if (context === undefined) throw new Error("Application context is not ready");
     return context.styleResources.importFolder(folderPath);
   });
-  ipcMain.handle("style-resources:duplicate", (_event, id: string) => {
+  handleIpc(desktopInvoke.styleResources.duplicate, (_event, id) => {
     if (context === undefined) throw new Error("Application context is not ready");
     return context.styleResources.duplicate(id);
   });
-  ipcMain.handle("style-resources:add-files", (_event, id: string, paths: string[]) => {
+  handleIpc(desktopInvoke.styleResources.addFiles, (_event, id, paths) => {
     if (context === undefined) throw new Error("Application context is not ready");
     return context.styleResources.addFiles(id, paths);
   });
-  ipcMain.handle("style-resources:rename", (_event, id: string, name: string) => {
+  handleIpc(desktopInvoke.styleResources.rename, (_event, id, name) => {
     if (context === undefined) throw new Error("Application context is not ready");
     return context.styleResources.renameResource(id, name);
   });
-  ipcMain.handle("style-resources:remove", (_event, id: string) => {
+  handleIpc(desktopInvoke.styleResources.remove, (_event, id) => {
     if (context === undefined) throw new Error("Application context is not ready");
     return context.styleResources.remove(id);
   });
-  ipcMain.handle("themes:list", () => context?.themes.list() ?? []);
-  ipcMain.handle("themes:directory", () => context?.themes.directory() ?? "");
-  ipcMain.handle("themes:import-files", (_event, paths: string[]) => {
+  handleIpc(desktopInvoke.themes.list, () => context?.themes.list() ?? []);
+  handleIpc(desktopInvoke.themes.directory, () => context?.themes.directory() ?? "");
+  handleIpc(desktopInvoke.themes.importFiles, (_event, paths) => {
     if (context === undefined) throw new Error("Application context is not ready");
     return context.themes.importFiles(paths);
   });
-  ipcMain.handle("themes:import-folder", (_event, folderPath: string) => {
+  handleIpc(desktopInvoke.themes.importFolder, (_event, folderPath) => {
     if (context === undefined) throw new Error("Application context is not ready");
     return context.themes.importFolder(folderPath);
   });
-  ipcMain.handle("themes:remove", (_event, id: string) => {
+  handleIpc(desktopInvoke.themes.remove, (_event, id) => {
     if (context === undefined) throw new Error("Application context is not ready");
     return context.themes.remove(id);
   });
-  ipcMain.handle("toolchain:detect", async (_event, manual?: "directory" | "executable") => {
+  handleIpc(desktopInvoke.settings.detectToolchain, async (_event, manual) => {
     let path: string | undefined;
     if (manual) {
       const selected = await dialog.showOpenDialog({ properties: [manual === "directory" ? "openDirectory" : "openFile"] });
@@ -333,16 +299,16 @@ function registerIpcHandlers(): void {
     if (context) await context.installation.recordEnvironment(detected);
     return detected;
   });
-  ipcMain.handle("projects:list", async () => {
+  handleIpc(desktopInvoke.projects.list, async () => {
     if (!context) return [];
-    const projects = await context.projects.listProjects() as Project[];
+    const projects = await context.projects.listProjects();
     return Promise.all(projects.map(async (project) => {
       if (!project.mainFile || project.missing) return project;
       try { await context!.files.resolveFilePath(project.id, project.mainFile, true); return project; }
       catch { return { ...project, mainFileMissing: true }; }
     }));
   });
-  ipcMain.handle("projects:directory-update", (_event, projectId: string, patch: { displayName?: string; isFavorite?: boolean; isPinned?: boolean }) => {
+  handleIpc(desktopInvoke.projects.updateDirectoryEntry, (_event, projectId, patch) => {
     if (!context) throw new Error("Application context is not ready");
     const project = context.registry.get(projectId);
     if (!project) throw new Error("Project not found");
@@ -367,11 +333,11 @@ function registerIpcHandlers(): void {
     context.registry.update(updated);
     return updated;
   });
-  ipcMain.handle("projects:directory-remove", async (_event, projectId: string) => {
+  handleIpc(desktopInvoke.projects.removeFromDirectory, async (_event, projectId) => {
     if (!context) throw new Error("Application context is not ready");
     return context.projects.remove({ projectId, mode: "registryOnly" });
   });
-  ipcMain.handle("projects:directory-relocate", async (_event, projectId: string, folderPath: string) => {
+  handleIpc(desktopInvoke.projects.relocateInDirectory, async (_event, projectId, folderPath) => {
     if (!context) throw new Error("Application context is not ready");
     const previous = context.registry.get(projectId);
     if (!previous) throw new Error("Project not found");
@@ -397,7 +363,7 @@ function registerIpcHandlers(): void {
     }
     return updated;
   });
-  ipcMain.handle("projects:directory-delete", async (_event, projectId: string, confirmedPath: string) => {
+  handleIpc(desktopInvoke.projects.deleteToRecycleBin, async (_event, projectId, confirmedPath) => {
     if (!context) throw new Error("Application context is not ready");
     const project = context.registry.get(projectId);
     if (!project || project.canonicalPath !== confirmedPath) throw new Error("Project path confirmation did not match");
@@ -406,43 +372,43 @@ function registerIpcHandlers(): void {
     await context.projects.remove({ projectId, mode: "registryOnly" });
     return true;
   });
-  ipcMain.handle("projects:directory-reveal", (_event, projectId: string) => {
+  handleIpc(desktopInvoke.projects.revealInFileManager, (_event, projectId) => {
     if (!context) throw new Error("Application context is not ready");
     const project = context.registry.get(projectId);
     if (!project || project.missing) throw new Error("Project folder is unavailable");
     shell.showItemInFolder(project.canonicalPath);
   });
-  ipcMain.handle("projects:directory-copy-path", (_event, projectId: string) => {
+  handleIpc(desktopInvoke.projects.copyProjectPath, (_event, projectId) => {
     if (!context) throw new Error("Application context is not ready");
     const project = context.registry.get(projectId);
     if (!project) throw new Error("Project not found");
     clipboard.writeText(project.canonicalPath);
   });
-  ipcMain.handle("projects:create", async (_event, input: { name: string; parentPath: string }) => {
+  handleIpc(desktopInvoke.projects.create, async (_event, input) => {
     if (context === undefined) throw new Error("Application context is not ready");
     return context.projects.createProject(input);
   });
-  ipcMain.handle("projects:register", async (_event, folderPath: string) => {
+  handleIpc(desktopInvoke.projects.register, async (_event, folderPath) => {
     if (context === undefined) throw new Error("Application context is not ready");
     return context.projects.registerExistingFolder(folderPath);
   });
-  ipcMain.handle("projects:open", async (_event, projectId: string) => {
+  handleIpc(desktopInvoke.projects.open, async (_event, projectId) => {
     if (context === undefined) throw new Error("Application context is not ready");
     return context.projects.openProject(projectId);
   });
-  ipcMain.handle("files:tree", async (_event, projectId: string) => {
+  handleIpc(desktopInvoke.files.tree, async (_event, projectId) => {
     if (context === undefined) throw new Error("Application context is not ready");
     return context.files.listTree(projectId);
   });
-  ipcMain.handle("files:read", async (_event, projectId: string, relativePath: string) => {
+  handleIpc(desktopInvoke.files.read, async (_event, projectId, relativePath) => {
     if (context === undefined) throw new Error("Application context is not ready");
     return context.files.readText(projectId, relativePath);
   });
-  ipcMain.handle("files:write", async (_event, projectId: string, relativePath: string, content: string) => {
+  handleIpc(desktopInvoke.files.write, async (_event, projectId, relativePath, content) => {
     if (context === undefined) throw new Error("Application context is not ready");
     return context.files.writeText(projectId, relativePath, content);
   });
-  ipcMain.handle("files:read-pdf", async (_event, projectId: string, relativePath: string) => {
+  handleIpc(desktopInvoke.files.readPdf, async (_event, projectId, relativePath) => {
     if (context === undefined) throw new Error("Application context is not ready");
     try {
       const filePath = await context.files.resolveFilePath(projectId, relativePath, true);
@@ -453,47 +419,47 @@ function registerIpcHandlers(): void {
       return undefined;
     }
   });
-  ipcMain.handle("files:create-file", async (_event, projectId: string, relativePath: string) => {
+  handleIpc(desktopInvoke.files.createFile, async (_event, projectId, relativePath) => {
     if (context === undefined) throw new Error("Application context is not ready");
     return context.files.createFile(projectId, relativePath);
   });
-  ipcMain.handle("files:create-directory", async (_event, projectId: string, relativePath: string) => {
+  handleIpc(desktopInvoke.files.createDirectory, async (_event, projectId, relativePath) => {
     if (context === undefined) throw new Error("Application context is not ready");
     return context.files.createDirectory(projectId, relativePath);
   });
-  ipcMain.handle("files:rename", async (_event, projectId: string, fromRelativePath: string, toRelativePath: string) => {
+  handleIpc(desktopInvoke.files.rename, async (_event, projectId, fromRelativePath, toRelativePath) => {
     if (context === undefined) throw new Error("Application context is not ready");
     return context.files.renameEntry(projectId, fromRelativePath, toRelativePath);
   });
-  ipcMain.handle("files:copy", async (_event, projectId: string, fromRelativePath: string, toRelativePath: string) => {
+  handleIpc(desktopInvoke.files.copy, async (_event, projectId, fromRelativePath, toRelativePath) => {
     if (context === undefined) throw new Error("Application context is not ready");
     return context.files.copyEntry(projectId, fromRelativePath, toRelativePath);
   });
-  ipcMain.handle("files:import", async (_event, projectId: string, sourcePath: string, destinationRelativePath: string) => {
+  handleIpc(desktopInvoke.files.import, async (_event, projectId, sourcePath, destinationRelativePath) => {
     if (context === undefined) throw new Error("Application context is not ready");
     return context.files.importEntry(projectId, sourcePath, destinationRelativePath);
   });
-  ipcMain.handle("files:remove", async (_event, projectId: string, relativePath: string) => {
+  handleIpc(desktopInvoke.files.remove, async (_event, projectId, relativePath) => {
     if (context === undefined) throw new Error("Application context is not ready");
     return context.files.removeEntry(projectId, relativePath);
   });
-  ipcMain.handle("images:pick", async (_event, multiple = false) => {
+  handleIpc(desktopInvoke.images.pick, async (_event, multiple = false) => {
     const result = await dialog.showOpenDialog({ properties: ["openFile", ...(multiple ? ["multiSelections" as const] : [])], filters: [{ name: "Images", extensions: ["png", "jpg", "jpeg", "webp", "svg", "pdf"] }] });
     return result.canceled ? [] : result.filePaths;
   });
-  ipcMain.handle("images:import", async (_event, projectId: string, sourcePaths: string[], directory: string) => {
+  handleIpc(desktopInvoke.images.import, async (_event, projectId, sourcePaths, directory) => {
     if (context === undefined) throw new Error("Application context is not ready");
     return context.images.importImages(projectId, sourcePaths, directory);
   });
-  ipcMain.handle("images:resolve", async (_event, projectId: string, texPath: string, requestedPath: string, graphicPaths?: string[]) => {
+  handleIpc(desktopInvoke.images.resolve, async (_event, projectId, texPath, requestedPath, graphicPaths) => {
     if (context === undefined) throw new Error("Application context is not ready");
     return context.images.resolve(projectId, texPath, requestedPath, graphicPaths);
   });
-  ipcMain.handle("projects:set-main-file", async (_event, projectId: string, relativePath: string) => {
+  handleIpc(desktopInvoke.projects.setMainFile, async (_event, projectId, relativePath) => {
     if (context === undefined) throw new Error("Application context is not ready");
     return context.projects.setMainFile(projectId, relativePath);
   });
-  ipcMain.handle("compile:run", async (_event, projectId: string, mainFile?: string) => {
+  handleIpc(desktopInvoke.compile.run, async (_event, projectId, mainFile) => {
     if (context === undefined) throw new Error("Application context is not ready");
     const preferences = await settings.snapshot(projectId);
     let result: CompileResult;
@@ -503,34 +469,34 @@ function registerIpcHandlers(): void {
       const code = error && typeof error === "object" && "code" in error ? String(error.code) : "COMPILATION_FAILED";
       const message = code === "TOOLCHAIN_NOT_FOUND" ? "LaTeX toolchain unavailable. Open Settings > Compiler to detect or locate latexmk." : error instanceof Error ? error.message : String(error);
       const now = new Date().toISOString();
-      return { compilationId: randomUUID(), status: "failed", exitCode: null, startedAt: now, finishedAt: now, durationMs: 0, mainFile: mainFile ?? "", diagnostics: [{ severity: "error", source: "system", code, message }], stdoutTail: "", stderrTail: message };
+      return { compilationId: randomUUID(), status: "failed", exitCode: null, startedAt: now, finishedAt: now, durationMs: 0, mainFile: mainFile ?? "", diagnostics: [{ severity: "error", source: "system", code, message }], stdoutTail: "", stderrTail: message } satisfies CompileResult;
     }
     if (result.pdfPath === undefined) return result;
     const pdfDataUrl = `data:application/pdf;base64,${(await readFile(result.pdfPath)).toString("base64")}`;
     return { ...result, pdfDataUrl };
   });
   registerAiIpcHandlers(context, settings);
-  ipcMain.handle("synctex:forward", async (_event, projectId: string, sourceFile: string, pdfFile: string, line: number, column: number) => {
+  handleIpc(desktopInvoke.synctex.forward, async (_event, projectId, sourceFile, pdfFile, line, column) => {
     if (context === undefined) throw new Error("Application context is not ready");
-    const project = await context.projects.openProject(projectId) as { canonicalPath: string };
+    const project = await context.projects.openProject(projectId);
     const [sourcePath, pdfPath] = await Promise.all([context.files.resolveFilePath(projectId, sourceFile, true), context.files.resolveFilePath(projectId, pdfFile, true)]);
     return forwardSync({ root: project.canonicalPath, sourcePath, pdfPath, line, column, ...(settings.toolchain?.binDirectory ? { binDirectory: settings.toolchain.binDirectory } : {}), ...(settings.toolchain?.latexmk ? { latexmk: settings.toolchain.latexmk } : {}) });
   });
-  ipcMain.handle("synctex:reverse", async (_event, projectId: string, pdfFile: string, page: number, x: number, y: number) => {
+  handleIpc(desktopInvoke.synctex.reverse, async (_event, projectId, pdfFile, page, x, y) => {
     if (context === undefined) throw new Error("Application context is not ready");
-    const project = await context.projects.openProject(projectId) as { canonicalPath: string };
+    const project = await context.projects.openProject(projectId);
     const pdfPath = await context.files.resolveFilePath(projectId, pdfFile, true);
     return reverseSync({ root: project.canonicalPath, pdfPath, page, x, y, ...(settings.toolchain?.binDirectory ? { binDirectory: settings.toolchain.binDirectory } : {}), ...(settings.toolchain?.latexmk ? { latexmk: settings.toolchain.latexmk } : {}) });
   });
-  ipcMain.handle("dialogs:pick-folder", async () => {
+  handleIpc(desktopInvoke.dialogs.pickFolder, async () => {
     const result = await dialog.showOpenDialog({ properties: ["openDirectory", "createDirectory"] });
     return result.canceled ? undefined : result.filePaths[0];
   });
-  ipcMain.handle("dialogs:pick-files", async () => {
+  handleIpc(desktopInvoke.dialogs.pickFiles, async () => {
     const result = await dialog.showOpenDialog({ properties: ["openFile", "multiSelections"], filters: [{ name: "TeX resources", extensions: ["sty", "cls", "bst", "bib", "tex", "cfg", "def", "ltx"] }] });
     return result.canceled ? [] : result.filePaths;
   });
-  ipcMain.handle("dialogs:pick-theme-files", async () => {
+  handleIpc(desktopInvoke.dialogs.pickThemeFiles, async () => {
     const result = await dialog.showOpenDialog({ properties: ["openFile", "multiSelections"], filters: [{ name: "CSS themes", extensions: ["css"] }] });
     return result.canceled ? [] : result.filePaths;
   });
@@ -563,7 +529,7 @@ function createWindow(): BrowserWindow {
     event.preventDefault();
     if (closeState.pending) return;
     closeState.pending = randomUUID();
-    window.webContents.send("window:close-requested", closeState.pending);
+    sendIpc(window.webContents, desktopEvents.toRenderer.closeRequested, closeState.pending);
   });
   window.once("closed", () => closeStates.delete(window.id));
 

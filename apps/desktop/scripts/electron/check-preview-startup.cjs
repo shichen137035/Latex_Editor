@@ -29,28 +29,28 @@ async function until(expression, label) {
 async function run() {
   while (!BrowserWindow.getAllWindows().length) await delay(100);
   page = BrowserWindow.getAllWindows()[0];
-  await until('!!window.latexEditor && !!document.querySelector(".dashboard")', 'dashboard');
+  await until('!!window.latexEditor && !!document.querySelector(".project-directory-v044")', 'project directory');
   for (const mode of ['split', 'single']) {
     const project = await evaluate(`window.latexEditor.projects.create({name:${JSON.stringify(mode)},parentPath:${JSON.stringify(projects)}})`);
     await evaluate(`window.latexEditor.settings.set('layout', {mode:${JSON.stringify(mode)},leftPane:'preview',singlePane:'preview',rightPane:'pdf'},${JSON.stringify(project.id)})`);
     await evaluate(`window.latexEditor.files.write(${JSON.stringify(project.id)}, 'main.tex', ${JSON.stringify('\\documentclass{article}\n\\begin{document}\n\\section{Startup}\nA paragraph.\n\\end{document}')})`);
     await evaluate(`window.latexEditor.files.write(${JSON.stringify(project.id)}, 'notes.txt', 'Non-TeX file')`);
     page.reload();
-    await until(`Array.from(document.querySelectorAll('.project-row')).some(row => row.querySelector('strong')?.textContent === ${JSON.stringify(mode)})`, 'project list');
-    await evaluate(`Array.from(document.querySelectorAll('.project-row')).find(row => row.querySelector('strong')?.textContent === ${JSON.stringify(mode)}).click()`);
+    await until(`Array.from(document.querySelectorAll('.directory-project-row')).some(row => row.querySelector('.directory-name-text strong')?.textContent === ${JSON.stringify(mode)})`, 'project list');
+    await evaluate(`Array.from(document.querySelectorAll('.directory-project-row')).find(row => row.querySelector('.directory-name-text strong')?.textContent === ${JSON.stringify(mode)}).click()`);
     await until('!!document.querySelector(".structured-preview .preview-block")', `${mode} saved Visual startup`);
     await delay(300);
     assert.equal(errors.length, 0, errors.join('\n'));
     console.log(`PASS ${mode}: saved Visual layout opens project after asynchronous source load`);
     await evaluate(`document.querySelector('.tree-row[data-path="notes.txt"]').click()`);
-    await until('!!document.querySelector(".preview-empty")', 'unsupported file');
+    await until('document.querySelector(".preview-empty p")?.innerText.includes(".tex")', 'unsupported file');
     await evaluate(`document.querySelector('.tree-row[data-path="main.tex"]').click()`);
     await until('!!document.querySelector(".structured-preview .preview-block")', 'return to TeX');
     console.log(`PASS ${mode}: unsupported file -> TeX preserves hook order`);
     await evaluate('document.querySelector(".logo-button").click()');
-    await until('!!document.querySelector(".dashboard")', 'return to directory');
+    await until('!!document.querySelector(".project-directory-v044")', 'return to project directory');
   }
 }
-require('../dist/main/index.js');
+require('../../dist/main/index.js');
 const timeout = setTimeout(() => { console.error('Startup check timed out'); app.exit(1); }, 45000);
 app.whenReady().then(run).then(() => { clearTimeout(timeout); console.log('Artifacts:', root); app.exit(0); }).catch(error => { console.error(error); console.error('Artifacts:', root); app.exit(1); });

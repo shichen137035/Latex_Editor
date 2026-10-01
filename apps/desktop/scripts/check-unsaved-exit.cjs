@@ -4,7 +4,6 @@ const { app, BrowserWindow, dialog, ipcMain } = require("electron");
 const { mkdtempSync, mkdirSync, readFileSync } = require("node:fs");
 const { tmpdir } = require("node:os");
 const { resolve } = require("node:path");
-const { clearTimeout } = require("node:timers");
 const assert = require("node:assert/strict");
 const mode = process.argv[2] || "save";
 const root = mkdtempSync(resolve(tmpdir(), "texweave-exit-"));

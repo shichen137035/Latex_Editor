@@ -1,5 +1,6 @@
 import eslint from "@eslint/js";
 import tseslint from "typescript-eslint";
+import globals from "globals";
 
 export default tseslint.config(
   {
@@ -8,14 +9,13 @@ export default tseslint.config(
   eslint.configs.recommended,
   ...tseslint.configs.recommended,
   {
-    files: ["apps/desktop/scripts/check-structure-api.cjs"],
-    languageOptions: { sourceType: "commonjs", globals: { console: "readonly", setTimeout: "readonly", clearTimeout: "readonly" } },
+    files: ["apps/desktop/scripts/**/*.cjs"],
+    languageOptions: { sourceType: "commonjs", globals: globals.node },
     rules: { "@typescript-eslint/no-require-imports": "off" }
   },
   {
-    files: ["apps/desktop/scripts/check-file-menu.cjs", "apps/desktop/scripts/check-edit-history.cjs", "apps/desktop/scripts/check-preview.cjs", "apps/desktop/scripts/check-preview-large.cjs", "apps/desktop/scripts/check-preview-project.cjs", "apps/desktop/scripts/check-preview-labels.cjs", "apps/desktop/scripts/check-unsaved-exit.cjs", "apps/desktop/scripts/check-compile-path.cjs", "apps/desktop/scripts/check-foundations.cjs"],
-    languageOptions: { sourceType: "commonjs", globals: { console: "readonly", process: "readonly", setTimeout: "readonly" } },
-    rules: { "@typescript-eslint/no-require-imports": "off" }
+    files: ["apps/desktop/scripts/**/*.mjs"],
+    languageOptions: { sourceType: "module", globals: globals.node }
   },
   {
     files: ["**/*.ts", "**/*.tsx"],

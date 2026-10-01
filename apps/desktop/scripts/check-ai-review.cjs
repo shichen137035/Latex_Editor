@@ -1,5 +1,3 @@
-/* eslint-disable @typescript-eslint/no-require-imports */
-/* global require, console, setTimeout, clearTimeout, structuredClone */
 // Real Electron UI + project file/history operations; fake providers, isolated profile.
 const { app, BrowserWindow, ipcMain } = require("electron");
 const { mkdtempSync, mkdirSync, readFileSync, writeFileSync } = require("node:fs");

@@ -22,6 +22,36 @@ CLI ─────────────────────────�
 - CLI commands call application services and adapters without going through Electron.
 - `editor-core` is runtime-independent. Both the application layer and renderer can use its parsing and indexing logic. For example, the renderer's `preview/parser.ts` re-exports the shared preview parser.
 
+## Typed desktop contract
+
+`packages/contracts/src/desktop-ipc.cts` owns desktop method names, IPC wire names,
+arguments, results, and event payloads. It compiles to CommonJS so both Electron
+main and the existing CJS preload can load it directly; the renderer imports only
+the derived `DesktopApi` type. The preload creates its invoke allowlist from that
+contract. Main-process `handleIpc`, `onIpc`, and `sendIpc` check handlers and
+notifications against the same descriptors. `desktop:typecheck` also checks the
+preload with TypeScript's JavaScript checking.
+
+`typecheck` includes negative type fixtures for invalid arguments, results, and
+events. The IPC unit tests check registration coverage and the actual preload;
+`desktop:test-structure` checks both structure and legacy graph calls in Electron.
+
+Add or change endpoints in the contract, then implement their main-process
+handlers. Keep native dialogs, lifecycle handshakes, subscriptions, and file-drop
+helpers in the Electron adapter. CLI commands retain command parsing/output;
+AI tools retain schemas, approvals, and isolated working copies. All entrypoints
+call the application services for the operations they support. Sharing a contract
+does not give one entrypoint another entrypoint's permissions.
+
+`structure` owns parsed document blocks, source ranges, content operations, and
+revision checks. `blockGraph` owns relations, traversal, validation, and relation
+history. Existing block creation, reconciliation, range mapping, and structural
+tree methods in `blockGraph` remain compatibility methods for the editor. Migrate
+their callers individually as source-aware equivalents become available; keep
+public method names, wire names, block identities, and result shapes stable until
+that migration is complete. Both services already share persistence and mutation
+coordination; this contract change adds no new document store or migration.
+
 ## Repository map
 
 | Path | Responsibility |

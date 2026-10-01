@@ -328,3 +328,6 @@ export interface ReferenceImportResult {
 }
 /** 来自 resources 的编译器配置，arguments 由 catalog 做 allowlist 校验。 */
 export interface CompilerProfile { id: string; executable: string; arguments: string[]; timeoutMs: number }
+
+export * from "./installation.js";
+export type { DesktopApi, DesktopInvokeApi } from "./desktop-ipc.cjs";

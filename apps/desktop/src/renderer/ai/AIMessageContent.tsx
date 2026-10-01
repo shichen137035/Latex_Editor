@@ -121,7 +121,7 @@ function fileReference(value: string, projectRoot: string): FileReferenceData | 
   const lineMatch = /[:#](\d+)(?::\d+)?$/.exec(decoded);
   const line = lineMatch ? Number(lineMatch[1]) : undefined;
   const rawPath = lineMatch ? decoded.slice(0, lineMatch.index) : decoded;
-  let normalized = rawPath.replaceAll("\\", "/").replace(/^\/(\w:\/)/, "$1").replace(/^\.\//, "");
+  const normalized = rawPath.replaceAll("\\", "/").replace(/^\/(\w:\/)/, "$1").replace(/^\.\//, "");
   const root = projectRoot.replaceAll("\\", "/").replace(/\/$/, "");
   let relativePath: string | undefined;
   if (root && normalized.toLocaleLowerCase().startsWith(`${root.toLocaleLowerCase()}/`)) {

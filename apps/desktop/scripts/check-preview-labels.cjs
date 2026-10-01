@@ -4,7 +4,6 @@ const { mkdtempSync, mkdirSync } = require("node:fs");
 const { tmpdir } = require("node:os");
 const { resolve } = require("node:path");
 const assert = require("node:assert/strict");
-const { clearTimeout } = require("node:timers");
 const root = mkdtempSync(resolve(tmpdir(), "texweave-preview-labels-"));
 mkdirSync(resolve(root, "projects"));
 app.setPath("userData", resolve(root, "profile"));

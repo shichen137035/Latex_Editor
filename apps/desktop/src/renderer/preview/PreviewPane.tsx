@@ -43,7 +43,7 @@ export interface PreviewRelationUi {
   onFocus(blockId: BlockId): void;
   onToggle(blockId: BlockId, x: number, y: number): void;
 }
-type PreviewEditorServices = { nodeRanges: ReadonlyMap<string, SourceSpan>; api: EditorApi | undefined; projectId: string; tree: ProjectTreeNode[]; currentPath: string; documentSource: string; definitions: EnvironmentDefinition[]; mathContext: MathContext; searchQuery: SearchQuery; activeSearchResult?: SearchResult | undefined; filterQuery: FilterQuery; filterStates: Map<string, FilterState>; relation?: PreviewRelationUi | undefined; selectedBlockIds: string[]; setSelectedBlockIds(ids: string[]): void; deleteBlocks(ids: string[]): void; removeEnvironment(id: string): void; onFigureSelect: ((selection?: FigureSelection) => void) | undefined; onFigureSlotSelect: ((selection: FigureSelection) => void) | undefined; onTableSelect: ((selection?: TableSelection) => void) | undefined; onTableChange: ((selection: TableSelection, source: string) => void) | undefined; onSpellContextMenu(request: SpellContextRequest): void; onDetectedLanguage(language: string): void; onForwardSync(path: string, line: number, column?: number): void };
+type PreviewEditorServices = { nodeRanges: ReadonlyMap<string, SourceSpan>; api: EditorApi | undefined; projectId: string; tree: ProjectTreeNode[]; currentPath: string; documentSource: string; definitions: EnvironmentDefinition[]; mathContext: MathContext; searchQuery: SearchQuery; activeSearchResult?: SearchResult | undefined; filterQuery: FilterQuery; filterStates: Map<string, FilterState>; relation?: PreviewRelationUi | undefined; selectedBlockIds: string[]; setSelectedBlockIds(ids: string[]): void; deleteBlocks(ids: string[]): void; removeEnvironment(id: string): void; onBoundaryDraftChange(insertion: BoundaryInsertion, value: string): void; onFigureSelect: ((selection?: FigureSelection) => void) | undefined; onFigureSlotSelect: ((selection: FigureSelection) => void) | undefined; onTableSelect: ((selection?: TableSelection) => void) | undefined; onTableChange: ((selection: TableSelection, source: string) => void) | undefined; onSpellContextMenu(request: SpellContextRequest): void; onDetectedLanguage(language: string): void; onForwardSync(path: string, line: number, column?: number): void };
 
 const deleteMenuHandlers = new Map<string, (event: globalThis.MouseEvent) => void>();
 let deleteMenuDocument: Document | undefined;
@@ -76,6 +76,7 @@ interface PreviewActions extends Pick<PreviewEditorServices, "setSelectedBlockId
   edit(id: string, offset?: number): void;
   applyEdit(node: PreviewNode, value: string): void;
   applyBoundary(insertion: BoundaryInsertion, value: string): void;
+  onBoundaryDraftChange(insertion: BoundaryInsertion, value: string): void;
   cancelEdit(): void;
   requestBoundary(node: PreviewNode, side: "before" | "after", draft?: string): void;
   relationFocus(id: BlockId): void;
@@ -451,7 +452,7 @@ function ListContent({ node, source, mathContext, searchQuery, activeSearch, ren
 
 const LocalEditor = PreviewLocalEditor;
 
-function ContentRenderer({ node, source, editing, cursorOffset, boundary, beginEdit, applyEdit, applyBoundary, cancelEdit, requestBoundary, services }: { node: ContentRegion; source: string; editing: boolean; cursorOffset?: number | undefined; boundary?: BoundaryInsertion | undefined; beginEdit(offset?: number): void; applyEdit(value: string): void; applyBoundary(insertion: BoundaryInsertion, value: string): void; cancelEdit(): void; requestBoundary(node: PreviewNode, side: "before" | "after", draft?: string): void; services: PreviewEditorServices }) {
+function ContentRenderer({ node, source, editing, cursorOffset, boundary, beginEdit, applyEdit, onDraftChange, applyBoundary, cancelEdit, requestBoundary, services }: { node: ContentRegion; source: string; editing: boolean; cursorOffset?: number | undefined; boundary?: BoundaryInsertion | undefined; beginEdit(offset?: number): void; applyEdit(value: string): void; onDraftChange?: ((value: string) => void) | undefined; applyBoundary(insertion: BoundaryInsertion, value: string): void; cancelEdit(): void; requestBoundary(node: PreviewNode, side: "before" | "after", draft?: string): void; services: PreviewEditorServices }) {
   const insertion = boundary?.targetId === node.id ? boundary : undefined;
   const filterState = services.filterStates.get(node.id) ?? "match";
   if (services.filterQuery.enabled && filterState === "unmatched" && !editing && !insertion) {
@@ -463,9 +464,9 @@ function ContentRenderer({ node, source, editing, cursorOffset, boundary, beginE
   const filterClass = services.filterQuery.enabled ? `filter-${filterState} filter-view-${services.filterQuery.viewMode}` : "";
   const virtualClass = node.origin === "virtual" && node.raw.length === 0 ? " preview-content-virtual" : "";
   return <Fragment>
-    {insertion?.side === "before" && <LocalEditor value="" onApply={(value) => applyBoundary(insertion, value)} onCancel={cancelEdit} {...services}/>}
-    {editing ? <LocalEditor value={nodeSource(node, source)} sourceStartLine={node.source.startLine} initialCursorOffset={cursorOffset === undefined ? undefined : cursorOffset - node.source.startOffset} onApply={applyEdit} onCancel={cancelEdit} onInsertBefore={(draft) => requestBoundary(node, "before", draft)} onInsertAfter={(draft) => requestBoundary(node, "after", draft)} {...services}/> : <div className={`preview-content-region${virtualClass} ${filterClass} ${activeSearch ? "search-result-active" : ""}`} data-node-id={node.id} data-source-line={node.source.startLine} data-source-start-offset={node.source.startOffset} data-source-end-offset={node.source.endOffset} onClick={(event) => { event.stopPropagation(); if (window.getSelection()?.isCollapsed !== false) beginEdit(sourceOffsetAtPoint(event.currentTarget, event)); }}>{inlineLatex(node.raw, services.mathContext, effectiveSearch, activeSearch, node.source.startOffset)}</div>}
-    {insertion?.side === "after" && <LocalEditor value="" onApply={(value) => applyBoundary(insertion, value)} onCancel={cancelEdit} {...services}/>}
+    {insertion?.side === "before" && <LocalEditor value="" onApply={(value) => applyBoundary(insertion, value)} onDraftChange={(value) => services.onBoundaryDraftChange(insertion, value)} onCancel={cancelEdit} {...services}/>}
+    {editing ? <LocalEditor value={nodeSource(node, source)} sourceStartLine={node.source.startLine} initialCursorOffset={cursorOffset === undefined ? undefined : cursorOffset - node.source.startOffset} onApply={applyEdit} onDraftChange={onDraftChange} onCancel={cancelEdit} onInsertBefore={(draft) => requestBoundary(node, "before", draft)} onInsertAfter={(draft) => requestBoundary(node, "after", draft)} {...services}/> : <div className={`preview-content-region${virtualClass} ${filterClass} ${activeSearch ? "search-result-active" : ""}`} data-node-id={node.id} data-source-line={node.source.startLine} data-source-start-offset={node.source.startOffset} data-source-end-offset={node.source.endOffset} onClick={(event) => { event.stopPropagation(); if (window.getSelection()?.isCollapsed !== false) beginEdit(sourceOffsetAtPoint(event.currentTarget, event)); }}>{inlineLatex(node.raw, services.mathContext, effectiveSearch, activeSearch, node.source.startOffset)}</div>}
+    {insertion?.side === "after" && <LocalEditor value="" onApply={(value) => applyBoundary(insertion, value)} onDraftChange={(value) => services.onBoundaryDraftChange(insertion, value)} onCancel={cancelEdit} {...services}/>}
   </Fragment>;
 }
 
@@ -488,7 +489,26 @@ function hasEmptyBody(node: StructuralBlock, source: string): boolean {
     .trim().length === 0;
 }
 
-function BlockRenderer({ node, source, definitions, selectedId, editingId, cursorOffset, boundary, select, edit, applyEdit, applyBoundary, cancelEdit, requestBoundary, services }: { node: StructuralBlock; source: string; definitions: EnvironmentDefinition[]; selectedId?: string | undefined; editingId?: string | undefined; cursorOffset?: number | undefined; boundary?: BoundaryInsertion | undefined; select(id: string): void; edit(id: string, cursorOffset?: number): void; applyEdit(node: PreviewNode, value: string): void; applyBoundary(insertion: BoundaryInsertion, value: string): void; cancelEdit(): void; requestBoundary(node: PreviewNode, side: "before" | "after", draft?: string): void; services: PreviewEditorServices }) {
+function structuralBlockDraft(source: string, filePath: string, definitions: EnvironmentDefinition[]): StructuralBlock | undefined {
+  // Let the preview parser decide when a heading or environment is complete.
+  // An unclosed \begin stays a draft, while headings become structural as soon
+  // as their required title argument has been entered.
+  const block = parsePreview(source, filePath, definitions).nodes.find((node): node is StructuralBlock => node.kind === "block");
+  if (!block || block.origin !== "latex" || source.slice(0, block.source.startOffset).trim().length > 0) return undefined;
+  return block;
+}
+
+function structuralBlockAt(nodes: PreviewNode[], startOffset: number, environmentId: string): StructuralBlock | undefined {
+  for (const node of nodes) {
+    if (node.kind !== "block") continue;
+    if (node.source.startOffset === startOffset && node.environmentId === environmentId) return node;
+    const nested = structuralBlockAt(node.children, startOffset, environmentId);
+    if (nested) return nested;
+  }
+  return undefined;
+}
+
+function BlockRenderer({ node, source, definitions, selectedId, editingId, cursorOffset, boundary, select, edit, applyEdit, applyBoundary, cancelEdit, requestBoundary, services }: { node: StructuralBlock; source: string; definitions: EnvironmentDefinition[]; selectedId?: string | undefined; editingId?: string | undefined; cursorOffset?: number | undefined; boundary?: BoundaryInsertion | undefined; select(id: string): void; edit(id: string, cursorOffset?: number): void; applyEdit(node: PreviewNode, value: string): void; applyBoundary(insertion: BoundaryInsertion, value: string): void; cancelEdit(): void; requestBoundary(node: PreviewNode, side: "before" | "after", draft?: string): void; onDraftChange?: ((value: string) => void) | undefined; services: PreviewEditorServices }) {
   const definition = definitionForId(definitions, node.environmentId);
   const family = definition?.family ?? (node.origin === "virtual" ? "virtual" : "generic");
   const editing = editingId === node.id;
@@ -541,7 +561,7 @@ function BlockRenderer({ node, source, definitions, selectedId, editingId, curso
   const specializedContent = emptyBlock && contentBlock
     ? <div className="preview-empty-block-placeholder" onClick={(event) => { event.stopPropagation(); edit(node.id); }}>{t("preview.emptyBlockHint")}</div>
     : emptyStructuralParagraph
-      ? <PreviewNodeRenderer node={emptyStructuralParagraph} source={source} definitions={definitions} selectedId={selectedId} editingId={editingId} cursorOffset={cursorOffset} boundary={boundary} select={select} edit={edit} applyEdit={applyEdit} applyBoundary={applyBoundary} cancelEdit={cancelEdit} requestBoundary={requestBoundary} services={services}/>
+      ? <PreviewNodeRenderer node={emptyStructuralParagraph} source={source} definitions={definitions} selectedId={selectedId} editingId={editingId} cursorOffset={cursorOffset} boundary={boundary} select={select} edit={edit} applyEdit={applyEdit} onDraftChange={(draft) => { if (structuralBlockDraft(draft, services.currentPath, definitions)) applyEdit(emptyStructuralParagraph, draft); }} applyBoundary={applyBoundary} cancelEdit={cancelEdit} requestBoundary={requestBoundary} services={services}/>
       : listEnvironment
         ? <ListContent node={node} source={source} mathContext={services.mathContext} searchQuery={effectiveSearch} activeSearch={activeSearch} onEdit={(offset) => edit(node.id, offset)} renderChild={(child) => <PreviewNodeRenderer key={child.id} node={child} source={source} definitions={definitions} selectedId={selectedId} editingId={editingId} cursorOffset={cursorOffset} boundary={boundary} select={select} edit={edit} applyEdit={applyEdit} applyBoundary={applyBoundary} cancelEdit={cancelEdit} requestBoundary={requestBoundary} services={services}/>} />
         : specialized;
@@ -566,7 +586,7 @@ function BlockRenderer({ node, source, definitions, selectedId, editingId, curso
     if (replacement !== blockSource) applyEdit(node, replacement);
   };
   return <Fragment>
-    {insertion?.side === "before" && <LocalEditor value="" onApply={(value) => applyBoundary(insertion, value)} onCancel={cancelEdit} {...services}/>}
+    {insertion?.side === "before" && <LocalEditor value="" onApply={(value) => applyBoundary(insertion, value)} onDraftChange={(value) => services.onBoundaryDraftChange(insertion, value)} onCancel={cancelEdit} {...services}/>}
     <section className={`preview-block env-${family} ${filterClass} ${activeSearch ? "search-result-active" : ""} ${selected ? "selected" : ""} ${selected && services.selectedBlockIds.length > 1 ? "multi-selected" : ""} ${editing ? "editing" : ""} ${services.relation?.active && !relationMatches ? "relation-unmatched" : ""} ${semanticId === services.relation?.focusId ? "relation-focus" : ""}`} data-preview-node-id={node.id} data-environment={node.environmentId} data-semantic-block-id={semanticId} data-source-line={node.source.startLine} data-source-start-offset={node.source.startOffset} data-source-end-offset={node.source.endOffset} onDoubleClickCapture={(event) => { const target = event.target as Element; if (target.closest(".preview-local-editor, .structured-table") || target.closest(".preview-block") !== event.currentTarget) return; event.preventDefault(); event.stopPropagation(); const figureBlock = node.environmentId === "figure" || node.environmentId === "figure-star" || node.environmentId === "custom:figure*" || node.environmentId === "inline-image"; if (figureBlock) { if (preferences.get("images").editor.defaultMode === "source") edit(node.id); else { select(node.id); services.onFigureSelect?.({ fileId: services.currentPath, start: node.source.startOffset, end: node.source.endOffset, source: nodeSource(node, source) }); } return; } services.onForwardSync(services.currentPath, node.source.startLine, 1); }} style={{ "--block-accent": cssValue(definition?.style.accentToken, "--env-generic-accent"), "--block-fill": cssValue(definition?.style.fillToken, "--env-generic-fill"), "--block-border": cssValue(definition?.style.borderToken, "--env-border-default"), "--block-selected-border": cssValue(definition?.style.selectedBorderToken, "--env-border-selected"), "--block-label-bg": cssValue(definition?.style.labelBackgroundToken, "--env-generic-label-bg"), "--block-label-text": cssValue(definition?.style.labelTextToken, "--env-generic-label-text") } as CSSProperties}>
     {(definition?.behavior.showHeader ?? true) && <div className="preview-block-header"><div className="preview-block-header-main" onClick={(event) => { event.stopPropagation(); select(node.id); }}><BlockEnvironmentSelector node={node} source={source} definition={definition} definitions={definitions} disabled={editing} onChange={(value) => applyEdit(node, value)}/>{node.title && <strong>{node.title}</strong>}{(definition?.behavior.showLabel ?? true) && <LabelEditor label={node.latexLabel ?? ""} auto={Boolean(node.autoLabel)} onCommit={applyLabel}/>}</div>{(singleSelected || (services.relation?.active && semanticId && services.selectedBlockIds.length === 1)) && <div className="preview-block-header-actions">{services.relation?.active && semanticId && <><button className={semanticId === services.relation.focusId ? "relation-control active" : "relation-control"} title={t("relation.setFocus")} onClick={(event) => { event.stopPropagation(); services.relation?.onFocus(semanticId); }}>◎</button><button className="relation-control" disabled={!!relationState?.disabledReason} title={relationState?.disabledReason ? t(`relation.invalid.${relationState.disabledReason}`) : relationState?.existing ? t("relation.remove") : t("relation.add")} onClick={(event) => { event.stopPropagation(); services.relation?.onToggle(semanticId, event.clientX, event.clientY); }}>{relationState?.existing ? relationState.existingDirection === "prerequisite" ? "← −" : "→ −" : "+"}</button></>}{singleSelected && <><button title={t("preview.insertBefore")} onPointerDown={(event) => { event.preventDefault(); event.stopPropagation(); requestBoundary(node, "before"); }} onClick={(event) => { event.stopPropagation(); if (event.detail === 0) requestBoundary(node, "before"); }}>↥＋</button><button title={t("preview.insertAfter")} onPointerDown={(event) => { event.preventDefault(); event.stopPropagation(); requestBoundary(node, "after"); }} onClick={(event) => { event.stopPropagation(); if (event.detail === 0) requestBoundary(node, "after"); }}>↧＋</button><button className="preview-block-delete" title={t("files.delete")} aria-label={t("files.delete")} onClick={(event) => { event.stopPropagation(); services.deleteBlocks([node.id]); }}>×</button></>}</div>}</div>}
     <div className="preview-block-body" onClickCapture={() => {
@@ -598,21 +618,21 @@ function BlockRenderer({ node, source, definitions, selectedId, editingId, curso
       {canRemoveEnvironment && <button role="menuitem" onClick={() => { setDeleteMenuOpen(false); services.removeEnvironment(node.id); }}>{t("preview.removeEnvironment")}</button>}
       <button role="menuitem" className="danger" onClick={() => { setDeleteMenuOpen(false); services.deleteBlocks([node.id]); }}>{t("preview.deleteEntireBlock")}</button>
     </div>, document.body)}
-    {insertion?.side === "after" && <LocalEditor value="" onApply={(value) => applyBoundary(insertion, value)} onCancel={cancelEdit} {...services}/>}
+    {insertion?.side === "after" && <LocalEditor value="" onApply={(value) => applyBoundary(insertion, value)} onDraftChange={(value) => services.onBoundaryDraftChange(insertion, value)} onCancel={cancelEdit} {...services}/>}
   </Fragment>;
 }
 
-type PreviewNodeRendererProps = { node: PreviewNode; source: string; definitions: EnvironmentDefinition[]; selectedId?: string | undefined; editingId?: string | undefined; cursorOffset?: number | undefined; boundary?: BoundaryInsertion | undefined; select(id: string): void; edit(id: string, cursorOffset?: number): void; applyEdit(node: PreviewNode, value: string): void; applyBoundary(insertion: BoundaryInsertion, value: string): void; cancelEdit(): void; requestBoundary(node: PreviewNode, side: "before" | "after", draft?: string): void; services: PreviewEditorServices };
+type PreviewNodeRendererProps = { node: PreviewNode; source: string; definitions: EnvironmentDefinition[]; selectedId?: string | undefined; editingId?: string | undefined; cursorOffset?: number | undefined; boundary?: BoundaryInsertion | undefined; select(id: string): void; edit(id: string, cursorOffset?: number): void; applyEdit(node: PreviewNode, value: string): void; onDraftChange?: ((value: string) => void) | undefined; applyBoundary(insertion: BoundaryInsertion, value: string): void; cancelEdit(): void; requestBoundary(node: PreviewNode, side: "before" | "after", draft?: string): void; services: PreviewEditorServices };
 
 const PreviewNodeRenderer = memo(function RenderPreviewNode(props: PreviewNodeRendererProps) {
   if (props.node.kind === "block") return <BlockRenderer {...props} node={props.node} select={(id) => { props.services.setSelectedBlockIds([id]); props.select(id); }} edit={(id, offset) => { props.services.setSelectedBlockIds([]); props.edit(id, offset); }}/>;
   // Keep click offsets document-relative through every recursive renderer. Only
   // the LocalEditor boundary converts to the source range actually being edited.
-  return <ContentRenderer node={props.node} source={props.source} editing={props.editingId === props.node.id} cursorOffset={props.cursorOffset} boundary={props.boundary} beginEdit={(offset) => { props.services.setSelectedBlockIds([]); props.edit(props.node.id, offset); }} applyEdit={(value) => props.applyEdit(props.node, value)} applyBoundary={props.applyBoundary} cancelEdit={props.cancelEdit} requestBoundary={props.requestBoundary} services={props.services}/>;
+  return <ContentRenderer node={props.node} source={props.source} editing={props.editingId === props.node.id} cursorOffset={props.cursorOffset} boundary={props.boundary} beginEdit={(offset) => { props.services.setSelectedBlockIds([]); props.edit(props.node.id, offset); }} applyEdit={(value) => props.applyEdit(props.node, value)} onDraftChange={props.onDraftChange} applyBoundary={props.applyBoundary} cancelEdit={props.cancelEdit} requestBoundary={props.requestBoundary} services={props.services}/>;
 }, samePreviewNodeRender);
 
 function samePreviewNodeRender(previous: PreviewNodeRendererProps, next: PreviewNodeRendererProps): boolean {
-  if (previous.node !== next.node || previous.source !== next.source || previous.definitions !== next.definitions) return false;
+  if (previous.node !== next.node || previous.source !== next.source || previous.definitions !== next.definitions || previous.onDraftChange !== next.onDraftChange) return false;
   const a = previous.services, b = next.services;
   if (a.api !== b.api || a.projectId !== b.projectId || a.tree !== b.tree || a.currentPath !== b.currentPath || a.mathContext !== b.mathContext || a.searchQuery !== b.searchQuery || a.activeSearchResult !== b.activeSearchResult || a.filterQuery !== b.filterQuery || a.filterStates !== b.filterStates) return false;
   const ra = a.relation, rb = b.relation;
@@ -668,11 +688,13 @@ export function PreviewPane({ filePath, source, definitions, mathContext = EMPTY
   const marqueeGesture = useRef<{ pointerId: number; startX: number; startY: number; currentX: number; currentY: number; moved: boolean } | undefined>(undefined);
   const marqueeJustCompleted = useRef(false);
   const pendingBoundaryRef = useRef<{ startOffset: number; position: number; side: "before" | "after"; kind: PreviewNode["kind"] } | undefined>(undefined);
+  const pendingStructuralEditRef = useRef<{ startOffset: number; environmentId: string } | undefined>(undefined);
   useEffect(() => {
     const reset = () => {
       setSelectedId(undefined); setAdditionalSelectedIds([]);
       setEditingId(undefined); setEditingCursorOffset(undefined); setBoundary(undefined);
       pendingBoundaryRef.current = undefined;
+      pendingStructuralEditRef.current = undefined;
     };
     window.addEventListener("texweave:history-replayed", reset);
     return () => window.removeEventListener("texweave:history-replayed", reset);
@@ -700,6 +722,7 @@ export function PreviewPane({ filePath, source, definitions, mathContext = EMPTY
     edit: (id, offset) => actionsRef.current?.edit(id, offset),
     applyEdit: (node, value) => actionsRef.current?.applyEdit(node, value),
     applyBoundary: (insertion, value) => actionsRef.current?.applyBoundary(insertion, value),
+    onBoundaryDraftChange: (insertion, value) => actionsRef.current?.onBoundaryDraftChange(insertion, value),
     cancelEdit: () => actionsRef.current?.cancelEdit(),
     requestBoundary: (node, side, draft) => actionsRef.current?.requestBoundary(node, side, draft),
     setSelectedBlockIds: (ids) => actionsRef.current?.setSelectedBlockIds(ids),
@@ -719,8 +742,23 @@ export function PreviewPane({ filePath, source, definitions, mathContext = EMPTY
   useEffect(() => {
     onInsertionAnchorChange?.(boundary && filePath ? { fileId: filePath, offset: boundary.position } : undefined);
   }, [boundary, filePath, onInsertionAnchorChange]);
-  useEffect(() => { pendingBoundaryRef.current = undefined; setRenderLimit(previewNodeLimit); setEditingId(undefined); setEditingCursorOffset(undefined); setSelectedId(undefined); setAdditionalSelectedIds([]); setBoundary(undefined); }, [filePath]);
+  useEffect(() => { pendingBoundaryRef.current = undefined; pendingStructuralEditRef.current = undefined; setRenderLimit(previewNodeLimit); setEditingId(undefined); setEditingCursorOffset(undefined); setSelectedId(undefined); setAdditionalSelectedIds([]); setBoundary(undefined); }, [filePath]);
   useEffect(() => {
+    const pendingStructuralEdit = pendingStructuralEditRef.current;
+    if (pendingStructuralEdit && document) {
+      const target = structuralBlockAt(document.nodes, pendingStructuralEdit.startOffset, pendingStructuralEdit.environmentId);
+      pendingStructuralEditRef.current = undefined;
+      if (target) {
+        const body = source?.slice(target.body.startOffset, target.body.endOffset) ?? "";
+        const leadingWhitespace = body.match(/^[\t \r\n]*/)?.[0].length ?? 0;
+        setEditingId(target.id);
+        setEditingCursorOffset(target.body.startOffset + leadingWhitespace);
+        setSelectedId(undefined);
+        setAdditionalSelectedIds([]);
+        setBoundary(undefined);
+        return;
+      }
+    }
     const pending = pendingBoundaryRef.current;
     if (pending && document) {
       const target = nodeAtStart(document.nodes, pending.startOffset, pending.kind);
@@ -917,7 +955,34 @@ export function PreviewPane({ filePath, source, definitions, mathContext = EMPTY
   // file is active. Saved Visual layouts render both states during startup.
   if (!filePath || source === undefined) return <div className="preview-empty"><h2>{t("preview.noSourceTitle")}</h2><p>{t("preview.noSource")}</p></div>;
   if (!filePath.toLocaleLowerCase().endsWith(".tex")) return <div className="preview-empty"><h2>{t("preview.unsupportedFileTitle")}</h2><p>{t("preview.unsupportedFile")}</p></div>;
+  const commitStructuralDraft = (draft: string, startOffset: number, endOffset: number, insertedSource: string, blockPrefixLength: number): boolean => {
+    const createdBlock = structuralBlockDraft(draft, filePath, definitions);
+    if (!createdBlock) return false;
+    const nextSource = source.slice(0, startOffset) + insertedSource + source.slice(endOffset);
+    pendingBoundaryRef.current = undefined;
+    pendingStructuralEditRef.current = {
+      startOffset: startOffset + blockPrefixLength + createdBlock.source.startOffset,
+      environmentId: createdBlock.environmentId
+    };
+    onSourceChange(nextSource);
+    setBoundary(undefined);
+    return true;
+  };
+  const tryApplyBoundaryStructuralDraft = (insertion: BoundaryInsertion, value: string): boolean => {
+    const content = value.replace(/^\n+|\n+$/g, "");
+    const prefix = insertion.side === "before" ? "" : content ? "\n\n" : "\n";
+    const insertedSource = insertion.side === "before" ? `${content}${content ? "\n" : ""}\n` : `${prefix}${content}`;
+    return commitStructuralDraft(content, insertion.position, insertion.position, insertedSource, prefix.length);
+  };
+  const onBoundaryDraftChange = (insertion: BoundaryInsertion, value: string) => { tryApplyBoundaryStructuralDraft(insertion, value); };
   const applyEdit = (node: PreviewNode, replacement: string) => {
+    if (node.kind === "content" && node.origin === "virtual" && node.raw.length === 0
+      && commitStructuralDraft(replacement, node.source.startOffset, node.source.endOffset, replacement, 0)) {
+      setEditingId(undefined);
+      setEditingCursorOffset(undefined);
+      return;
+    }
+    const nextSource = source.slice(0, node.source.startOffset) + replacement + source.slice(node.source.endOffset);
     if (node.kind === "block") {
       const converted = parsePreview(replacement, filePath, definitions).nodes.find((candidate): candidate is StructuralBlock => candidate.kind === "block" && candidate.source.startOffset === 0);
       if (converted && converted.environmentId !== node.environmentId) {
@@ -926,11 +991,12 @@ export function PreviewPane({ filePath, source, definitions, mathContext = EMPTY
         setAdditionalSelectedIds([]);
       }
     }
-    onSourceChange(source.slice(0, node.source.startOffset) + replacement + source.slice(node.source.endOffset));
+    onSourceChange(nextSource);
     setEditingId(undefined);
     setEditingCursorOffset(undefined);
   };
   const applyBoundary = (insertion: BoundaryInsertion, value: string) => {
+    if (tryApplyBoundaryStructuralDraft(insertion, value)) return;
     const content = value.replace(/^\n+|\n+$/g, "");
     const replacement = insertion.side === "before" ? `${content}${content ? "\n" : ""}\n` : `\n${content ? `\n${content}` : ""}`;
     onSourceChange(source.slice(0, insertion.position) + replacement + source.slice(insertion.position));
@@ -946,7 +1012,7 @@ export function PreviewPane({ filePath, source, definitions, mathContext = EMPTY
     edit: (id, offset) => { setEditingId(id); setEditingCursorOffset(offset); setSelectedId(undefined); setBoundary(undefined); onFigureSelect?.(undefined); onTableSelect?.(undefined); },
     cancelEdit: () => { setEditingId(undefined); setEditingCursorOffset(undefined); setBoundary(undefined); },
     setSelectedBlockIds: (ids) => { setSelectedId(ids[0]); setAdditionalSelectedIds(ids.slice(1)); },
-    applyEdit, applyBoundary, requestBoundary, deleteBlocks, removeEnvironment, onFigureSelect, onFigureSlotSelect, onTableSelect, onTableChange, onSpellContextMenu, onDetectedLanguage, onForwardSync,
+    applyEdit, applyBoundary, onBoundaryDraftChange, requestBoundary, deleteBlocks, removeEnvironment, onFigureSelect, onFigureSlotSelect, onTableSelect, onTableChange, onSpellContextMenu, onDetectedLanguage, onForwardSync,
     relationFocus: (id) => relation?.onFocus(id),
     relationToggle: (id, x, y) => relation?.onToggle(id, x, y)
   };
@@ -955,7 +1021,7 @@ export function PreviewPane({ filePath, source, definitions, mathContext = EMPTY
     activeSearchResult: activeSearchResult?.fileId === filePath ? activeSearchResult : undefined,
     filterQuery, filterStates: filterEvaluation?.states ?? new Map(),
     relation: relation ? { ...relation, onFocus: actions.relationFocus, onToggle: actions.relationToggle } : undefined,
-    selectedBlockIds: selectedBlockIds(), setSelectedBlockIds: actions.setSelectedBlockIds, deleteBlocks: actions.deleteBlocks, removeEnvironment: actions.removeEnvironment,
+    selectedBlockIds: selectedBlockIds(), setSelectedBlockIds: actions.setSelectedBlockIds, deleteBlocks: actions.deleteBlocks, removeEnvironment: actions.removeEnvironment, onBoundaryDraftChange: actions.onBoundaryDraftChange,
     onFigureSelect: actions.onFigureSelect, onFigureSlotSelect: actions.onFigureSlotSelect, onTableSelect: actions.onTableSelect, onTableChange: actions.onTableChange,
     onSpellContextMenu: actions.onSpellContextMenu, onDetectedLanguage: actions.onDetectedLanguage, onForwardSync: actions.onForwardSync
   };

@@ -37,7 +37,8 @@ function verify() {
   for (const [entryPath, label] of [
     [manifest.main, "Electron main process"],
     ["apps/desktop/dist/renderer/index.html", "renderer entry point"],
-    ["apps/desktop/src/preload/index.cjs", "isolated preload script"]
+    ["apps/desktop/src/preload/index.cjs", "isolated preload script"],
+    ["packages/contracts/dist/desktop-ipc.cjs", "shared desktop IPC contract"]
   ]) requireArchiveEntry(entries, entryPath, label);
 
   for (const dependency of Object.keys(manifest.dependencies ?? {})) {

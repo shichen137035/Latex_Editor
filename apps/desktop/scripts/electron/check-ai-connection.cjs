@@ -4,7 +4,7 @@ const { mkdtempSync, mkdirSync, writeFileSync } = require("node:fs");
 const { tmpdir } = require("node:os");
 const { join } = require("node:path");
 const assert = require("node:assert/strict");
-const labels = require("../src/renderer/i18n/locales/en.json");
+const labels = require("../../src/renderer/i18n/locales/en.json");
 const root = mkdtempSync(join(tmpdir(), "texweave-ai-connection-"));
 const projects = join(root, "projects");
 mkdirSync(projects);
@@ -50,7 +50,7 @@ async function run() {
   writeFileSync(join(root, "ai-connected.png"), (await page.webContents.capturePage(bounds)).toPNG());
   console.log("Screenshot:", join(root, "ai-connected.png"));
 }
-require("../dist/main/index.js");
+require("../../dist/main/index.js");
 const timeout = setTimeout(() => { console.error("AI connection check timed out"); finish(1); }, 60000);
 function finish(code) {
   clearTimeout(timeout);

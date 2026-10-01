@@ -102,6 +102,6 @@ async function run() {
   await probe("1800 nodes warm click", "Paragraph 2 with", "ordinary");
   console.log("Artifacts:", root);
 }
-require("../dist/main/index.js");
+require("../../dist/main/index.js");
 const timeout = setTimeout(() => { console.error("Diagnostic timed out"); app.exit(1); }, 55000);
 app.whenReady().then(run).then(() => {clearTimeout(timeout);app.exit(0)}).catch(error=>{console.error(error);console.error("Artifacts:",root);app.exit(1)});

@@ -146,6 +146,6 @@ async function run() {
   console.log("PASS current selection, footer boundary action and cancellation after memoized updates");
   console.log("Artifacts:", root);
 }
-require("../dist/main/index.js");
+require("../../dist/main/index.js");
 const timeout = setTimeout(() => { console.error("Caret check timed out"); app.exit(1); }, 60000);
 app.whenReady().then(run).then(() => { clearTimeout(timeout); app.exit(0); }).catch(error => { console.error(error); console.error("Artifacts:", root); app.exit(1); });

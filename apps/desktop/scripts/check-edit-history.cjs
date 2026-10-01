@@ -3,7 +3,6 @@ const { app, BrowserWindow } = require("electron");
 const { mkdtempSync, mkdirSync } = require("node:fs");
 const { resolve } = require("node:path");
 const { tmpdir } = require("node:os");
-const { clearTimeout } = require("node:timers");
 const assert = require("node:assert/strict");
 const root = mkdtempSync(resolve(tmpdir(), "texweave-history-"));
 mkdirSync(resolve(root, "projects"));
