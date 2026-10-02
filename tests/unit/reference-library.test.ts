@@ -39,6 +39,15 @@ describe("reference library", () => {
       .toBe("@book{GoodKey,\n  title = {A title}\n}");
   });
 
+  it("keeps citation locations tied to the supplied source text and exact character offsets", () => {
+    const source = "\\section{Old}\r\nEdited text.\\cite{first, second}.";
+    const occurrences = citationOccurrences([{ filePath: "chapter.tex", content: source }]);
+    const second = occurrences.find((item) => item.key === "second");
+    expect(second).toMatchObject({ filePath: "chapter.tex", line: 2 });
+    expect(second && source.slice(second.start, second.end)).toBe("second");
+    expect(second?.start).toBe(source.indexOf("second"));
+  });
+
   it("indexes multi-key citations and persists imported entries locally", async () => {
     const root = await mkdtemp(join(tmpdir(), "texweave-reference-library-"));
     try {

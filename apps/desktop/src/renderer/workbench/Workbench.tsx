@@ -145,7 +145,7 @@ export function Workbench({ project, projects, environments, onHome, onSwitch, o
   const [deleteRequest, setDeleteRequest] = useState<{ path: string; resolve(value: boolean): void }>();
   const [compileState, setCompileState] = useState<"idle" | "running">("idle");
   const [compileResult, setCompileResult] = useState<CompileResult>();
-  const [pendingDiagnostic, setPendingDiagnostic] = useState<{ path: string; line: number; column?: number }>();
+  const [pendingDiagnostic, setPendingDiagnostic] = useState<{ path: string; line?: number; column?: number; offset?: number }>();
   const [pdfDataUrl, setPdfDataUrl] = useState<string>();
   const [pdfTarget, setPdfTarget] = useState<(SyncTexPdfPosition & { requestId: number })>();
   const [bottomVisible, setBottomVisible] = useState(false);
@@ -1589,12 +1589,44 @@ export function Workbench({ project, projects, environments, onHome, onSwitch, o
 
   useEffect(() => {
     if (!pendingDiagnostic || pendingDiagnostic.path !== activePath || !activeTab) return;
+    if (pendingDiagnostic.offset !== undefined) {
+      if (!sourceEditorVisible) return;
+      let attempts = 0;
+      let frame = 0;
+      const revealOffset = () => {
+        const editor = editorRef.current;
+        const model = editor?.getModel();
+        if (!editor || !model) {
+          if (attempts++ < 12) frame = requestAnimationFrame(revealOffset);
+          return;
+        }
+        const source = activeTab.content;
+        const offset = Math.min(Math.max(0, pendingDiagnostic.offset ?? 0), source.length);
+        const modelSource = model.getValue();
+        let position: { lineNumber: number; column: number };
+        if (modelSource === source) {
+          position = model.getPositionAt(Math.min(offset, model.getValueLength()));
+        } else if (modelSource.replace(/\r\n?/g, "\n") === source.replace(/\r\n?/g, "\n")) {
+          const before = source.slice(0, offset).split(/\r\n|\r|\n/);
+          position = { lineNumber: before.length, column: (before.at(-1)?.length ?? 0) + 1 };
+        } else {
+          if (attempts++ < 12) frame = requestAnimationFrame(revealOffset);
+          return;
+        }
+        editor.revealPositionInCenter(position);
+        editor.setPosition(position);
+        editor.focus();
+        setPendingDiagnostic(undefined);
+      };
+      frame = requestAnimationFrame(revealOffset);
+      return () => cancelAnimationFrame(frame);
+    }
     const timer = window.setTimeout(() => {
-      navigateToLocation(pendingDiagnostic.line, pendingDiagnostic.column);
+      if (pendingDiagnostic.line !== undefined) navigateToLocation(pendingDiagnostic.line, pendingDiagnostic.column);
       setPendingDiagnostic(undefined);
     }, 0);
     return () => window.clearTimeout(timer);
-  }, [pendingDiagnostic, activePath, activeTab?.content, layout.mode, layout.singlePane, layout.leftPane]);
+  }, [pendingDiagnostic, activePath, activeTab?.content, sourceEditorVisible, layout.mode, layout.singlePane, layout.leftPane]);
 
   const filePaths = (nodes: ProjectTreeNode[]): string[] => nodes.flatMap((node) => node.kind === "file" ? [node.relativePath] : node.children ? filePaths(node.children) : []);
   const resolveDiagnosticPath = (file: string | undefined) => {
@@ -1740,13 +1772,8 @@ export function Workbench({ project, projects, environments, onHome, onSwitch, o
   const sourcePane = <section className="work-pane source-pane">{sourceTabs}{sourceToolbar}{sourceEditor}</section>;
   const previewProps = { filePath: activeTab?.path, source: activeTab?.content, definitions: previewEnvironments, mathContext, filterQuery, searchQuery, activeSearchResult, highlightRange: createdBlockHighlight, relation: blockSnapshot ? { active: relationModeActive, snapshot: blockSnapshot, transientToBlockId: previewSemanticIds, focusId: relationFocusId, direction: relationDirection, matchIds: relationProjection.matchIds, contextIds: relationProjection.contextIds, unmatchedBehavior: relationUnmatched, locateRequest: relationLocateRequest, onFocus: focusRelationBlock, onToggle: toggleRelation } : undefined, onSourceChange: setEditorContent, onSelectionChange: setPreviewSelection, onSelectionContextMenu: (selection: DocumentSelection, x: number, y: number) => { setPreviewSelection(selection); setBlockContext({ selection, x, y }); }, onViewportAnchorChange: trackPreviewViewport, onClickSourcePosition: trackPreviewClick, onFigureSelect: (selection?: FigureSelection) => { if (selection) { setInspectorBlock(undefined); setTableSelection(undefined); } setFigureSelection(selection); }, onFigureSlotSelect: (selection: FigureSelection) => { setInspectorBlock(undefined); setTableSelection(undefined); setFigureSelection(selection); setImageDialog({ kind: "replace", selection, imageIndex: selection.imageIndex ?? 0 }); }, onTableSelect: (selection?: TableSelection) => { if (selection) { setInspectorBlock(undefined); setFigureSelection(undefined); } setTableSelection(selection); }, onTableChange: applyPreviewTableChange, api, projectId: project.id, tree, onSpellContextMenu: setSpellContextMenu, onDetectedLanguage: setDetectedSpellLanguage, onForwardSync: forwardSyncToPdf };
   const anchoredPreviewProps = { ...previewProps, onInsertionAnchorChange: trackPreviewInsertion };
-  const bibPreview = activeTab?.path.toLocaleLowerCase().endsWith(".bib") ? <BibtexPreviewPane source={activeTab.content} filePath={activeTab.path} projectId={project.id} documents={projectSearchDocuments} onSourceChange={setEditorContent} onLocate={({ filePath, offset, line, column }) => {
-    const document = projectSearchDocuments.find((item) => item.fileId === filePath);
-    const content = filePath === activePath ? activeTab?.content : document?.content;
-    const lineStart = content && offset > 0 ? content.lastIndexOf("\n", offset - 1) : -1;
-    const targetLine = line ?? (content ? content.slice(0, offset).split("\n").length : 1);
-    const targetColumn = column ?? offset - lineStart;
-    setPendingDiagnostic({ path: filePath, line: targetLine, column: targetColumn });
+  const bibPreview = activeTab?.path.toLocaleLowerCase().endsWith(".bib") ? <BibtexPreviewPane source={activeTab.content} filePath={activeTab.path} projectId={project.id} documents={searchDocuments} onSourceChange={setEditorContent} onLocate={({ filePath, offset }) => {
+    setPendingDiagnostic({ path: filePath, offset });
     setLayout((value) => value.mode === "single" ? { ...value, singlePane: "source" } : { ...value, leftPane: "source" });
     if (filePath !== activePath) void openFile(filePath);
   }} /> : <PreviewPane {...anchoredPreviewProps}/>;
