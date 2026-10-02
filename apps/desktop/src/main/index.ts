@@ -4,9 +4,9 @@ import { desktopInvoke, desktopEvents } from "@latex-editor/contracts/desktop-ip
 import { handleIpc, onIpc, sendIpc } from "./ipc.js";
 import { app, BrowserWindow, clipboard, dialog, Menu, shell } from "electron";
 import { randomUUID } from "node:crypto";
-import { readFile } from "node:fs/promises";
-import { resolve } from "node:path";
-import type { AIStatus, CompileResult, Project } from "@latex-editor/contracts" with { "resolution-mode": "import" };
+import { copyFile, readFile } from "node:fs/promises";
+import { extname, join, resolve } from "node:path";
+import type { AIStatus, CompileResult, PdfExportResult, Project } from "@latex-editor/contracts" with { "resolution-mode": "import" };
 import type { EnvironmentCatalog } from "@latex-editor/editor-core/preview/catalog" with { "resolution-mode": "import" };
 import type { EnvironmentDefinition } from "@latex-editor/editor-core/preview/types" with { "resolution-mode": "import" };
 import type { DesktopContext } from "./desktopContext.js";
@@ -23,6 +23,7 @@ import { CopilotChatService } from "./ai/copilot-chat.js";
 import { AIWorkspaceService } from "./ai/ai-workspace.js";
 import { createWorkspaceBlockApi } from "./ai/workspace-block-api.js";
 import { registerAiIpcHandlers } from "./ai/ipc.js";
+import { createProjectSourceArchive } from "./project-export.js";
 
 let context: DesktopContext | undefined;
 let settings: SettingsRepository;
@@ -209,6 +210,18 @@ function registerIpcHandlers(): void {
     if (!context) throw new Error("Application context is not ready");
     return context.references.createCollection(name, parentId);
   });
+  handleIpc(desktopInvoke.references.createTag, (_event, name) => {
+    if (!context) throw new Error("Application context is not ready");
+    return context.references.createTag(name);
+  });
+  handleIpc(desktopInvoke.references.renameTag, (_event, id, name) => {
+    if (!context) throw new Error("Application context is not ready");
+    return context.references.renameTag(id, name);
+  });
+  handleIpc(desktopInvoke.references.removeTag, (_event, id) => {
+    if (!context) throw new Error("Application context is not ready");
+    return context.references.removeTag(id);
+  });
   handleIpc(desktopInvoke.references.setProjectLink, (_event, link) => {
     if (!context) throw new Error("Application context is not ready");
     return context.references.setProjectLink(link);
@@ -328,6 +341,17 @@ function registerIpcHandlers(): void {
     if (patch.isPinned !== undefined) {
       if (typeof patch.isPinned !== "boolean") throw new Error("Pin state must be boolean");
       next.isPinned = patch.isPinned;
+    }
+    if (patch.avatarLetter !== undefined) {
+      if (typeof patch.avatarLetter !== "string") throw new Error("Project avatar letter must be text");
+      const letter = Array.from(patch.avatarLetter.trim());
+      const codePoint = letter[0]?.codePointAt(0);
+      if (letter.length !== 1 || codePoint === undefined || codePoint <= 0x1f || codePoint === 0x7f) throw new Error("Project avatar must contain one character");
+      next.avatarLetter = Array.from(letter[0]!.toLocaleUpperCase())[0] ?? "?";
+    }
+    if (patch.avatarColor !== undefined) {
+      if (typeof patch.avatarColor !== "string" || !/^#[\da-f]{6}$/i.test(patch.avatarColor)) throw new Error("Project avatar color must be a six-digit hex color");
+      next.avatarColor = patch.avatarColor.toLocaleLowerCase("en-US");
     }
     const updated = { ...project, settings: { ...project.settings, projectDirectory: next } };
     context.registry.update(updated);
@@ -474,6 +498,83 @@ function registerIpcHandlers(): void {
     if (result.pdfPath === undefined) return result;
     const pdfDataUrl = `data:application/pdf;base64,${(await readFile(result.pdfPath)).toString("base64")}`;
     return { ...result, pdfDataUrl };
+  });
+  handleIpc(desktopInvoke.exports.sourceArchive, async (event, projectId, mainFile) => {
+    if (context === undefined) throw new Error("Application context is not ready");
+    const project = await context.projects.openProject(projectId);
+    const options = {
+      title: "Export project source",
+      defaultPath: join(app.getPath("downloads"), `${project.name}-source.zip`),
+      filters: [{ name: "ZIP archive", extensions: ["zip"] }]
+    };
+    const owner = BrowserWindow.fromWebContents(event.sender);
+    const choice = owner ? await dialog.showSaveDialog(owner, options) : await dialog.showSaveDialog(options);
+    if (choice.canceled || !choice.filePath) return undefined;
+    await createProjectSourceArchive(project.canonicalPath, mainFile ?? project.mainFile, choice.filePath);
+    return choice.filePath;
+  });
+  handleIpc(desktopInvoke.exports.mainTex, async (event, projectId, mainFile) => {
+    if (context === undefined) throw new Error("Application context is not ready");
+    if (extname(mainFile).toLowerCase() !== ".tex") throw new Error("Choose a .tex file as the project's main file.");
+    const project = await context.projects.openProject(projectId);
+    const sourcePath = await context.files.resolveFilePath(projectId, mainFile, true);
+    const suggestedName = mainFile.split(/[\\/]/).at(-1) ?? `${project.name}.tex`;
+    const options = {
+      title: "Export main TeX file",
+      defaultPath: join(app.getPath("downloads"), suggestedName),
+      filters: [{ name: "TeX source", extensions: ["tex"] }]
+    };
+    const owner = BrowserWindow.fromWebContents(event.sender);
+    const choice = owner ? await dialog.showSaveDialog(owner, options) : await dialog.showSaveDialog(options);
+    if (choice.canceled || !choice.filePath) return undefined;
+    const targetPath = resolve(choice.filePath);
+    const normalizedSource = process.platform === "win32" ? sourcePath.toLocaleLowerCase("en-US") : sourcePath;
+    const normalizedTarget = process.platform === "win32" ? targetPath.toLocaleLowerCase("en-US") : targetPath;
+    if (normalizedSource !== normalizedTarget) await copyFile(sourcePath, targetPath);
+    return targetPath;
+  });
+  handleIpc(desktopInvoke.exports.pdf, async (event, projectId, mainFile): Promise<PdfExportResult> => {
+    if (context === undefined) throw new Error("Application context is not ready");
+    if (extname(mainFile).toLowerCase() !== ".tex") throw new Error("Choose a .tex file as the project's main file.");
+    const project = await context.projects.openProject(projectId);
+    await context.files.resolveFilePath(projectId, mainFile, true);
+    const texName = mainFile.split(/[\\/]/).at(-1) ?? `${project.name}.tex`;
+    const pdfName = texName.replace(/\.tex$/i, ".pdf");
+    const options = {
+      title: "Compile and export PDF",
+      defaultPath: join(app.getPath("downloads"), pdfName),
+      filters: [{ name: "PDF document", extensions: ["pdf"] }]
+    };
+    const owner = BrowserWindow.fromWebContents(event.sender);
+    const choice = owner ? await dialog.showSaveDialog(owner, options) : await dialog.showSaveDialog(options);
+    if (choice.canceled || !choice.filePath) return { status: "cancelled" };
+
+    const preferences = await settings.snapshot(projectId);
+    let compilation: CompileResult;
+    try {
+      compilation = await context.compiler.compile({
+        projectId,
+        mainFile,
+        engine: preferences.project.engine ?? preferences.global.engine ?? "pdflatex"
+      });
+    } catch (error) {
+      const code = error && typeof error === "object" && "code" in error ? String(error.code) : "COMPILATION_FAILED";
+      const message = code === "TOOLCHAIN_NOT_FOUND" ? "LaTeX toolchain unavailable. Open Settings > Compiler to detect or locate latexmk." : error instanceof Error ? error.message : String(error);
+      const timestamp = new Date().toISOString();
+      compilation = {
+        compilationId: randomUUID(), status: "failed", exitCode: null,
+        startedAt: timestamp, finishedAt: timestamp, durationMs: 0, mainFile,
+        diagnostics: [{ severity: "error", source: "system", code, message }], stdoutTail: "", stderrTail: message
+      };
+    }
+    if (compilation.status !== "succeeded" || !compilation.pdfPath) return { status: "failed", compilation };
+
+    const targetPath = resolve(choice.filePath);
+    const normalizedSource = process.platform === "win32" ? compilation.pdfPath.toLocaleLowerCase("en-US") : compilation.pdfPath;
+    const normalizedTarget = process.platform === "win32" ? targetPath.toLocaleLowerCase("en-US") : targetPath;
+    if (normalizedSource !== normalizedTarget) await copyFile(compilation.pdfPath, targetPath);
+    const pdfDataUrl = `data:application/pdf;base64,${(await readFile(compilation.pdfPath)).toString("base64")}`;
+    return { status: "exported", path: targetPath, compilation, pdfDataUrl };
   });
   registerAiIpcHandlers(context, settings);
   handleIpc(desktopInvoke.synctex.forward, async (_event, projectId, sourceFile, pdfFile, line, column) => {

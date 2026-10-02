@@ -249,6 +249,11 @@ export interface CompileResult {
   stderrTail: string;
 }
 
+export type PdfExportResult =
+  | { status: "cancelled" }
+  | { status: "failed"; compilation: CompileResult }
+  | { status: "exported"; path: string; compilation: CompileResult; pdfDataUrl: string };
+
 /** Coordinates returned by SyncTeX use PDF points measured from the page's top-left. */
 export interface SyncTexPdfPosition { page: number; x: number; y: number }
 export interface SyncTexSourcePosition { file: string; line: number; column: number }

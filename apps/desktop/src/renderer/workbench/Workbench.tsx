@@ -757,11 +757,58 @@ export function Workbench({ project, projects, environments, onHome, onSwitch, o
 
   const compile = async () => {
     if (!api || compileState === "running") return;
-    const mainFile = project.mainFile ?? activeTab?.path ?? tree.find((node) => node.kind === "file" && node.name.toLocaleLowerCase().endsWith(".tex"))?.relativePath;
+    const mainFile = resolveMainTexFile();
     if (!mainFile) { setCompileResult({ compilationId: "ui-error", status: "failed", exitCode: null, startedAt: new Date().toISOString(), finishedAt: new Date().toISOString(), durationMs: 0, mainFile: "", diagnostics: [{ severity: "error", source: "system", message: "No LaTeX main file is configured." }], stdoutTail: "", stderrTail: "" }); setBottomTab("problems"); return; }
     await saveActive(); setCompileState("running");
     try { const result = await api.compile.run(project.id, mainFile); setCompileResult(result); setPdfDataUrl(result.pdfDataUrl); setLayout((value) => ({ ...value, rightPane: "pdf" })); setBottomTab(result.diagnostics.length ? "problems" : "compileLog"); setBottomVisible(false); }
     catch (reason) { setCompileResult({ compilationId: "ui-error", status: "failed", exitCode: null, startedAt: new Date().toISOString(), finishedAt: new Date().toISOString(), durationMs: 0, mainFile, diagnostics: [{ severity: "error", source: "system", message: reason instanceof Error ? reason.message : String(reason) }], stdoutTail: "", stderrTail: "" }); setBottomTab("problems"); setBottomVisible(false); }
+    finally { setCompileState("idle"); }
+  };
+
+  const resolveMainTexFile = () => project.mainFile
+    ?? (activeTab?.path.toLocaleLowerCase().endsWith(".tex") ? activeTab.path : undefined)
+    ?? projectFilePaths(tree).find((path) => path.toLocaleLowerCase().endsWith(".tex"));
+  const exportSourceArchive = async () => {
+    if (!api || compileState === "running") return;
+    try {
+      await saveTabs(true);
+      const path = await api.exports.sourceArchive(project.id, resolveMainTexFile());
+      if (path) window.alert(t("export.saved", { path }));
+    } catch (error) { window.alert(error instanceof Error ? error.message : String(error)); }
+  };
+  const exportMainTex = async () => {
+    if (!api || compileState === "running") return;
+    const mainFile = resolveMainTexFile();
+    if (!mainFile) { window.alert(t("export.noMainTex")); return; }
+    try {
+      await saveTabs(true);
+      const path = await api.exports.mainTex(project.id, mainFile);
+      if (path) window.alert(t("export.saved", { path }));
+    } catch (error) { window.alert(error instanceof Error ? error.message : String(error)); }
+  };
+  const exportPdf = async () => {
+    if (!api || compileState === "running") return;
+    const mainFile = resolveMainTexFile();
+    if (!mainFile) { window.alert(t("export.noMainTex")); return; }
+    setCompileState("running");
+    try {
+      await saveTabs(true);
+      const result = await api.exports.pdf(project.id, mainFile);
+      if (result.status === "cancelled") return;
+      setCompileResult(result.compilation);
+      if (result.status === "failed") {
+        setBottomTab("problems");
+        setBottomVisible(true);
+        const diagnostic = result.compilation.diagnostics.find((item) => item.severity === "error");
+        window.alert(diagnostic?.message ?? t("export.pdfFailed"));
+        return;
+      }
+      setPdfDataUrl(result.pdfDataUrl);
+      setLayout((value) => ({ ...value, rightPane: "pdf" }));
+      setBottomTab(result.compilation.diagnostics.length ? "problems" : "compileLog");
+      setBottomVisible(false);
+      window.alert(t("export.saved", { path: result.path }));
+    } catch (error) { window.alert(error instanceof Error ? error.message : String(error)); }
     finally { setCompileState("idle"); }
   };
 
@@ -1551,7 +1598,7 @@ export function Workbench({ project, projects, environments, onHome, onSwitch, o
   const spellLanguages = [...new Set(["en-US", ...(spellStatus?.availableLanguages ?? [])])];
   const spellStatusControl = <div className="spell-status-control"><button onClick={() => setSpellMenuOpen((value) => !value)}>{spellMode === "disabled" ? t("spell.status.off") : spellMode === "manual" ? t("spell.status.manual", { language: spellLanguageLabel(spellDisplayLanguage) }) : t("spell.status.auto", { language: spellLanguageLabel(spellDisplayLanguage) })}</button>{spellMenuOpen && <div className="spell-status-menu"><button onClick={() => void configureSpell("auto", detectedSpellLanguage)}>{spellMode === "auto" && "✓ "}{t("spell.menu.auto", { language: spellLanguageLabel(detectedSpellLanguage) })}</button>{spellLanguages.map((language) => <button key={language} onClick={() => void configureSpell("manual", language)}>{spellMode === "manual" && spellManualLanguage === language && "✓ "}{spellLanguageLabel(language)}</button>)}<div className="menu-divider"/><button onClick={() => void configureSpell("disabled", spellDisplayLanguage)}>{spellMode === "disabled" && "✓ "}{t("spell.menu.disable")}</button></div>}</div>;
   const menuItems = (menu: Exclude<MenuName, "projects">) => {
-    if (menu === "file") return [{ label: t("menu.newFile"), action: () => void createEntry(false, "") }, { label: t("menu.openFile"), disabled: true }, { label: t("menu.save"), action: () => { commands.execute("file.save"); } }, { label: t("menu.saveAll"), action: () => { commands.execute("file.saveAll"); } }, { label: "", divider: true }, { label: t("menu.export"), disabled: true }, { label: t("menu.closeProject"), action: onHome }];
+    if (menu === "file") return [{ label: t("menu.newFile"), action: () => void createEntry(false, "") }, { label: t("menu.openFile"), disabled: true }, { label: t("menu.save"), action: () => { commands.execute("file.save"); } }, { label: t("menu.saveAll"), action: () => { commands.execute("file.saveAll"); } }, { label: "", divider: true }, { label: t("export.sourceArchive"), action: () => void exportSourceArchive() }, { label: t("export.pdf"), action: () => void exportPdf() }, { label: t("export.mainTex"), action: () => void exportMainTex() }, { label: "", divider: true }, { label: t("menu.closeProject"), action: onHome }];
     if (menu === "edit") return [{ label: t("menu.undo"), action: () => { commands.execute("edit.undo"); } }, { label: t("menu.redo"), action: () => { commands.execute("edit.redo"); } }, { label: t("menu.find"), action: () => { commands.execute("edit.find"); } }, { label: t("menu.replace"), action: () => { commands.execute("edit.replace"); } }];
     if (menu === "view") return [{ label: t("menu.source"), action: () => { if ((layout.mode === "single" ? layout.singlePane === "preview" : layout.leftPane === "preview")) pendingVisualToCodeAnchor.current = previewToCodeAnchor(); setLayout((value) => ({ ...value, mode: "single", singlePane: "source" })); } }, { label: t("menu.preview"), action: () => setLayout((value) => ({ ...value, mode: "single", singlePane: "preview" })) }, { label: t("menu.pdf"), action: () => setLayout((value) => ({ ...value, mode: "single", singlePane: "pdf" })) }, { label: "", divider: true }, { label: t("menu.single"), action: () => setLayout((value) => ({ ...value, mode: "single" })) }, { label: t("menu.split"), action: () => setLayout((value) => ({ ...value, mode: "split" })) }];
     return [{ label: t("menu.automaticHistory"), action: () => { setBottomTab("versions"); setBottomVisible(true); } }, { label: t("menu.namedVersions"), action: () => { setBottomTab("versions"); setBottomVisible(true); } }];

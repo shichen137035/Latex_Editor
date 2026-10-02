@@ -1,4 +1,4 @@
-import type { AIStatus, AIModelOption, AIConversation, AIChangeSet, AIContextSnapshotFile, AIProjectSkill, AIMode, AIAttachment, AddSemanticBlockInput, BlockCreationValidation, BlockGraphSnapshot, BlockId, BlockRangeMappingResult, BlockReconciliationResult, CommandMetadata, CompileResult, CreateSemanticBlockInput, CreateUserBlockInput, DependencyCycle, DictionaryPackage, FileWriteResult, GraphDiagnostic, GraphTraversalOptions, GraphTraversalResult, ImportedImage, LogicalRelation, MapUserBlockRangesInput, Project, ProjectTreeNode, ReconcileParsedBlocksInput, RelationDirection, RelationMutationResult, RelationNeighborhood, RelationValidation, ResolvedGraphic, SemanticBlock, SettingsSnapshot, PreferenceKey, LatexToolchain, StyleResource, ThemeDefinition, SpellCheckMode, SpellCheckStatus, StructuralDependencyOverlap, StructuralHistoryState, StructureWarning, SyncTexPdfPosition, SyncTexSourcePosition, TextFileContent, UpdateSemanticBlockInput, ProjectReferenceLink, ReferenceLibraryEntry, ReferenceLibrarySnapshot, ReferenceImportResult } from "./index.js" with { "resolution-mode": "import" };
+import type { AIStatus, AIModelOption, AIConversation, AIChangeSet, AIContextSnapshotFile, AIProjectSkill, AIMode, AIAttachment, AddSemanticBlockInput, BlockCreationValidation, BlockGraphSnapshot, BlockId, BlockRangeMappingResult, BlockReconciliationResult, CommandMetadata, CompileResult, PdfExportResult, CreateSemanticBlockInput, CreateUserBlockInput, DependencyCycle, DictionaryPackage, FileWriteResult, GraphDiagnostic, GraphTraversalOptions, GraphTraversalResult, ImportedImage, LogicalRelation, MapUserBlockRangesInput, Project, ProjectTreeNode, ReconcileParsedBlocksInput, RelationDirection, RelationMutationResult, RelationNeighborhood, RelationValidation, ResolvedGraphic, SemanticBlock, SettingsSnapshot, PreferenceKey, LatexToolchain, StyleResource, ThemeDefinition, SpellCheckMode, SpellCheckStatus, StructuralDependencyOverlap, StructuralHistoryState, StructureWarning, SyncTexPdfPosition, SyncTexSourcePosition, TextFileContent, UpdateSemanticBlockInput, ProjectReferenceLink, ReferenceLibraryEntry, ReferenceLibrarySnapshot, ReferenceImportResult, ReferenceTag } from "./index.js" with { "resolution-mode": "import" };
 
 import type { BlockApiResult, DocumentBlockApi, DocumentStructure, AIApprovalRequest } from "./index.js" with { "resolution-mode": "import" };
 
@@ -55,6 +55,9 @@ export const desktopInvoke = {
     removeEntry: invoke<(id: string) => Promise<void>>("references:remove-entry"),
     setFavorite: invoke<(id: string, favorite: boolean) => Promise<void>>("references:set-favorite"),
     createCollection: invoke<(name: string, parentId?: string) => Promise<{ id: string; name: string; parentId?: string }>>("references:create-collection"),
+    createTag: invoke<(name: string) => Promise<ReferenceTag>>("references:create-tag"),
+    renameTag: invoke<(id: string, name: string) => Promise<ReferenceTag>>("references:rename-tag"),
+    removeTag: invoke<(id: string) => Promise<void>>("references:remove-tag"),
     setProjectLink: invoke<(link: ProjectReferenceLink) => Promise<void>>("references:set-project-link"),
     removeProjectLink: invoke<(projectId: string, entryId: string) => Promise<void>>("references:remove-project-link"),
   },
@@ -136,7 +139,7 @@ export const desktopInvoke = {
     open: invoke<(projectId: string) => Promise<Project>>("projects:open"),
     setMainFile: invoke<(projectId: string, relativePath: string) => Promise<Project>>("projects:set-main-file"),
     relocateInDirectory: invoke<(projectId: string, folderPath: string) => Promise<Project>>("projects:directory-relocate"),
-    updateDirectoryEntry: invoke<(projectId: string, patch: { displayName?: string; isFavorite?: boolean; isPinned?: boolean }) => Promise<Project>>("projects:directory-update"),
+    updateDirectoryEntry: invoke<(projectId: string, patch: { displayName?: string; isFavorite?: boolean; isPinned?: boolean; avatarLetter?: string; avatarColor?: string }) => Promise<Project>>("projects:directory-update"),
     removeFromDirectory: invoke<(projectId: string) => Promise<unknown>>("projects:directory-remove"),
     deleteToRecycleBin: invoke<(projectId: string, confirmedPath: string) => Promise<boolean>>("projects:directory-delete"),
     revealInFileManager: invoke<(projectId: string) => Promise<void>>("projects:directory-reveal"),
@@ -161,6 +164,11 @@ export const desktopInvoke = {
   },
   compile: {
     run: invoke<(projectId: string, mainFile?: string) => Promise<CompileResult & { pdfDataUrl?: string }>>("compile:run"),
+  },
+  exports: {
+    sourceArchive: invoke<(projectId: string, mainFile?: string) => Promise<string | undefined>>("exports:source-archive"),
+    mainTex: invoke<(projectId: string, mainFile: string) => Promise<string | undefined>>("exports:main-tex"),
+    pdf: invoke<(projectId: string, mainFile: string) => Promise<PdfExportResult>>("exports:pdf"),
   },
   ai: {
     detect: invoke<() => Promise<AIStatus | undefined>>("ai:detect"),

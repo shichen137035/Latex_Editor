@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, type Dispatch, type ReactNode, type SetStateAction } from "react";
+import { useEffect, useMemo, useRef, useState, type CSSProperties, type Dispatch, type ReactNode, type SetStateAction } from "react";
 import type { Project, StyleResource } from "@latex-editor/contracts";
 import { t } from "./i18n/index.js";
 import { Workbench } from "./workbench/Workbench.js";
@@ -11,6 +11,7 @@ import { ThemeRuntime } from "./themes/runtime.js";
 import { ReferenceLibraryPage } from "./references/ReferenceLibraryPage.js";
 import { flushSync } from "react-dom";
 import { resolveExit, unsavedChanges } from "./lifecycle/unsavedChanges.js";
+import { chooseProjectAvatarColor, isProjectAvatarColor, projectAvatarLetter, projectAvatarPalette, type ProjectAvatarColor } from "./projectAvatar.js";
 
 function Icon({ children, size = 20 }: { children: ReactNode; size?: number }) {
   return <svg aria-hidden="true" className="icon" width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">{children}</svg>;
@@ -30,10 +31,23 @@ type DirectoryTab = "all" | "pinned" | "favorites" | "recent";
 type DirectorySort = "lastOpened" | "name" | "dateAdded";
 type DirectoryPreferences = { tab: DirectoryTab; sort: DirectorySort; direction: "asc" | "desc"; density: "compact" | "comfortable" };
 const defaultDirectoryPreferences: DirectoryPreferences = { tab: "all", sort: "lastOpened", direction: "desc", density: "compact" };
-function directoryMetadata(project: Project): { displayName: string; isFavorite: boolean; isPinned: boolean } {
+function directoryMetadata(project: Project): { displayName: string; isFavorite: boolean; isPinned: boolean; avatarLetter: string; avatarColor: ProjectAvatarColor } {
   const saved = project.settings.projectDirectory;
   const meta = saved && typeof saved === "object" ? saved as Record<string, unknown> : {};
-  return { displayName: typeof meta.displayName === "string" ? meta.displayName : project.name, isFavorite: meta.isFavorite === true, isPinned: meta.isPinned === true };
+  const displayName = typeof meta.displayName === "string" ? meta.displayName : project.name;
+  const savedLetter = typeof meta.avatarLetter === "string" ? Array.from(meta.avatarLetter.trim()) : [];
+  return {
+    displayName,
+    isFavorite: meta.isFavorite === true,
+    isPinned: meta.isPinned === true,
+    avatarLetter: savedLetter.length === 1 ? projectAvatarLetter(savedLetter[0]!) : projectAvatarLetter(displayName),
+    avatarColor: isProjectAvatarColor(meta.avatarColor) ? meta.avatarColor.toLocaleLowerCase("en-US") as ProjectAvatarColor : projectAvatarPalette[0].foreground
+  };
+}
+function hasSavedAvatarIdentity(project: Project): boolean {
+  const saved = project.settings.projectDirectory;
+  const meta = saved && typeof saved === "object" ? saved as Record<string, unknown> : {};
+  return typeof meta.avatarLetter === "string" && Array.from(meta.avatarLetter.trim()).length === 1 && isProjectAvatarColor(meta.avatarColor);
 }
 function comparablePath(path: string): string { return path.replace(/[\\/]+$/, "").toLocaleLowerCase(); }
 function formatLastOpened(project: Project): string {
@@ -65,7 +79,45 @@ function ProjectDirectory({ projects, onProjectsChange, onOpen, onOpenLibrary, s
   const [error, setError] = useState<string>();
   const api = window.latexEditor;
   const searchRef = useRef<HTMLInputElement>(null);
+  const avatarAssignmentInProgress = useRef(false);
+  const failedAvatarAssignments = useRef(new Set<string>());
+  const [avatarAssignmentRevision, setAvatarAssignmentRevision] = useState(0);
   useEffect(() => { localStorage.setItem("texweave.projectDirectory.v1", JSON.stringify(preferences)); }, [preferences]);
+  useEffect(() => {
+    if (!api || avatarAssignmentInProgress.current) return;
+    const needsIdentity = projects.filter((project) => !hasSavedAvatarIdentity(project) && !failedAvatarAssignments.current.has(project.id));
+    if (!needsIdentity.length) return;
+
+    avatarAssignmentInProgress.current = true;
+    const usedColors = projects.flatMap((project) => {
+      const saved = project.settings.projectDirectory;
+      const meta = saved && typeof saved === "object" ? saved as Record<string, unknown> : {};
+      return isProjectAvatarColor(meta.avatarColor) ? [meta.avatarColor.toLocaleLowerCase("en-US")] : [];
+    });
+    void (async () => {
+      for (const project of needsIdentity) {
+        const saved = project.settings.projectDirectory;
+        const meta = saved && typeof saved === "object" ? saved as Record<string, unknown> : {};
+        const letter = typeof meta.avatarLetter === "string" && Array.from(meta.avatarLetter.trim()).length === 1
+          ? projectAvatarLetter(meta.avatarLetter.trim())
+          : projectAvatarLetter(directoryMetadata(project).displayName);
+        const color = isProjectAvatarColor(meta.avatarColor)
+          ? meta.avatarColor.toLocaleLowerCase("en-US")
+          : chooseProjectAvatarColor(usedColors);
+        if (!usedColors.includes(color)) usedColors.push(color);
+        try {
+          const updated = await api.projects.updateDirectoryEntry(project.id, { avatarLetter: letter, avatarColor: color });
+          onProjectsChange((current) => current.map((item) => item.id === updated.id ? { ...item, settings: updated.settings } : item));
+        } catch (reason) {
+          failedAvatarAssignments.current.add(project.id);
+          setError(reason instanceof Error ? reason.message : String(reason));
+        }
+      }
+    })().finally(() => {
+      avatarAssignmentInProgress.current = false;
+      setAvatarAssignmentRevision((revision) => revision + 1);
+    });
+  }, [api, avatarAssignmentRevision, onProjectsChange, projects]);
   useEffect(() => {
     const listener = (event: KeyboardEvent) => { if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "k") { event.preventDefault(); searchRef.current?.focus(); searchRef.current?.select(); } };
     document.addEventListener("keydown", listener);
@@ -123,7 +175,7 @@ function ProjectDirectory({ projects, onProjectsChange, onOpen, onOpenLibrary, s
   const createProject = async () => { if (!api || !name.trim() || !parentPath.trim()) return; setBusy(true); try { const project = await api.projects.create({ name: name.trim(), parentPath: parentPath.trim(), styleResourceIds: [baseResource, ...extraResources] }); onProjectsChange([project, ...projects]); setCreateOpen(false); setName(""); setQuery(""); setPreferences((value) => ({ ...value, tab: "all" })); } catch (reason) { setError(reason instanceof Error ? reason.message : String(reason)); } finally { setBusy(false); } };
   const updateEntry = async (project: Project, patch: { displayName?: string; isFavorite?: boolean; isPinned?: boolean }) => {
     if (!api) return;
-    try { const updated = await api.projects.updateDirectoryEntry(project.id, patch); onProjectsChange((current) => current.map((item) => item.id === updated.id ? updated : item)); setError(undefined); }
+    try { const updated = await api.projects.updateDirectoryEntry(project.id, patch); onProjectsChange((current) => current.map((item) => item.id === updated.id ? { ...item, settings: updated.settings } : item)); setError(undefined); }
     catch (reason) { setError(reason instanceof Error ? reason.message : String(reason)); }
   };
   const updateMany = async (patch: { isFavorite?: boolean; isPinned?: boolean }) => {
@@ -198,9 +250,9 @@ function ProjectDirectory({ projects, onProjectsChange, onOpen, onOpenLibrary, s
     <section className={`directory-table-card density-${preferences.density}`}>
       <div className="directory-table-head"><label className="directory-check"><input type="checkbox" aria-label={t("directory.selectAll")} checked={filtered.length > 0 && filtered.every((project) => selectedIds.includes(project.id))} onChange={(event) => setSelectedIds(event.target.checked ? filtered.map((project) => project.id) : [])}/></label><span>{t("project.name")}</span><span>{t("directory.mainFile")}</span><span>{t("project.location")}</span><span>{t("directory.lastOpened")}</span><span aria-label={t("directory.favorite")}>☆</span><span aria-label={t("directory.pin")}>⌖</span><span/></div>
       <div className="directory-project-list" onKeyDown={(event) => { if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "a") { event.preventDefault(); setSelectedIds(filtered.map((project) => project.id)); } else if (event.key === "Delete" && selectedIds.length) { event.preventDefault(); void removeSelected(); } else if (event.key === "Escape") { setSelectedIds([]); setMenuProjectId(undefined); } }}>
-        {filtered.map((project) => { const meta = directoryMetadata(project); const selected = selectedIds.includes(project.id); return <div role="row" tabIndex={0} aria-selected={selected} className={`directory-project-row ${selected ? "selected" : ""} ${project.missing ? "missing" : ""}`} key={project.id} onClick={(event) => { if (!(event.target instanceof Element) || !event.target.closest("button, input, .project-action-menu")) openProjectEntry(project); }} onContextMenu={(event) => { event.preventDefault(); if (!selected) setSelectedIds([project.id]); setMenuProjectId(project.id); }} onKeyDown={(event) => { if (event.key === "Enter") { event.preventDefault(); openProjectEntry(project); } }}>
+        {filtered.map((project) => { const meta = directoryMetadata(project); const avatarColor = projectAvatarPalette.find((color) => color.foreground === meta.avatarColor) ?? projectAvatarPalette[0]; const selected = selectedIds.includes(project.id); return <div role="row" tabIndex={0} aria-selected={selected} className={`directory-project-row ${selected ? "selected" : ""} ${project.missing ? "missing" : ""}`} key={project.id} onClick={(event) => { if (!(event.target instanceof Element) || !event.target.closest("button, input, .project-action-menu")) openProjectEntry(project); }} onContextMenu={(event) => { event.preventDefault(); if (!selected) setSelectedIds([project.id]); setMenuProjectId(project.id); }} onKeyDown={(event) => { if (event.key === "Enter") { event.preventDefault(); openProjectEntry(project); } }}>
           <label className="directory-check" onClick={(event) => event.stopPropagation()}><input type="checkbox" aria-label={t("directory.selectProject", { name: meta.displayName })} checked={selected} onChange={(event) => setSelectedIds((ids) => event.target.checked ? [...new Set([...ids, project.id])] : ids.filter((id) => id !== project.id))}/></label>
-          <span className="directory-project-name"><span className="directory-avatar">{meta.displayName.slice(0, 1).toLocaleUpperCase()}</span><span className="directory-name-text"><strong title={meta.displayName}>{meta.displayName}</strong><small>{project.missing ? t("directory.locationMissing") : project.mainFileMissing ? t("directory.mainFileMissing") : project.mainFile ?? t("directory.noMainFile")}</small></span></span>
+          <span className="directory-project-name"><span className="directory-avatar" style={{ "--directory-avatar-foreground": avatarColor.foreground, "--directory-avatar-background": avatarColor.background } as CSSProperties}>{meta.avatarLetter}</span><span className="directory-name-text"><strong title={meta.displayName}>{meta.displayName}</strong><small>{project.missing ? t("directory.locationMissing") : project.mainFileMissing ? t("directory.mainFileMissing") : project.mainFile ?? t("directory.noMainFile")}</small></span></span>
           <span className={`directory-main-file ${project.mainFileMissing ? "missing-main" : project.mainFile ? "" : "muted"}`} title={project.mainFile ?? ""}>{project.mainFile ? <><span className="directory-file-icon">{project.mainFileMissing ? "!" : "Tₓ"}</span>{project.mainFile}</> : t("directory.notSet")}</span>
           <span className="directory-location" title={project.canonicalPath}><FolderIcon/><span>{project.canonicalPath}</span></span>
           <span className="directory-last-opened">{formatLastOpened(project)}</span>

@@ -84,6 +84,7 @@ export class ReferenceLibraryRepository {
       if (keyed?.deleted_at) {
         this.db.prepare("UPDATE library_entries SET entry_type = ?, fields_json = ?, raw_bibtex = ?, source_file = ?, updated_at = ?, deleted_at = NULL WHERE id = ?")
           .run(input.entryType, JSON.stringify(input.fields), input.rawBibtex ?? null, input.sourceFile ?? null, timestamp, keyed.id);
+        if (input.tags !== undefined) this.syncEntryTags(keyed.id, input.tags);
         return this.snapshot().entries.find((entry) => entry.id === keyed.id)!;
       }
     }
@@ -91,13 +92,57 @@ export class ReferenceLibraryRepository {
     const existing = this.db.prepare("SELECT id FROM library_entries WHERE id = ?").get(id);
     if (existing) this.db.prepare("UPDATE library_entries SET citation_key = ?, entry_type = ?, fields_json = ?, raw_bibtex = ?, updated_at = ?, deleted_at = NULL WHERE id = ?").run(input.citationKey, input.entryType, JSON.stringify(input.fields), input.rawBibtex ?? null, timestamp, id);
     else this.db.prepare("INSERT INTO library_entries (id, citation_key, entry_type, fields_json, favorite, raw_bibtex, source_file, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)").run(id, input.citationKey, input.entryType, JSON.stringify(input.fields), input.favorite ? 1 : 0, input.rawBibtex ?? null, input.sourceFile ?? null, input.createdAt ?? timestamp, timestamp);
+    if (input.tags !== undefined) this.syncEntryTags(id, input.tags);
     return this.snapshot().entries.find((entry) => entry.id === id)!;
+  }
+
+  private syncEntryTags(entryId: string, names: string[]): void {
+    const distinctNames = new Map<string, string>();
+    for (const name of names) {
+      if (typeof name !== "string") continue;
+      const normalized = name.trim();
+      if (normalized) distinctNames.set(normalized.toLocaleLowerCase(), normalized);
+    }
+    const tagIds = [...distinctNames.values()].map((name) => this.ensureTag(name));
+    this.db.prepare("DELETE FROM entry_tags WHERE entry_id = ?").run(entryId);
+    const insert = this.db.prepare("INSERT INTO entry_tags (entry_id, tag_id) VALUES (?, ?)");
+    for (const tagId of tagIds) insert.run(entryId, tagId);
+  }
+
+  private ensureTag(name: string): string {
+    const normalized = name.trim();
+    if (!normalized) throw new Error("Tag names cannot be empty.");
+    const existing = this.db.prepare("SELECT id FROM tags WHERE name = ? COLLATE NOCASE").get(normalized) as { id: string } | undefined;
+    if (existing) return existing.id;
+    const id = randomUUID();
+    this.db.prepare("INSERT INTO tags (id, name) VALUES (?, ?)").run(id, normalized);
+    return id;
   }
 
   setFavorite(id: string, favorite: boolean): void { this.db.prepare("UPDATE library_entries SET favorite = ?, updated_at = ? WHERE id = ?").run(favorite ? 1 : 0, now(), id); }
 
   removeEntry(id: string): void { this.db.prepare("UPDATE library_entries SET deleted_at = ? WHERE id = ?").run(now(), id); }
   createCollection(name: string, parentId?: string): ReferenceCollection { const id = randomUUID(); this.db.prepare("INSERT INTO collections (id, name, parent_id) VALUES (?, ?, ?)").run(id, name.trim(), parentId ?? null); return { id, name: name.trim(), ...(parentId ? { parentId } : {}) }; }
+  createTag(name: string): ReferenceTag {
+    const normalized = name.trim();
+    if (!normalized) throw new Error("Tag names cannot be empty.");
+    const existing = this.db.prepare("SELECT id, name, color FROM tags WHERE name = ? COLLATE NOCASE").get(normalized) as { id: string; name: string; color?: string | null } | undefined;
+    if (existing) return { id: existing.id, name: existing.name, ...(existing.color ? { color: existing.color } : {}) };
+    const tag = { id: randomUUID(), name: normalized };
+    this.db.prepare("INSERT INTO tags (id, name) VALUES (?, ?)").run(tag.id, tag.name);
+    return tag;
+  }
+  renameTag(id: string, name: string): ReferenceTag {
+    const normalized = name.trim();
+    if (!normalized) throw new Error("Tag names cannot be empty.");
+    const conflict = this.db.prepare("SELECT id FROM tags WHERE name = ? COLLATE NOCASE AND id != ?").get(normalized, id);
+    if (conflict) throw new Error(`A tag named “${normalized}” already exists.`);
+    const result = this.db.prepare("UPDATE tags SET name = ? WHERE id = ?").run(normalized, id);
+    if (!result.changes) throw new Error("Tag was not found.");
+    const tag = this.db.prepare("SELECT id, name, color FROM tags WHERE id = ?").get(id) as { id: string; name: string; color?: string | null };
+    return { id: tag.id, name: tag.name, ...(tag.color ? { color: tag.color } : {}) };
+  }
+  removeTag(id: string): void { this.db.prepare("DELETE FROM tags WHERE id = ?").run(id); }
   setProjectLink(link: ProjectReferenceLink): void { this.db.prepare("INSERT INTO project_references (project_id, entry_id, citation_key, mode, target_bib_path, last_snapshot) VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT(project_id, entry_id) DO UPDATE SET citation_key = excluded.citation_key, mode = excluded.mode, target_bib_path = excluded.target_bib_path, last_snapshot = excluded.last_snapshot").run(link.projectId, link.libraryEntryId, link.citationKeyInProject, link.mode, link.targetBibPath ?? null, link.lastSnapshot ?? null); }
   removeProjectLink(projectId: string, entryId: string): void { this.db.prepare("DELETE FROM project_references WHERE project_id = ? AND entry_id = ?").run(projectId, entryId); }
   close(): void { this.db.close(); }

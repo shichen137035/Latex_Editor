@@ -124,10 +124,7 @@
 .directory-check { display: flex; justify-content: center; }
 .directory-check input { width: 15px; height: 15px; margin: 0; accent-color: var(--color-primary); cursor: pointer; }
 .directory-project-name { min-width: 0; display: flex; align-items: center; gap: 9px; }
-.directory-avatar { width: 34px; height: 34px; flex: 0 0 34px; display: grid; place-items: center; border-radius: 9px; color: var(--color-primary-strong); background: color-mix(in srgb, var(--color-primary) 14%, var(--color-bg-panel)); font-size: 13px; font-weight: 700; }
-.directory-project-row:nth-child(5n + 2) .directory-avatar { color: #17866c; background: color-mix(in srgb, #39c99c 18%, var(--color-bg-panel)); }
-.directory-project-row:nth-child(5n + 3) .directory-avatar { color: #6853ae; background: color-mix(in srgb, #8e74e8 16%, var(--color-bg-panel)); }
-.directory-project-row:nth-child(5n + 4) .directory-avatar { color: #b34d63; background: color-mix(in srgb, #ed7793 17%, var(--color-bg-panel)); }
+.directory-avatar { width: 34px; height: 34px; flex: 0 0 34px; display: grid; place-items: center; border-radius: 9px; color: var(--directory-avatar-foreground, var(--color-primary-strong)); background: color-mix(in srgb, var(--directory-avatar-background, var(--color-primary)) 86%, var(--color-bg-panel)); font-size: 13px; font-weight: 700; }
 .directory-name-text { min-width: 0; }
 .directory-name-text strong, .directory-name-text small { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .directory-name-text strong { color: var(--color-text-primary); font-size: 12px; font-weight: 650; }

@@ -40,6 +40,18 @@ const aiCopyPathLabels: Record<Locale, string> = {
   en: "Copy file path", ja: "ファイルパスをコピー", "zh-CN": "复制文件路径", "zh-TW": "複製檔案路徑", ko: "파일 경로 복사", fr: "Copier le chemin"
 };
 for (const [language, label] of Object.entries(aiCopyPathLabels)) catalogs[language as Locale]["ai.copyPath"] = label;
+const projectExportMessages: Record<Locale, string[]> = {
+  en: ["Export source archive (.zip)", "Export PDF", "Export main .tex file", "No main TeX file is configured.", "Export saved to:\n{{path}}", "PDF export failed. See the Problems panel for details."],
+  ja: ["ソース一式を ZIP でエクスポート", "PDF をエクスポート", "メイン .tex ファイルをエクスポート", "メインの TeX ファイルが設定されていません。", "エクスポートしました:\n{{path}}", "PDF の生成に失敗しました。問題パネルを確認してください。"],
+  "zh-CN": ["导出源码压缩包 (.zip)", "导出 PDF", "导出主 .tex 文件", "尚未设置主 TeX 文件。", "已导出到：\n{{path}}", "PDF 导出失败，请查看问题面板。"],
+  "zh-TW": ["匯出原始碼壓縮檔 (.zip)", "匯出 PDF", "匯出主要 .tex 檔案", "尚未設定主要 TeX 檔案。", "已匯出至：\n{{path}}", "PDF 匯出失敗，請查看問題面板。"],
+  ko: ["소스 압축 파일 내보내기 (.zip)", "PDF 내보내기", "주 .tex 파일 내보내기", "주 TeX 파일이 설정되지 않았습니다.", "내보냈습니다:\n{{path}}", "PDF 내보내기에 실패했습니다. 문제 패널을 확인하세요."],
+  fr: ["Exporter les sources (.zip)", "Exporter le PDF", "Exporter le fichier .tex principal", "Aucun fichier TeX principal n’est défini.", "Export enregistré ici :\n{{path}}", "L’export PDF a échoué. Consultez le panneau Problèmes."]
+};
+const projectExportKeys = ["export.sourceArchive", "export.pdf", "export.mainTex", "export.noMainTex", "export.saved", "export.pdfFailed"];
+for (const [language, labels] of Object.entries(projectExportMessages)) {
+  for (const [index, key] of projectExportKeys.entries()) catalogs[language as Locale][key!] = labels[index]!;
+}
 for (const catalog of Object.values(catalogs)) catalog["ai.chat"] = "Copilot";
 const historyMessages: Record<Locale, string[]> = {
   en: ["Conversations", "Close", "Search chats…", "No conversations found", "Today", "Yesterday", "Last 7 days", "Earlier", "Select {{title}}", "{{count}} messages", "Delete {{title}}", "Delete {{count}} conversations and their local AI changes?", "Cancel", "Deleting…", "Delete", "Select visible", "Delete selected ({{count}})"],
