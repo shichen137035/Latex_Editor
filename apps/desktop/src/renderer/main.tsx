@@ -5,6 +5,7 @@ import * as monaco from "monaco-editor";
 import EditorWorker from "monaco-editor/esm/vs/editor/editor.worker?worker";
 import JsonWorker from "monaco-editor/esm/vs/language/json/json.worker?worker";
 import { App } from "./App.js";
+import { formatLatexSource } from "./editor/latexFormatter.js";
 import { settings } from "./settings/service.js";
 import "./styles.css";
 import "./themes/light.css";
@@ -80,6 +81,13 @@ monaco.languages.setMonarchTokensProvider("latex", {
       [/\d+(?:\.\d+)?/, "number.math"],
       [/[^\\\n{}[\]]+/, "string.math"]
     ]
+  }
+});
+monaco.languages.registerDocumentFormattingEditProvider("latex", {
+  provideDocumentFormattingEdits(model, options) {
+    const source = model.getValue();
+    const formatted = formatLatexSource(source, options);
+    return formatted === source ? [] : [{ range: model.getFullModelRange(), text: formatted }];
   }
 });
 

@@ -15,7 +15,7 @@ type Section = SettingsSection;
 
 const projectSettingsBySection: Partial<Record<Section, PreferenceKey[]>> = {
   general: ["autoSave"],
-  editor: ["fontSize", "tabSize", "wordWrap", "autoPairSymbols", "confirmPreviewEdits"],
+  editor: ["fontSize", "tabSize", "wordWrap", "autoPairSymbols", "mathPreviewOnHover", "confirmPreviewEdits"],
   images: ["images"],
   tables: ["tables"],
   compiler: ["engine"],
@@ -289,7 +289,7 @@ export function SettingsDialog({ onClose, initial = "general" }: { onClose(): vo
   const row = (key: PreferenceKey, label: string, options?: Array<[string, string]>, numeric = false) => {
     const allowed = scope === "global" || projectPreferenceKeys.includes(key);
     const value = read(key);
-    const hint = key === "hideBuildArtifacts" ? t("settings.hideBuildArtifactsHint") : key === "documentWordCompletion" ? t("settings.documentWordCompletionHint") : key === "autoPairSymbols" ? t("settings.autoPairSymbolsHint") : key === "autoEnvironmentLabels" ? t("settings.autoEnvironmentLabelsHint") : key === "confirmPreviewEdits" ? t("settings.confirmPreviewEditsHint") : key === "warnIncompatibleEnvironmentConversion" ? t("settings.warnIncompatibleEnvironmentConversionHint") : undefined;
+    const hint = key === "hideBuildArtifacts" ? t("settings.hideBuildArtifactsHint") : key === "documentWordCompletion" ? t("settings.documentWordCompletionHint") : key === "autoPairSymbols" ? t("settings.autoPairSymbolsHint") : key === "mathPreviewOnHover" ? t("settings.mathPreviewOnHoverHint") : key === "autoEnvironmentLabels" ? t("settings.autoEnvironmentLabelsHint") : key === "confirmPreviewEdits" ? t("settings.confirmPreviewEditsHint") : key === "warnIncompatibleEnvironmentConversion" ? t("settings.warnIncompatibleEnvironmentConversionHint") : undefined;
     return <label className="preference-row" key={key}><span><strong>{t(label)}</strong>{hint && <small>{hint}</small>}{scope === "project" && !(key in store.snapshot().project) && <small>{t(allowed ? "settings.inherited" : "settings.globalOnly")}</small>}</span>
       {options ? <select data-setting={key} disabled={!allowed} value={String(value)} onChange={(event) => void store.set(key, numeric ? Number(event.target.value) : event.target.value as never, scope)}>{options.map(([id, labelKey]) => <option key={id} value={id}>{t(labelKey)}</option>)}</select> : numeric ? <input data-setting={key} disabled={!allowed} type="number" min={10} max={32} value={Number(value)} onChange={(event) => { const next = Number(event.target.value); if (next >= 10 && next <= 32) void store.set(key, next, scope); }}/> : <input data-setting={key} disabled={!allowed} type="checkbox" checked={Boolean(value)} onChange={(event) => void store.set(key, event.target.checked, scope)}/>}
       <button type="button" disabled={!allowed} onClick={() => void store.reset(key, scope)}>{t("settings.reset")}</button></label>;
@@ -309,7 +309,7 @@ export function SettingsDialog({ onClose, initial = "general" }: { onClose(): vo
   const resetSection = () => void resetKeys(sectionProjectKeys.length && scope === "project" ? sectionProjectKeys : Object.keys(preferenceDefaults).filter((key) => {
     if (section === "general") return ["autoSave", "restoreProject", "maximize"].includes(key);
     if (section === "appearance") return ["theme", "themeDirectory"].includes(key);
-    if (section === "editor") return ["fontSize", "tabSize", "wordWrap", "autoPairSymbols", "documentWordCompletion", "autoEnvironmentLabels", "confirmPreviewEdits", "warnIncompatibleEnvironmentConversion"].includes(key);
+    if (section === "editor") return ["fontSize", "tabSize", "wordWrap", "autoPairSymbols", "mathPreviewOnHover", "documentWordCompletion", "autoEnvironmentLabels", "confirmPreviewEdits", "warnIncompatibleEnvironmentConversion"].includes(key);
     if (section === "language") return key === "locale";
     if (section === "searchFilter") return key === "visibleFilterGroups";
     if (section === "compiler") return key === "engine";
@@ -328,7 +328,7 @@ export function SettingsDialog({ onClose, initial = "general" }: { onClose(): vo
       {section === "general" && <><h2>{t("settings.general")}</h2>{row("autoSave", "settings.autoSave", [["off", "settings.off"], ["afterDelay", "settings.afterDelay"]])}{row("hideBuildArtifacts", "settings.hideBuildArtifacts")}{row("restoreProject", "settings.restore")}{row("maximize", "settings.maximize")}</>}
       {section === "appearance" && <ThemeSettingsPanel store={store}/>} 
       {section === "language" && row("locale", "settings.language", [["en", "settings.localeEnglish"], ["ja", "settings.localeJapanese"], ["zh-CN", "settings.localeSimplifiedChinese"], ["zh-TW", "settings.localeTraditionalChinese"], ["ko", "settings.localeKorean"], ["fr", "settings.localeFrench"]])}
-      {section === "editor" && <>{row("fontSize", "settings.fontSize", undefined, true)}{row("wordWrap", "settings.wordWrap")}{row("tabSize", "settings.tabSize", [["2", "2"], ["4", "4"], ["8", "8"]], true)}{row("autoPairSymbols", "settings.autoPairSymbols")}{row("documentWordCompletion", "settings.documentWordCompletion")}{row("autoEnvironmentLabels", "settings.autoEnvironmentLabels")}{row("confirmPreviewEdits", "settings.confirmPreviewEdits")}{row("warnIncompatibleEnvironmentConversion", "settings.warnIncompatibleEnvironmentConversion")}</>}
+      {section === "editor" && <>{row("fontSize", "settings.fontSize", undefined, true)}{row("wordWrap", "settings.wordWrap")}{row("tabSize", "settings.tabSize", [["2", "2"], ["4", "4"], ["8", "8"]], true)}{row("autoPairSymbols", "settings.autoPairSymbols")}{row("mathPreviewOnHover", "settings.mathPreviewOnHover")}{row("documentWordCompletion", "settings.documentWordCompletion")}{row("autoEnvironmentLabels", "settings.autoEnvironmentLabels")}{row("confirmPreviewEdits", "settings.confirmPreviewEdits")}{row("warnIncompatibleEnvironmentConversion", "settings.warnIncompatibleEnvironmentConversion")}</>}
       {section === "images" && <ImageSettingsPanel store={store} scope={scope}/>}
       {section === "tables" && <TableSettingsPanel store={store} scope={scope}/>}
       {section === "searchFilter" && <><h2>{t("settings.searchFilter")}</h2><p>{t("settings.filterGroupsHint")}</p>{(["blockType", "location", "file", "properties"] as const).map((group) => { const visible = store.global("visibleFilterGroups"); return <label className="preference-row" key={group}><span><strong>{t(`filter.${group}`)}</strong></span><input type="checkbox" checked={visible.includes(group)} onChange={(event) => void store.set("visibleFilterGroups", event.target.checked ? [...visible, group] : visible.filter((item) => item !== group))}/><button type="button" onClick={() => void store.reset("visibleFilterGroups")}>{t("settings.reset")}</button></label>; })}</>}

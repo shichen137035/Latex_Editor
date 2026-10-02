@@ -32,6 +32,7 @@ import { installEditorContextActions } from "./editorContextActions.js";
 import { editorThemeName } from "../themes/runtime.js";
 import { boundaryRepairCandidates, normalizeDocumentSelection, type BoundaryRepairCandidate, type DocumentSelection } from "../custom-blocks/selection.js";
 import { installSymbolPairing } from "../editor/symbolPairing.js";
+import { formatLatexSource } from "../editor/latexFormatter.js";
 import { RelationBrowser } from "../relations/RelationBrowser.js";
 import { RelationInspector } from "../relations/RelationInspector.js";
 import { RelationGraphView } from "../relations/RelationGraphView.js";
@@ -95,9 +96,13 @@ export function Workbench({ project, projects, environments, onHome, onSwitch, o
   const [sidebarMode, setSidebarMode] = useState<SidebarMode>("files");
   const [tree, setTree] = useState<ProjectTreeNode[]>([]);
   const [treeFilter, setTreeFilter] = useState("");
+  const [treeSortBy, setTreeSortBy] = useState<"type" | "name">("type");
+  const [treeSortDirection, setTreeSortDirection] = useState<"asc" | "desc">("asc");
   const [outlineMode, setOutlineMode] = useState<"outline" | "relations">("outline");
   const [tabs, setTabs] = useState<EditorTab[]>([]);
+  const [importingProjectEntries, setImportingProjectEntries] = useState(false);
   const tabsRef = useRef(tabs);
+  const openingFilesRef = useRef(new Map<string, Promise<void>>());
   const savedContents = useRef(new Map<string, string>());
   const editHistory = useRef(new EditHistory());
   const [, refreshHistoryUi] = useState(0);
@@ -153,6 +158,9 @@ export function Workbench({ project, projects, environments, onHome, onSwitch, o
   const [projectMathSources, setProjectMathSources] = useState<ProjectMathSource[]>([]);
   const [projectSearchDocuments, setProjectSearchDocuments] = useState<SearchDocument[]>([]);
   const [sourceMathPreview, setSourceMathPreview] = useState<SourceMathPreview>();
+  const clearHoverMathPreviewRef = useRef<() => void>(() => undefined);
+  const mathPreviewOnHover = store.get("mathPreviewOnHover");
+  useEffect(() => { if (!mathPreviewOnHover) clearHoverMathPreviewRef.current(); }, [mathPreviewOnHover]);
   const [searchQuery, setSearchQuery] = useState<SearchQuery>(defaultSearchQuery);
   const [replacement, setReplacement] = useState("");
   const [replaceOpen, setReplaceOpen] = useState(false);
@@ -422,6 +430,63 @@ export function Workbench({ project, projects, environments, onHome, onSwitch, o
       await refreshTree();
     } catch (error) { window.alert(error instanceof Error ? error.message : String(error)); }
   };
+  const updateMovedEntryReferences = async (from: string, to: string) => {
+    const movedPath = (path: string) => path === from || path.startsWith(from + "/") ? to + path.slice(from.length) : path;
+    editHistory.current.renameFile(from, to);
+    savedContents.current = new Map([...savedContents.current].map(([path, content]) => [movedPath(path), content]));
+    setTabs((current) => current.map((tab) => ({ ...tab, path: movedPath(tab.path) })));
+    setActivePath((value) => value ? movedPath(value) : value);
+    const nextMainFile = project.mainFile ? movedPath(project.mainFile) : undefined;
+    if (api && project.mainFile && nextMainFile && nextMainFile !== project.mainFile && nextMainFile.toLocaleLowerCase().endsWith(".tex")) {
+      onSwitch(await api.projects.setMainFile(project.id, nextMainFile));
+    }
+  };
+  const moveEntry = async (sourcePath: string, destinationDirectory: string) => {
+    if (!api || !project.writable) return;
+    const name = sourcePath.split("/").at(-1);
+    if (!name || destinationDirectory === sourcePath || destinationDirectory.startsWith(sourcePath + "/")) return;
+    const destinationPath = pathJoin(destinationDirectory, name);
+    if (destinationPath === sourcePath) return;
+    try {
+      await api.files.rename(project.id, sourcePath, destinationPath);
+      await updateMovedEntryReferences(sourcePath, destinationPath);
+      await refreshTree();
+    } catch (error) { window.alert(error instanceof Error ? error.message : String(error)); }
+  };
+  const importFromComputer = async (kind: "file" | "folder") => {
+    if (!api || importingProjectEntries || !project.writable) return;
+    setImportingProjectEntries(true);
+    let importAttempted = false;
+    try {
+      const sourcePaths = kind === "file" ? await api.dialogs.pickProjectFiles() : await api.dialogs.pickProjectFolders();
+      if (!sourcePaths.length) return;
+      const currentTree = await api.files.tree(project.id);
+      setTree(currentTree);
+      const names = new Set(currentTree.map((node) => node.name.normalize("NFC").toLocaleLowerCase("en-US")));
+      const destinations = sourcePaths.map((sourcePath) => sourcePath.replace(/[\\/]+$/, "").split(/[\\/]/).at(-1) ?? "");
+      for (const name of destinations) {
+        const key = name.normalize("NFC").toLocaleLowerCase("en-US");
+        if (!name || names.has(key)) throw new Error(t("files.importConflict", { name }));
+        names.add(key);
+      }
+      for (const [index, sourcePath] of sourcePaths.entries()) {
+        const destination = destinations[index];
+        if (!destination) continue;
+        importAttempted = true;
+        await api.files.import(project.id, sourcePath, destination);
+      }
+      await refreshTree();
+      if (kind === "file" && sourcePaths.length === 1 && destinations[0]) {
+        setLayout((value) => value.mode === "single" ? { ...value, singlePane: "source" } : { ...value, leftPane: "source" });
+        await openFile(destinations[0]);
+      }
+    } catch (error) {
+      if (importAttempted) await refreshTree().catch(() => undefined);
+      window.alert(error instanceof Error ? error.message : String(error));
+    } finally {
+      setImportingProjectEntries(false);
+    }
+  };
   const renameEntry = async () => {
     if (!api || !fileContext?.path) return;
     const currentPath = fileContext.path;
@@ -431,14 +496,7 @@ export function Workbench({ project, projects, environments, onHome, onSwitch, o
     try {
       const nextPath = pathJoin(pathParent(currentPath), newName);
       await api.files.rename(project.id, currentPath, nextPath);
-      const movedPath = (path: string) => path === currentPath || path.startsWith(currentPath + "/") ? nextPath + path.slice(currentPath.length) : path;
-      editHistory.current.renameFile(currentPath, nextPath);
-      savedContents.current = new Map([...savedContents.current].map(([path, content]) => [movedPath(path), content]));
-      setTabs((current) => current.map((tab) => ({ ...tab, path: movedPath(tab.path) })));
-      setActivePath((value) => value ? movedPath(value) : value);
-      if (project.mainFile && movedPath(project.mainFile) !== project.mainFile && movedPath(project.mainFile).toLowerCase().endsWith(".tex")) {
-        onSwitch(await api.projects.setMainFile(project.id, movedPath(project.mainFile)));
-      }
+      await updateMovedEntryReferences(currentPath, nextPath);
       await refreshTree();
     }
     catch (error) { window.alert(error instanceof Error ? error.message : String(error)); }
@@ -530,11 +588,32 @@ export function Workbench({ project, projects, environments, onHome, onSwitch, o
 
   const openFile = async (path: string) => {
     setAiDiffFile(undefined);
-    const existing = tabs.find((tab) => tab.path === path);
+    const existing = tabsRef.current.find((tab) => tab.path === path);
     if (existing) { setActivePath(path); return; }
     if (!api) return;
-    try { const file = await api.files.read(project.id, path); savedContents.current.set(path, file.content); setTabs((current) => [...current, { path, content: file.content, dirty: false }]); setActivePath(path); setSaveState("saved"); }
-    catch { /* Binary and unsupported files stay unopened until dedicated viewers exist. */ }
+    const opening = openingFilesRef.current.get(path);
+    if (opening) {
+      await opening;
+      if (tabsRef.current.some((tab) => tab.path === path)) setActivePath(path);
+      return;
+    }
+    const pending = (async () => {
+      try {
+        const file = await api.files.read(project.id, path);
+        const alreadyOpened = tabsRef.current.some((tab) => tab.path === path);
+        if (!alreadyOpened) {
+          const nextTabs = [...tabsRef.current, { path, content: file.content, dirty: false }];
+          tabsRef.current = nextTabs;
+          savedContents.current.set(path, file.content);
+          setTabs(nextTabs);
+          setSaveState("saved");
+        }
+        setActivePath(path);
+      } catch { /* Binary and unsupported files stay unopened until dedicated viewers exist. */ }
+    })();
+    openingFilesRef.current.set(path, pending);
+    try { await pending; }
+    finally { if (openingFilesRef.current.get(path) === pending) openingFilesRef.current.delete(path); }
   };
 
   const forwardSyncToPdf = async (path: string, line: number, column = 1) => {
@@ -1228,7 +1307,18 @@ export function Workbench({ project, projects, environments, onHome, onSwitch, o
     let mathIndex = new MathNodeIndex([]);
     let cursorMathActive = false;
     let mathTimer: number | undefined;
+    let pendingMathKind: SourceMathPreview["kind"] | undefined;
     let activeMath: { source: string; displayMode: boolean; kind: SourceMathPreview["kind"]; start: number; end: number } | undefined;
+    const clearHoverMathPreview = () => {
+      if (pendingMathKind === "source-hover") {
+        if (mathTimer !== undefined) window.clearTimeout(mathTimer);
+        mathTimer = undefined;
+        pendingMathKind = undefined;
+      }
+      if (activeMath?.kind === "source-hover") activeMath = undefined;
+      setSourceMathPreview((current) => current?.kind === "source-hover" ? undefined : current);
+    };
+    clearHoverMathPreviewRef.current = clearHoverMathPreview;
     const currentMathIndex = () => {
       const model = editor.getModel();
       if (model && model.getVersionId() !== indexedVersion) {
@@ -1253,11 +1343,16 @@ export function Workbench({ project, projects, environments, onHome, onSwitch, o
       return new DOMRect(left, top, 1, Math.max(1, bottom - top));
     };
     const refreshMathPreview = () => {
+      if (activeMath?.kind === "source-hover" && !store.get("mathPreviewOnHover")) {
+        clearHoverMathPreview();
+        return;
+      }
       if (!activeMath) return;
       const anchor = mathAnchor(activeMath.start, activeMath.end);
       setSourceMathPreview(anchor ? { source: activeMath.source, displayMode: activeMath.displayMode, anchor, kind: activeMath.kind } : undefined);
     };
     const scheduleMathPreview = (position: { lineNumber: number; column: number }, kind: SourceMathPreview["kind"]): boolean => {
+      if (kind === "source-hover" && !store.get("mathPreviewOnHover")) return false;
       const model = editor.getModel();
       if (!model || !/\.tex$/i.test(activePathRef.current ?? "")) return false;
       const offset = model.getOffsetAt(position);
@@ -1266,9 +1361,16 @@ export function Workbench({ project, projects, environments, onHome, onSwitch, o
       const extracted = extractMathExpression(model.getValue().slice(mathNode.start, mathNode.end));
       if (mathTimer !== undefined) window.clearTimeout(mathTimer);
       mathTimer = window.setTimeout(() => {
+        mathTimer = undefined;
+        pendingMathKind = undefined;
+        if (kind === "source-hover" && !store.get("mathPreviewOnHover")) {
+          clearHoverMathPreview();
+          return;
+        }
         activeMath = { source: extracted.expression, displayMode: extracted.displayMode, kind, start: mathNode.start, end: mathNode.end };
         refreshMathPreview();
       }, 75);
+      pendingMathKind = kind;
       return true;
     };
     const updateCursorMath = (position: { lineNumber: number; column: number }) => {
@@ -1360,19 +1462,16 @@ export function Workbench({ project, projects, environments, onHome, onSwitch, o
     const mouseMove = editor.onMouseMove((event) => {
       hoverPosition = event.target.position ?? undefined;
       setReferenceCursor(Boolean(hoverPosition && modifierPressed(event.event) && referenceAtPosition(hoverPosition)));
-      if (!cursorMathActive && hoverPosition && !scheduleMathPreview(hoverPosition, "source-hover")) {
-        if (activeMath?.kind === "source-hover") activeMath = undefined;
-        setSourceMathPreview((current) => current?.kind === "source-hover" ? undefined : current);
-      }
+      if (!cursorMathActive && hoverPosition && !scheduleMathPreview(hoverPosition, "source-hover")) clearHoverMathPreview();
     });
-    const mouseLeave = editor.onMouseLeave(() => { hoverPosition = undefined; setReferenceCursor(false); if (!cursorMathActive) { if (activeMath?.kind === "source-hover") activeMath = undefined; setSourceMathPreview(undefined); } });
+    const mouseLeave = editor.onMouseLeave(() => { hoverPosition = undefined; setReferenceCursor(false); if (!cursorMathActive) clearHoverMathPreview(); });
     const modifierChange = (event: KeyboardEvent) => { if (hoverPosition) setReferenceCursor(Boolean(modifierPressed(event) && referenceAtPosition(hoverPosition))); };
     window.addEventListener("keydown", modifierChange);
     window.addEventListener("keyup", modifierChange);
     const initialPosition = editor.getPosition();
     if (initialPosition) updateCursorMath(initialPosition);
     const contextActions = installEditorContextActions(editor, (line, column) => { if (activePathRef.current) void forwardSyncToPdf(activePathRef.current, line, column); });
-    referenceMouseListener.current = { dispose: () => { if (mathTimer !== undefined) window.clearTimeout(mathTimer); activeMath = undefined; blockAction.dispose(); contextActions.dispose(); symbolPairingListener.current?.dispose(); symbolPairingListener.current = null; cursorListener.dispose(); selectionListener.dispose(); contentListener.dispose(); scrollListener.dispose(); layoutListener.dispose(); blurListener.dispose(); mouseDown.dispose(); mouseMove.dispose(); mouseLeave.dispose(); window.removeEventListener("keydown", modifierChange); window.removeEventListener("keyup", modifierChange); setReferenceCursor(false); setSourceMathPreview(undefined); } };
+    referenceMouseListener.current = { dispose: () => { if (mathTimer !== undefined) window.clearTimeout(mathTimer); activeMath = undefined; if (clearHoverMathPreviewRef.current === clearHoverMathPreview) clearHoverMathPreviewRef.current = () => undefined; blockAction.dispose(); contextActions.dispose(); symbolPairingListener.current?.dispose(); symbolPairingListener.current = null; cursorListener.dispose(); selectionListener.dispose(); contentListener.dispose(); scrollListener.dispose(); layoutListener.dispose(); blurListener.dispose(); mouseDown.dispose(); mouseMove.dispose(); mouseLeave.dispose(); window.removeEventListener("keydown", modifierChange); window.removeEventListener("keyup", modifierChange); setReferenceCursor(false); setSourceMathPreview(undefined); } };
     if (api) {
       completionController.current = new CompletionController({ monaco, api, projectId: project.id, getTree: () => treeRef.current, getCurrentPath: () => activePathRef.current, getEnvironments: () => environmentsRef.current, isDocumentWordCompletionEnabled: () => store.get("documentWordCompletion") });
       spellCheckController.current = new SpellCheckController({ editor, api, getCurrentPath: () => activePathRef.current, getMode: () => store.get("spellCheckMode"), getManualLanguage: () => store.get("spellCheckLanguage"), onDetectedLanguage: setDetectedSpellLanguage, onContextMenu: setSpellContextMenu });
@@ -1598,7 +1697,7 @@ export function Workbench({ project, projects, environments, onHome, onSwitch, o
   const spellLanguages = [...new Set(["en-US", ...(spellStatus?.availableLanguages ?? [])])];
   const spellStatusControl = <div className="spell-status-control"><button onClick={() => setSpellMenuOpen((value) => !value)}>{spellMode === "disabled" ? t("spell.status.off") : spellMode === "manual" ? t("spell.status.manual", { language: spellLanguageLabel(spellDisplayLanguage) }) : t("spell.status.auto", { language: spellLanguageLabel(spellDisplayLanguage) })}</button>{spellMenuOpen && <div className="spell-status-menu"><button onClick={() => void configureSpell("auto", detectedSpellLanguage)}>{spellMode === "auto" && "✓ "}{t("spell.menu.auto", { language: spellLanguageLabel(detectedSpellLanguage) })}</button>{spellLanguages.map((language) => <button key={language} onClick={() => void configureSpell("manual", language)}>{spellMode === "manual" && spellManualLanguage === language && "✓ "}{spellLanguageLabel(language)}</button>)}<div className="menu-divider"/><button onClick={() => void configureSpell("disabled", spellDisplayLanguage)}>{spellMode === "disabled" && "✓ "}{t("spell.menu.disable")}</button></div>}</div>;
   const menuItems = (menu: Exclude<MenuName, "projects">) => {
-    if (menu === "file") return [{ label: t("menu.newFile"), action: () => void createEntry(false, "") }, { label: t("menu.openFile"), disabled: true }, { label: t("menu.save"), action: () => { commands.execute("file.save"); } }, { label: t("menu.saveAll"), action: () => { commands.execute("file.saveAll"); } }, { label: "", divider: true }, { label: t("export.sourceArchive"), action: () => void exportSourceArchive() }, { label: t("export.pdf"), action: () => void exportPdf() }, { label: t("export.mainTex"), action: () => void exportMainTex() }, { label: "", divider: true }, { label: t("menu.closeProject"), action: onHome }];
+    if (menu === "file") return [{ label: t("menu.newFile"), action: () => void createEntry(false, "") }, { label: t("menu.openFile"), disabled: importingProjectEntries || !project.writable, action: () => void importFromComputer("file") }, { label: t("menu.openFolder"), disabled: importingProjectEntries || !project.writable, action: () => void importFromComputer("folder") }, { label: t("menu.save"), action: () => { commands.execute("file.save"); } }, { label: t("menu.saveAll"), action: () => { commands.execute("file.saveAll"); } }, { label: "", divider: true }, { label: t("export.sourceArchive"), action: () => void exportSourceArchive() }, { label: t("export.pdf"), action: () => void exportPdf() }, { label: t("export.mainTex"), action: () => void exportMainTex() }, { label: "", divider: true }, { label: t("menu.closeProject"), action: onHome }];
     if (menu === "edit") return [{ label: t("menu.undo"), action: () => { commands.execute("edit.undo"); } }, { label: t("menu.redo"), action: () => { commands.execute("edit.redo"); } }, { label: t("menu.find"), action: () => { commands.execute("edit.find"); } }, { label: t("menu.replace"), action: () => { commands.execute("edit.replace"); } }];
     if (menu === "view") return [{ label: t("menu.source"), action: () => { if ((layout.mode === "single" ? layout.singlePane === "preview" : layout.leftPane === "preview")) pendingVisualToCodeAnchor.current = previewToCodeAnchor(); setLayout((value) => ({ ...value, mode: "single", singlePane: "source" })); } }, { label: t("menu.preview"), action: () => setLayout((value) => ({ ...value, mode: "single", singlePane: "preview" })) }, { label: t("menu.pdf"), action: () => setLayout((value) => ({ ...value, mode: "single", singlePane: "pdf" })) }, { label: "", divider: true }, { label: t("menu.single"), action: () => setLayout((value) => ({ ...value, mode: "single" })) }, { label: t("menu.split"), action: () => setLayout((value) => ({ ...value, mode: "split" })) }];
     return [{ label: t("menu.automaticHistory"), action: () => { setBottomTab("versions"); setBottomVisible(true); } }, { label: t("menu.namedVersions"), action: () => { setBottomTab("versions"); setBottomVisible(true); } }];
@@ -1610,6 +1709,19 @@ export function Workbench({ project, projects, environments, onHome, onSwitch, o
     setLayout((value) => single ? { ...value, singlePane: target } : { ...value, leftPane: target });
   };
   const viewSwitch = (active: "source" | "preview", single = false) => <div className="view-switch"><button className={active === "source" ? "active" : ""} onClick={() => switchTextView("source", single)}>{t("menu.code")}</button><button className={active === "preview" ? "active" : ""} onClick={() => switchTextView("preview", single)}>{t("menu.visual")}</button></div>;
+  const isLatexSource = !!activeTab && !/\.(?:bib|json)$/i.test(activeTab.path);
+  const formatSource = () => {
+    if (!activeTab || !isLatexSource) return;
+    const editor = editorRef.current;
+    const model = editor?.getModel();
+    if (editor?.getDomNode()?.isConnected && model?.getLanguageId() === "latex" && model.getValue() === activeTab.content) {
+      editor.trigger("texweave", "editor.action.formatDocument", {});
+      return;
+    }
+    const formatted = formatLatexSource(activeTab.content, { insertSpaces: true, tabSize: store.get("tabSize") });
+    if (formatted !== activeTab.content) setEditorContent(formatted);
+  };
+  const formatSourceButton = () => isLatexSource ? <button key="format-source" type="button" title={t("editor.formatSourceHint")} aria-label={t("editor.formatSource")} onClick={formatSource}><b>¶</b><span>{t("editor.formatSource")}</span></button> : null;
   const blockButtonDisabled = blockCreationAvailability.kind === "none" || blockCreationAvailability.kind === "checking" || blockCreationAvailability.kind === "invalid";
   const blockButton = <button key="custom-block" className={`custom-block-button ${blockCreationAvailability.kind === "repair" ? "warning" : ""} ${blockCreationAvailability.kind === "edit" ? "editing" : ""}`} disabled={blockButtonDisabled} title={blockButtonDisabled ? t("block.selectRange") : t("block.createHint", { shortcut: displayBinding(bindings()["block.createFromSelection"] ?? "") })} onClick={() => {
     if (blockCreationAvailability.kind === "edit") { setInspectorBlock(blockCreationAvailability.block); return; }
@@ -1620,8 +1732,8 @@ export function Workbench({ project, projects, environments, onHome, onSwitch, o
   const editorQuickActions = isBibFile ? [] : quickActions;
   const sourceTabs = <div className="editor-tabs">{tabs.map((tab) => <button className={tab.path === activePath ? "active" : ""} key={tab.path} onClick={() => { setAiDiffFile(undefined); setActivePath(tab.path); }}><span>{tab.path.split("/").at(-1)}</span>{tab.dirty && <i/>}<span className="tab-close" title={t("editor.closeTab")} onClick={(event) => { event.stopPropagation(); closeTab(tab.path); }}><Icon name="close"/></span></button>)}</div>;
   const sourceEditor = <div className="editor-surface" onDragOver={(event) => { if (event.dataTransfer.types.includes("Files")) event.preventDefault(); }} onDrop={dropImages}>{aiReviewFile ? <div className="ai-inline-diff"><div className="ai-inline-diff-heading"><strong>{t("ai.inlineDiffTitle")}</strong><span>{aiReviewFile.path}</span><button className="ai-diff-close" onClick={() => setAiDiffFile(undefined)}>{t("ai.closeDiff")}</button></div><DiffEditor height="calc(100% - 34px)" language={aiReviewFile.path.endsWith(".bib") ? "bibtex" : aiReviewFile.path.endsWith(".json") ? "json" : "latex"} original={aiReviewContent?.original ?? ""} modified={aiReviewContent?.modified ?? ""} theme={editorThemeName(store.get("theme"))} options={{ readOnly: true, originalEditable: false, renderSideBySide: true, automaticLayout: true, minimap: { enabled: false }, fontSize: store.get("fontSize"), lineHeight: Math.round(store.get("fontSize") * 1.5), wordWrap: store.get("wordWrap") ? "on" : "off", scrollBeyondLastLine: false }} /></div> : activeTab ? <Editor height="100%" language={activeTab.path.endsWith(".bib") ? "bibtex" : activeTab.path.endsWith(".json") ? "json" : "latex"} value={activeTab.content} onChange={(value, event) => setEditorContent(value ?? "", event.changes.map((change) => ({ start: change.rangeOffset, end: change.rangeOffset + change.rangeLength, newLength: change.text.length })))} onMount={onEditorMount} theme={editorThemeName(store.get("theme"))} options={{ minimap: { enabled: true }, fontSize: store.get("fontSize"), tabSize: store.get("tabSize"), lineHeight: Math.round(store.get("fontSize") * 1.5), wordWrap: store.get("wordWrap") ? "on" : "off", quickSuggestions: { other: true, comments: true, strings: true }, suggestOnTriggerCharacters: true, autoClosingBrackets: "never", autoClosingQuotes: "always", autoSurround: "never", automaticLayout: true, padding: { top: 14 }, renderWhitespace: "selection", scrollBeyondLastLine: false }} /> : <div className="editor-empty"><Logo/><p>{t("editor.noFile")}</p></div>}</div>;
-  const sourceToolbar = <div className="latex-toolbar">{editorQuickActions}<div className="toolbar-spacer"/>{viewSwitch("source", layout.mode === "single")}</div>;
-  const previewToolbar = <div className="latex-toolbar">{editorQuickActions}<div className="toolbar-spacer"/>{viewSwitch("preview", layout.mode === "single")}</div>;
+  const sourceToolbar = <div className="latex-toolbar">{editorQuickActions}{formatSourceButton()}<div className="toolbar-spacer"/>{viewSwitch("source", layout.mode === "single")}</div>;
+  const previewToolbar = <div className="latex-toolbar">{editorQuickActions}{formatSourceButton()}<div className="toolbar-spacer"/>{viewSwitch("preview", layout.mode === "single")}</div>;
   const enginePicker = <label className="engine-picker" title={t("settings.engine")}><span>{t("build.engine")}</span><select aria-label={t("settings.engine")} value={store.get("engine")} onChange={(event) => void store.set("engine", event.target.value as "pdflatex" | "xelatex" | "lualatex", "project")}><option value="pdflatex">pdfLaTeX</option><option value="xelatex">XeLaTeX</option><option value="lualatex">LuaLaTeX</option></select></label>;
   const outputToolbar = <div className="output-toolbar"><button className="compile-button" onClick={() => { commands.execute("latex.compile"); }} disabled={compileState === "running"}><Icon name="play"/><span>{t(compileState === "running" ? "build.compiling" : "build.compile")}</span></button>{enginePicker}<button onClick={() => { setBottomTab("compileLog"); setBottomVisible(true); }}>{t("build.log")}</button><div className="toolbar-spacer"/><button className={layout.rightPane === "pdf" ? "active" : ""} onClick={() => setLayout((value) => ({ ...value, rightPane: value.rightPane === "pdf" ? "preview" : "pdf" }))}>{layout.rightPane === "pdf" ? t("menu.preview") : t("menu.pdf")}</button></div>;
   const sourcePaneContent = <section className="work-pane source-pane">{sourceTabs}{sourceEditor}</section>;
@@ -1638,12 +1750,12 @@ export function Workbench({ project, projects, environments, onHome, onSwitch, o
     setLayout((value) => value.mode === "single" ? { ...value, singlePane: "source" } : { ...value, leftPane: "source" });
     if (filePath !== activePath) void openFile(filePath);
   }} /> : <PreviewPane {...anchoredPreviewProps}/>;
-  const previewContent = <section className="work-pane" onDragOver={(event) => { if (event.dataTransfer.types.includes("Files")) event.preventDefault(); }} onDrop={dropImages}>{bibPreview}</section>;
-  const previewPane = <section className="work-pane" onDragOver={(event) => { if (event.dataTransfer.types.includes("Files")) event.preventDefault(); }} onDrop={dropImages}>{previewToolbar}{bibPreview}</section>;
+  const previewContent = <section className="work-pane" onDragOver={(event) => { if (event.dataTransfer.types.includes("Files")) event.preventDefault(); }} onDrop={dropImages}>{sourceTabs}{bibPreview}</section>;
+  const previewPane = <section className="work-pane" onDragOver={(event) => { if (event.dataTransfer.types.includes("Files")) event.preventDefault(); }} onDrop={dropImages}>{sourceTabs}{previewToolbar}{bibPreview}</section>;
   const secondaryContent = <section className="work-pane output-pane"><Placeholder type={layout.rightPane} pdfDataUrl={pdfDataUrl} pdfTarget={pdfTarget} onPdfInteract={() => setPdfTarget(undefined)} onPdfDoubleClick={(page, x, y) => void reverseSyncFromPdf(page, x, y)}/></section>;
   const singlePane = layout.singlePane === "source" ? sourcePane : layout.singlePane === "preview" ? previewPane : <section className="work-pane single-output"><div className="output-toolbar"><div className="view-switch"><button onClick={() => setLayout((value) => ({ ...value, singlePane: "source" }))}>{t("menu.code")}</button><button onClick={() => setLayout((value) => ({ ...value, singlePane: "preview" }))}>{t("menu.visual")}</button><button className="active">{t("menu.pdf")}</button></div><div className="toolbar-spacer"/><button className="compile-button" onClick={() => { commands.execute("latex.compile"); }}><Icon name="play"/>{t("build.compile")}</button></div><Placeholder type="pdf" pdfDataUrl={pdfDataUrl} pdfTarget={pdfTarget} onPdfInteract={() => setPdfTarget(undefined)} onPdfDoubleClick={(page, x, y) => void reverseSyncFromPdf(page, x, y)}/></section>;
   const splitLeftContent = layout.leftPane === "preview" ? previewContent : sourcePaneContent;
-  const splitToolbar = <div className="split-toolbar"><div className="split-toolbar-left latex-toolbar">{editorQuickActions}<div className="toolbar-spacer"/>{viewSwitch(layout.leftPane)}</div><div className="split-toolbar-right">{outputToolbar}</div></div>;
+  const splitToolbar = <div className="split-toolbar"><div className="split-toolbar-left latex-toolbar">{editorQuickActions}{formatSourceButton()}<div className="toolbar-spacer"/>{viewSwitch(layout.leftPane)}</div><div className="split-toolbar-right">{outputToolbar}</div></div>;
 
   return <div className="workbench" data-theme={store.get("theme")}>
     {deleteRequest && <div className="modal-backdrop"><section className="modal-card" role="dialog" aria-label={t("files.deleteTitle")}>
@@ -1658,7 +1770,7 @@ export function Workbench({ project, projects, environments, onHome, onSwitch, o
     {relationGraphOpen && relationNeighborhood && createPortal(<RelationGraphView snapshot={blockSnapshot ?? emptyBlockSnapshot} neighborhood={relationNeighborhood} direction={relationDirection} depth={relationDepth} onDirection={setRelationDirection} onDepth={setRelationDepth} onFocus={(id) => { focusRelationBlock(id); setRelationGraphFocusId(id); }} onLocate={(id) => { setRelationGraphOpen(false); void locateRelationBlock(id); }} onClose={() => setRelationGraphOpen(false)}/>, document.body)}
     <header className="workbench-topbar" ref={workbenchRef}><button className="logo-button" onClick={onHome} title={t("project.directory")}><Logo/><span>{t("app.name")}</span></button><nav className="app-menus">{(["file", "edit", "view", "history"] as const).map((menu) => <div className="menu-anchor" key={menu}><button onMouseDown={(event) => { if (menu === "edit") event.preventDefault(); }} onClick={() => setActiveMenu(activeMenu === menu ? undefined : menu)}>{t(`menu.${menu}` as MessageKey)}</button>{activeMenu === menu && <Menu items={menuItems(menu)} onClose={() => setActiveMenu(undefined)}/>}</div>)}</nav><div className="project-switcher menu-anchor"><button onClick={() => setActiveMenu(activeMenu === "projects" ? undefined : "projects")}><strong>{project.name}</strong><Icon name="chevron"/></button>{activeMenu === "projects" && <div className="menu-popover project-menu">{projects.map((item) => <button key={item.id} onClick={() => { setActiveMenu(undefined); onSwitch(item); }}><span>{item.name}</span>{item.id === project.id && <b>✓</b>}</button>)}<div className="menu-divider"/><button onClick={() => { setActiveMenu(undefined); onHome(); }}>{t("project.directory")}</button></div>}</div><button className={`save-status ${saveState}`} onClick={() => { commands.execute("file.save"); }}><Icon name="save"/>{t(`save.${saveState}` as MessageKey)}</button></header>
     <div className="workbench-body"><aside className="activity-bar"><div>{(["files", "search", "library", "ai"] as const).map((mode) => <button key={mode} className={layout.sidebarVisible && sidebarMode === mode ? "active" : ""} title={t(`activity.${mode}` as MessageKey)} onClick={() => selectActivity(mode)}><Icon name={mode}/><span>{t(`activity.${mode}` as MessageKey)}</span></button>)}</div><div><button className={layout.sidebarVisible && sidebarMode === "settings" ? "active" : ""} title={t("activity.settings")} onClick={() => selectActivity("settings")}><Icon name="settings"/><span>{t("activity.settings")}</span></button><button className={layout.sidebarVisible && sidebarMode === "help" ? "active" : ""} title={t("activity.help")} onClick={() => selectActivity("help")}><Icon name="help"/><span>{t("activity.help")}</span></button></div></aside>
-      {layout.sidebarVisible && <><aside className="sidebar" style={{ width: layout.sidebarWidth }}>{sidebarMode === "files" && <><div className="sidebar-heading"><strong>{t("sidebar.files")}</strong><div><button onClick={() => void createEntry(false, "")} title={t("files.newFile")}><Icon name="plus"/></button><button onClick={() => void refreshTree()} title={t("sidebar.refresh")}><Icon name="refresh"/></button><button onClick={() => setLayout((value) => ({ ...value, sidebarVisible: false }))} title={t("sidebar.collapse")}>‹</button></div></div><div className="tree-section" style={{ height: layout.fileTreeHeight }} onDragOver={(event) => { if (event.dataTransfer.types.includes("Files")) event.preventDefault(); }} onDrop={dropImagesToProject}><input className="sidebar-input" value={treeFilter} onChange={(event) => setTreeFilter(event.target.value)} placeholder={t("sidebar.fileSearch")}/><Tree nodes={tree} activePath={activePath} mainFile={project.mainFile} filter={treeFilter} hideBuildArtifacts={store.get("hideBuildArtifacts")} onOpen={(path) => void openFile(path)}/></div><div className="horizontal-resizer" onPointerDown={(event) => startResize("tree", event)}/><div className="outline-section"><div className="segment-tabs"><button className={outlineMode === "outline" ? "active" : ""} onClick={() => setOutlineMode("outline")}>{t("sidebar.outline")}</button><button className={outlineMode === "relations" ? "active" : ""} onClick={() => { setOutlineMode("relations"); setInspectorBlock(undefined); }}>{t("sidebar.relations")}</button></div>{outlineMode === "outline" ? <div className="outline-list">{outline.map((item, index) => <button key={`${item.title}-${index}`} style={{ paddingLeft: 14 + item.level * 15 }} onClick={() => navigateToOutline(item.line)}>{item.title}</button>)}</div> : <RelationBrowser snapshot={blockSnapshot ?? emptyBlockSnapshot} focusId={relationFocusId} direction={relationDirection} depth={relationDepth} filters={relationFilters} unmatchedBehavior={relationUnmatched} canGoBack={relationFocusHistory.length > 0} onBack={relationBack} onFocus={focusRelationBlock} onLocate={(id) => void locateRelationBlock(id)} onDirection={setRelationDirection} onDepth={setRelationDepth} onFilters={setRelationFilters} onUnmatchedBehavior={setRelationUnmatched} onToggleRelation={(id, event) => toggleRelation(id, event.clientX, event.clientY)}/>}</div></>}{sidebarMode === "search" && <AdvancedSearchPanel query={searchQuery} response={searchResponse} activeResultId={activeSearchResult?.id} replacement={replacement} replaceOpen={replaceOpen} filter={filterQuery} options={filterOptions} visibleGroups={store.get("visibleFilterGroups") as FilterGroupId[]} setQuery={setSearchQuery} setReplacement={setReplacement} setReplaceOpen={setReplaceOpen} setFilter={setFilterQuery} selectResult={(result) => void selectSearchResult(result)} replaceCurrent={() => void replaceCurrentSearchResult()} replaceAll={() => void replaceAllSearchResults()}/>} {sidebarMode === "library" && <ReferenceLibraryPanel project={project} onOpenLibrary={onOpenLibrary} onReturnToEditor={() => setLayout((value) => ({ ...value, sidebarVisible: false }))} onCite={(key) => insertText(`\\cite{${key}}`, `\\cite{${key}}`.length)}/>} {sidebarMode === "ai" && <AIView projectId={project.id} projectRoot={project.canonicalPath} overrides={tabs.map(({ path, content }) => ({ path, content }))} {...(activeTab ? { currentFile: activeTab.path, currentFileContent: activeTab.content } : {})} {...(creationSelection && activeTab && creationSelection.fileId === activeTab.path ? { selectedText: activeTab.content.slice(creationSelection.start, creationSelection.end) } : {})} onApplyChanges={applyAIChanges} onUndoChanges={undoAIChanges} onViewChanges={viewAIChanges} onOpenFile={(path, line) => { void openFile(path).then(() => { if (line) setPendingDiagnostic({ path, line, column: 1 }); }).catch((reason: unknown) => setBlockNotice(String(reason))); }} onReviewChanges={setAiReviewChanges} onOpenSettings={() => { setSettingsInitial("ai"); setSettingsOpen(true); }}/ >}{sidebarMode === "settings" && <div className="generic-sidebar"><h2>{t("activity.settings")}</h2><p>{t("placeholder.settings")}</p><dl><div><dt>{t("settings.language")}</dt><dd>{t("settings.english")}</dd></div><div><dt>{t("settings.theme")}</dt><dd>{t("settings.light")}</dd></div></dl></div>}{sidebarMode === "help" && <div className="generic-sidebar"><h2>{t("activity.help")}</h2><p>{t("placeholder.help")}</p></div>}</aside><div className="vertical-resizer" onPointerDown={(event) => startResize("sidebar", event)}/></>}
+      {layout.sidebarVisible && <><aside className="sidebar" style={{ width: layout.sidebarWidth }}>{sidebarMode === "files" && <><div className="sidebar-heading"><strong>{t("sidebar.files")}</strong><div><button onClick={() => void createEntry(false, "")} title={t("files.newFile")}><Icon name="plus"/></button><button onClick={() => void refreshTree()} title={t("sidebar.refresh")}><Icon name="refresh"/></button><button onClick={() => setLayout((value) => ({ ...value, sidebarVisible: false }))} title={t("sidebar.collapse")}>‹</button></div></div><div className="tree-section" style={{ height: layout.fileTreeHeight }} onDragOver={(event) => { if (event.dataTransfer.types.includes("Files")) event.preventDefault(); }} onDrop={dropImagesToProject}><div className="tree-sort-controls"><label><span>{t("sidebar.sortBy")}</span><select aria-label={t("sidebar.sortBy")} value={treeSortBy} onChange={(event) => setTreeSortBy(event.target.value as "type" | "name")}><option value="type">{t("sidebar.sortType")}</option><option value="name">{t("sidebar.sortName")}</option></select></label><button type="button" title={t(treeSortDirection === "asc" ? "sidebar.sortAscending" : "sidebar.sortDescending")} aria-label={t("sidebar.reverseSort")} onClick={() => setTreeSortDirection((value) => value === "asc" ? "desc" : "asc")}>{treeSortDirection === "asc" ? "↑" : "↓"}</button></div><input className="sidebar-input" value={treeFilter} onChange={(event) => setTreeFilter(event.target.value)} placeholder={t("sidebar.fileSearch")}/><Tree nodes={tree} activePath={activePath} mainFile={project.mainFile} filter={treeFilter} hideBuildArtifacts={store.get("hideBuildArtifacts")} sortBy={treeSortBy} sortDirection={treeSortDirection} canMove={project.writable} onOpen={(path) => void openFile(path)} onMove={(sourcePath, destinationDirectory) => void moveEntry(sourcePath, destinationDirectory)}/></div><div className="horizontal-resizer" onPointerDown={(event) => startResize("tree", event)}/><div className="outline-section"><div className="segment-tabs"><button className={outlineMode === "outline" ? "active" : ""} onClick={() => setOutlineMode("outline")}>{t("sidebar.outline")}</button><button className={outlineMode === "relations" ? "active" : ""} onClick={() => { setOutlineMode("relations"); setInspectorBlock(undefined); }}>{t("sidebar.relations")}</button></div>{outlineMode === "outline" ? <div className="outline-list">{outline.map((item, index) => <button key={`${item.title}-${index}`} style={{ paddingLeft: 14 + item.level * 15 }} onClick={() => navigateToOutline(item.line)}>{item.title}</button>)}</div> : <RelationBrowser snapshot={blockSnapshot ?? emptyBlockSnapshot} focusId={relationFocusId} direction={relationDirection} depth={relationDepth} filters={relationFilters} unmatchedBehavior={relationUnmatched} canGoBack={relationFocusHistory.length > 0} onBack={relationBack} onFocus={focusRelationBlock} onLocate={(id) => void locateRelationBlock(id)} onDirection={setRelationDirection} onDepth={setRelationDepth} onFilters={setRelationFilters} onUnmatchedBehavior={setRelationUnmatched} onToggleRelation={(id, event) => toggleRelation(id, event.clientX, event.clientY)}/>}</div></>}{sidebarMode === "search" && <AdvancedSearchPanel query={searchQuery} response={searchResponse} activeResultId={activeSearchResult?.id} replacement={replacement} replaceOpen={replaceOpen} filter={filterQuery} options={filterOptions} visibleGroups={store.get("visibleFilterGroups") as FilterGroupId[]} setQuery={setSearchQuery} setReplacement={setReplacement} setReplaceOpen={setReplaceOpen} setFilter={setFilterQuery} selectResult={(result) => void selectSearchResult(result)} replaceCurrent={() => void replaceCurrentSearchResult()} replaceAll={() => void replaceAllSearchResults()}/>} {sidebarMode === "library" && <ReferenceLibraryPanel project={project} onOpenLibrary={onOpenLibrary} onReturnToEditor={() => setLayout((value) => ({ ...value, sidebarVisible: false }))} onCite={(key) => insertText(`\\cite{${key}}`, `\\cite{${key}}`.length)}/>} {sidebarMode === "ai" && <AIView projectId={project.id} projectRoot={project.canonicalPath} overrides={tabs.map(({ path, content }) => ({ path, content }))} {...(activeTab ? { currentFile: activeTab.path, currentFileContent: activeTab.content } : {})} {...(creationSelection && activeTab && creationSelection.fileId === activeTab.path ? { selectedText: activeTab.content.slice(creationSelection.start, creationSelection.end) } : {})} onApplyChanges={applyAIChanges} onUndoChanges={undoAIChanges} onViewChanges={viewAIChanges} onOpenFile={(path, line) => { void openFile(path).then(() => { if (line) setPendingDiagnostic({ path, line, column: 1 }); }).catch((reason: unknown) => setBlockNotice(String(reason))); }} onReviewChanges={setAiReviewChanges} onOpenSettings={() => { setSettingsInitial("ai"); setSettingsOpen(true); }}/ >}{sidebarMode === "settings" && <div className="generic-sidebar"><h2>{t("activity.settings")}</h2><p>{t("placeholder.settings")}</p><dl><div><dt>{t("settings.language")}</dt><dd>{t("settings.english")}</dd></div><div><dt>{t("settings.theme")}</dt><dd>{t("settings.light")}</dd></div></dl></div>}{sidebarMode === "help" && <div className="generic-sidebar"><h2>{t("activity.help")}</h2><p>{t("placeholder.help")}</p></div>}</aside><div className="vertical-resizer" onPointerDown={(event) => startResize("sidebar", event)}/></>}
       <main className="workspace"><div className="workspace-main">{layout.mode === "single" ? singlePane : <><div className="split-toolbar-row">{splitToolbar}</div><div className="split-layout"><div style={{ width: `${layout.splitRatio}%` }}>{splitLeftContent}</div><div className="split-resizer" onPointerDown={(event) => startResize("split", event)}/><div style={{ width: `${100 - layout.splitRatio}%` }}>{secondaryContent}</div></div></>}</div>{bottomVisible && <><div className="bottom-resizer" onPointerDown={(event) => startResize("bottom", event)}/><section className="bottom-panel" style={{ height: layout.bottomPanelHeight }}><div className="bottom-tabs">{(["problems", "output", "compileLog", "versions"] as const).map((tab) => <button className={bottomTab === tab ? "active" : ""} key={tab} onClick={() => setBottomTab(tab)}>{t(`panel.${tab}` as MessageKey)}{tab === "problems" && diagnostics.length > 0 && <span>{diagnostics.length}</span>}</button>)}<button className="panel-close" onClick={() => setBottomVisible(false)} title={t("common.close")}><Icon name="close"/></button></div><div className="panel-content">{bottomTab === "problems" && (diagnostics.length ? diagnostics.map((diagnostic, index) => <DiagnosticRow diagnostic={diagnostic} onOpen={() => void openDiagnostic(diagnostic)} key={`${diagnostic.message}-${index}`}/>) : <p>{t("panel.noProblems")}</p>)}{bottomTab === "compileLog" && <pre>{compileResult ? `${compileResult.stdoutTail}\n${compileResult.stderrTail}` : t("panel.noOutput")}</pre>}{bottomTab === "output" && <p>{t("panel.noOutput")}</p>}{bottomTab === "versions" && <p>{t("panel.versionsPlaceholder")}</p>}</div></section></>}</main>
       {figureSelection ? <FigureInspector selection={figureSelection} onClose={() => setFigureSelection(undefined)} onLocate={(imageIndex) => setImageDialog({ kind: "replace", selection: figureSelection, imageIndex })} onChange={(replacement) => {
         if (!activeTab || activeTab.path !== figureSelection.fileId) return;

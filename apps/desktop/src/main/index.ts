@@ -601,6 +601,14 @@ function registerIpcHandlers(): void {
     const result = await dialog.showOpenDialog({ properties: ["openFile", "multiSelections"], filters: [{ name: "CSS themes", extensions: ["css"] }] });
     return result.canceled ? [] : result.filePaths;
   });
+  handleIpc(desktopInvoke.dialogs.pickProjectFiles, async () => {
+    const result = await dialog.showOpenDialog({ properties: ["openFile", "multiSelections"] });
+    return result.canceled ? [] : result.filePaths;
+  });
+  handleIpc(desktopInvoke.dialogs.pickProjectFolders, async () => {
+    const result = await dialog.showOpenDialog({ properties: ["openDirectory", "multiSelections", "createDirectory"] });
+    return result.canceled ? [] : result.filePaths;
+  });
 }
 
 function createWindow(): BrowserWindow {

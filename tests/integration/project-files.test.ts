@@ -49,18 +49,40 @@ describe("Project Manager and file service", () => {
     await expect(backend.files.readText(project.id, "chapters/final.tex")).rejects.toMatchObject({ code: "FILE_NOT_FOUND" });
   });
 
+  it("moves files and folders between project directories and rejects recursive folder moves", async () => {
+    const folder = resolve(backend.root, "project");
+    await mkdir(resolve(folder, "chapters", "nested"), { recursive: true });
+    await mkdir(resolve(folder, "archive"));
+    await writeFile(resolve(folder, "chapters", "nested", "intro.tex"), "chapter", "utf8");
+    await writeFile(resolve(folder, "chapters", "nested", "appendix.tex"), "appendix", "utf8");
+    const project = await backend.projects.registerExistingFolder(folder);
+
+    await backend.files.renameEntry(project.id, "chapters/nested/intro.tex", "archive/intro.tex");
+    expect((await backend.files.readText(project.id, "archive/intro.tex")).content).toBe("chapter");
+    await backend.files.renameEntry(project.id, "chapters", "archive/chapters");
+    expect((await backend.files.readText(project.id, "archive/chapters/nested/appendix.tex")).content).toBe("appendix");
+    await expect(backend.files.renameEntry(project.id, "archive/chapters", "archive/chapters/nested/inside"))
+      .rejects.toMatchObject({ code: "INVALID_MOVE_TARGET" });
+  });
+
   it("creates, copies, imports, and sets the main TeX file through file operations", async () => {
     const folder = resolve(backend.root, "project");
     const external = resolve(backend.root, "external.txt");
+    const externalFolder = resolve(backend.root, "external-folder");
     await mkdir(folder);
+    await mkdir(resolve(externalFolder, "nested"), { recursive: true });
     await writeFile(external, "external", "utf8");
+    await writeFile(resolve(externalFolder, "nested", "included.tex"), "included", "utf8");
     const project = await backend.projects.registerExistingFolder(folder);
     await backend.files.createDirectory(project.id, "chapters");
     await backend.files.createFile(project.id, "chapters/source.tex", "source");
     await backend.files.copyEntry(project.id, "chapters/source.tex", "chapters/copy.tex");
     await backend.files.importEntry(project.id, external, "chapters/imported.txt");
+    await backend.files.importEntry(project.id, externalFolder, "vendor");
     expect((await backend.files.readText(project.id, "chapters/copy.tex")).content).toBe("source");
     expect((await backend.files.readText(project.id, "chapters/imported.txt")).content).toBe("external");
+    expect((await backend.files.readText(project.id, "vendor/nested/included.tex")).content).toBe("included");
+    await expect(backend.files.importEntry(project.id, project.canonicalPath, "project-copy")).rejects.toMatchObject({ code: "INVALID_IMPORT_SOURCE" });
     await expect(backend.projects.setMainFile(project.id, "chapters/imported.txt")).rejects.toMatchObject({ code: "INVALID_RELATIVE_PATH" });
     expect((await backend.projects.setMainFile(project.id, "chapters/source.tex")).mainFile).toBe("chapters/source.tex");
   });

@@ -266,8 +266,13 @@ export class NodeProjectFileService {
 
   async renameEntry(projectId: string, fromRelativePath: string, toRelativePath: string): Promise<void> {
     const project = this.#projects.getProject(projectId);
+    if (!project.writable) throw new AppError("PROJECT_NOT_WRITABLE", `Project is not writable: ${project.name}`);
     const source = await resolveSafeProjectPath(project.canonicalPath, fromRelativePath, true);
     const target = await resolveSafeProjectPath(project.canonicalPath, toRelativePath, false);
+    const sourceInfo = await lstat(source);
+    if (sourceInfo.isDirectory() && isWithin(await realpath(source), target)) {
+      throw new AppError("INVALID_MOVE_TARGET", "Cannot move a folder into itself or one of its descendants.");
+    }
     await mkdir(dirname(target), { recursive: true });
     try { await lstat(target); throw new AppError("FILE_ALREADY_EXISTS", `Target already exists: ${toRelativePath}`); }
     catch (error: unknown) {
@@ -296,8 +301,13 @@ export class NodeProjectFileService {
 
   async importEntry(projectId: string, sourcePath: string, destinationRelativePath: string): Promise<void> {
     const project = this.#projects.getProject(projectId);
+    if (!project.writable) throw new AppError("PROJECT_NOT_WRITABLE", `Project is not writable: ${project.name}`);
     const source = resolve(sourcePath);
     const target = await resolveSafeProjectPath(project.canonicalPath, destinationRelativePath, false);
+    const sourceInfo = await lstat(source);
+    if (sourceInfo.isDirectory() && isWithin(await realpath(source), target)) {
+      throw new AppError("INVALID_IMPORT_SOURCE", "Cannot import a folder into itself or one of its descendants.");
+    }
     await mkdir(dirname(target), { recursive: true });
     try { await lstat(target); throw new AppError("FILE_ALREADY_EXISTS", `Target already exists: ${destinationRelativePath}`); }
     catch (error: unknown) {
@@ -305,7 +315,6 @@ export class NodeProjectFileService {
       if (error instanceof AppError) throw error;
       if (code !== "ENOENT") throw error;
     }
-    const sourceInfo = await lstat(source);
     await cp(source, target, { errorOnExist: true, force: false, recursive: sourceInfo.isDirectory() });
     this.#projects.touchEditedAt(projectId);
   }

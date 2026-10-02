@@ -1,4 +1,4 @@
-import { useState, type MouseEvent } from "react";
+import { useRef, useState, type DragEvent as ReactDragEvent, type MouseEvent } from "react";
 import type { Diagnostic, ProjectTreeNode, SyncTexPdfPosition } from "@latex-editor/contracts";
 import { t } from "../i18n/index.js";
 import { settings } from "../settings/service.js";
@@ -56,34 +56,141 @@ function isBuildArtifact(node: ProjectTreeNode): boolean {
   return /\.(aux|bbl|blg|fdb_latexmk|fls|log|out|pdf|xdv|synctex\.gz|toc|lof|lot|nav|snm|vrb)$/i.test(node.name);
 }
 
-export function Tree({ nodes, activePath, mainFile, filter, hideBuildArtifacts, onOpen, onContextMenu }: { nodes: ProjectTreeNode[]; activePath: string | undefined; mainFile: string | undefined; filter: string; hideBuildArtifacts?: boolean; onOpen(path: string): void; onContextMenu?: (path: string, kind: ProjectTreeNode["kind"], event: MouseEvent) => void }) {
-  const shouldHideBuildArtifacts = hideBuildArtifacts ?? settings.get("hideBuildArtifacts");
-  const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
-  const renderNodes = (items: ProjectTreeNode[], depth: number) => items.map((node) => {
-    if (shouldHideBuildArtifacts && isBuildArtifact(node)) return null;
-    const visible = !filter || `${node.name} ${node.relativePath}`.toLocaleLowerCase().includes(filter.toLocaleLowerCase()) || node.children?.some((child) => `${child.name} ${child.relativePath}`.toLocaleLowerCase().includes(filter.toLocaleLowerCase()));
-    if (!visible) return null;
-    const isDirectory = node.kind === "directory";
-    const isCollapsed = collapsed.has(node.relativePath);
-    return <div key={node.relativePath}><button className={`tree-row ${activePath === node.relativePath ? "active" : ""}`} data-path={node.relativePath} data-kind={node.kind} style={{ paddingLeft: 10 + depth * 16 }} onClick={() => isDirectory ? setCollapsed((value) => { const next = new Set(value); if (next.has(node.relativePath)) next.delete(node.relativePath); else next.add(node.relativePath); return next; }) : onOpen(node.relativePath)}><span className="tree-arrow">{isDirectory ? (isCollapsed ? "›" : "⌄") : ""}</span><span className="tree-kind">{isDirectory ? "▱" : node.name.endsWith(".tex") ? "TₑX" : "◇"}</span><span>{node.name}</span>{node.relativePath === mainFile && <span className="main-file-star">★</span>}</button>{isDirectory && !isCollapsed && node.children && <div>{renderNodes(node.children, depth + 1)}</div>}</div>;
-  });
-  return <div className="file-tree" onDragOver={(event) => event.preventDefault()} onDrop={(event) => {
-    event.preventDefault();
-    const paths = Array.from(event.dataTransfer.files).map((file) => window.latexEditor?.files.pathForFile(file)).filter((path): path is string => Boolean(path));
-    const row = (event.target as HTMLElement).closest<HTMLElement>(".tree-row");
-    window.dispatchEvent(new CustomEvent("texweave:file-drop", { detail: { paths, destination: row?.dataset.kind === "directory" ? row.dataset.path ?? "" : "" } }));
-  }} onContextMenu={(event) => {
-    event.preventDefault();
-    const show = (path: string, kind: ProjectTreeNode["kind"]) => {
-      if (onContextMenu) onContextMenu(path, kind, event);
-      else window.dispatchEvent(new CustomEvent("texweave:file-context", { detail: { path, kind, x: event.clientX, y: event.clientY } }));
-    };
-    const row = (event.target as HTMLElement).closest<HTMLElement>(".tree-row");
-    if (!row) { show("", "directory"); return; }
-    show(row.dataset.path ?? "", row.dataset.kind as ProjectTreeNode["kind"]);
-  }}>{renderNodes(nodes, 0)}</div>;
+const PROJECT_FILE_DRAG_TYPE = "application/x-texweave-project-path";
+
+function parentProjectPath(path: string): string {
+  return path.includes("/") ? path.slice(0, path.lastIndexOf("/")) : "";
 }
 
+function fileExtension(name: string): string {
+  const dot = name.lastIndexOf(".");
+  return dot > 0 ? name.slice(dot + 1).toLocaleLowerCase() : "";
+}
+
+export function Tree({ nodes, activePath, mainFile, filter, hideBuildArtifacts, sortBy, sortDirection, canMove, onOpen, onMove, onContextMenu }: {
+  nodes: ProjectTreeNode[];
+  activePath: string | undefined;
+  mainFile: string | undefined;
+  filter: string;
+  hideBuildArtifacts?: boolean;
+  sortBy: "type" | "name";
+  sortDirection: "asc" | "desc";
+  canMove: boolean;
+  onOpen(path: string): void;
+  onMove(sourcePath: string, destinationDirectory: string): void;
+  onContextMenu?: (path: string, kind: ProjectTreeNode["kind"], event: MouseEvent) => void;
+}) {
+  const shouldHideBuildArtifacts = hideBuildArtifacts ?? settings.get("hideBuildArtifacts");
+  const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
+  const [draggingPath, setDraggingPath] = useState<string | undefined>(undefined);
+  const [dropTargetPath, setDropTargetPath] = useState<string | undefined>(undefined);
+  const draggingPathRef = useRef<string | undefined>(undefined);
+  const matchesFilter = (node: ProjectTreeNode): boolean => !filter
+    || `${node.name} ${node.relativePath}`.toLocaleLowerCase().includes(filter.toLocaleLowerCase())
+    || node.children?.some(matchesFilter) === true;
+  const canMoveTo = (source: string | undefined, destination: string): boolean => {
+    if (!canMove || !source || destination === source || destination.startsWith(source + "/")) return false;
+    return parentProjectPath(source) !== destination;
+  };
+  const renderNodes = (items: ProjectTreeNode[], depth: number) => {
+    const direction = sortDirection === "asc" ? 1 : -1;
+    const ordered = [...items].sort((left, right) => {
+      const leftDirectory = left.kind === "directory";
+      const rightDirectory = right.kind === "directory";
+      if (leftDirectory !== rightDirectory) return leftDirectory ? -1 : 1;
+      let comparison = 0;
+      if (sortBy === "type" && !leftDirectory) comparison = fileExtension(left.name).localeCompare(fileExtension(right.name), "en", { numeric: true, sensitivity: "base" });
+      if (comparison === 0) comparison = left.name.localeCompare(right.name, "en", { numeric: true, sensitivity: "base" });
+      return comparison * direction;
+    });
+    return ordered.map((node) => {
+      if (shouldHideBuildArtifacts && isBuildArtifact(node)) return null;
+      if (!matchesFilter(node)) return null;
+      const isDirectory = node.kind === "directory";
+      const isCollapsed = collapsed.has(node.relativePath);
+      const isDropTarget = isDirectory && dropTargetPath === node.relativePath;
+      return <div key={node.relativePath}>
+        <button
+          className={`tree-row ${activePath === node.relativePath ? "active" : ""} ${draggingPath === node.relativePath ? "dragging" : ""} ${isDropTarget ? "drop-target" : ""}`}
+          data-path={node.relativePath}
+          data-kind={node.kind}
+          draggable={canMove && node.kind !== "symlink"}
+          style={{ paddingLeft: 10 + depth * 16 }}
+          onClick={() => isDirectory ? setCollapsed((value) => { const next = new Set(value); if (next.has(node.relativePath)) next.delete(node.relativePath); else next.add(node.relativePath); return next; }) : onOpen(node.relativePath)}
+          onDragStart={(event) => {
+            if (!canMove || node.kind === "symlink") { event.preventDefault(); return; }
+            draggingPathRef.current = node.relativePath;
+            setDraggingPath(node.relativePath);
+            event.dataTransfer.effectAllowed = "move";
+            event.dataTransfer.setData(PROJECT_FILE_DRAG_TYPE, node.relativePath);
+            event.dataTransfer.setData("text/plain", node.relativePath);
+          }}
+          onDragEnd={() => { draggingPathRef.current = undefined; setDraggingPath(undefined); setDropTargetPath(undefined); }}
+        >
+          <span className="tree-arrow">{isDirectory ? (isCollapsed ? "›" : "⌄") : ""}</span>
+          <span className="tree-kind">{isDirectory ? "▱" : node.name.toLocaleLowerCase().endsWith(".tex") ? "TₑX" : "◇"}</span>
+          <span>{node.name}</span>
+          {node.relativePath === mainFile && <span className="main-file-star">★</span>}
+        </button>
+        {isDirectory && !isCollapsed && node.children && <div>{renderNodes(node.children, depth + 1)}</div>}
+      </div>;
+    });
+  };
+  return <div
+    className={`file-tree ${dropTargetPath === "" ? "root-drop-target" : ""}`}
+    onDragOver={(event: ReactDragEvent<HTMLDivElement>) => {
+      const internal = Array.from(event.dataTransfer.types).includes(PROJECT_FILE_DRAG_TYPE);
+      if (!internal) {
+        if (event.dataTransfer.types.includes("Files")) event.preventDefault();
+        return;
+      }
+      const source = draggingPathRef.current;
+      const row = (event.target as HTMLElement).closest<HTMLElement>(".tree-row");
+      const destination = row?.dataset.kind === "directory" ? row.dataset.path ?? "" : row ? parentProjectPath(row.dataset.path ?? "") : "";
+      if (canMoveTo(source, destination)) {
+        event.preventDefault();
+        event.dataTransfer.dropEffect = "move";
+        setDropTargetPath(destination);
+      } else setDropTargetPath(undefined);
+    }}
+    onDragLeave={(event) => {
+      if (!event.currentTarget.contains(event.relatedTarget as Node | null)) setDropTargetPath(undefined);
+    }}
+    onDrop={(event) => {
+      const internal = Array.from(event.dataTransfer.types).includes(PROJECT_FILE_DRAG_TYPE);
+      const row = (event.target as HTMLElement).closest<HTMLElement>(".tree-row");
+      const destination = row?.dataset.kind === "directory" ? row.dataset.path ?? "" : row ? parentProjectPath(row.dataset.path ?? "") : "";
+      if (internal) {
+        event.preventDefault();
+        event.stopPropagation();
+        const source = draggingPathRef.current ?? event.dataTransfer.getData(PROJECT_FILE_DRAG_TYPE);
+        if (canMoveTo(source, destination)) {
+          if (destination) setCollapsed((value) => { const next = new Set(value); next.delete(destination); return next; });
+          onMove(source, destination);
+        }
+        draggingPathRef.current = undefined;
+        setDraggingPath(undefined);
+        setDropTargetPath(undefined);
+        return;
+      }
+      const paths = Array.from(event.dataTransfer.files).map((file) => window.latexEditor?.files.pathForFile(file)).filter((path): path is string => Boolean(path));
+      if (paths.length === 0) return;
+      event.preventDefault();
+      event.stopPropagation();
+      window.dispatchEvent(new CustomEvent("texweave:file-drop", { detail: { paths, destination: row?.dataset.kind === "directory" ? row.dataset.path ?? "" : "" } }));
+    }}
+    onContextMenu={(event) => {
+      event.preventDefault();
+      const show = (path: string, kind: ProjectTreeNode["kind"]) => {
+        if (onContextMenu) onContextMenu(path, kind, event);
+        else window.dispatchEvent(new CustomEvent("texweave:file-context", { detail: { path, kind, x: event.clientX, y: event.clientY } }));
+      };
+      const row = (event.target as HTMLElement).closest<HTMLElement>(".tree-row");
+      if (!row) { show("", "directory"); return; }
+      show(row.dataset.path ?? "", row.dataset.kind as ProjectTreeNode["kind"]);
+    }}
+  >{renderNodes(nodes, 0)}</div>;
+}
 export function Placeholder({ type, pdfDataUrl, pdfTarget, onPdfDoubleClick, onPdfInteract }: { type: "preview" | "pdf"; pdfDataUrl?: string | undefined; pdfTarget?: SyncTexPdfPosition | undefined; onPdfDoubleClick?(page: number, x: number, y: number): void; onPdfInteract?(): void }) {
   if (type === "pdf" && pdfDataUrl) return <PdfViewer dataUrl={pdfDataUrl} target={pdfTarget} onReverse={(page, x, y) => onPdfDoubleClick?.(page, x, y)} onInteract={() => onPdfInteract?.()}/>;
   return <div className="pane-placeholder"><div className="placeholder-orbit"><Logo /></div><h2>{t(type === "preview" ? "placeholder.previewTitle" : "placeholder.pdfTitle")}</h2><p>{t(type === "preview" ? "placeholder.preview" : "placeholder.pdf")}</p>{type === "preview" && <small>{t("placeholder.previewPlan")}</small>}</div>;

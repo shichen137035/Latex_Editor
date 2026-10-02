@@ -206,6 +206,8 @@ export const desktopInvoke = {
     pickFolder: invoke<() => Promise<string | undefined>>("dialogs:pick-folder"),
     pickFiles: invoke<() => Promise<string[]>>("dialogs:pick-files"),
     pickThemeFiles: invoke<() => Promise<string[]>>("dialogs:pick-theme-files"),
+    pickProjectFiles: invoke<() => Promise<string[]>>("dialogs:pick-project-files"),
+    pickProjectFolders: invoke<() => Promise<string[]>>("dialogs:pick-project-folders"),
   },
 } as const;
 
