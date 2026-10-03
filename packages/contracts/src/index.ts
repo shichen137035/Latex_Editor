@@ -4,6 +4,7 @@ export * from "./spellcheck.js";
 export * from "./block-graph.js";
 export * from "./document-structure.js";
 export * from "./history.js";
+export * from "./relations.js";
 
 export type AIAuthState = "unknown" | "signed_out" | "authenticating" | "signed_in" | "expired" | "error";
 export type AICodexProcessState = "not_detected" | "stopped" | "starting" | "running" | "crashed";

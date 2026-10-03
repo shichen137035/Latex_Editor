@@ -2,6 +2,7 @@ import {
   AppError,
   inferBlockKind,
   isKnownBlockType,
+  isRelationCapableBlock,
   type AddSemanticBlockInput,
   type BlockGraphSnapshot,
   type DocumentStructure,
@@ -29,7 +30,8 @@ import {
   type StructureWarning,
   type UpdateSemanticBlockInput
 } from "@latex-editor/contracts";
-import { assertDocumentStructure, mergeGraphStructure, structureToGraph } from "./document-structure.js";
+import { migrateRelationData, RelationGraphManager } from "./relations.js";
+import { assertDocumentStructure, getContainedDocumentBlocks, getDocumentBlockParents, getBlockCapabilities, mergeGraphStructure, structureToGraph } from "./document-structure.js";
 
 type GraphDirection = "incoming" | "outgoing";
 
@@ -82,7 +84,7 @@ function cloneBlock(block: AddSemanticBlockInput): SemanticBlock {
 }
 
 function defaultCapabilities(origin: SemanticBlock["origin"]): BlockCapabilities {
-  if (origin === "virtual") return { connectable: false, deletable: false, renameable: false, retypable: false };
+  if (origin === "virtual") return { connectable: true, deletable: false, renameable: false, retypable: false };
   if (origin === "environment") return { connectable: true, deletable: false, renameable: "limited", retypable: false };
   return { connectable: true, deletable: true, renameable: true, retypable: true };
 }
@@ -96,7 +98,7 @@ function normalizedBlock(block: AddSemanticBlockInput): SemanticBlock {
     role,
     type: block.type || block.role || "custom",
     kind: block.kind === undefined ? inferBlockKind(role) : block.kind,
-    capabilities: { ...defaultCapabilities(origin), ...block.capabilities },
+    capabilities: { ...defaultCapabilities(origin), ...block.capabilities, connectable: isRelationCapableBlock({ ...block, kind: block.kind ?? inferBlockKind(role) }) },
     state: block.state ?? "active"
   };
 }
@@ -172,7 +174,8 @@ function parseSnapshot(value: unknown): BlockGraphSnapshot {
     assertBlockId(edge.child);
     return { parent: edge.parent, child: edge.child };
   });
-  return { version: 2, blocks, dependencies, structuralParents };
+  const relations = migrateRelationData(record.relations === undefined ? undefined : { version: record.relationSchemaVersion ?? 1, relations: record.relations }, dependencies);
+  return { version: 2, blocks, dependencies, structuralParents, relations: relations.relations, relationSchemaVersion: 1 };
 }
 
 /**
@@ -184,7 +187,8 @@ function parseSnapshot(value: unknown): BlockGraphSnapshot {
 export class BlockGraphManager implements IBlockGraphManager {
   readonly #blocks = new Map<BlockId, SemanticBlock>();
   readonly #blockEntries: SemanticBlock[] = [];
-  #dependencies: DependencyEdge[] = [];
+  readonly #relations: RelationGraphManager;
+  get #dependencies(): DependencyEdge[] { return this.#relations.snapshot().relations.map(r => ({ from: r.sourceId, to: r.targetId })); }
   #structuralParents: StructuralParentEdge[] = [];
   #documentStructure: DocumentStructure | undefined;
 
@@ -194,7 +198,17 @@ export class BlockGraphManager implements IBlockGraphManager {
       this.#blockEntries.push(normalized);
       if (!this.#blocks.has(block.id)) this.#blocks.set(block.id, normalized);
     }
-    this.#dependencies = (snapshot?.dependencies ?? []).map((edge) => ({ ...edge }));
+    const relationData = migrateRelationData(snapshot?.relations === undefined ? undefined : { version: snapshot.relationSchemaVersion ?? 1, relations: snapshot.relations }, snapshot?.dependencies);
+    this.#relations = new RelationGraphManager({
+      getBlock: id => {
+        const parsed = this.getBlock(id);
+        if (parsed) return parsed;
+        const block = this.#documentStructure?.blocks[id];
+        return block ? { id, type: block.type, kind: block.kind, origin: block.origin, state: block.state, capabilities: getBlockCapabilities(block) } : undefined;
+      },
+      getContainedBlocks: id => this.#documentStructure?.blocks[id] ? getContainedDocumentBlocks(this.#documentStructure, id) : this.getStructuralDescendants(id),
+      getStructuralParents: id => this.#documentStructure?.blocks[id] ? getDocumentBlockParents(this.#documentStructure, id) : this.getStructuralAncestors(id)
+    }, relationData.relations);
     this.#structuralParents = (snapshot?.structuralParents ?? []).map((edge) => ({ ...edge }));
   }
 
@@ -215,6 +229,7 @@ export class BlockGraphManager implements IBlockGraphManager {
   }
 
   getDocumentStructure(): DocumentStructure | undefined { return this.#documentStructure; }
+  relations(): RelationGraphManager { return this.#relations; }
   setDocumentStructure(structure: DocumentStructure): void { this.#documentStructure = structure; }
   toPersistenceSnapshot(): BlockGraphSnapshot | DocumentStructure {
     return this.#documentStructure ? mergeGraphStructure(this.toSnapshot(), this.#documentStructure) : this.toSnapshot();
@@ -225,7 +240,8 @@ export class BlockGraphManager implements IBlockGraphManager {
       version: 2,
       blocks: this.#blockEntries.map(cloneBlock),
       dependencies: this.#dependencies.map((edge) => ({ ...edge })),
-      structuralParents: this.#structuralParents.map((edge) => ({ ...edge }))
+      structuralParents: this.#structuralParents.map((edge) => ({ ...edge })),
+      relations: this.#relations.snapshot().relations, relationSchemaVersion: 1
     };
   }
 
@@ -252,6 +268,8 @@ export class BlockGraphManager implements IBlockGraphManager {
       ...existing,
       ...patch,
       id: blockId,
+      kind: patch.kind ?? (patch.type !== undefined || patch.role !== undefined ? inferBlockKind(patch.role ?? patch.type ?? existing.type) : existing.kind),
+      ...((patch.type !== undefined || patch.kind !== undefined) && patch.capabilities === undefined ? { capabilities: defaultCapabilities(patch.origin ?? existing.origin) } : {}),
       ...(patch.source === undefined ? {} : { source: { ...patch.source } }),
       ...(patch.metadata === undefined ? {} : { metadata: structuredClone(patch.metadata) })
     });
@@ -268,39 +286,21 @@ export class BlockGraphManager implements IBlockGraphManager {
     for (let index = this.#blockEntries.length - 1; index >= 0; index -= 1) {
       if (this.#blockEntries[index]?.id === blockId) this.#blockEntries.splice(index, 1);
     }
-    this.#dependencies = this.#dependencies.filter((edge) => edge.from !== blockId && edge.to !== blockId);
+    this.#relations.removeBlockRelations(blockId);
     // Children become roots. Structural lifecycle decisions beyond that belong to the parser/block store.
     this.#structuralParents = this.#structuralParents.filter((edge) => edge.parent !== blockId && edge.child !== blockId);
   }
 
   validateDependency(prerequisite: BlockId, consequence: BlockId): RelationValidation {
-    const source = this.#blocks.get(prerequisite);
-    const target = this.#blocks.get(consequence);
-    if (!source || !target) return { status: "invalid", reason: "missing-endpoint", message: "Relation endpoint cannot be resolved." };
-    if (prerequisite === consequence) return { status: "invalid", reason: "self-loop", message: "A block cannot be related to itself." };
-    if (source.capabilities?.connectable === false || target.capabilities?.connectable === false || source.origin === "virtual" || target.origin === "virtual") {
-      return { status: "invalid", reason: "virtual-endpoint", message: "Virtual blocks cannot be relation endpoints." };
-    }
-    if (this.#isStructuralAncestorIn(consequence, prerequisite, this.#structuralParents)) {
-      return { status: "invalid", reason: "descendant-prerequisite", message: "A child block cannot be a prerequisite of one of its containing blocks." };
-    }
-    if (this.hasDirectDependency(consequence, prerequisite)) {
-      return { status: "invalid", reason: "bidirectional", message: "The reverse relation already exists; bidirectional logical relations are not supported." };
-    }
-    if (this.isPrerequisiteOf(consequence, prerequisite)) {
-      return { status: "warning", reason: "cycle", message: "This relation creates a logical cycle." };
-    }
-    return { status: "valid" };
+    const validation = this.#relations.canCreateRelation(prerequisite, consequence);
+    if (validation.valid) return { status: "valid" };
+    const reason = validation.reason!;
+    return { status: "invalid", reason: reason.endsWith("NOT_FOUND") ? "missing-endpoint" : reason === "SELF_RELATION" ? "self-loop" : reason === "DUPLICATE_RELATION" ? "duplicate" : reason === "CYCLE" ? "cycle" : "virtual-endpoint", message: `Relation rejected: ${reason}` };
   }
 
   addDependency(prerequisite: BlockId, consequence: BlockId): RelationMutationResult {
-    const validation = this.validateDependency(prerequisite, consequence);
-    if (validation.status === "invalid") {
-      throw new AppError("RELATION_INVALID", validation.message, { details: { prerequisite, consequence, reason: validation.reason } });
-    }
-    if (this.hasDirectDependency(prerequisite, consequence)) return { outcome: "duplicate", validation };
-    this.#dependencies.push({ from: prerequisite, to: consequence });
-    return { outcome: "created", validation };
+    this.#relations.createRelation(prerequisite, consequence, { id: `rel:${globalThis.crypto.randomUUID()}`, createdBy: "user" });
+    return { outcome: "created", validation: { status: "valid" } };
   }
 
   validateUserBlock(input: CreateUserBlockInput): BlockCreationValidation {
@@ -527,21 +527,21 @@ export class BlockGraphManager implements IBlockGraphManager {
   }
 
   removeDependency(prerequisite: BlockId, consequence: BlockId): void {
-    this.#dependencies = this.#dependencies.filter((edge) => edge.from !== prerequisite || edge.to !== consequence);
+    for (const r of this.#relations.getRelations(prerequisite).outgoing) if (r.targetId === consequence) this.#relations.deleteRelation(r.id);
   }
 
   hasDirectDependency(prerequisite: BlockId, consequence: BlockId): boolean {
-    return this.#dependencies.some((edge) => edge.from === prerequisite && edge.to === consequence);
+    return this.#relations.getDependents(prerequisite).includes(consequence);
   }
 
   getDirectPrerequisites(blockId: BlockId): BlockId[] {
     this.#requireBlock(blockId);
-    return sorted(this.#dependencies.filter((edge) => edge.to === blockId && edge.from !== blockId).map((edge) => edge.from));
+    return this.#relations.getPrerequisites(blockId);
   }
 
   getDirectConsequences(blockId: BlockId): BlockId[] {
     this.#requireBlock(blockId);
-    return sorted(this.#dependencies.filter((edge) => edge.from === blockId && edge.to !== blockId).map((edge) => edge.to));
+    return this.#relations.getDependents(blockId);
   }
 
   getAllPrerequisites(blockId: BlockId, options?: GraphTraversalOptions): BlockId[] {
@@ -699,17 +699,12 @@ export class BlockGraphManager implements IBlockGraphManager {
       return this.#blockEntries.filter((block) => selected.has(block.id)).map((block) => block.id);
     };
     if (focusId === null) {
-      const blockIds = ordered(this.#blockEntries.filter((block) => block.capabilities?.connectable !== false && block.state !== "orphaned").map((block) => block.id));
+      const blockIds = ordered(this.#blockEntries.filter(isRelationCapableBlock).map((block) => block.id));
       const visible = new Set(blockIds);
       return { focusId, direction, depth, blockIds, edges: this.#dependencies.filter((edge) => visible.has(edge.from) && visible.has(edge.to)).map((edge) => ({ ...edge })) };
     }
-    this.#requireBlock(focusId);
-    const options = depth === "all" ? undefined : { maxDepth: depth };
-    const ids = new Set<BlockId>([focusId]);
-    if (direction === "prerequisite" || direction === "both") for (const id of this.getPrerequisiteClosure(focusId, options).all) ids.add(id);
-    if (direction === "consequence" || direction === "both") for (const id of this.getConsequenceClosure(focusId, options).all) ids.add(id);
-    const blockIds = ordered(ids);
-    return { focusId, direction, depth, blockIds, edges: this.#dependencies.filter((edge) => ids.has(edge.from) && ids.has(edge.to)).map((edge) => ({ ...edge })) };
+    const scope = this.#relations.getRelationScope({ focusIds: [focusId], direction: direction === "prerequisite" ? "prerequisites" : direction === "consequence" ? "dependents" : "both", depth });
+    return { focusId, direction, depth, blockIds: ordered(scope.blockIds), edges: scope.relations.map(r => ({ from: r.sourceId, to: r.targetId })) };
   }
 
   validateGraph(): GraphDiagnostic[] {
@@ -720,21 +715,8 @@ export class BlockGraphManager implements IBlockGraphManager {
       if (count > 1) diagnostics.push({ type: "duplicate-block", severity: "error", blockIds: [id], message: `Block ${id} is declared ${count} times.` });
     }
 
-    const dependencyCounts = new Map<string, number>();
-    for (const edge of this.#dependencies) {
-      if (!this.#blocks.has(edge.from) || !this.#blocks.has(edge.to)) {
-        diagnostics.push({ type: "dangling-dependency", severity: "error", blockIds: [edge.from, edge.to], message: `Dependency ${edge.from} → ${edge.to} references a missing block.` });
-      }
-      if (edge.from === edge.to) {
-        diagnostics.push({ type: "self-dependency", severity: "error", blockIds: [edge.from], message: `Block ${edge.from} directly depends on itself.` });
-      }
-      const key = `${edge.from}\0${edge.to}`;
-      dependencyCounts.set(key, (dependencyCounts.get(key) ?? 0) + 1);
-    }
-    for (const [key, count] of dependencyCounts) {
-      if (count <= 1) continue;
-      const [from = "", to = ""] = key.split("\0");
-      diagnostics.push({ type: "duplicate-dependency", severity: "warning", blockIds: [from, to], message: `Dependency ${from} → ${to} is declared ${count} times.` });
+    for (const issue of this.#relations.validateRelationGraph()) {
+      diagnostics.push({ type: issue.type === "CYCLE" ? "dependency-cycle" : issue.type === "DUPLICATE_RELATION" ? "duplicate-dependency" : issue.type === "DANGLING_RELATION" ? "dangling-dependency" : issue.details?.reason === "SELF_RELATION" ? "self-dependency" : "invalid-relation-endpoint", severity: issue.severity, blockIds: issue.blockIds, message: `Relation graph issue: ${issue.type}`, ...(issue.details ? { details: issue.details } : {}) });
     }
 
     const parentCounts = new Map<BlockId, number>();
@@ -749,9 +731,6 @@ export class BlockGraphManager implements IBlockGraphManager {
     }
     for (const blockIds of this.#detectStructuralCycles()) {
       diagnostics.push({ type: "structural-cycle", severity: "error", blockIds, message: `Blocks ${blockIds.join(", ")} form a structural containment cycle.` });
-    }
-    for (const cycle of this.detectDependencyCycles()) {
-      diagnostics.push({ type: "dependency-cycle", severity: "warning", blockIds: cycle.blockIds, message: `Blocks ${cycle.blockIds.join(", ")} form a logical dependency cycle.` });
     }
 
     for (const warning of this.validateStructure()) {
@@ -855,22 +834,8 @@ export class BlockGraphManager implements IBlockGraphManager {
     if ((maxDepth !== Number.POSITIVE_INFINITY && !Number.isInteger(maxDepth)) || maxDepth < 0) {
       throw new AppError("INVALID_GRAPH_QUERY", "Graph traversal maxDepth must be a non-negative integer");
     }
-    const neighbors = (id: BlockId): BlockId[] => direction === "incoming"
-      ? this.#dependencies.filter((edge) => edge.to === id).map((edge) => edge.from)
-      : this.#dependencies.filter((edge) => edge.from === id).map((edge) => edge.to);
-    const distances = new Map<BlockId, number>([[start, 0]]);
-    const queue: BlockId[] = [start];
-    for (let index = 0; index < queue.length; index += 1) {
-      const current = queue[index]!;
-      const depth = distances.get(current)!;
-      if (depth >= maxDepth) continue;
-      for (const next of neighbors(current)) {
-        if (distances.has(next)) continue;
-        distances.set(next, depth + 1);
-        queue.push(next);
-      }
-    }
-    distances.delete(start);
+    const traversal = direction === "incoming" ? this.#relations.getAncestors(start, options) : this.#relations.getDescendants(start, options);
+    const distances = new Map(traversal.entries.map(entry => [entry.blockId, entry.distance]));
     const all = sorted(distances.keys());
     const direct = all.filter((id) => distances.get(id) === 1);
     const indirect = all.filter((id) => (distances.get(id) ?? 0) > 1);

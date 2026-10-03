@@ -55,6 +55,7 @@ export class ProjectBlockGraphService {
   readonly #ids: IdGenerator;
   readonly #mutationQueues = new Map<string, Promise<void>>();
   readonly #histories = new Map<string, { undo: HistoryEntry[]; redo: HistoryEntry[] }>();
+  readonly #listeners = new Set<(projectId: string) => void>();
 
   constructor(files: BlockGraphFilePort, ids: IdGenerator) {
     this.#files = files;
@@ -64,6 +65,10 @@ export class ProjectBlockGraphService {
   async snapshot(projectId: string): Promise<BlockGraphSnapshot> {
     return (await this.#load(projectId)).toSnapshot();
   }
+
+  onChange(listener: (projectId: string) => void): () => void { this.#listeners.add(listener); return () => this.#listeners.delete(listener); }
+  /** All relation and block writes share this project transaction and undo history. */
+  withGraphMutation<T>(projectId: string, action: (graph: BlockGraphManager) => T | Promise<T>): Promise<T> { return this.#mutate(projectId, action); }
 
   /** Shared serialization boundary for source-aware APIs and existing graph operations. */
   async withDocumentGraph<T>(projectId: string, action: (graph: BlockGraphManager) => Promise<T>): Promise<T> {
@@ -300,6 +305,7 @@ export class ProjectBlockGraphService {
 
   async #save(projectId: string, graph: BlockGraphManager): Promise<void> {
     await this.#files.writeText(projectId, graphMetadataPath, `${JSON.stringify(graph.toPersistenceSnapshot(), null, 2)}\n`);
+    for (const listener of this.#listeners) { try { listener(projectId); } catch { /* Subscribers cannot invalidate a completed write. */ } }
   }
 
   async #mutate<T>(projectId: string, action: (graph: BlockGraphManager) => T | Promise<T>, options: { recordHistory?: boolean } = {}): Promise<T> {

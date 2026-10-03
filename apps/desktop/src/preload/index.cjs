@@ -18,6 +18,7 @@ const subscribe = (endpoint, listener) => {
 /** @type {import("@latex-editor/contracts/desktop-ipc").DesktopApi} */
 const api = {
   ...requests,
+  relations: { ...requests.relations, onUpdate: (listener) => subscribe(desktopEvents.toRenderer.relationUpdate, listener) },
   lifecycle: {
     ...requests.lifecycle,
     onCloseRequested: (listener) => {

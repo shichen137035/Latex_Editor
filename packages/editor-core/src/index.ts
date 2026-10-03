@@ -5,6 +5,7 @@ import {
 import { isoNow, type Clock } from "@latex-editor/domain";
 
 export * from "./block-graph.js";
+export * from "./relations.js";
 
 export interface DocumentFilePort {
   readText(projectId: string, relativePath: string): Promise<TextFileContent>;

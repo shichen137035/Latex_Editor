@@ -2,9 +2,10 @@ import { randomUUID } from "node:crypto";
 import { mkdir, readdir } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { ProjectService } from "../../../packages/application/src/index.js";
+import { ProjectService, ProjectBlockGraphService, ProjectRelationService } from "../../../packages/application/src/index.js";
 import { LatexmkCompilerService } from "../../../packages/compiler-latexmk/src/index.js";
-import { AppError } from "../../../packages/contracts/src/index.js";
+import { AppError, type RelationScopeOptions } from "../../../packages/contracts/src/index.js";
+import { RelationError } from "@latex-editor/contracts";
 import { systemClock } from "../../../packages/domain/src/index.js";
 import { NodeProjectEnvironment, NodeProjectFileService } from "../../../packages/filesystem-node/src/index.js";
 import { SQLiteProjectRegistry } from "../../../packages/registry-sqlite/src/index.js";
@@ -19,6 +20,7 @@ interface ApplicationContext {
   files: NodeProjectFileService;
   compiler: LatexmkCompilerService;
   resources: FileResourceCatalog;
+  relations: ProjectRelationService;
 }
 
 function printJson(value: unknown): void {
@@ -65,7 +67,8 @@ async function createContext(): Promise<ApplicationContext> {
   });
   const files = new NodeProjectFileService(projects);
   const compiler = new LatexmkCompilerService({ projects, files, profiles: resources, clock: systemClock });
-  return { registry, projects, files, compiler, resources };
+  const relations = new ProjectRelationService(new ProjectBlockGraphService(files, { next: randomUUID }), { next: randomUUID });
+  return { registry, projects, files, compiler, resources, relations };
 }
 
 async function validateResourcesCommand(): Promise<number> {
@@ -79,6 +82,32 @@ async function validateResourcesCommand(): Promise<number> {
 async function run(context: ApplicationContext): Promise<number> {
   const args = process.argv.slice(2).filter((argument) => argument !== "--json");
   const [command, subcommand, third, fourth] = args;
+  if (command === "relation" && third) {
+    const service = context.relations;
+    const depthValue = option("--depth") ?? "all";
+    const scope = (): RelationScopeOptions => ({ focusIds: requiredOption("--focus").split(",").filter(Boolean), direction: (option("--direction") ?? "both") as RelationScopeOptions["direction"], depth: depthValue === "all" ? "all" : Number(depthValue) });
+    const endpoint = () => { if (!fourth) throw new RelationError("BLOCK_NOT_FOUND", "A block or relation ID is required."); return fourth; };
+    if (subcommand === "create") output(await service.createRelation(third, requiredOption("--source"), requiredOption("--target")));
+    else if (subcommand === "can-create") output(await service.canCreateRelation(third, requiredOption("--source"), requiredOption("--target")));
+    else if (subcommand === "delete") await service.deleteRelation(third, endpoint());
+    else if (subcommand === "reverse") output(await service.reverseRelation(third, endpoint()));
+    else if (subcommand === "get") output(await service.getRelation(third, endpoint()));
+    else if (subcommand === "around") output(await service.getRelations(third, endpoint()));
+    else if (subcommand === "prerequisites") output(await service.getPrerequisites(third, endpoint()));
+    else if (subcommand === "dependents") output(await service.getDependents(third, endpoint()));
+    else if (subcommand === "ancestors") output(await service.getAncestors(third, endpoint(), depthValue === "all" ? {} : { maxDepth: Number(depthValue) }));
+    else if (subcommand === "descendants") output(await service.getDescendants(third, endpoint(), depthValue === "all" ? {} : { maxDepth: Number(depthValue) }));
+    else if (subcommand === "path") output(await service.findRelationPath(third, requiredOption("--source"), requiredOption("--target")));
+    else if (subcommand === "depends-on") output(await service.dependsOn(third, endpoint(), requiredOption("--prerequisite")));
+    else if (subcommand === "scope") output(await service.getRelationScope(third, scope()));
+    else if (subcommand === "subgraph") output(await service.getRelationSubgraph(third, scope()));
+    else if (subcommand === "display-scope") output(await service.getDisplayScope(third, await service.getRelationScope(third, scope()), { includeContent: !args.includes("--no-content"), includeStructuralParents: args.includes("--parents") }));
+    else if (subcommand === "impact") output(await service.getRelationImpact(third, endpoint()));
+    else if (subcommand === "context") output(await service.getLogicContext(third, endpoint()));
+    else if (subcommand === "validate") output(await service.validateRelationGraph(third));
+    else throw new RelationError("INVALID_GRAPH_STATE", `Unknown relation command: ${subcommand}`);
+    return 0;
+  }
   if (command === "doctor") {
     const toolchain = await context.compiler.detectToolchain();
     output({ node: process.version, platform: process.platform, sqlite: true, resources: true, latexmk: toolchain });
@@ -149,7 +178,13 @@ async function run(context: ApplicationContext): Promise<number> {
       "latex-editor project register <folder>", "latex-editor project list [--json]",
       "latex-editor file read <project-id> <path>", "latex-editor file write <project-id> <path> --stdin",
       "latex-editor main set <project-id> <path>", "latex-editor compile <project-id> [--main main.tex] [--json]",
-      "latex-editor resources validate", "latex-editor resources search <query>"
+      "latex-editor resources validate", "latex-editor resources search <query>",
+      "latex-editor relation create <project-id> --source <block-id> --target <block-id> [--json]",
+      "latex-editor relation scope <project-id> --focus <id[,id]> --direction both --depth all [--json]",
+      "latex-editor relation <delete|reverse|get|around|prerequisites|dependents|ancestors|descendants|impact|context> <project-id> <id> [--json]",
+      "latex-editor relation <path|can-create> <project-id> --source <id> --target <id> [--json]",
+      "latex-editor relation <subgraph|display-scope> <project-id> --focus <id[,id]> [--parents] [--json]",
+      "latex-editor relation validate <project-id> [--json]"
     ].join("\n") + "\n");
     return command === undefined ? 2 : 0;
   }
@@ -158,6 +193,11 @@ async function run(context: ApplicationContext): Promise<number> {
 }
 
 function handleError(error: unknown): void {
+  if (error instanceof RelationError) {
+    if (jsonOutput) printJson({ error: { code: error.code, message: error.message, ...(error.details ? { details: error.details } : {}) } });
+    else process.stderr.write(`${error.code}: ${error.message}\n`);
+    process.exitCode = 2; return;
+  }
   if (error instanceof AppError) {
     if (jsonOutput) printJson({ error: error.toPayload() });
     else process.stderr.write(`${error.code}: ${error.message}\n`);
@@ -175,6 +215,6 @@ if (commandArgs[0] === "resources" && commandArgs[1] === "validate") {
 } else {
   createContext().then(async (context) => {
     try { process.exitCode = await run(context); }
-    finally { context.registry.close(); }
+    finally { context.relations.dispose(); context.registry.close(); }
   }).catch(handleError);
 }

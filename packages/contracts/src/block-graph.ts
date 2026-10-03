@@ -1,15 +1,24 @@
+import type { BlockRelation } from "./relations.js";
+
 /** Stable identity for a semantic document block. It must not encode source offsets. */
 export type BlockId = string;
 export type BlockOrigin = "environment" | "virtual" | "user";
 export type BlockRole = string;
 export type BlockKind = "structural" | "content";
 
+/** One Block System capability rule, shared by backend validation and the UI. */
+export function isRelationCapableBlock(block: { type: string; kind?: BlockKind; state?: string; placeholder?: boolean; capabilities?: Partial<BlockCapabilities>; capabilityOverrides?: Partial<BlockCapabilities> }): boolean {
+  return (block.kind ?? inferBlockKind(block.type)) === "structural" && inferBlockKind(block.type) !== "content" && !block.placeholder
+    && (!block.state || block.state === "active") && !["itemize", "enumerate", "description", "list"].includes(block.type)
+    && block.capabilities?.connectable !== false && block.capabilityOverrides?.connectable !== false;
+}
+
 const defaultBlockKinds: Record<string, BlockKind> = {
   abstract: "structural", chapter: "structural", section: "structural", subsection: "structural", subsubsection: "structural",
   theorem: "structural", lemma: "structural", proposition: "structural", corollary: "structural", definition: "structural",
   assumption: "structural", remark: "structural", example: "structural", proof: "structural", enumerate: "structural",
   itemize: "structural", description: "structural", algorithm: "structural", algorithmic: "structural", quote: "structural",
-  quotation: "structural", custom: "structural",
+  quotation: "structural", custom: "structural", placeholder: "structural",
   paragraph: "content", equation: "content", "equation-star": "content", "display-math": "content", align: "content", "align-star": "content", gather: "content", multline: "content",
   aligned: "content", split: "content", cases: "content", image: "content", "inline-image": "content", figure: "content",
   table: "content", "table-star": "content", tabular: "content", "tabular-star": "content", tabularx: "content", longtable: "content",
@@ -154,7 +163,7 @@ export interface DependencyEdge {
 export type RelationValidation =
   | { status: "valid" }
   | { status: "warning"; reason: "cycle"; message: string }
-  | { status: "invalid"; reason: "missing-endpoint" | "self-loop" | "virtual-endpoint" | "bidirectional" | "descendant-prerequisite"; message: string };
+  | { status: "invalid"; reason: "missing-endpoint" | "self-loop" | "virtual-endpoint" | "bidirectional" | "descendant-prerequisite" | "duplicate" | "cycle"; message: string };
 
 export interface RelationMutationResult {
   outcome: "created" | "duplicate";
@@ -187,6 +196,9 @@ export interface BlockGraphSnapshot {
   blocks: SemanticBlock[];
   dependencies: DependencyEdge[];
   structuralParents: StructuralParentEdge[];
+  /** Canonical v0.5.6 relations; dependencies is its legacy endpoint projection. */
+  relations?: BlockRelation[];
+  relationSchemaVersion?: 1;
 }
 
 /** Serializable traversal result used by both IPC and non-UI callers. */
@@ -219,6 +231,7 @@ export interface LogicalRelation {
 export type GraphDiagnosticType =
   | "duplicate-block"
   | "dangling-dependency"
+  | "invalid-relation-endpoint"
   | "self-dependency"
   | "duplicate-dependency"
   | "dangling-structural-relation"

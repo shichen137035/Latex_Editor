@@ -168,7 +168,7 @@ export function validPreference(key: string, value: unknown): boolean {
     case "history": {
       if (!value || typeof value !== "object" || Array.isArray(value)) return false;
       const history = value as Partial<HistoryPreferences>;
-      return [history.autoSnapshot, history.beforeRestore, history.beforeLargeDelete, history.beforeAiChange].every((item) => typeof item === "boolean")
+      return [history.autoSnapshot, history.beforeRestore, history.beforeLargeDelete].every((item) => typeof item === "boolean")
         && Number.isInteger(history.intervalMinutes) && Number(history.intervalMinutes) >= 1 && Number(history.intervalMinutes) <= 1440
         && Number.isInteger(history.maxSnapshots) && Number(history.maxSnapshots) >= 1 && Number(history.maxSnapshots) <= 1000
         && Number.isInteger(history.retentionDays) && Number(history.retentionDays) >= 1 && Number(history.retentionDays) <= 3650;

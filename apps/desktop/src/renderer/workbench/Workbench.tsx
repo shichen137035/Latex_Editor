@@ -350,6 +350,14 @@ export function Workbench({ project, projects, environments, onHome, onSwitch, o
     return () => clearTimeout(timer);
   }, [api, project.id, reconciliationInput]);
   useEffect(() => {
+    if (!api) return;
+    return api.relations.onUpdate(update => {
+      if (update.projectId !== project.id) return;
+      if (update.event.type !== "graph-invalidated") editHistory.current.recordStructure();
+      void Promise.all([api.blockGraph.snapshot(project.id), api.blockGraph.historyState(project.id)]).then(([snapshot, history]) => { setBlockSnapshot(snapshot); setStructuralHistory(history); }).catch(() => undefined);
+    });
+  }, [api, project.id]);
+  useEffect(() => {
     if (!api || !relationGraphOpen) return;
     let cancelled = false;
     void api.blockGraph.getRelationNeighborhood(project.id, relationGraphFocusId, relationGraphFocusId ? relationDirection : "both", relationGraphFocusId ? relationDepth : "all").then((neighborhood) => {
@@ -936,7 +944,6 @@ export function Workbench({ project, projects, environments, onHome, onSwitch, o
     const edge = relationEndpoints(relationFocusId, candidateId, direction);
     const validation = await api.blockGraph.validateDependency(project.id, edge.from, edge.to);
     if (validation.status === "invalid") { setBlockNotice(validation.message); return; }
-    if (validation.status === "warning" && !window.confirm(`${validation.message}\n\n${t("relation.cycleConfirm")}`)) return;
     const result = await api.blockGraph.addDependency(project.id, edge.from, edge.to);
     if (result.outcome === "created") editHistory.current.recordStructure();
     setRelationChooser(undefined);
@@ -1062,11 +1069,11 @@ export function Workbench({ project, projects, environments, onHome, onSwitch, o
     if (!activePath) return;
     changeDocument(activePath, content, edits !== undefined, edits);
   };
-  const changeDocument = (path: string, content: string, typing = false, edits?: BlockTextEdit[], record = true) => {
+  const changeDocument = (path: string, content: string, typing = false, edits?: BlockTextEdit[], record = true, captureLargeDelete = true) => {
     const before = tabsRef.current.find(tab => tab.path === path)?.content;
     if (before === undefined || before === content) return;
     const patch = edits ? patchFromEdits(before, content, edits) : textPatch(before, content);
-    if (api && patch.removed.length - patch.inserted.length >= 500 && settings.get("history").beforeLargeDelete) {
+    if (captureLargeDelete && api && patch.removed.length - patch.inserted.length >= 500 && settings.get("history").beforeLargeDelete) {
       const overrides = tabsRef.current.filter((tab) => tab.dirty || tab.path === path).map((tab) => ({ path: tab.path, content: tab.content }));
       void api.history.snapshot(project.id, "pre-delete", `Before removing content from ${path}`, overrides).catch((error: unknown) => setBlockNotice(String(error)));
     }
@@ -1180,8 +1187,9 @@ export function Workbench({ project, projects, environments, onHome, onSwitch, o
       for (const update of updates) {
         if (tabsRef.current.find(tab => tab.path === update.path)?.content !== update.buffer) throw new Error(t("ai.bufferConflict", { path: update.path }));
       }
-      if (apply && updates.length && settings.get("history").beforeAiChange) {
-        await api.history.snapshot(project.id, "pre-ai-change", undefined, tabsRef.current.filter((tab) => tab.dirty).map((tab) => ({ path: tab.path, content: tab.content })));
+      const snapshotBeforeAiFileRemoval = apply && updates.some(update => update.after === undefined) && settings.get("history").beforeLargeDelete;
+      if (snapshotBeforeAiFileRemoval) {
+        await api.history.snapshot(project.id, "pre-delete", "Before AI removes files", tabsRef.current.filter((tab) => tab.dirty).map((tab) => ({ path: tab.path, content: tab.content })));
       }
       const changedOnDisk: typeof updates = [];
       try {
@@ -1220,7 +1228,7 @@ export function Workbench({ project, projects, environments, onHome, onSwitch, o
             savedContents.current.set(update.path, update.before!);
             tabsRef.current = [...tabsRef.current, { path: update.path, content: update.before!, dirty: false }];
           }
-          changeDocument(update.path, update.after);
+          changeDocument(update.path, update.after, false, undefined, true, !snapshotBeforeAiFileRemoval);
         }
       }
       setTabs(tabsRef.current);

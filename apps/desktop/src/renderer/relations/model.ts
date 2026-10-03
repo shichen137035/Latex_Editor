@@ -1,4 +1,6 @@
-import type { BlockGraphSnapshot, BlockId, BlockOrigin, DependencyEdge, RelationDirection, SemanticBlock } from "@latex-editor/contracts";
+import { isRelationCapableBlock, type BlockGraphSnapshot, type BlockId, type BlockOrigin, type DependencyEdge, type RelationDirection, type SemanticBlock } from "@latex-editor/contracts";
+import { BlockGraphManager } from "@latex-editor/editor-core";
+const graphCache = new WeakMap<BlockGraphSnapshot, BlockGraphManager>();
 
 export type HierarchyScope = "all" | "same-parent" | "ancestors" | "descendants" | "same-section";
 export type UnmatchedBehavior = "dim" | "hide";
@@ -26,7 +28,7 @@ export interface RelationCandidateProjection {
 export interface CandidateRelationState {
   existing?: DependencyEdge;
   existingDirection?: Exclude<RelationDirection, "both">;
-  disabledReason?: "focus-required" | "self-loop" | "virtual-endpoint" | "bidirectional" | "orphaned" | "descendant-prerequisite";
+  disabledReason?: "focus-required" | "self-loop" | "virtual-endpoint" | "bidirectional" | "orphaned" | "descendant-prerequisite" | "cycle";
 }
 
 export function blockRole(block: SemanticBlock): string {
@@ -159,7 +161,7 @@ export function candidateRelationState(snapshot: BlockGraphSnapshot, focusId: Bl
   const focus = snapshot.blocks.find((block) => block.id === focusId);
   const candidate = snapshot.blocks.find((block) => block.id === candidateId);
   if (!focus || !candidate || focus.state === "orphaned" || candidate.state === "orphaned") return { disabledReason: "orphaned" };
-  if (focus.origin === "virtual" || candidate.origin === "virtual" || focus.capabilities?.connectable === false || candidate.capabilities?.connectable === false) return { disabledReason: "virtual-endpoint" };
+  if (!isRelationCapableBlock(focus) || !isRelationCapableBlock(candidate)) return { disabledReason: "virtual-endpoint" };
   const prerequisite = snapshot.dependencies.find((edge) => edge.from === candidateId && edge.to === focusId);
   const consequence = snapshot.dependencies.find((edge) => edge.from === focusId && edge.to === candidateId);
   if (direction === "prerequisite" && prerequisite) return { existing: prerequisite, existingDirection: "prerequisite" };
@@ -170,10 +172,11 @@ export function candidateRelationState(snapshot: BlockGraphSnapshot, focusId: Bl
   }
   if (direction === "prerequisite" && consequence) return { disabledReason: "bidirectional" };
   if (direction === "consequence" && prerequisite) return { disabledReason: "bidirectional" };
-  if (direction === "prerequisite") {
-    const parents = parentMap(snapshot);
-    if (ancestorsOf(candidateId, parents).includes(focusId)) return { disabledReason: "descendant-prerequisite" };
-  }
+  let graph = graphCache.get(snapshot);
+  if (!graph) { graph = new BlockGraphManager(snapshot); graphCache.set(snapshot, graph); }
+  const prerequisiteAllowed = graph.relations().canCreateRelation(candidateId, focusId).valid;
+  const dependentAllowed = graph.relations().canCreateRelation(focusId, candidateId).valid;
+  if ((direction === "prerequisite" && !prerequisiteAllowed) || (direction === "consequence" && !dependentAllowed) || (direction === "both" && !prerequisiteAllowed && !dependentAllowed)) return { disabledReason: "cycle" };
   return {};
 }
 

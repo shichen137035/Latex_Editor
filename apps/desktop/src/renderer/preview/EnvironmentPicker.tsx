@@ -19,7 +19,11 @@ export function environmentInsertion(definition: EnvironmentDefinition, selected
   const match = definition.match;
   if (match.kind === "latex-environment") return `\\begin{${match.name}}\n${indentBody(selectedText)}\n\\end{${match.name}}`;
   if (match.kind === "display-math") return `\\[\n${indentBody(selectedText)}\n\\]`;
-  if (match.kind === "virtual-block") return `% tw:block-begin type=${match.type} title="${environmentDisplayName(definition)}"\n${selectedText || "Content"}\n% tw:block-end`;
+  if (match.kind === "virtual-block") {
+    const title = match.type === "placeholder" ? "" : ` title="${environmentDisplayName(definition)}"`;
+    const body = match.type === "placeholder" ? selectedText : selectedText || "Content";
+    return `% tw:block-begin type=${match.type}${title}\n${body}\n% tw:block-end`;
+  }
   return undefined;
 }
 
@@ -34,6 +38,7 @@ export function environmentCursorOffset(snippet: string, selectedText: string): 
     if (labelLineEnd >= 0) return labelLineEnd + 1 + (snippet.slice(labelLineEnd + 1, labelLineEnd + 3) === "  " ? 2 : 0);
   }
   const firstLineEnd = snippet.indexOf("\n");
+  if (!selectedText && snippet.includes("% tw:block-begin type=placeholder")) return firstLineEnd >= 0 ? firstLineEnd + 1 : snippet.length;
   return firstLineEnd >= 0 ? firstLineEnd + 3 : snippet.length;
 }
 

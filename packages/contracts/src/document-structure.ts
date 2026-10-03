@@ -1,4 +1,5 @@
 import type { BlockCapabilities, BlockKind, BlockOrigin, DependencyEdge, SemanticBlock } from "./block-graph.js";
+import type { BlockRelation } from "./relations.js";
 
 /** UTF-16, half-open offsets. Line/column coordinates are one-based. */
 export interface SourceRange {
@@ -34,6 +35,8 @@ export interface DocumentStructure {
   roots: string[]; blocks: Record<string, DocumentBlock>;
   /** Existing logical dependencies are preserved, never inferred by this API. */
   dependencies?: DependencyEdge[];
+  relations?: BlockRelation[];
+  relationSchemaVersion?: 1;
   /** Legacy relation nodes without a source binding are retained during migration. */
   unboundBlocks?: SemanticBlock[];
 }

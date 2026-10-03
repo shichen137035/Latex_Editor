@@ -1,4 +1,4 @@
-import { AppError, type BlockCapabilities, type BlockGraphSnapshot, type DocumentBlock, type DocumentStructure, type SemanticBlock } from "@latex-editor/contracts";
+import { AppError, isRelationCapableBlock, type BlockCapabilities, type BlockGraphSnapshot, type DocumentBlock, type DocumentStructure, type SemanticBlock } from "@latex-editor/contracts";
 
 export function assertDocumentStructure(structure: DocumentStructure): void {
   const fail = (message: string): never => { throw new AppError("GRAPH_SNAPSHOT_INVALID", message); };
@@ -30,12 +30,34 @@ export function assertDocumentStructure(structure: DocumentStructure): void {
 export function getBlockCapabilities(block: Pick<DocumentBlock, "type" | "kind" | "origin" | "placeholder" | "capabilityOverrides">): BlockCapabilities {
   const virtual = block.origin === "virtual";
   return {
-    connectable: !virtual && block.type !== "paragraph",
+    connectable: isRelationCapableBlock(block),
     deletable: !block.placeholder,
     renameable: virtual ? false : block.origin === "user" ? true : "limited",
     retypable: !virtual,
-    ...block.capabilityOverrides
+    ...block.capabilityOverrides,
+    ...(!isRelationCapableBlock(block) ? { connectable: false } : {})
   };
+}
+
+/** Canonical containment includes the editable paragraphs of empty containers. */
+export function getContainedDocumentBlocks(structure: DocumentStructure, blockId: string): string[] {
+  const seen = new Set<string>([blockId]), queue = [...(structure.blocks[blockId]?.childIds ?? [])], result: string[] = [];
+  for (let cursor = 0; cursor < queue.length; cursor++) {
+    const id = queue[cursor]!, block = structure.blocks[id];
+    if (seen.has(id) || !block || block.state !== "active") continue;
+    seen.add(id); result.push(id); queue.push(...block.childIds);
+  }
+  return result;
+}
+export function getDocumentBlockParents(structure: DocumentStructure, blockId: string): string[] {
+  const seen = new Set<string>([blockId]), result: string[] = [];
+  let id = structure.blocks[blockId]?.parentId;
+  while (id && !seen.has(id)) {
+    const block = structure.blocks[id];
+    if (!block || block.state !== "active") break;
+    seen.add(id); result.push(id); id = block.parentId;
+  }
+  return result;
 }
 
 /** Adapter only: old graph consumers continue receiving the existing array DTO. */
@@ -52,10 +74,11 @@ export function structureToGraph(structure: DocumentStructure): BlockGraphSnapsh
       ...(block.label === undefined ? {} : { label: block.label }),
       ...(block.numbering?.ordinal === undefined ? {} : { ordinal: block.numbering.ordinal }),
       ...(block.metadata === undefined ? {} : { metadata: structuredClone(block.metadata) }),
-      ...(block.capabilityOverrides === undefined ? {} : { capabilities: { ...getBlockCapabilities(block), ...block.capabilityOverrides } })
+      capabilities: getBlockCapabilities(block)
     })), ...(structure.unboundBlocks ?? [])],
     structuralParents: nodes.filter((block) => block.parentId && ids.has(block.parentId)).map((block) => ({ parent: block.parentId!, child: block.id })),
-    dependencies: structure.dependencies ?? []
+    dependencies: structure.dependencies ?? [],
+    ...(structure.relations ? { relations: structure.relations, relationSchemaVersion: structure.relationSchemaVersion ?? 1 } : {})
   };
 }
 
@@ -88,6 +111,6 @@ export function mergeGraphStructure(graph: BlockGraphSnapshot, previous: Documen
     else { block.parentId = null; roots.push(block.id); }
   }
   const unboundBlocks = graph.blocks.filter((block) => !block.fileId || !block.range);
-  const result = { ...previous, blocks, roots, dependencies: graph.dependencies, ...(unboundBlocks.length ? { unboundBlocks } : {}) };
+  const result = { ...previous, blocks, roots, dependencies: graph.dependencies, relations: graph.relations ?? [], relationSchemaVersion: 1 as const, ...(unboundBlocks.length ? { unboundBlocks } : {}) };
   return JSON.stringify(result) === JSON.stringify(previous) ? previous : { ...result, indexDirty: true };
 }

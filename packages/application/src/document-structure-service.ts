@@ -138,7 +138,8 @@ export class ProjectDocumentStructureService {
     const configuration = JSON.stringify(definitions);
     const old = graph.getDocumentStructure();
     const configurationFingerprint = hash(`${STRUCTURE_PARSER_REVISION}\0${configuration}`);
-    const structure: DocumentStructure = { schemaVersion: 2, structureRevision: old?.structureRevision ?? 0, configurationFingerprint, files: {}, roots: [], blocks: {}, dependencies: graph.toSnapshot().dependencies };
+    const relationSnapshot = graph.toSnapshot();
+    const structure: DocumentStructure = { schemaVersion: 2, structureRevision: old?.structureRevision ?? 0, configurationFingerprint, files: {}, roots: [], blocks: {}, dependencies: relationSnapshot.dependencies, relations: relationSnapshot.relations ?? [], relationSchemaVersion: 1 };
     const paths: string[] = [], auxPaths: string[] = [];
     const walk = (nodes: ProjectTreeNode[]) => {
       for (const node of nodes) {
@@ -215,6 +216,8 @@ export class ProjectDocumentStructureService {
       }
     }
     snapshot = graph.toSnapshot();
+    structure.dependencies = snapshot.dependencies;
+    structure.relations = snapshot.relations ?? [];
     const unbound = snapshot.blocks.filter((block) => !block.fileId || !block.range);
     if (unbound.length) structure.unboundBlocks = unbound;
     const parentIds = new Map(snapshot.structuralParents.map((edge) => [edge.child, edge.parent]));
@@ -395,7 +398,11 @@ export class ProjectDocumentStructureService {
     const definition = context.definitions.find((definition) => definition.id === type);
     const match = definition?.match;
     let snippet = content;
-    if (type === "display-math" || match?.kind === "display-math") snippet = `\\[\n${content}\n\\]`;
+    if (match?.kind === "virtual-block") {
+      const title = input.block.title;
+      if (title && /["\r\n]/.test(title)) throw new ApiError("INVALID_GRAPH_QUERY", "A virtual block title must not contain quotes or newlines.");
+      snippet = `% tw:block-begin type=${match.type}${title ? ` title="${title}"` : ""}\n${content}\n% tw:block-end`;
+    } else if (type === "display-math" || match?.kind === "display-math") snippet = `\\[\n${content}\n\\]`;
     else if (match?.kind === "command" || ["chapter", "section", "subsection", "subsubsection"].includes(type)) {
       const title = input.block.title ?? "";
       if (/[{}\r\n]/.test(title)) throw new ApiError("INVALID_GRAPH_QUERY", "A heading title must not contain unbalanced delimiters.");

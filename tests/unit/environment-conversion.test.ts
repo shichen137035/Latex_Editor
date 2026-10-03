@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { convertBlockEnvironmentSource, definitionConversionGroup, environmentDefinitionsCompatible, environmentConversionGroup } from "../../apps/desktop/src/renderer/preview/EnvironmentPicker.js";
+import { convertBlockEnvironmentSource, definitionConversionGroup, environmentDefinitionsCompatible, environmentConversionGroup, environmentInsertion, environmentCursorOffset } from "../../apps/desktop/src/renderer/preview/EnvironmentPicker.js";
 import { DEFAULT_ENVIRONMENTS } from "../../apps/desktop/src/renderer/preview/environments.js";
 import type { EnvironmentDefinition } from "../../apps/desktop/src/renderer/preview/types.js";
 
@@ -33,6 +33,14 @@ describe("Preview block environment conversion", () => {
     const target: EnvironmentDefinition = { ...definition("remark"), id: "virtual-note", match: { kind: "virtual-block", type: "note" } };
     const source = "% tw:block-begin type=idea title=\"Keep me\"\nBody\n% tw:block-end";
     expect(convertBlockEnvironmentSource(source, target)).toBe("% tw:block-begin type=note title=\"Keep me\"\nBody\n% tw:block-end");
+  });
+
+  it("inserts an empty placeholder block with the cursor inside its body", () => {
+    const placeholder = definition("placeholder");
+    const source = "% tw:block-begin type=placeholder\n\n% tw:block-end";
+    expect(environmentInsertion(placeholder)).toBe(source);
+    expect(source[environmentCursorOffset(source, "")]).toBe("\n");
+    expect(environmentInsertion(placeholder, "Selected text")).toBe("% tw:block-begin type=placeholder\nSelected text\n% tw:block-end");
   });
 
   it("distinguishes semantic compatibility from shared LaTeX wrapper syntax", () => {

@@ -5,7 +5,7 @@ import { automaticLabelOccurrences, findBlockLabel, isAutomaticLabel } from "./l
 import type { BlockLabelRange } from "./labels.js";
 
 /** Bump when source ownership changes so persisted indexes refresh on upgrade. */
-export const STRUCTURE_PARSER_REVISION = 3;
+export const STRUCTURE_PARSER_REVISION = 4;
 
 interface RawBlock {
   start: number;
@@ -150,7 +150,7 @@ export function parsePreview(source: string, filePath: string, definitions: Envi
   let documentStart = 0;
   let documentEnd = source.length;
 
-  const tokenPattern = /\\begin\{([^}]+)\}(?:\[([^\]]*)\])?|\\end\{([^}]+)\}|\\\[|\\\]|^\s*%\s*tw:block-(begin|end)\b([^\r\n]*)/gm;
+  const tokenPattern = /\\begin\{([^}]+)\}(?:\[([^\]]*)\])?|\\end\{([^}]+)\}|\\\[|\\\]|^[ \t]*%[ \t]*tw:block-(begin|end)\b([^\r\n]*)/gm;
   for (const match of source.matchAll(tokenPattern)) {
     const offset = match.index ?? 0;
     // Only explicit TeXWeave comment directives are structural; ordinary

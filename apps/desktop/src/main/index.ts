@@ -1,5 +1,6 @@
 import { registerBlockGraphIpc } from "./block-graph-ipc.js";
 import { registerStructureIpc } from "./structure-ipc.js";
+import { registerRelationIpc } from "./relation-ipc.js";
 import { desktopInvoke, desktopEvents } from "@latex-editor/contracts/desktop-ipc";
 import { handleIpc, onIpc, sendIpc } from "./ipc.js";
 import { app, BrowserWindow, clipboard, dialog, Menu, shell } from "electron";
@@ -43,7 +44,7 @@ async function createContext(): Promise<DesktopContext> {
   const packageInfo = JSON.parse(await readFile(resolve(__dirname, "../../../../package.json"), "utf8")) as { version?: unknown };
   const appVersion = typeof packageInfo.version === "string" ? packageInfo.version : app.getVersion();
   // Backend packages are ESM; dynamic import keeps this Electron entry CommonJS-compatible.
-  const [{ ProjectService, ProjectBlockGraphService, ProjectDocumentStructureService }, { systemClock }, { NodeProjectEnvironment, NodeProjectFileService }, { SQLiteProjectRegistry }, { FileResourceCatalog }, { LatexmkCompilerService }] = await Promise.all([
+  const [{ ProjectService, ProjectBlockGraphService, ProjectDocumentStructureService, ProjectRelationService }, { systemClock }, { NodeProjectEnvironment, NodeProjectFileService }, { SQLiteProjectRegistry }, { FileResourceCatalog }, { LatexmkCompilerService }] = await Promise.all([
     import("@latex-editor/application"),
     import("@latex-editor/domain"),
     import("@latex-editor/filesystem-node"),
@@ -77,6 +78,8 @@ async function createContext(): Promise<DesktopContext> {
   await resources.reload();
   const files = new NodeProjectFileService(projects);
   const blockGraph = new ProjectBlockGraphService(files, { next: randomUUID });
+  const relations = new ProjectRelationService(blockGraph, { next: randomUUID });
+  relations.onEvent((projectId, event) => BrowserWindow.getAllWindows().forEach(window => sendIpc(window.webContents, desktopEvents.toRenderer.relationUpdate, { projectId, event })));
   settings = new SettingsRepository(app.getPath("userData"), async (id) => files.resolveFilePath(id, ".texweave/settings.json", false));
   await settings.initialize();
   const { defaultHistoryPreferences } = await import("@latex-editor/contracts");
@@ -128,6 +131,7 @@ async function createContext(): Promise<DesktopContext> {
       // Block tools and shell edits share the same diff-reviewed working copy.
       return createWorkspaceBlockApi(project, workspaceRoot, () => environmentDefinitions(projectId));
     },
+    relationAccess: { api: id => relations.aiAPI(id), commit: (id, proposalId) => relations.commitRelationProposal(id, proposalId), reject: (id, proposalId) => relations.rejectProposal(id, proposalId) },
     compileWorkspace: async ({ projectId, workspaceRoot, mainFile }) => {
       const project = registry.get(projectId);
       if (!project || project.missing) throw new Error("The source project is no longer available.");
@@ -139,7 +143,7 @@ async function createContext(): Promise<DesktopContext> {
     onUpdate: (kind, payload) => BrowserWindow.getAllWindows().forEach((window) => sendIpc(window.webContents, desktopEvents.toRenderer.aiUpdate, { kind, payload }))
   });
   await aiWorkspaces.initialize();
-  return { registry, projects, environment, files, compiler, resources, blockGraph, structure, styleResources, themes, spellcheck, installation, images, references, ai, copilot, aiWorkspaces, history };
+  return { registry, projects, environment, files, compiler, resources, blockGraph, structure, relations, styleResources, themes, spellcheck, installation, images, references, ai, copilot, aiWorkspaces, history };
 }
 
 function requireContext(): DesktopContext {
@@ -239,6 +243,7 @@ function registerIpcHandlers(): void {
   });
   registerStructureIpc(() => requireContext().structure);
   registerBlockGraphIpc(() => requireContext().blockGraph);
+  registerRelationIpc(() => requireContext().relations);
   registerHistoryIpc(() => requireContext().history);
   handleIpc(desktopInvoke.spellcheck.status, () => context?.spellcheck.status());
   handleIpc(desktopInvoke.spellcheck.checkText, (_event, text, language) => context?.spellcheck.checkText(text, language) ?? []);

@@ -99,6 +99,20 @@ z=w
     expect(document.diagnostics).toEqual([]);
   });
 
+  it("recognizes an empty placeholder as a structural virtual block", () => {
+    const source = String.raw`\begin{document}
+
+
+% tw:block-begin type=placeholder
+
+% tw:block-end
+\end{document}`;
+    const document = parsePreview(source, "main.tex", DEFAULT_ENVIRONMENTS);
+    expect(blocks(document.nodes)).toMatchObject([{ environmentId: "placeholder", origin: "virtual", children: [] }]);
+    expect(blocks(document.nodes)[0]!.source.startOffset).toBe(source.indexOf("% tw:block-begin"));
+    expect(document.diagnostics).toEqual([]);
+  });
+
   it("recognizes bracket display math nested inside list environments", () => {
     const source = String.raw`\begin{itemize}
 \item Before

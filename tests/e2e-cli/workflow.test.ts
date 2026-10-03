@@ -1,5 +1,5 @@
 import { spawn } from "node:child_process";
-import { mkdtemp, mkdir, rm } from "node:fs/promises";
+import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { resolve } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -35,6 +35,28 @@ describe("CLI backend workflow", () => {
     await mkdir(resolve(root, "projects"));
   });
   afterEach(async () => { await rm(root, { recursive: true, force: true }); });
+
+  it("uses the shared relation service across CLI processes and returns machine-readable validation errors", async () => {
+    const created = await runCli(root, ["project", "create", "--name", "relations", "--parent", resolve(root, "projects"), "--json"]);
+    expect(created.code, created.stderr).toBe(0);
+    const project = JSON.parse(created.stdout) as Project;
+    await mkdir(resolve(project.canonicalPath, ".texweave"), { recursive: true });
+    await writeFile(resolve(project.canonicalPath, ".texweave", "structure.json"), JSON.stringify({ version: 2, blocks: [{ id: "A", type: "lemma" }, { id: "B", type: "theorem" }], dependencies: [], structuralParents: [] }));
+    const edge = await runCli(root, ["relation", "create", project.id, "--source", "A", "--target", "B", "--json"]);
+    expect(edge.code, edge.stderr).toBe(0);
+    const relation = JSON.parse(edge.stdout);
+    expect(relation).toMatchObject({ sourceId: "A", targetId: "B", createdBy: "user" });
+    const scope = await runCli(root, ["relation", "scope", project.id, "--focus", "B", "--direction", "prerequisites", "--depth", "all", "--json"]);
+    expect(scope.code, scope.stderr).toBe(0); expect(JSON.parse(scope.stdout).blockIds).toEqual(["B", "A"]);
+    const cycle = await runCli(root, ["relation", "create", project.id, "--source", "B", "--target", "A", "--json"]);
+    expect(cycle.code, JSON.stringify(cycle)).toBe(2); expect(JSON.parse(cycle.stdout).error.code).toBe("CYCLE_DETECTED");
+    const duplicate = await runCli(root, ["relation", "create", project.id, "--source", "A", "--target", "B", "--json"]);
+    expect(duplicate.code, JSON.stringify(duplicate)).toBe(2); expect(JSON.parse(duplicate.stdout).error.code).toBe("RELATION_EXISTS");
+    const reversed = await runCli(root, ["relation", "reverse", project.id, relation.id, "--json"]);
+    expect(reversed.code, reversed.stderr).toBe(0); expect(JSON.parse(reversed.stdout)).toMatchObject({ id: relation.id, sourceId: "B", targetId: "A" });
+    const validation = await runCli(root, ["relation", "validate", project.id, "--json"]);
+    expect(validation.code, validation.stderr).toBe(0); expect(JSON.parse(validation.stdout)).toEqual([]);
+  }, 20_000);
 
   it("CL-001 CL-003 creates, edits, and compiles a project with single-document JSON output", async (context) => {
     const create = await runCli(root, ["project", "create", "--name", "paper", "--parent", resolve(root, "projects"), "--json"]);

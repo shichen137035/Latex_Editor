@@ -73,6 +73,7 @@
     { "id": "quote", "family": "quote", "match": { "kind": "latex-environment", "name": "quote" }, "behavior": { "showLabel": false } },
     { "id": "quotation", "family": "quote", "match": { "kind": "latex-environment", "name": "quotation" }, "behavior": { "showLabel": false } },
     { "id": "verbatim", "family": "code", "match": { "kind": "latex-environment", "name": "verbatim" }, "behavior": { "allowChildren": false } },
-    { "id": "lstlisting", "family": "code", "match": { "kind": "latex-environment", "name": "lstlisting" }, "behavior": { "allowChildren": false } }
+    { "id": "lstlisting", "family": "code", "match": { "kind": "latex-environment", "name": "lstlisting" }, "behavior": { "allowChildren": false } },
+    { "id": "placeholder", "family": "virtual", "match": { "kind": "virtual-block", "type": "placeholder" }, "behavior": { "showHeader": false, "showLabel": false, "addToOutline": false } }
   ]
 }

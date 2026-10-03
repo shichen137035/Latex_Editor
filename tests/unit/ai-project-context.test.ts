@@ -3,7 +3,9 @@ import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { ProjectBlockGraphService, ProjectRelationService } from "@latex-editor/application";
+import { AppError } from "@latex-editor/contracts";
 import { AIWorkspaceService } from "../../apps/desktop/src/main/ai/ai-workspace.js";
 import { isReadOnlyWorkspaceCommand, isWorkspacePath } from "../../apps/desktop/src/main/ai/ai-approvals.js";
 import type { CodexAppServer } from "../../apps/desktop/src/main/ai/codex-app-server.js";
@@ -78,5 +80,38 @@ describe("AI project context and workspace reads", () => {
     expect(isReadOnlyWorkspaceCommand(`${shell}'Remove-Item -LiteralPath main.tex'`)).toBe(false);
     expect(isReadOnlyWorkspaceCommand(`${shell}'Get-Content -LiteralPath ..\\auth.json'`)).toBe(false);
     expect(isReadOnlyWorkspaceCommand(`${shell}'Get-ChildItem .; Remove-Item main.tex'`)).toBe(false);
+  });
+
+  it("requires explicit relation approval even in full access mode and commits through the shared service", async () => {
+    root = mkdtempSync(join(tmpdir(), "texweave-ai-relations-"));
+    let turn: Parameters<CodexAppServer["startTurn"]>[0] | undefined;
+    const codex = { onEvent: () => () => undefined, startTurn: async (input: NonNullable<typeof turn>) => { turn = input; return { threadId: "relation-thread", turnId: "relation-turn" }; } } as unknown as CodexAppServer;
+    const metadata = new Map<string, string>();
+    const graph = new ProjectBlockGraphService({ readText: async (_id, path) => { const content = metadata.get(path); if (content === undefined) throw new AppError("FILE_NOT_FOUND", path); return { content }; }, writeText: async (_id, path, content) => { metadata.set(path, content); } }, { next: () => "unused" });
+    await graph.addBlock("p", { id: "A", type: "theorem" }); await graph.addBlock("p", { id: "B", type: "lemma" });
+    let id = 0;
+    const relations = new ProjectRelationService(graph, { next: () => `r${++id}` });
+    const service = new AIWorkspaceService({
+      userDataPath: root, codex, copilot: { dispose: async () => undefined } as unknown as CopilotChatService,
+      projectFiles: { resolveFilePath: async (_id, path) => join(root!, "project", path) }, projectExists: () => true, builtInSkillsRoot: join(root, "skills"),
+      compileWorkspace: async () => { throw new Error("Unexpected compile"); },
+      createBlockApi: ({ projectId, workspaceRoot }) => createWorkspaceBlockApi({ id: projectId, name: "Test", canonicalPath: workspaceRoot, createdAt: "", registeredAt: "", writable: true, missing: false }, workspaceRoot),
+      relationAccess: { api: project => relations.aiAPI(project), commit: (project, proposal) => relations.commitRelationProposal(project, proposal), reject: (project, proposal) => relations.rejectProposal(project, proposal) }
+    });
+    try {
+      await service.initialize(); const conversation = await service.create({ projectId: "p", mode: "codex" });
+      await service.send({ conversationId: conversation.id, content: "Link A to B", permissionMode: "full", snapshot: [{ path: "main.tex", content: "\\begin{document}Text\\end{document}" }] });
+      const pending = turn!.toolHandlers!.relation_propose_create!({ sourceId: "A", targetId: "B", reason: "B depends on A" });
+      await vi.waitFor(() => expect(service.listApprovals("p")).toHaveLength(1));
+      expect(await relations.getDependents("p", "A")).toEqual([]);
+      service.approvals.resolve(service.listApprovals("p")[0]!.id, true);
+      const committed = JSON.parse(await pending);
+      expect(committed.data).toMatchObject({ status: "committed", relation: { createdBy: "ai", sourceId: "A", targetId: "B" } });
+      const rejected = turn!.toolHandlers!.relation_propose_reverse!({ relationId: committed.data.relation.id });
+      await vi.waitFor(() => expect(service.listApprovals("p")).toHaveLength(1));
+      service.approvals.resolve(service.listApprovals("p")[0]!.id, false);
+      expect(JSON.parse(await rejected).data.status).toBe("rejected");
+      expect(await relations.getDependents("p", "A")).toEqual(["B"]);
+    } finally { await service.dispose(); relations.dispose(); }
   });
 });

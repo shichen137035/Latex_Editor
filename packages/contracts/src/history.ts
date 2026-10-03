@@ -1,4 +1,5 @@
 export type ProjectHistoryType = "version" | "snapshot" | "temporary";
+/** `pre-ai-change` is retained to display snapshots created by older releases. */
 export type SnapshotReason = "interval" | "project-close" | "pre-restore" | "pre-delete" | "pre-ai-change" | "recovery" | "manual";
 
 export interface ProjectHistoryEntry {
@@ -42,7 +43,6 @@ export interface HistoryPreferences {
   retentionDays: number;
   beforeRestore: boolean;
   beforeLargeDelete: boolean;
-  beforeAiChange: boolean;
 }
 
 export const defaultHistoryPreferences: HistoryPreferences = {
@@ -51,8 +51,7 @@ export const defaultHistoryPreferences: HistoryPreferences = {
   maxSnapshots: 20,
   retentionDays: 7,
   beforeRestore: true,
-  beforeLargeDelete: true,
-  beforeAiChange: true
+  beforeLargeDelete: true
 };
 
 export function suggestHistoryVersion(entries: ProjectHistoryEntry[]): string {

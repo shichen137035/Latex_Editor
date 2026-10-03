@@ -2,7 +2,7 @@ import type { NodeProjectEnvironment, NodeProjectFileService } from "@latex-edit
 import type { SQLiteProjectRegistry } from "@latex-editor/registry-sqlite" with { "resolution-mode": "import" };
 import type { LatexmkCompilerService } from "@latex-editor/compiler-latexmk" with { "resolution-mode": "import" };
 import type { FileResourceCatalog } from "@latex-editor/resource-catalog" with { "resolution-mode": "import" };
-import type { ProjectService, ProjectBlockGraphService, ProjectDocumentStructureService } from "@latex-editor/application" with { "resolution-mode": "import" };
+import type { ProjectService, ProjectBlockGraphService, ProjectDocumentStructureService, ProjectRelationService } from "@latex-editor/application" with { "resolution-mode": "import" };
 import type { StyleResourceRepository } from "./style-resources.js";
 import type { ThemeRepository } from "./themes.js";
 import type { OfflineSpellCheckService } from "./spellcheck.js";
@@ -23,6 +23,7 @@ export interface DesktopContext {
   compiler: LatexmkCompilerService;
   resources: FileResourceCatalog;
   blockGraph: ProjectBlockGraphService;
+  relations: ProjectRelationService;
   structure: ProjectDocumentStructureService;
   styleResources: StyleResourceRepository;
   themes: ThemeRepository;

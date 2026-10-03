@@ -26,7 +26,7 @@ const projectSettingsBySection: Partial<Record<Section, PreferenceKey[]>> = {
 function HistorySettingsPanel({ store, scope }: { store: ReturnType<typeof useSettings>; scope: "global" | "project" }) {
   const value = (scope === "global" ? store.global("history") : store.get("history")) as HistoryPreferences;
   const update = (patch: Partial<HistoryPreferences>) => void store.set("history", { ...value, ...patch }, scope);
-  const toggles = ["autoSnapshot", "beforeRestore", "beforeLargeDelete", "beforeAiChange"] as const;
+  const toggles = ["autoSnapshot", "beforeRestore", "beforeLargeDelete"] as const;
   const numbers = [["intervalMinutes", 1, 1440], ["maxSnapshots", 1, 1000], ["retentionDays", 1, 3650]] as const;
   return <><h2>{t("settings.history")}</h2>{toggles.map((key) => <label className="preference-row" key={key}><span><strong>{t(`history.${key}`)}</strong></span><input data-setting={`history.${key}`} type="checkbox" checked={value[key]} onChange={(event) => update({ [key]: event.target.checked })}/></label>)}{numbers.map(([key, min, max]) => <label className="preference-row" key={key}><span><strong>{t(`history.${key}`)}</strong></span><input data-setting={`history.${key}`} type="number" min={min} max={max} value={value[key]} onChange={(event) => { const next = Number(event.target.value); if (Number.isInteger(next) && next >= min && next <= max) update({ [key]: next }); }}/></label>)}</>;
 }

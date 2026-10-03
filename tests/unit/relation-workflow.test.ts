@@ -22,10 +22,10 @@ describe("v0.3.4 relation workflow projection", () => {
     expect(result.roots[0]?.children.map((node) => node.block.id)).toEqual(["definition", "lemma"]);
   });
 
-  it("does not force expansion without filters and rejects a child as its parent's prerequisite", () => {
+  it("does not force expansion without filters and keeps containment separate from logical validity", () => {
     const result = projectRelationCandidates(snapshot, "section", { hierarchyScope: "all", role: "all", origin: "all", label: "all", textQuery: "" });
     expect(result.autoExpandedIds.size).toBe(0);
-    expect(candidateRelationState(snapshot, "section", "lemma", "prerequisite").disabledReason).toBe("descendant-prerequisite");
+    expect(candidateRelationState(snapshot, "section", "lemma", "prerequisite").disabledReason).toBeUndefined();
     expect(candidateRelationState(snapshot, "section", "lemma", "consequence").disabledReason).toBeUndefined();
   });
 

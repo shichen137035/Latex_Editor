@@ -64,17 +64,13 @@ describe("v0.3.0 block relationship graph", () => {
   });
 
   it("terminates on logical cycles and reports strongly connected components", () => {
-    const graph = createGraph("A", "B", "C", "D", "E");
-    graph.addDependency("A", "B");
-    graph.addDependency("B", "C");
-    graph.addDependency("C", "A");
-    graph.addDependency("D", "E");
+    const graph = BlockGraphManager.fromUnknown({ ...createGraph("A", "B", "C", "D", "E").toSnapshot(), relations: undefined, dependencies: [{ from: "A", to: "B" }, { from: "B", to: "C" }, { from: "C", to: "A" }, { from: "D", to: "E" }] });
 
     expect(graph.getAllPrerequisites("A")).toEqual(["B", "C"]);
     expect(graph.detectDependencyCycles()).toEqual([{ blockIds: ["A", "B", "C"] }]);
     expect(graph.getStronglyConnectedComponents()).toEqual(expect.arrayContaining([["A", "B", "C"], ["D"], ["E"]]));
     expect(graph.validateGraph()).toEqual(expect.arrayContaining([
-      expect.objectContaining({ type: "dependency-cycle", severity: "warning", blockIds: ["A", "B", "C"] })
+      expect.objectContaining({ type: "dependency-cycle", severity: "error", blockIds: ["A", "B", "C"] })
     ]));
   });
 
@@ -156,7 +152,7 @@ describe("v0.3.0 block relationship graph", () => {
 });
 
 describe("v0.3.4 custom blocks and relation validation", () => {
-  it("uses one validator for virtual endpoints, self loops, reverse edges, duplicates, and cycle warnings", () => {
+  it("uses one validator to reject content endpoints, self loops, duplicates, and cycles", () => {
     const graph = BlockGraphManager.empty();
     graph.addBlock({ id: "A", type: "definition", origin: "environment" });
     graph.addBlock({ id: "B", type: "lemma", origin: "user" });
@@ -167,13 +163,13 @@ describe("v0.3.4 custom blocks and relation validation", () => {
 
     expect(graph.validateDependency("A", "A")).toMatchObject({ status: "invalid", reason: "self-loop" });
     expect(graph.validateDependency("P", "A")).toMatchObject({ status: "invalid", reason: "virtual-endpoint" });
-    expect(graph.validateDependency("D", "A")).toMatchObject({ status: "invalid", reason: "descendant-prerequisite" });
+    expect(graph.validateDependency("D", "A")).toMatchObject({ status: "valid" });
     expect(graph.addDependency("A", "B")).toMatchObject({ outcome: "created", validation: { status: "valid" } });
-    expect(graph.addDependency("A", "B")).toMatchObject({ outcome: "duplicate" });
-    expect(graph.validateDependency("B", "A")).toMatchObject({ status: "invalid", reason: "bidirectional" });
+    expect(() => graph.addDependency("A", "B")).toThrow(/DUPLICATE_RELATION/);
+    expect(graph.validateDependency("B", "A")).toMatchObject({ status: "invalid", reason: "cycle" });
     graph.addDependency("B", "C");
-    expect(graph.validateDependency("C", "A")).toMatchObject({ status: "warning", reason: "cycle" });
-    expect(graph.addDependency("C", "A")).toMatchObject({ outcome: "created", validation: { status: "warning" } });
+    expect(graph.validateDependency("C", "A")).toMatchObject({ status: "invalid", reason: "cycle" });
+    expect(() => graph.addDependency("C", "A")).toThrow(/CYCLE/);
   });
 
   it("enforces laminar custom block ranges and reparents children when a user block is deleted", () => {
@@ -198,11 +194,7 @@ describe("v0.3.4 custom blocks and relation validation", () => {
   });
 
   it("builds cycle-safe display neighborhoods without mutating the semantic graph", () => {
-    const graph = createGraph("A", "B", "C", "D");
-    graph.addDependency("A", "B");
-    graph.addDependency("B", "C");
-    graph.addDependency("C", "A");
-    graph.addDependency("C", "D");
+    const graph = BlockGraphManager.fromUnknown({ ...createGraph("A", "B", "C", "D").toSnapshot(), relations: undefined, dependencies: [{ from: "A", to: "B" }, { from: "B", to: "C" }, { from: "C", to: "A" }, { from: "C", to: "D" }] });
     const before = graph.toSnapshot();
 
     expect(graph.getRelationNeighborhood("B", "both", 1)).toMatchObject({ blockIds: ["A", "B", "C"], edges: [{ from: "A", to: "B" }, { from: "B", to: "C" }, { from: "C", to: "A" }] });

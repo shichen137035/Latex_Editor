@@ -2,6 +2,7 @@ import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import { AppError, type BlockApiResult, type BlockDetail, type DocumentStructure, type ProjectTreeNode } from "@latex-editor/contracts";
 import { ProjectBlockGraphService } from "../../packages/application/src/block-graph-service.js";
+import { ProjectRelationService } from "../../packages/application/src/relation-service.js";
 import { ProjectDocumentStructureService, type DocumentStructureFilePort } from "../../packages/application/src/document-structure-service.js";
 import { BlockGraphManager } from "../../packages/editor-core/src/block-graph.js";
 import { environmentsFromCatalog, type EnvironmentCatalog } from "../../packages/editor-core/src/preview/catalog.js";
@@ -45,6 +46,32 @@ Therefore the conclusion holds.
 \end{document}`;
 
 describe("v0.5.3 source-aware document block API", () => {
+  it("inserts a PDF-neutral semantic placeholder through the shared block API", async () => {
+    const { api, files, graph, ids } = setup(paper);
+    const inserted = data(await api.insert_block({ parentId: null, fileId: "main.tex", position: "end", block: { type: "placeholder" } }));
+    expect(inserted).toMatchObject({ type: "placeholder", kind: "structural", origin: "virtual", capabilities: { connectable: true } });
+    expect(data(await api.get_block_source({ blockId: inserted.id })).content).toBe("% tw:block-begin type=placeholder\n\n% tw:block-end");
+    expect(files.get("main.tex")).not.toContain("\\begin{placeholder}");
+    const relations = new ProjectRelationService(graph, ids);
+    const scope = await relations.getRelationScope("project", { focusIds: [inserted.id], direction: "both", depth: 0 });
+    const display = await relations.getDisplayScope("project", scope, { includeContent: true, includeStructuralParents: false });
+    expect(display.contentBlockIds).toEqual(inserted.children.map(child => child.id));
+  });
+
+  it("preserves canonical relation IDs and creator metadata across source edits and index refresh", async () => {
+    const { api, graph, service, ids } = setup(paper);
+    const indexed = data(await service.snapshot("project"));
+    const theorem = Object.values(indexed.blocks).find(block => block.type === "theorem")!;
+    const empty = Object.values(indexed.blocks).find(block => block.title === "Empty")!;
+    const relations = new ProjectRelationService(graph, ids);
+    const relation = await relations.createRelation("project", theorem.id, empty.id, { createdBy: "ai" });
+    const paragraph = data(await api.get_block_source({ blockId: theorem.childIds[0]! }));
+    data(await api.replace_block_content({ blockId: paragraph.blockId, expectedRevision: paragraph.revision, content: `${paragraph.content} Updated prose.` }));
+    const refreshed = data(await service.snapshot("project"));
+    expect(refreshed.relations).toEqual([relation]);
+    expect(await relations.getRelation("project", relation.id)).toEqual(relation);
+  });
+
   it("persists a record index with ordered adjacency, exact body ranges and no duplicated source", async () => {
     const { service, files, graph } = setup(paper);
     const structure = data(await service.snapshot("project"));
@@ -164,6 +191,8 @@ describe("v0.5.3 source-aware document block API", () => {
     const empty = Object.values(indexed.blocks).find((block) => block.title === "Empty")!;
     const legacy = BlockGraphManager.fromUnknown(JSON.parse(files.get(".texweave/structure.json")!)).toSnapshot();
     legacy.dependencies = [{ from: theorem.id, to: empty.id }];
+    delete legacy.relations;
+    delete legacy.relationSchemaVersion;
     files.set(".texweave/structure.json", JSON.stringify(legacy));
     const migrated = data(await service.snapshot("project"));
     expect(migrated.dependencies).toEqual(legacy.dependencies);

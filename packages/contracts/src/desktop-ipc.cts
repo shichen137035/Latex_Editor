@@ -3,6 +3,7 @@ import type { AIStatus, AIModelOption, AIConversation, AIChangeSet, AIContextSna
 import type { BlockApiResult, DocumentBlockApi, DocumentStructure, AIApprovalRequest } from "./index.js" with { "resolution-mode": "import" };
 
 import type { InstallationState, InstalledComponent, RemoveUserDataOptions } from "./installation.js" with { "resolution-mode": "import" };
+import type { RelationAPI, RelationEvent } from "./relations.js" with { "resolution-mode": "import" };
 
 /** A request descriptor owns its wire name, arguments and resolved result. */
 export interface InvokeEndpoint<F> {
@@ -15,6 +16,32 @@ type ProjectScoped<F extends (...args: never[]) => Promise<unknown>> = (projectI
 
 /** Desktop transport contract. Existing public method and wire names remain stable. */
 export const desktopInvoke = {
+  relations: {
+    canCreateRelation: invoke<ProjectScoped<RelationAPI["canCreateRelation"]>>("relations:can-create"),
+    createRelation: invoke<ProjectScoped<RelationAPI["createRelation"]>>("relations:create"),
+    deleteRelation: invoke<ProjectScoped<RelationAPI["deleteRelation"]>>("relations:delete"),
+    reverseRelation: invoke<ProjectScoped<RelationAPI["reverseRelation"]>>("relations:reverse"),
+    getRelation: invoke<ProjectScoped<RelationAPI["getRelation"]>>("relations:get"),
+    getRelations: invoke<ProjectScoped<RelationAPI["getRelations"]>>("relations:around"),
+    getPrerequisites: invoke<ProjectScoped<RelationAPI["getPrerequisites"]>>("relations:prerequisites"),
+    getDependents: invoke<ProjectScoped<RelationAPI["getDependents"]>>("relations:dependents"),
+    getAncestors: invoke<ProjectScoped<RelationAPI["getAncestors"]>>("relations:ancestors"),
+    getDescendants: invoke<ProjectScoped<RelationAPI["getDescendants"]>>("relations:descendants"),
+    dependsOn: invoke<ProjectScoped<RelationAPI["dependsOn"]>>("relations:depends-on"),
+    findRelationPath: invoke<ProjectScoped<RelationAPI["findRelationPath"]>>("relations:find-path"),
+    getRelationScope: invoke<ProjectScoped<RelationAPI["getRelationScope"]>>("relations:scope"),
+    getRelationSubgraph: invoke<ProjectScoped<RelationAPI["getRelationSubgraph"]>>("relations:subgraph"),
+    getDisplayScope: invoke<ProjectScoped<RelationAPI["getDisplayScope"]>>("relations:display-scope"),
+    getRelationImpact: invoke<ProjectScoped<RelationAPI["getRelationImpact"]>>("relations:impact"),
+    validateRelationGraph: invoke<ProjectScoped<RelationAPI["validateRelationGraph"]>>("relations:validate"),
+    getLogicContext: invoke<ProjectScoped<RelationAPI["getLogicContext"]>>("relations:logic-context"),
+    proposeRelationCreate: invoke<ProjectScoped<RelationAPI["proposeRelationCreate"]>>("relations:propose-create"),
+    proposeRelationDelete: invoke<ProjectScoped<RelationAPI["proposeRelationDelete"]>>("relations:propose-delete"),
+    proposeRelationReverse: invoke<ProjectScoped<RelationAPI["proposeRelationReverse"]>>("relations:propose-reverse"),
+    listProposals: invoke<ProjectScoped<RelationAPI["listProposals"]>>("relations:proposals"),
+    rejectProposal: invoke<ProjectScoped<RelationAPI["rejectProposal"]>>("relations:reject-proposal"),
+    commitRelationProposal: invoke<ProjectScoped<RelationAPI["commitRelationProposal"]>>("relations:commit-proposal"),
+  } satisfies { [K in keyof RelationAPI]: InvokeEndpoint<ProjectScoped<RelationAPI[K]>> },
   structure: {
     snapshot: invoke<(projectId: string) => Promise<BlockApiResult<DocumentStructure>>>("structure:snapshot"),
     list_blocks: invoke<ProjectScoped<DocumentBlockApi["list_blocks"]>>("structure:list_blocks"),
@@ -235,7 +262,8 @@ export const desktopEvents = {
   toRenderer: {
     closeRequested: event<[requestId: string]>("window:close-requested"),
     aiUpdate: event<[update: { kind: "conversation" | "changes" | "approval"; payload: AIConversation | AIChangeSet | AIApprovalRequest }]>("ai:update"),
-    aiStatus: event<[status: AIStatus]>("ai:status")
+    aiStatus: event<[status: AIStatus]>("ai:status"),
+    relationUpdate: event<[update: { projectId: string; event: RelationEvent }]>("relations:update")
   },
   toMain: {
     closeReady: event<[]>("window:close-ready"),
@@ -249,7 +277,8 @@ export type DesktopInvokeApi = {
   }
 };
 /** Renderer surface includes explicit subscriptions and Electron's local File helper. */
-export type DesktopApi = Omit<DesktopInvokeApi, "lifecycle" | "ai" | "files"> & {
+export type DesktopApi = Omit<DesktopInvokeApi, "lifecycle" | "ai" | "files" | "relations"> & {
+  relations: DesktopInvokeApi["relations"] & { onUpdate(listener: NonNullable<typeof desktopEvents.toRenderer.relationUpdate.signature>): () => void };
   lifecycle: DesktopInvokeApi["lifecycle"] & {
     onCloseRequested(listener: NonNullable<typeof desktopEvents.toRenderer.closeRequested.signature>): () => void;
     completeClose: NonNullable<typeof desktopEvents.toMain.closeResponse.signature>;
