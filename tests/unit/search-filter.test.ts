@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { SearchEngine, replaceRanges } from "../../apps/desktop/src/renderer/search/SearchEngine.js";
 import { FilterEngine } from "../../apps/desktop/src/renderer/filter/FilterEngine.js";
-import { defaultFilterQuery } from "../../apps/desktop/src/renderer/filter/types.js";
+import { combineFilterStates, defaultFilterQuery, filterDisposition } from "../../apps/desktop/src/renderer/filter/types.js";
 import { parsePreview } from "../../apps/desktop/src/renderer/preview/parser.js";
 import { DEFAULT_ENVIRONMENTS } from "../../apps/desktop/src/renderer/preview/environments.js";
 
@@ -61,5 +61,16 @@ Closing text.`;
     const result = engine.evaluate(document.nodes, source, "main.tex", query);
     expect([...result.matches].some((id) => id.includes("equation"))).toBe(false);
     expect(query.masterMode).toBe("include");
+  });
+
+  it("applies one display mode to unmatched and context states from any filter source", () => {
+    expect(combineFilterStates("match", "context")).toBe("context");
+    expect(combineFilterStates("context", "unmatched")).toBe("unmatched");
+    expect(filterDisposition("unmatched", "original")).toBe("show");
+    expect(filterDisposition("unmatched", "dim")).toBe("dim");
+    expect(filterDisposition("unmatched", "collapse")).toBe("collapse");
+    expect(filterDisposition("unmatched", "remove")).toBe("remove");
+    expect(filterDisposition("context", "collapse")).toBe("show");
+    expect(filterDisposition("context", "dim")).toBe("dim");
   });
 });

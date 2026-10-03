@@ -296,7 +296,12 @@ export function parsePreview(source: string, filePath: string, definitions: Envi
   const contentBlockIds = new Set(definitions.filter((definition) => ["equation", "figure", "table"].includes(definition.family)
     || (definition.family === "code" && (inferBlockKind(definition.id) === "content" || definition.behavior.allowChildren === false))).map((definition) => definition.id));
   contentBlockIds.add("display-math");
-  for (const block of valid) if (inferBlockKind(block.environmentId) === "content") contentBlockIds.add(block.environmentId);
+  const headingBlockIds = new Set(headings.map((heading) => heading.command));
+  for (const block of valid) {
+    // Sectioning commands can have content even when their semantic graph kind
+    // is content (notably \paragraph). Keep that body in the preview tree.
+    if (inferBlockKind(block.environmentId) === "content" && !headingBlockIds.has(block.environmentId)) contentBlockIds.add(block.environmentId);
+  }
   const semanticKindFor = (block: RawBlock): BlockKind => {
     const definition = definitionById.get(block.environmentId);
     return definition && ["equation", "figure", "table"].includes(definition.family)

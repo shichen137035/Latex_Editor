@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { t, type MessageKey } from "../i18n/index.js";
 import type { EnvironmentDefinition } from "./types.js";
+import { environmentAccent } from "./environment-colors.js";
 import "./environment-picker.css";
 
 export function environmentDisplayName(definition: EnvironmentDefinition): string {
@@ -71,7 +72,7 @@ export function EnvironmentPickerPanel({ definitions, title = t("editor.environm
   return <section className="environment-picker" role="dialog" aria-label={title}>
     <header><div><strong>{title}</strong><small>{hint}</small></div><button onClick={onClose} aria-label={t("common.close")}>×</button></header>
     <input autoFocus value={query} onChange={(event) => setQuery(event.target.value)} placeholder={t("editor.environmentPicker.search")}/>
-    <div className="environment-picker-list">{available.length ? available.map((definition) => <button data-environment-id={definition.id} key={definition.id} onClick={() => onSelect(definition)}><i style={{ background: definition.style.accentToken.startsWith("--") ? `var(${definition.style.accentToken})` : definition.style.accentToken }}/><span><strong>{environmentDisplayName(definition)}</strong><small>{sourceHint(definition)}</small></span><em>{familyLabel(definition)}</em></button>) : <p>{t("editor.environmentPicker.empty")}</p>}</div>
+    <div className="environment-picker-list">{available.length ? available.map((definition) => <button data-environment-id={definition.id} key={definition.id} onClick={() => onSelect(definition)}><i style={{ background: environmentAccent(definition.id, definition) }}/><span><strong>{environmentDisplayName(definition)}</strong><small>{sourceHint(definition)}</small></span><em>{familyLabel(definition)}</em></button>) : <p>{t("editor.environmentPicker.empty")}</p>}</div>
     <footer>{available.length} {t("editor.environmentPicker.available")}</footer>
   </section>;
 }

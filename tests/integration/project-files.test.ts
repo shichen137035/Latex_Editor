@@ -1,6 +1,7 @@
 import { mkdir, readFile, symlink, writeFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { NodeProjectFileService } from "../../packages/filesystem-node/src/index.js";
 import type { TestBackend } from "../helpers/backend.js";
 import { createTestBackend } from "../helpers/backend.js";
 
@@ -85,6 +86,31 @@ describe("Project Manager and file service", () => {
     await expect(backend.files.importEntry(project.id, project.canonicalPath, "project-copy")).rejects.toMatchObject({ code: "INVALID_IMPORT_SOURCE" });
     await expect(backend.projects.setMainFile(project.id, "chapters/imported.txt")).rejects.toMatchObject({ code: "INVALID_RELATIVE_PATH" });
     expect((await backend.projects.setMainFile(project.id, "chapters/source.tex")).mainFile).toBe("chapters/source.tex");
+  });
+
+  it("rejects every project mutation through a read-only project service", async () => {
+    const folder = resolve(backend.root, "read-only-project");
+    const external = resolve(backend.root, "external.txt");
+    await mkdir(folder);
+    await writeFile(resolve(folder, "source.tex"), "keep", "utf8");
+    await writeFile(resolve(folder, "remove.tex"), "keep", "utf8");
+    await writeFile(external, "external", "utf8");
+    const project = await backend.projects.registerExistingFolder(folder);
+    const files = new NodeProjectFileService({
+      getProject: (id) => ({ ...backend.projects.getProject(id), writable: false }),
+      touchEditedAt: (id) => backend.projects.touchEditedAt(id)
+    });
+
+    await expect(files.writeText(project.id, "source.tex", "changed")).rejects.toMatchObject({ code: "PROJECT_NOT_WRITABLE" });
+    await expect(files.createFile(project.id, "new.tex")).rejects.toMatchObject({ code: "PROJECT_NOT_WRITABLE" });
+    await expect(files.createDirectory(project.id, "new-folder")).rejects.toMatchObject({ code: "PROJECT_NOT_WRITABLE" });
+    await expect(files.renameEntry(project.id, "source.tex", "renamed.tex")).rejects.toMatchObject({ code: "PROJECT_NOT_WRITABLE" });
+    await expect(files.copyEntry(project.id, "source.tex", "copy.tex")).rejects.toMatchObject({ code: "PROJECT_NOT_WRITABLE" });
+    await expect(files.importEntry(project.id, external, "imported.txt")).rejects.toMatchObject({ code: "PROJECT_NOT_WRITABLE" });
+    await expect(files.removeEntry(project.id, "remove.tex")).rejects.toMatchObject({ code: "PROJECT_NOT_WRITABLE" });
+
+    expect(await readFile(resolve(folder, "source.tex"), "utf8")).toBe("keep");
+    expect(await readFile(resolve(folder, "remove.tex"), "utf8")).toBe("keep");
   });
 
   it("PM-009 removes only the registry record by default", async () => {

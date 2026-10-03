@@ -5,13 +5,19 @@ import { fileURLToPath } from "node:url";
 
 const rootPackage = JSON.parse(readFileSync(fileURLToPath(new URL("../../package.json", import.meta.url)), "utf8")) as { version: string };
 
-export default defineConfig({
+export default defineConfig(({ command }) => ({
   root: "apps/desktop/src/renderer",
   // Relative asset URLs work both with Vite's dev server and Electron's
   // production file:// load, where absolute /assets URLs resolve incorrectly.
   base: "./",
   define: { __APP_VERSION__: JSON.stringify(rootPackage.version) },
-  plugins: [react()],
+  plugins: [react(), {
+    name: "texweave-content-security-policy",
+    transformIndexHtml(html) {
+      const developmentSources = command === "serve" ? "http://127.0.0.1:* ws://127.0.0.1:*" : "";
+      return html.replace("__CSP_CONNECT_SOURCES__", developmentSources);
+    }
+  }],
   build: {
     outDir: "../../dist/renderer",
     emptyOutDir: true,
@@ -20,4 +26,4 @@ export default defineConfig({
     // locally for offline desktop use; 5 MB is an acceptable warning threshold.
     chunkSizeWarningLimit: 6000
   }
-});
+}));

@@ -194,6 +194,19 @@ z=w
     if (section) expect(source.slice(section.body.startOffset, section.body.endOffset).trim()).toBe("");
   });
 
+  it("renders the body following a paragraph heading as child prose", () => {
+    const source = String.raw`\begin{document}
+\paragraph{Overview}
+Paragraph body that should be visible.
+\section{Next}
+Following section text.
+\end{document}`;
+    const paragraph = blocks(parsePreview(source, "main.tex", DEFAULT_ENVIRONMENTS).nodes).find((node) => node.environmentId === "paragraph");
+
+    expect(paragraph?.title).toBe("Overview");
+    expect(paragraph?.children.some((node) => node.kind === "content" && node.raw.includes("Paragraph body that should be visible."))).toBe(true);
+  });
+
   it("keeps empty structural and content blocks free of synthetic child nodes", () => {
     const source = String.raw`\begin{theorem}\end{theorem}
 \section{Part}

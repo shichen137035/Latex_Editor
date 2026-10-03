@@ -1,13 +1,16 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import type { BlockGraphSnapshot, BlockId, RelationDirection, RelationNeighborhood } from "@latex-editor/contracts";
+import { isRelationCapableBlock, type BlockGraphSnapshot, type BlockId, type RelationDirection, type RelationNeighborhood } from "@latex-editor/contracts";
 import { t } from "../i18n/index.js";
 import { blockName, blockRole } from "./model.js";
+import type { EnvironmentDefinition } from "../preview/types.js";
+import { blockColorStyle, blockTypeLabel, EnvironmentBadge } from "./presentation.js";
 
 const nodeWidth = 180;
 const nodeHeight = 64;
 
-export function RelationGraphView({ snapshot, neighborhood, direction, depth, onDirection, onDepth, onFocus, onLocate, onClose }: {
+export function RelationGraphView({ snapshot, definitions, neighborhood, direction, depth, onDirection, onDepth, onFocus, onLocate, onClose }: {
   snapshot: BlockGraphSnapshot;
+  definitions: EnvironmentDefinition[];
   neighborhood: RelationNeighborhood;
   direction: RelationDirection;
   depth: number | "all";
@@ -49,6 +52,7 @@ export function RelationGraphView({ snapshot, neighborhood, direction, depth, on
     return () => cancelAnimationFrame(frame);
   }, [width, height]);
   const selectedBlock = selected ? blocks.get(selected) : undefined;
+  const selectedCanBeFocused = !!selectedBlock && isRelationCapableBlock(selectedBlock);
   return <div className="relation-graph-backdrop" role="dialog" aria-modal="true" aria-label={t("relation.graphTitle")}>
     <section className="relation-graph-view">
       <header><div><small>{neighborhood.focusId ? t("relation.focusedView") : t("relation.fullView")}</small><strong>{neighborhood.focusId ? blockName(blocks.get(neighborhood.focusId)!) : t("relation.graphTitle")}</strong></div><button onClick={onClose} title={t("common.close")}>×</button></header>
@@ -64,9 +68,9 @@ export function RelationGraphView({ snapshot, neighborhood, direction, depth, on
           const x1 = from.x + nodeWidth; const y1 = from.y + nodeHeight / 2; const x2 = to.x; const y2 = to.y + nodeHeight / 2; const bend = Math.max(35, (x2 - x1) / 2);
           return <path key={`${edge.from}:${edge.to}`} d={`M${x1},${y1} C${x1 + bend},${y1} ${x2 - bend},${y2} ${x2},${y2}`} markerEnd="url(#relation-arrow)"/>;
         })}</svg>
-        {nodes.map((block) => { const position = positions[block.id]; if (!position) return null; return <button key={block.id} className={`relation-graph-node ${block.id === neighborhood.focusId ? "focus" : ""} ${block.id === selected ? "selected" : ""}`} style={{ left: position.x, top: position.y }} onClick={() => setSelected(block.id)} onDoubleClick={() => onFocus(block.id)}><small>{blockRole(block)}</small><strong>{blockName(block)}</strong>{block.label && <span>{block.label}</span>}</button>; })}
+        {nodes.map((block) => { const position = positions[block.id]; if (!position) return null; const canFocus = isRelationCapableBlock(block); return <button key={block.id} className={`relation-graph-node ${block.id === neighborhood.focusId ? "focus" : ""} ${block.id === selected ? "selected" : ""}`} style={{ ...blockColorStyle(block, definitions), left: position.x, top: position.y }} title={canFocus ? undefined : t("relation.invalid.virtual-endpoint")} onClick={() => setSelected(block.id)} onDoubleClick={() => { if (canFocus) onFocus(block.id); }}><small>{blockTypeLabel(block, definitions)}</small><strong>{blockName(block)}</strong>{block.label && <span>{block.label}</span>}</button>; })}
       </div></div>
-      <aside className="relation-graph-selection">{selectedBlock ? <><small>{blockRole(selectedBlock)}</small><strong>{blockName(selectedBlock)}</strong><span>{selectedBlock.label || selectedBlock.fileId || ""}</span><div><button onClick={() => onFocus(selectedBlock.id)}>{t("relation.setFocus")}</button><button onClick={() => onLocate(selectedBlock.id)}>{t("relation.locate")}</button></div></> : <span>{t("relation.selectNode")}</span>}</aside>
+      <aside className="relation-graph-selection">{selectedBlock ? <><EnvironmentBadge block={selectedBlock} definitions={definitions}/><strong>{blockName(selectedBlock)}</strong><span>{selectedBlock.label || selectedBlock.fileId || ""}</span><div><button disabled={!selectedCanBeFocused} title={selectedCanBeFocused ? t("relation.setFocus") : t("relation.invalid.virtual-endpoint")} onClick={() => onFocus(selectedBlock.id)}>{t("relation.setFocus")}</button><button onClick={() => onLocate(selectedBlock.id)}>{t("relation.locateDocument")}</button></div></> : <span>{t("relation.selectNode")}</span>}</aside>
     </section>
   </div>;
 }

@@ -1,9 +1,8 @@
-import { isRelationCapableBlock, type BlockGraphSnapshot, type BlockId, type BlockOrigin, type DependencyEdge, type RelationDirection, type SemanticBlock } from "@latex-editor/contracts";
+import { isRelationCapableBlock, type BlockGraphSnapshot, type BlockId, type BlockOrigin, type DependencyEdge, type RelationDirection, type RelationScope, type SemanticBlock } from "@latex-editor/contracts";
 import { BlockGraphManager } from "@latex-editor/editor-core";
 const graphCache = new WeakMap<BlockGraphSnapshot, BlockGraphManager>();
 
 export type HierarchyScope = "all" | "same-parent" | "ancestors" | "descendants" | "same-section";
-export type UnmatchedBehavior = "dim" | "hide";
 
 export interface RelationFilters {
   hierarchyScope: HierarchyScope;
@@ -128,12 +127,13 @@ function scopeIds(snapshot: BlockGraphSnapshot, focusId: BlockId | null, scope: 
  * match remain visible as muted context and are auto-expanded separately from
  * the user's manual expansion state.
  */
-export function projectRelationCandidates(snapshot: BlockGraphSnapshot, focusId: BlockId | null, filters: RelationFilters): RelationCandidateProjection {
+export function projectRelationCandidates(snapshot: BlockGraphSnapshot, focusId: BlockId | null, filters: RelationFilters, allowedIds?: ReadonlySet<BlockId>): RelationCandidateProjection {
   const parents = parentMap(snapshot);
   const allowedByScope = scopeIds(snapshot, focusId, filters.hierarchyScope);
   const query = filters.textQuery.trim().toLocaleLowerCase();
   const matchIds = new Set<BlockId>();
   for (const block of snapshot.blocks) {
+    if (allowedIds && !allowedIds.has(block.id)) continue;
     const origin = block.origin ?? "environment";
     const haystack = `${blockName(block)} ${blockRole(block)} ${block.label ?? ""} ${block.fileId ?? block.source?.relativePath ?? ""}`.toLocaleLowerCase();
     if (!allowedByScope.has(block.id)) continue;
@@ -145,7 +145,7 @@ export function projectRelationCandidates(snapshot: BlockGraphSnapshot, focusId:
   }
   const contextIds = new Set<BlockId>();
   const autoExpandedIds = new Set<BlockId>();
-  const filterActive = filters.hierarchyScope !== "all" || filters.role !== "all" || filters.origin !== "all" || filters.label !== "all" || query.length > 0;
+  const filterActive = !!allowedIds || filters.hierarchyScope !== "all" || filters.role !== "all" || filters.origin !== "all" || filters.label !== "all" || query.length > 0;
   for (const id of matchIds) {
     for (const ancestor of ancestorsOf(id, parents)) {
       contextIds.add(ancestor);
@@ -155,13 +155,42 @@ export function projectRelationCandidates(snapshot: BlockGraphSnapshot, focusId:
   return { roots: relationTree(snapshot), matchIds, contextIds, autoExpandedIds };
 }
 
+function cachedGraph(snapshot: BlockGraphSnapshot): BlockGraphManager {
+  let graph = graphCache.get(snapshot);
+  if (!graph) { graph = new BlockGraphManager(snapshot); graphCache.set(snapshot, graph); }
+  return graph;
+}
+
+/** Frontend scopes use the same traversal and containment rules as the application service. */
+export function relationScope(snapshot: BlockGraphSnapshot, focusId: BlockId | null, direction: RelationDirection, depth: number | "all"): RelationScope {
+  const focus = focusableRelationBlock(snapshot, focusId);
+  if (!focus) return { focusIds: [], entries: [], blockIds: [], relations: [] };
+  return cachedGraph(snapshot).relations().getRelationScope({ focusIds: [focus.id], direction: direction === "prerequisite" ? "prerequisites" : direction === "consequence" ? "dependents" : "both", depth });
+}
+
+/** Return a block only when it is a valid relation focus target. */
+export function focusableRelationBlock(snapshot: BlockGraphSnapshot, blockId: BlockId | null | undefined): SemanticBlock | undefined {
+  if (!blockId) return undefined;
+  const block = snapshot.blocks.find(candidate => candidate.id === blockId);
+  return block && isRelationCapableBlock(block) ? block : undefined;
+}
+
+export function relationDocumentIds(snapshot: BlockGraphSnapshot, scope: RelationScope): Set<BlockId> {
+  return new Set(cachedGraph(snapshot).relations().getDisplayScope(scope, { includeContent: true, includeStructuralParents: false }).allBlockIds);
+}
+
+export function blockSection(snapshot: BlockGraphSnapshot, id: BlockId): SemanticBlock | undefined {
+  const blocks = new Map(snapshot.blocks.map(block => [block.id, block]));
+  return [id, ...ancestorsOf(id, parentMap(snapshot))].map(key => blocks.get(key)).find(block => block && /^(chapter|section|subsection|subsubsection)$/i.test(blockRole(block)));
+}
+
 export function candidateRelationState(snapshot: BlockGraphSnapshot, focusId: BlockId | null, candidateId: BlockId, direction: RelationDirection): CandidateRelationState {
   if (!focusId) return { disabledReason: "focus-required" };
   if (focusId === candidateId) return { disabledReason: "self-loop" };
   const focus = snapshot.blocks.find((block) => block.id === focusId);
   const candidate = snapshot.blocks.find((block) => block.id === candidateId);
   if (!focus || !candidate || focus.state === "orphaned" || candidate.state === "orphaned") return { disabledReason: "orphaned" };
-  if (!isRelationCapableBlock(focus) || !isRelationCapableBlock(candidate)) return { disabledReason: "virtual-endpoint" };
+  if (!focusableRelationBlock(snapshot, focusId) || !focusableRelationBlock(snapshot, candidateId)) return { disabledReason: "virtual-endpoint" };
   const prerequisite = snapshot.dependencies.find((edge) => edge.from === candidateId && edge.to === focusId);
   const consequence = snapshot.dependencies.find((edge) => edge.from === focusId && edge.to === candidateId);
   if (direction === "prerequisite" && prerequisite) return { existing: prerequisite, existingDirection: "prerequisite" };
@@ -172,8 +201,7 @@ export function candidateRelationState(snapshot: BlockGraphSnapshot, focusId: Bl
   }
   if (direction === "prerequisite" && consequence) return { disabledReason: "bidirectional" };
   if (direction === "consequence" && prerequisite) return { disabledReason: "bidirectional" };
-  let graph = graphCache.get(snapshot);
-  if (!graph) { graph = new BlockGraphManager(snapshot); graphCache.set(snapshot, graph); }
+  const graph = cachedGraph(snapshot);
   const prerequisiteAllowed = graph.relations().canCreateRelation(candidateId, focusId).valid;
   const dependentAllowed = graph.relations().canCreateRelation(focusId, candidateId).valid;
   if ((direction === "prerequisite" && !prerequisiteAllowed) || (direction === "consequence" && !dependentAllowed) || (direction === "both" && !prerequisiteAllowed && !dependentAllowed)) return { disabledReason: "cycle" };

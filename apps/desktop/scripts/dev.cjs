@@ -4,6 +4,7 @@ const path = require("node:path");
 
 const root = path.resolve(__dirname, "../../..");
 const mainConfig = path.join(root, "apps/desktop/tsconfig.main.json");
+const preloadBuildScript = path.join(root, "apps/desktop/scripts/build-preload.cjs");
 const tsc = path.join(root, "node_modules/typescript/bin/tsc");
 const vite = path.join(root, "node_modules/vite/bin/vite.js");
 const rendererUrl = "http://127.0.0.1:5173/";
@@ -68,6 +69,12 @@ function failChild(name, child, code, signal) {
 
 function launchElectron() {
   if (stopping) return;
+  const preloadBuild = spawnSync(process.execPath, [preloadBuildScript], { cwd: root, env: environment, stdio: "inherit" });
+  if (preloadBuild.error || preloadBuild.status !== 0) {
+    process.stderr.write(`Unable to build the sandboxed preload${preloadBuild.error ? `: ${preloadBuild.error.message}` : "."}\n`);
+    stop(preloadBuild.status ?? 1);
+    return;
+  }
   const electronExecutable = require("electron").trim();
   const electronEnvironment = { ...environment, TEXWEAVE_RENDERER_URL: rendererUrl };
   electronProcess = spawn(electronExecutable, [path.join(root, "apps/desktop")], {

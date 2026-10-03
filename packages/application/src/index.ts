@@ -4,6 +4,7 @@ import { isoNow, type Clock, type IdGenerator } from "@latex-editor/domain";
 export * from "./block-graph-service.js";
 export * from "./relation-service.js";
 export * from "./document-structure-service.js";
+export * from "./project-block-services.js";
 
 export interface ProjectRegistryPort {
   insert(project: Project): void;

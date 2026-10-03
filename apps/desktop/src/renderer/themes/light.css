@@ -27,7 +27,7 @@
   --topbar-height: 46px;
   --status-height: 24px;
   --env-section-accent: #3979c6; --env-section-fill: rgba(244,249,255,.72); --env-section-label-bg: #e8f2ff; --env-section-label-text: #285f9f;
-  --env-theorem-accent: #6f6cc6; --env-theorem-fill: #f8f7ff; --env-theorem-label-bg: #eeecff; --env-theorem-label-text: #5551a7;
+  --env-theorem-accent: #296bcb; --env-theorem-fill: #f5f8ff; --env-theorem-label-bg: #eaf1ff; --env-theorem-label-text: #285c9f;
   --env-definition-accent: #25979f; --env-definition-fill: #f4fbfb; --env-definition-label-bg: #e1f6f5; --env-definition-label-text: #19767d;
   --env-proof-accent: #4b9471; --env-proof-fill: #f7fbf8; --env-proof-label-bg: #e8f5ed; --env-proof-label-text: #347054;
   --env-equation-accent: #71879e; --env-equation-fill: #f7fafc; --env-equation-label-bg: #eaf0f5; --env-equation-label-text: #50667b;
@@ -41,4 +41,6 @@
   --env-virtual-accent: #c07845; --env-virtual-fill: #fff9f3; --env-virtual-label-bg: #fbeadb; --env-virtual-label-text: #925a31;
   --env-generic-accent: #8a97a3; --env-generic-fill: #fafbfc; --env-generic-label-bg: #edf0f2; --env-generic-label-text: #65717c;
   --env-border-default: rgba(70,95,120,.13); --env-border-hover: rgba(70,95,120,.28); --env-border-selected: #2f6bb2;
+  --env-lemma-accent: #159a82; --env-proposition-accent: #b56b2f; --env-corollary-accent: #8c54c7;
+  --env-assumption-accent: #bc5484; --env-subsection-accent: #668bc1; --env-subsubsection-accent: #8975b7;
 }

@@ -184,6 +184,10 @@ export class NodeProjectFileService {
     this.#projects = projects;
   }
 
+  #assertWritable(project: Project): void {
+    if (!project.writable) throw new AppError("PROJECT_NOT_WRITABLE", `Project is not writable: ${project.name}`);
+  }
+
   async listTree(projectId: string): Promise<ProjectTreeNode[]> {
     const project = this.#projects.getProject(projectId);
     return this.#listDirectory(project.canonicalPath, project.canonicalPath);
@@ -221,7 +225,7 @@ export class NodeProjectFileService {
 
   async writeText(projectId: string, relativePath: string, content: string): Promise<FileWriteResult> {
     const project = this.#projects.getProject(projectId);
-    if (!project.writable) throw new AppError("PROJECT_NOT_WRITABLE", `Project is not writable: ${project.name}`);
+    this.#assertWritable(project);
     const filePath = await resolveSafeProjectPath(project.canonicalPath, relativePath, false);
     await mkdir(dirname(filePath), { recursive: true });
     // 同目录临时文件 + rename，避免写入中断留下截断的源文件。
@@ -246,6 +250,7 @@ export class NodeProjectFileService {
 
   async createFile(projectId: string, relativePath: string, content = ""): Promise<void> {
     const project = this.#projects.getProject(projectId);
+    this.#assertWritable(project);
     const filePath = await resolveSafeProjectPath(project.canonicalPath, relativePath, false);
     await mkdir(dirname(filePath), { recursive: true });
     try { await writeFile(filePath, content, { encoding: "utf8", flag: "wx" }); }
@@ -259,6 +264,7 @@ export class NodeProjectFileService {
 
   async createDirectory(projectId: string, relativePath: string): Promise<void> {
     const project = this.#projects.getProject(projectId);
+    this.#assertWritable(project);
     const directoryPath = await resolveSafeProjectPath(project.canonicalPath, relativePath, false);
     await mkdir(directoryPath, { recursive: false });
     this.#projects.touchEditedAt(projectId);
@@ -266,7 +272,7 @@ export class NodeProjectFileService {
 
   async renameEntry(projectId: string, fromRelativePath: string, toRelativePath: string): Promise<void> {
     const project = this.#projects.getProject(projectId);
-    if (!project.writable) throw new AppError("PROJECT_NOT_WRITABLE", `Project is not writable: ${project.name}`);
+    this.#assertWritable(project);
     const source = await resolveSafeProjectPath(project.canonicalPath, fromRelativePath, true);
     const target = await resolveSafeProjectPath(project.canonicalPath, toRelativePath, false);
     const sourceInfo = await lstat(source);
@@ -286,6 +292,7 @@ export class NodeProjectFileService {
 
   async copyEntry(projectId: string, fromRelativePath: string, toRelativePath: string): Promise<void> {
     const project = this.#projects.getProject(projectId);
+    this.#assertWritable(project);
     const source = await resolveSafeProjectPath(project.canonicalPath, fromRelativePath, true);
     const target = await resolveSafeProjectPath(project.canonicalPath, toRelativePath, false);
     await mkdir(dirname(target), { recursive: true });
@@ -301,7 +308,7 @@ export class NodeProjectFileService {
 
   async importEntry(projectId: string, sourcePath: string, destinationRelativePath: string): Promise<void> {
     const project = this.#projects.getProject(projectId);
-    if (!project.writable) throw new AppError("PROJECT_NOT_WRITABLE", `Project is not writable: ${project.name}`);
+    this.#assertWritable(project);
     const source = resolve(sourcePath);
     const target = await resolveSafeProjectPath(project.canonicalPath, destinationRelativePath, false);
     const sourceInfo = await lstat(source);
@@ -321,6 +328,7 @@ export class NodeProjectFileService {
 
   async removeEntry(projectId: string, relativePath: string): Promise<void> {
     const project = this.#projects.getProject(projectId);
+    this.#assertWritable(project);
     const target = await resolveSafeProjectPath(project.canonicalPath, relativePath, true);
     await rm(target, { recursive: true, force: false });
     this.#projects.touchEditedAt(projectId);

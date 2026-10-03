@@ -1,8 +1,9 @@
 import { Fragment, memo, useEffect, useMemo, useRef, useState, type CSSProperties, type MouseEvent, type PointerEvent as ReactPointerEvent, type ReactNode } from "react";
 import { createPortal, flushSync } from "react-dom";
-import type { BlockGraphSnapshot, BlockId, ProjectTreeNode, RelationDirection } from "@latex-editor/contracts";
+import { isRelationCapableBlock, type BlockGraphSnapshot, type BlockId, type ProjectTreeNode, type RelationDirection } from "@latex-editor/contracts";
 import { t, type MessageKey } from "../i18n/index.js";
 import { definitionForId } from "./environments.js";
+import { environmentAccent } from "./environment-colors.js";
 import { parsePreview } from "./parser.js";
 import type { ContentRegion, EnvironmentDefinition, PreviewNode, SourceSpan, StructuralBlock } from "./types.js";
 import "./preview.css";
@@ -14,9 +15,9 @@ import { EMPTY_MATH_CONTEXT, type MathContext } from "../math/types.js";
 import { searchPattern } from "../search/SearchEngine.js";
 import type { SearchQuery, SearchResult } from "../search/types.js";
 import { FilterEngine } from "../filter/FilterEngine.js";
-import { defaultFilterQuery, type FilterQuery, type FilterState } from "../filter/types.js";
+import { combineFilterStates, defaultFilterQuery, filterDisposition, type FilterQuery, type FilterState } from "../filter/types.js";
 import type { DocumentSelection } from "../custom-blocks/selection.js";
-import { candidateRelationState, type UnmatchedBehavior } from "../relations/model.js";
+import { candidateRelationState } from "../relations/model.js";
 import { convertBlockEnvironmentSource, definitionConversionGroup, environmentDefinitionsCompatible, environmentDisplayName, EnvironmentPickerPanel, environmentConversionGroup } from "./EnvironmentPicker.js";
 import { unwrapLatexEnvironment } from "./sourceOperations.js";
 import { FigurePreview } from "../figure/FigurePreview.js";
@@ -38,12 +39,24 @@ export interface PreviewRelationUi {
   direction: RelationDirection;
   matchIds: Set<BlockId>;
   contextIds: Set<BlockId>;
-  unmatchedBehavior: UnmatchedBehavior;
   locateRequest?: { blockId: BlockId; nonce: number } | undefined;
   onFocus(blockId: BlockId): void;
   onToggle(blockId: BlockId, x: number, y: number): void;
 }
 type PreviewEditorServices = { nodeRanges: ReadonlyMap<string, SourceSpan>; api: EditorApi | undefined; projectId: string; tree: ProjectTreeNode[]; currentPath: string; documentSource: string; definitions: EnvironmentDefinition[]; mathContext: MathContext; searchQuery: SearchQuery; activeSearchResult?: SearchResult | undefined; filterQuery: FilterQuery; filterStates: Map<string, FilterState>; relation?: PreviewRelationUi | undefined; selectedBlockIds: string[]; setSelectedBlockIds(ids: string[]): void; deleteBlocks(ids: string[]): void; removeEnvironment(id: string): void; onBoundaryDraftChange(insertion: BoundaryInsertion, value: string): void; onFigureSelect: ((selection?: FigureSelection) => void) | undefined; onFigureSlotSelect: ((selection: FigureSelection) => void) | undefined; onTableSelect: ((selection?: TableSelection) => void) | undefined; onTableChange: ((selection: TableSelection, source: string) => void) | undefined; onSpellContextMenu(request: SpellContextRequest): void; onDetectedLanguage(language: string): void; onForwardSync(path: string, line: number, column?: number): void };
+
+function previewFilterState(node: PreviewNode, services: PreviewEditorServices): FilterState {
+  const documentState = services.filterQuery.enabled ? services.filterStates.get(node.id) ?? "match" : "match";
+  const semanticId = services.relation?.active ? services.relation.transientToBlockId[node.id] : undefined;
+  const relationState: FilterState = !semanticId || !services.relation?.active
+    ? "match"
+    : services.relation.matchIds.has(semanticId)
+      ? "match"
+      : services.relation.contextIds.has(semanticId)
+        ? "context"
+        : "unmatched";
+  return combineFilterStates(documentState, relationState);
+}
 
 const deleteMenuHandlers = new Map<string, (event: globalThis.MouseEvent) => void>();
 let deleteMenuDocument: Document | undefined;
@@ -464,14 +477,16 @@ const LocalEditor = PreviewLocalEditor;
 
 function ContentRenderer({ node, source, editing, cursorOffset, boundary, beginEdit, applyEdit, onDraftChange, applyBoundary, cancelEdit, requestBoundary, services }: { node: ContentRegion; source: string; editing: boolean; cursorOffset?: number | undefined; boundary?: BoundaryInsertion | undefined; beginEdit(offset?: number): void; applyEdit(value: string): void; onDraftChange?: ((value: string) => void) | undefined; applyBoundary(insertion: BoundaryInsertion, value: string): void; cancelEdit(): void; requestBoundary(node: PreviewNode, side: "before" | "after", draft?: string): void; services: PreviewEditorServices }) {
   const insertion = boundary?.targetId === node.id ? boundary : undefined;
-  const filterState = services.filterStates.get(node.id) ?? "match";
-  if (services.filterQuery.enabled && filterState === "unmatched" && !editing && !insertion) {
-    if (services.filterQuery.viewMode === "remove") return null;
-    if (services.filterQuery.viewMode === "collapse") return <div className="preview-filter-collapsed">⋯ 1 {t("filter.blockCollapsed")}</div>;
+  const queryFilterState = services.filterQuery.enabled ? services.filterStates.get(node.id) ?? "match" : "match";
+  const filterState = previewFilterState(node, services);
+  const disposition = filterDisposition(filterState, services.filterQuery.viewMode);
+  if (disposition === "remove" && !editing && !insertion) return null;
+  if (disposition === "collapse" && !editing && !insertion) {
+    return <div className="preview-filter-collapsed">⋯ 1 {t("filter.blockCollapsed")}</div>;
   }
   const activeSearch = services.activeSearchResult ? services.activeSearchResult.matchStart >= node.source.startOffset && services.activeSearchResult.matchEnd <= node.source.endOffset : false;
-  const effectiveSearch = services.filterQuery.enabled && filterState !== "match" ? defaultInlineSearch : services.searchQuery;
-  const filterClass = services.filterQuery.enabled ? `filter-${filterState} filter-view-${services.filterQuery.viewMode}` : "";
+  const effectiveSearch = services.filterQuery.enabled && queryFilterState !== "match" ? defaultInlineSearch : services.searchQuery;
+  const filterClass = services.filterQuery.enabled || services.relation?.active ? `filter-${filterState} filter-view-${services.filterQuery.viewMode}` : "";
   const virtualClass = node.origin === "virtual" && node.raw.length === 0 ? " preview-content-virtual" : "";
   return <Fragment>
     {insertion?.side === "before" && <LocalEditor value="" onApply={(value) => applyBoundary(insertion, value)} onDraftChange={(value) => services.onBoundaryDraftChange(insertion, value)} onCancel={cancelEdit} {...services}/>}
@@ -521,12 +536,14 @@ function structuralBlockAt(nodes: PreviewNode[], startOffset: number, environmen
 function BlockRenderer({ node, source, definitions, selectedId, editingId, cursorOffset, boundary, select, edit, applyEdit, applyBoundary, cancelEdit, requestBoundary, services }: { node: StructuralBlock; source: string; definitions: EnvironmentDefinition[]; selectedId?: string | undefined; editingId?: string | undefined; cursorOffset?: number | undefined; boundary?: BoundaryInsertion | undefined; select(id: string): void; edit(id: string, cursorOffset?: number): void; applyEdit(node: PreviewNode, value: string): void; applyBoundary(insertion: BoundaryInsertion, value: string): void; cancelEdit(): void; requestBoundary(node: PreviewNode, side: "before" | "after", draft?: string): void; onDraftChange?: ((value: string) => void) | undefined; services: PreviewEditorServices }) {
   const definition = definitionForId(definitions, node.environmentId);
   const family = definition?.family ?? (node.origin === "virtual" ? "virtual" : "generic");
+  const accent = environmentAccent(node.environmentId, definition);
   const editing = editingId === node.id;
   const selected = services.selectedBlockIds.includes(node.id);
   const singleSelected = services.selectedBlockIds.length === 1 && selected;
-  const filterState = services.filterStates.get(node.id) ?? "match";
+  const queryFilterState = services.filterQuery.enabled ? services.filterStates.get(node.id) ?? "match" : "match";
+  const filterState = previewFilterState(node, services);
   const activeSearch = services.activeSearchResult ? services.activeSearchResult.matchStart >= node.source.startOffset && services.activeSearchResult.matchEnd <= node.source.endOffset : false;
-  const effectiveSearch = services.filterQuery.enabled && filterState !== "match" ? defaultInlineSearch : services.searchQuery;
+  const effectiveSearch = services.filterQuery.enabled && queryFilterState !== "match" ? defaultInlineSearch : services.searchQuery;
   const listEnvironment = isListEnvironment(node.environmentId);
   const figureBlock = node.environmentId === "figure" || node.environmentId === "figure-star" || node.environmentId === "custom:figure*" || node.environmentId === "inline-image";
   const tableBlock = ["table", "table-star", "tabular", "tabular-star", "tabularx", "longtable"].includes(node.environmentId);
@@ -578,17 +595,17 @@ function BlockRenderer({ node, source, definitions, selectedId, editingId, curso
   const cssValue = (value: string | undefined, fallback: string) => value ? (value.startsWith("--") ? `var(${value})` : value) : `var(${fallback})`;
   const insertion = boundary?.targetId === node.id ? boundary : undefined;
   const semanticId = services.relation?.transientToBlockId[node.id];
+  const semanticBlock = semanticId ? services.relation?.snapshot.blocks.find((block) => block.id === semanticId) : undefined;
+  const canSetRelationFocus = !!semanticBlock && isRelationCapableBlock(semanticBlock);
   const relationState = semanticId && services.relation?.active
     ? candidateRelationState(services.relation.snapshot, services.relation.focusId, semanticId, services.relation.direction)
     : undefined;
-  const relationMatches = semanticId ? services.relation?.matchIds.has(semanticId) ?? true : true;
-  const relationContext = semanticId ? services.relation?.contextIds.has(semanticId) ?? false : false;
-  if (services.relation?.active && services.relation.unmatchedBehavior === "hide" && semanticId && !relationMatches && !relationContext && !editing && !insertion) return null;
-  if (services.filterQuery.enabled && filterState === "unmatched" && !editing && !insertion && !selected) {
-    if (services.filterQuery.viewMode === "remove") return null;
-    if (services.filterQuery.viewMode === "collapse") return <div className="preview-filter-collapsed">⋯ 1 {t("filter.blockCollapsed")}</div>;
+  const disposition = filterDisposition(filterState, services.filterQuery.viewMode);
+  if (!editing && !insertion && !selected && disposition === "remove") return null;
+  if (!editing && !insertion && !selected && disposition === "collapse") {
+    return <div className="preview-filter-collapsed">⋯ 1 {t("filter.blockCollapsed")}</div>;
   }
-  const filterClass = services.filterQuery.enabled ? `filter-${filterState} filter-view-${services.filterQuery.viewMode}` : "";
+  const filterClass = services.filterQuery.enabled || services.relation?.active ? `filter-${filterState} filter-view-${services.filterQuery.viewMode}` : "";
   const applyLabel = (label: string) => {
     const blockSource = nodeSource(node, source);
     const ownedRange = node.labelSource ? { startOffset: node.labelSource.startOffset - node.source.startOffset, endOffset: node.labelSource.endOffset - node.source.startOffset } : null;
@@ -597,8 +614,8 @@ function BlockRenderer({ node, source, definitions, selectedId, editingId, curso
   };
   return <Fragment>
     {insertion?.side === "before" && <LocalEditor value="" onApply={(value) => applyBoundary(insertion, value)} onDraftChange={(value) => services.onBoundaryDraftChange(insertion, value)} onCancel={cancelEdit} {...services}/>}
-    <section className={`preview-block env-${family} ${filterClass} ${activeSearch ? "search-result-active" : ""} ${selected ? "selected" : ""} ${selected && services.selectedBlockIds.length > 1 ? "multi-selected" : ""} ${editing ? "editing" : ""} ${services.relation?.active && !relationMatches ? "relation-unmatched" : ""} ${semanticId === services.relation?.focusId ? "relation-focus" : ""}`} data-preview-node-id={node.id} data-environment={node.environmentId} data-semantic-block-id={semanticId} data-source-line={node.source.startLine} data-source-start-offset={node.source.startOffset} data-source-end-offset={node.source.endOffset} onDoubleClickCapture={(event) => { const target = event.target as Element; if (target.closest(".preview-local-editor, .structured-table") || target.closest(".preview-block") !== event.currentTarget) return; event.preventDefault(); event.stopPropagation(); const figureBlock = node.environmentId === "figure" || node.environmentId === "figure-star" || node.environmentId === "custom:figure*" || node.environmentId === "inline-image"; if (figureBlock) { if (preferences.get("images").editor.defaultMode === "source") edit(node.id); else { select(node.id); services.onFigureSelect?.({ fileId: services.currentPath, start: node.source.startOffset, end: node.source.endOffset, source: nodeSource(node, source) }); } return; } services.onForwardSync(services.currentPath, node.source.startLine, 1); }} style={{ "--block-accent": cssValue(definition?.style.accentToken, "--env-generic-accent"), "--block-fill": cssValue(definition?.style.fillToken, "--env-generic-fill"), "--block-border": cssValue(definition?.style.borderToken, "--env-border-default"), "--block-selected-border": cssValue(definition?.style.selectedBorderToken, "--env-border-selected"), "--block-label-bg": cssValue(definition?.style.labelBackgroundToken, "--env-generic-label-bg"), "--block-label-text": cssValue(definition?.style.labelTextToken, "--env-generic-label-text") } as CSSProperties}>
-    {(definition?.behavior.showHeader ?? true) && <div className="preview-block-header"><div className="preview-block-header-main" onClick={(event) => { event.stopPropagation(); select(node.id); }}><BlockEnvironmentSelector node={node} source={source} definition={definition} definitions={definitions} disabled={editing} onChange={(value) => applyEdit(node, value)}/>{node.title && <strong>{node.title}</strong>}{(definition?.behavior.showLabel ?? true) && <LabelEditor label={node.latexLabel ?? ""} auto={Boolean(node.autoLabel)} onCommit={applyLabel}/>}</div>{(singleSelected || (services.relation?.active && semanticId && services.selectedBlockIds.length === 1)) && <div className="preview-block-header-actions">{services.relation?.active && semanticId && <><button className={semanticId === services.relation.focusId ? "relation-control active" : "relation-control"} title={t("relation.setFocus")} onClick={(event) => { event.stopPropagation(); services.relation?.onFocus(semanticId); }}>◎</button><button className="relation-control" disabled={!!relationState?.disabledReason} title={relationState?.disabledReason ? t(`relation.invalid.${relationState.disabledReason}`) : relationState?.existing ? t("relation.remove") : t("relation.add")} onClick={(event) => { event.stopPropagation(); services.relation?.onToggle(semanticId, event.clientX, event.clientY); }}>{relationState?.existing ? relationState.existingDirection === "prerequisite" ? "← −" : "→ −" : "+"}</button></>}{singleSelected && <><button title={t("preview.insertBefore")} onPointerDown={(event) => { event.preventDefault(); event.stopPropagation(); requestBoundary(node, "before"); }} onClick={(event) => { event.stopPropagation(); if (event.detail === 0) requestBoundary(node, "before"); }}>↥＋</button><button title={t("preview.insertAfter")} onPointerDown={(event) => { event.preventDefault(); event.stopPropagation(); requestBoundary(node, "after"); }} onClick={(event) => { event.stopPropagation(); if (event.detail === 0) requestBoundary(node, "after"); }}>↧＋</button><button className="preview-block-delete" title={t("files.delete")} aria-label={t("files.delete")} onClick={(event) => { event.stopPropagation(); services.deleteBlocks([node.id]); }}>×</button></>}</div>}</div>}
+    <section className={`preview-block env-${family} ${filterClass} ${activeSearch ? "search-result-active" : ""} ${selected ? "selected" : ""} ${selected && services.selectedBlockIds.length > 1 ? "multi-selected" : ""} ${editing ? "editing" : ""} ${semanticId === services.relation?.focusId ? "relation-focus" : ""}`} data-preview-node-id={node.id} data-environment={node.environmentId} data-semantic-block-id={semanticId} data-source-line={node.source.startLine} data-source-start-offset={node.source.startOffset} data-source-end-offset={node.source.endOffset} onDoubleClickCapture={(event) => { const target = event.target as Element; if (target.closest(".preview-local-editor, .structured-table") || target.closest(".preview-block") !== event.currentTarget) return; event.preventDefault(); event.stopPropagation(); const figureBlock = node.environmentId === "figure" || node.environmentId === "figure-star" || node.environmentId === "custom:figure*" || node.environmentId === "inline-image"; if (figureBlock) { if (preferences.get("images").editor.defaultMode === "source") edit(node.id); else { select(node.id); services.onFigureSelect?.({ fileId: services.currentPath, start: node.source.startOffset, end: node.source.endOffset, source: nodeSource(node, source) }); } return; } services.onForwardSync(services.currentPath, node.source.startLine, 1); }} style={{ "--block-accent": accent, "--block-fill": cssValue(definition?.style.fillToken, "--env-generic-fill"), "--block-border": cssValue(definition?.style.borderToken, "--env-border-default"), "--block-selected-border": cssValue(definition?.style.selectedBorderToken, "--env-border-selected"), "--block-label-bg": definition?.style.labelBackgroundToken === `--env-${family}-label-bg` ? `color-mix(in srgb, ${accent} 10%, var(--color-bg-panel))` : cssValue(definition?.style.labelBackgroundToken, "--env-generic-label-bg"), "--block-label-text": definition?.style.labelTextToken === `--env-${family}-label-text` ? accent : cssValue(definition?.style.labelTextToken, "--env-generic-label-text") } as CSSProperties}>
+    {(definition?.behavior.showHeader ?? true) && <div className="preview-block-header"><div className="preview-block-header-main" onClick={(event) => { event.stopPropagation(); select(node.id); }}><BlockEnvironmentSelector node={node} source={source} definition={definition} definitions={definitions} disabled={editing} onChange={(value) => applyEdit(node, value)}/>{node.title && <strong>{node.title}</strong>}{(definition?.behavior.showLabel ?? true) && <LabelEditor label={node.latexLabel ?? ""} auto={Boolean(node.autoLabel)} onCommit={applyLabel}/>}</div>{(singleSelected || (services.relation?.active && semanticId && services.selectedBlockIds.length === 1)) && <div className="preview-block-header-actions">{services.relation?.active && semanticId && <><button className={semanticId === services.relation.focusId ? "relation-control active" : "relation-control"} disabled={!canSetRelationFocus} title={canSetRelationFocus ? t("relation.setFocus") : t("relation.invalid.virtual-endpoint")} onClick={(event) => { event.stopPropagation(); services.relation?.onFocus(semanticId); }}>◎</button><button className="relation-control" disabled={!!relationState?.disabledReason} title={relationState?.disabledReason ? t(`relation.invalid.${relationState.disabledReason}`) : relationState?.existing ? t("relation.remove") : t("relation.add")} onClick={(event) => { event.stopPropagation(); services.relation?.onToggle(semanticId, event.clientX, event.clientY); }}>{relationState?.existing ? relationState.existingDirection === "prerequisite" ? "← −" : "→ −" : "+"}</button></>}{singleSelected && <><button title={t("preview.insertBefore")} onPointerDown={(event) => { event.preventDefault(); event.stopPropagation(); requestBoundary(node, "before"); }} onClick={(event) => { event.stopPropagation(); if (event.detail === 0) requestBoundary(node, "before"); }}>↥＋</button><button title={t("preview.insertAfter")} onPointerDown={(event) => { event.preventDefault(); event.stopPropagation(); requestBoundary(node, "after"); }} onClick={(event) => { event.stopPropagation(); if (event.detail === 0) requestBoundary(node, "after"); }}>↧＋</button><button className="preview-block-delete" title={t("files.delete")} aria-label={t("files.delete")} onClick={(event) => { event.stopPropagation(); services.deleteBlocks([node.id]); }}>×</button></>}</div>}</div>}
     <div className="preview-block-body" onClickCapture={() => {
        // Figure and table previews stop propagation for their own controls/cell editing.
        // Activate the surrounding block during capture so its boundary actions remain
@@ -646,7 +663,7 @@ function samePreviewNodeRender(previous: PreviewNodeRendererProps, next: Preview
   const a = previous.services, b = next.services;
   if (a.api !== b.api || a.projectId !== b.projectId || a.tree !== b.tree || a.currentPath !== b.currentPath || a.mathContext !== b.mathContext || a.searchQuery !== b.searchQuery || a.activeSearchResult !== b.activeSearchResult || a.filterQuery !== b.filterQuery || a.filterStates !== b.filterStates) return false;
   const ra = a.relation, rb = b.relation;
-  if (ra?.active !== rb?.active || ra?.snapshot !== rb?.snapshot || ra?.transientToBlockId !== rb?.transientToBlockId || ra?.focusId !== rb?.focusId || ra?.direction !== rb?.direction || ra?.matchIds !== rb?.matchIds || ra?.contextIds !== rb?.contextIds || ra?.unmatchedBehavior !== rb?.unmatchedBehavior) return false;
+  if (ra?.active !== rb?.active || ra?.snapshot !== rb?.snapshot || ra?.transientToBlockId !== rb?.transientToBlockId || ra?.focusId !== rb?.focusId || ra?.direction !== rb?.direction || ra?.matchIds !== rb?.matchIds || ra?.contextIds !== rb?.contextIds) return false;
   const interaction = (props: PreviewNodeRendererProps) => {
     const range = props.node.source;
     const contains = (id?: string) => {
@@ -668,14 +685,15 @@ function PreviewNodeList({ nodes, ...props }: { nodes: PreviewNode[] } & Omit<Pr
   for (let index = 0; index < nodes.length;) {
     const node = nodes[index];
     if (!node) break;
-    const collapsible = props.services.filterQuery.enabled && props.services.filterQuery.viewMode === "collapse" && props.services.filterStates.get(node.id) === "unmatched" && !props.services.selectedBlockIds.includes(node.id) && props.editingId !== node.id && props.boundary?.targetId !== node.id;
+    const nodeState = previewFilterState(node, props.services);
+    const collapsible = filterDisposition(nodeState, props.services.filterQuery.viewMode) === "collapse" && !props.services.selectedBlockIds.includes(node.id) && props.editingId !== node.id && props.boundary?.targetId !== node.id;
     // Source offsets change on every edit (including added preamble packages).
     // Keep the render slot stable so an active table retains its draft and focus.
     if (!collapsible) { rendered.push(<PreviewNodeRenderer key={`${node.source.filePath}:${index}:${node.kind === "block" ? node.environmentId : node.kind}`} node={node} {...props}/>); index += 1; continue; }
     let end = index + 1;
     while (end < nodes.length) {
       const next = nodes[end];
-      if (!next || props.services.filterStates.get(next.id) !== "unmatched" || props.services.selectedBlockIds.includes(next.id) || props.editingId === next.id || props.boundary?.targetId === next.id) break;
+      if (!next || filterDisposition(previewFilterState(next, props.services), props.services.filterQuery.viewMode) !== "collapse" || props.services.selectedBlockIds.includes(next.id) || props.editingId === next.id || props.boundary?.targetId === next.id) break;
       end += 1;
     }
     rendered.push(<div className="preview-filter-collapsed" key={`collapsed:${node.id}`}>⋯ {end - index} {t("filter.blocksCollapsed")}</div>);

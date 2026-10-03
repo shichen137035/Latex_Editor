@@ -4,7 +4,22 @@ export type FilterGroupId = "blockType" | "location" | "file" | "properties";
 export type FilterGroupMode = "include" | "exclude";
 export type FilterViewMode = "original" | "dim" | "collapse" | "remove";
 export type FilterState = "match" | "context" | "unmatched";
+export type FilterDisposition = "show" | "dim" | "collapse" | "remove";
 export type ContentProperty = "hasMath" | "hasCitation" | "hasLabel" | "hasFigure" | "hasTable" | "hasReference";
+
+/** Combine independent filter sources into one display state. */
+export function combineFilterStates(...states: FilterState[]): FilterState {
+  if (states.includes("unmatched")) return "unmatched";
+  if (states.includes("context")) return "context";
+  return "match";
+}
+
+/** Shared presentation rule for every filter source. */
+export function filterDisposition(state: FilterState, viewMode: FilterViewMode): FilterDisposition {
+  if (state === "unmatched") return viewMode === "original" ? "show" : viewMode;
+  if (state === "context" && viewMode === "dim") return "dim";
+  return "show";
+}
 
 export interface FilterQuery {
   enabled: boolean;

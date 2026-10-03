@@ -27,6 +27,7 @@ import { registerAiIpcHandlers } from "./ai/ipc.js";
 import { createProjectSourceArchive } from "./project-export.js";
 import { ProjectHistoryService } from "./project-history.js";
 import { registerHistoryIpc } from "./history-ipc.js";
+import { installRendererSecurity, resolveRendererTarget } from "./renderer-security.js";
 
 let context: DesktopContext | undefined;
 let settings: SettingsRepository;
@@ -44,7 +45,7 @@ async function createContext(): Promise<DesktopContext> {
   const packageInfo = JSON.parse(await readFile(resolve(__dirname, "../../../../package.json"), "utf8")) as { version?: unknown };
   const appVersion = typeof packageInfo.version === "string" ? packageInfo.version : app.getVersion();
   // Backend packages are ESM; dynamic import keeps this Electron entry CommonJS-compatible.
-  const [{ ProjectService, ProjectBlockGraphService, ProjectDocumentStructureService, ProjectRelationService }, { systemClock }, { NodeProjectEnvironment, NodeProjectFileService }, { SQLiteProjectRegistry }, { FileResourceCatalog }, { LatexmkCompilerService }] = await Promise.all([
+  const [{ ProjectService, createProjectBlockServices }, { systemClock }, { NodeProjectEnvironment, NodeProjectFileService }, { SQLiteProjectRegistry }, { FileResourceCatalog }, { LatexmkCompilerService }] = await Promise.all([
     import("@latex-editor/application"),
     import("@latex-editor/domain"),
     import("@latex-editor/filesystem-node"),
@@ -77,9 +78,6 @@ async function createContext(): Promise<DesktopContext> {
   // Resource loading is completed before the first project action is accepted.
   await resources.reload();
   const files = new NodeProjectFileService(projects);
-  const blockGraph = new ProjectBlockGraphService(files, { next: randomUUID });
-  const relations = new ProjectRelationService(blockGraph, { next: randomUUID });
-  relations.onEvent((projectId, event) => BrowserWindow.getAllWindows().forEach(window => sendIpc(window.webContents, desktopEvents.toRenderer.relationUpdate, { projectId, event })));
   settings = new SettingsRepository(app.getPath("userData"), async (id) => files.resolveFilePath(id, ".texweave/settings.json", false));
   await settings.initialize();
   const { defaultHistoryPreferences } = await import("@latex-editor/contracts");
@@ -95,7 +93,8 @@ async function createContext(): Promise<DesktopContext> {
     const defaults = environmentsFromCatalog(environmentCatalog);
     return configured?.length ? [...configured, ...defaults.filter((entry) => !configured.some((custom) => custom.id === entry.id))] : defaults;
   };
-  const structure = new ProjectDocumentStructureService(files, blockGraph, { next: randomUUID }, environmentDefinitions);
+  const { blockGraph, structure, relations } = createProjectBlockServices({ files, ids: { next: randomUUID }, definitions: environmentDefinitions });
+  relations.onEvent((projectId, event) => BrowserWindow.getAllWindows().forEach(window => sendIpc(window.webContents, desktopEvents.toRenderer.relationUpdate, { projectId, event })));
   await themes.setDirectory(settings.global.themeDirectory ?? "");
   const { discoverToolchain } = await import("@latex-editor/compiler-latexmk");
   let detected = await discoverToolchain(settings.toolchain?.latexmk ?? settings.toolchain?.binDirectory);
@@ -637,13 +636,18 @@ function createWindow(): BrowserWindow {
     backgroundColor: "#f5f7fb",
     title: "TeXWeave — Local LaTeX Editor",
     webPreferences: {
-      preload: resolve(__dirname, "../../src/preload/index.cjs"),
+      preload: resolve(__dirname, "../preload/index.cjs"),
       contextIsolation: true,
       nodeIntegration: false,
-      sandbox: false,
+      sandbox: true,
+      webSecurity: true,
+      allowRunningInsecureContent: false,
       ...(offscreenTest ? { offscreen: true, backgroundThrottling: false } : {})
     }
   });
+  const rendererFile = resolve(__dirname, "../renderer/index.html");
+  const rendererTarget = resolveRendererTarget(rendererFile, process.env.TEXWEAVE_RENDERER_URL, app.isPackaged);
+  installRendererSecurity(window, rendererTarget, (url) => shell.openExternal(url));
   const closeState = { pending: undefined as string | undefined, approved: false, ready: false };
   closeStates.set(window.id, closeState);
   window.on("close", (event) => {
@@ -662,9 +666,8 @@ function createWindow(): BrowserWindow {
     if (settings.global.maximize !== false) window.maximize();
     window.show();
   });
-  const rendererUrl = process.env.TEXWEAVE_RENDERER_URL;
-  if (rendererUrl) void window.loadURL(rendererUrl);
-  else void window.loadFile(resolve(__dirname, "../renderer/index.html"));
+  if (rendererTarget.startsWith("file:")) void window.loadFile(rendererFile);
+  else void window.loadURL(rendererTarget);
   return window;
 }
 
