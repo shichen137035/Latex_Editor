@@ -12,6 +12,7 @@ import type { ReferenceLibraryRepository } from "./references.js";
 import type { CodexAppServer } from "./ai/codex-app-server.js";
 import type { CopilotChatService } from "./ai/copilot-chat.js";
 import type { AIWorkspaceService } from "./ai/ai-workspace.js";
+import type { ProjectHistoryService } from "./project-history.js";
 
 /** Services composed once during Electron startup and shared by IPC modules. */
 export interface DesktopContext {
@@ -32,4 +33,5 @@ export interface DesktopContext {
   ai: CodexAppServer;
   copilot: CopilotChatService;
   aiWorkspaces: AIWorkspaceService;
+  history: ProjectHistoryService;
 }

@@ -5,7 +5,7 @@ import { automaticLabelOccurrences, findBlockLabel, isAutomaticLabel } from "./l
 import type { BlockLabelRange } from "./labels.js";
 
 /** Bump when source ownership changes so persisted indexes refresh on upgrade. */
-export const STRUCTURE_PARSER_REVISION = 2;
+export const STRUCTURE_PARSER_REVISION = 3;
 
 interface RawBlock {
   start: number;
@@ -291,7 +291,10 @@ export function parsePreview(source: string, filePath: string, definitions: Envi
     children.push(block);
     childrenByParent.set(block.parent, children);
   }
-  const contentBlockIds = new Set(definitions.filter((definition) => ["equation", "figure", "table", "code"].includes(definition.family)).map((definition) => definition.id));
+  // Algorithm floats and algorithmic bodies are structural code: their nested
+  // environments and prose must remain in the tree. Verbatim code is atomic.
+  const contentBlockIds = new Set(definitions.filter((definition) => ["equation", "figure", "table"].includes(definition.family)
+    || (definition.family === "code" && (inferBlockKind(definition.id) === "content" || definition.behavior.allowChildren === false))).map((definition) => definition.id));
   contentBlockIds.add("display-math");
   for (const block of valid) if (inferBlockKind(block.environmentId) === "content") contentBlockIds.add(block.environmentId);
   const semanticKindFor = (block: RawBlock): BlockKind => {

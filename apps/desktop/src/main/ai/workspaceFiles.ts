@@ -1,6 +1,7 @@
 import { readFile, readdir, stat } from "node:fs/promises";
 import { join } from "node:path";
 import type { AIContextSnapshotFile, AIProjectSkill } from "@latex-editor/contracts" with { "resolution-mode": "import" };
+import { isAIEditableProjectPath, isAIStructureMetadataPath } from "@latex-editor/contracts/ai-paths";
 
 export type ProjectSkill = AIProjectSkill & { path: string };
 
@@ -16,23 +17,28 @@ export function safeRelativePath(value: string): string {
 }
 
 export function isSnapshotTextPath(value: string): boolean {
-  return TEXT_EXTENSIONS.test(value) || /^\.texweave\/settings\.json$/i.test(value);
+  const path = value.replaceAll("\\", "/");
+  if (!TEXT_EXTENSIONS.test(path)) return false;
+  return isAIEditableProjectPath(path)
+    || /^\.texweave\/(?:structure|block-graph|settings)\.json$/i.test(path)
+    || /^\.texweave\/ai-inputs\/[^/]+\.txt$/i.test(path);
 }
 
 export function snapshotFileLimit(path: string): number {
   return /^\.texweave\/(?:structure|block-graph)\.json$/i.test(path) ? MAX_STRUCTURE_BYTES : MAX_FILE_BYTES;
 }
 
-export async function readWorkspace(root: string): Promise<Map<string, string>> {
+export async function readWorkspace(root: string, includeStructure = false): Promise<Map<string, string>> {
   const result = new Map<string, string>();
   const walk = async (directory: string, prefix = "") => {
     for (const entry of await readdir(directory, { withFileTypes: true })) {
-      if (entry.isSymbolicLink() || entry.name === ".git" || entry.name === "node_modules") continue;
+      if (entry.isSymbolicLink() || [".git", ".latex-editor", "node_modules"].includes(entry.name.toLowerCase())) continue;
       const relative = prefix ? `${prefix}/${entry.name}` : entry.name;
-      if (relative === ".texweave/ai-attachments") continue;
+      if (entry.name.toLowerCase() === ".texweave" && (!includeStructure || prefix)) continue;
+      if (prefix.toLowerCase() === ".texweave" && entry.isDirectory()) continue;
       const absolute = join(directory, entry.name);
       if (entry.isDirectory()) await walk(absolute, relative);
-      else if (entry.isFile() && isSnapshotTextPath(relative)) {
+      else if (entry.isFile() && (isAIEditableProjectPath(relative) || (includeStructure && isAIStructureMetadataPath(relative))) && isSnapshotTextPath(relative)) {
         const metadata = await stat(absolute);
         if (metadata.size <= snapshotFileLimit(relative)) result.set(relative, await readFile(absolute, "utf8"));
       }
@@ -63,7 +69,7 @@ export async function loadSkills(builtInRoot: string, userRoot: string): Promise
 
 /** A bounded inventory, not thousands of lines injected before block tools run. */
 export function describeProjectSnapshot(files: AIContextSnapshotFile[], workspace: string): string {
-  const readable = files.filter((file) => isSnapshotTextPath(file.path.replaceAll("\\", "/")) && Buffer.byteLength(file.content, "utf8") <= MAX_FILE_BYTES);
+  const readable = files.filter((file) => isAIEditableProjectPath(file.path) && isSnapshotTextPath(file.path) && Buffer.byteLength(file.content, "utf8") <= MAX_FILE_BYTES);
   const sorted = [...readable].sort((a, b) => {
     const priority = (path: string) => /(^|\/)main\.tex$/i.test(path) ? 0 : /\.tex$/i.test(path) ? 1 : /\.(?:bib|sty|cls)$/i.test(path) ? 2 : 3;
     return priority(a.path) - priority(b.path) || a.path.localeCompare(b.path);

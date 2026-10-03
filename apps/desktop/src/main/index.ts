@@ -24,6 +24,8 @@ import { AIWorkspaceService } from "./ai/ai-workspace.js";
 import { createWorkspaceBlockApi } from "./ai/workspace-block-api.js";
 import { registerAiIpcHandlers } from "./ai/ipc.js";
 import { createProjectSourceArchive } from "./project-export.js";
+import { ProjectHistoryService } from "./project-history.js";
+import { registerHistoryIpc } from "./history-ipc.js";
 
 let context: DesktopContext | undefined;
 let settings: SettingsRepository;
@@ -77,6 +79,11 @@ async function createContext(): Promise<DesktopContext> {
   const blockGraph = new ProjectBlockGraphService(files, { next: randomUUID });
   settings = new SettingsRepository(app.getPath("userData"), async (id) => files.resolveFilePath(id, ".texweave/settings.json", false));
   await settings.initialize();
+  const { defaultHistoryPreferences } = await import("@latex-editor/contracts");
+  const history = new ProjectHistoryService((id) => projects.getProject(id), async (id) => {
+    const snapshot = await settings.snapshot(id);
+    return { ...defaultHistoryPreferences, ...(snapshot.global.history ?? {}), ...(snapshot.project.history ?? {}) };
+  });
   const { environmentsFromCatalog } = await import("@latex-editor/editor-core/preview/catalog");
   const environmentCatalog = JSON.parse(await readFile(resolve(resourceRoot, "environments", "preview-environments.json"), "utf8")) as EnvironmentCatalog;
   const environmentDefinitions = async (projectId: string): Promise<EnvironmentDefinition[]> => {
@@ -132,7 +139,7 @@ async function createContext(): Promise<DesktopContext> {
     onUpdate: (kind, payload) => BrowserWindow.getAllWindows().forEach((window) => sendIpc(window.webContents, desktopEvents.toRenderer.aiUpdate, { kind, payload }))
   });
   await aiWorkspaces.initialize();
-  return { registry, projects, environment, files, compiler, resources, blockGraph, structure, styleResources, themes, spellcheck, installation, images, references, ai, copilot, aiWorkspaces };
+  return { registry, projects, environment, files, compiler, resources, blockGraph, structure, styleResources, themes, spellcheck, installation, images, references, ai, copilot, aiWorkspaces, history };
 }
 
 function requireContext(): DesktopContext {
@@ -232,6 +239,7 @@ function registerIpcHandlers(): void {
   });
   registerStructureIpc(() => requireContext().structure);
   registerBlockGraphIpc(() => requireContext().blockGraph);
+  registerHistoryIpc(() => requireContext().history);
   handleIpc(desktopInvoke.spellcheck.status, () => context?.spellcheck.status());
   handleIpc(desktopInvoke.spellcheck.checkText, (_event, text, language) => context?.spellcheck.checkText(text, language) ?? []);
   handleIpc(desktopInvoke.spellcheck.checkWords, (_event, words, language) => context?.spellcheck.checkWords(words, language) ?? []);

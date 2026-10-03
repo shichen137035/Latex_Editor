@@ -1,4 +1,4 @@
-import type { AIStatus, AIModelOption, AIConversation, AIChangeSet, AIContextSnapshotFile, AIProjectSkill, AIMode, AIAttachment, AddSemanticBlockInput, BlockCreationValidation, BlockGraphSnapshot, BlockId, BlockRangeMappingResult, BlockReconciliationResult, CommandMetadata, CompileResult, PdfExportResult, CreateSemanticBlockInput, CreateUserBlockInput, DependencyCycle, DictionaryPackage, FileWriteResult, GraphDiagnostic, GraphTraversalOptions, GraphTraversalResult, ImportedImage, LogicalRelation, MapUserBlockRangesInput, Project, ProjectTreeNode, ReconcileParsedBlocksInput, RelationDirection, RelationMutationResult, RelationNeighborhood, RelationValidation, ResolvedGraphic, SemanticBlock, SettingsSnapshot, PreferenceKey, LatexToolchain, StyleResource, ThemeDefinition, SpellCheckMode, SpellCheckStatus, StructuralDependencyOverlap, StructuralHistoryState, StructureWarning, SyncTexPdfPosition, SyncTexSourcePosition, TextFileContent, UpdateSemanticBlockInput, ProjectReferenceLink, ReferenceLibraryEntry, ReferenceLibrarySnapshot, ReferenceImportResult, ReferenceTag } from "./index.js" with { "resolution-mode": "import" };
+import type { AIStatus, AIModelOption, AIConversation, AIChangeSet, AIContextSnapshotFile, AIProjectSkill, AIMode, AIAttachment, AddSemanticBlockInput, BlockCreationValidation, BlockGraphSnapshot, BlockId, BlockRangeMappingResult, BlockReconciliationResult, CommandMetadata, CompileResult, PdfExportResult, CreateSemanticBlockInput, CreateUserBlockInput, DependencyCycle, DictionaryPackage, FileWriteResult, GraphDiagnostic, GraphTraversalOptions, GraphTraversalResult, ImportedImage, LogicalRelation, MapUserBlockRangesInput, Project, ProjectHistoryDetails, ProjectHistoryEntry, ProjectHistoryStorage, ProjectTreeNode, ReconcileParsedBlocksInput, RelationDirection, RelationMutationResult, RelationNeighborhood, RelationValidation, ResolvedGraphic, SemanticBlock, SettingsSnapshot, PreferenceKey, LatexToolchain, StyleResource, ThemeDefinition, SnapshotReason, SpellCheckMode, SpellCheckStatus, StructuralDependencyOverlap, StructuralHistoryState, StructureWarning, SyncTexPdfPosition, SyncTexSourcePosition, TextFileContent, UpdateSemanticBlockInput, ProjectReferenceLink, ReferenceLibraryEntry, ReferenceLibrarySnapshot, ReferenceImportResult, ReferenceTag } from "./index.js" with { "resolution-mode": "import" };
 
 import type { BlockApiResult, DocumentBlockApi, DocumentStructure, AIApprovalRequest } from "./index.js" with { "resolution-mode": "import" };
 
@@ -156,6 +156,20 @@ export const desktopInvoke = {
     copy: invoke<(projectId: string, fromRelativePath: string, toRelativePath: string) => Promise<void>>("files:copy"),
     import: invoke<(projectId: string, sourcePath: string, destinationRelativePath: string) => Promise<void>>("files:import"),
     remove: invoke<(projectId: string, relativePath: string) => Promise<void>>("files:remove"),
+  },
+  history: {
+    list: invoke<(projectId: string) => Promise<ProjectHistoryEntry[]>>("history:list"),
+    createVersion: invoke<(projectId: string, input: { versionNumber: string; title: string; summary?: string }) => Promise<ProjectHistoryEntry>>("history:create-version"),
+    createTemporary: invoke<(projectId: string, input: { title: string; summary?: string }) => Promise<ProjectHistoryEntry>>("history:create-temporary"),
+    snapshot: invoke<(projectId: string, reason: SnapshotReason, description?: string, overrides?: Array<{ path: string; content: string }>) => Promise<ProjectHistoryEntry | undefined>>("history:snapshot"),
+    details: invoke<(projectId: string, entryId: string) => Promise<ProjectHistoryDetails>>("history:details"),
+    readText: invoke<(projectId: string, entryId: string, path: string) => Promise<string | undefined>>("history:read-text"),
+    restore: invoke<(projectId: string, entryId: string, paths?: string[]) => Promise<{ restored: string[]; safetySnapshotId?: string }>>("history:restore"),
+    promote: invoke<(projectId: string, entryId: string, input: { versionNumber: string; title: string; summary?: string }) => Promise<ProjectHistoryEntry>>("history:promote"),
+    editVersion: invoke<(projectId: string, entryId: string, input: { title: string; summary?: string }) => Promise<ProjectHistoryEntry>>("history:edit-version"),
+    remove: invoke<(projectId: string, entryId: string) => Promise<void>>("history:remove"),
+    storage: invoke<(projectId: string) => Promise<ProjectHistoryStorage>>("history:storage"),
+    optimize: invoke<(projectId: string) => Promise<ProjectHistoryStorage>>("history:optimize"),
   },
   images: {
     pick: invoke<(multiple?: boolean) => Promise<string[]>>("images:pick"),

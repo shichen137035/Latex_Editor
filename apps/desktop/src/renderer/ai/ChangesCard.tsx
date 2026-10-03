@@ -1,5 +1,6 @@
 import { useState } from "react";
 import type { AIChangeSet } from "@latex-editor/contracts";
+import { isAIStructureMetadataPath } from "@latex-editor/contracts/ai-paths";
 import { t } from "../i18n/index.js";
 import { hunkLineStats, isHunkApplied, pendingHunkIds } from "./changeOperations.js";
 
@@ -13,6 +14,7 @@ export function ChangesCard({ changes, busy, onKeep, onDiscard, onView }: Props)
   return <section className="ai-change-set">
     <header><strong>{t(applied ? "ai.editedFiles" : "ai.proposedChanges", { count: files.length })}</strong><div><button disabled={busy} onClick={() => onKeep(pending)}>{t("ai.keepAll")}</button><button disabled={busy} onClick={() => onDiscard(pending)}>{t(applied ? "ai.undoChanges" : "ai.rejectAll")}</button><button disabled={!files.length} onClick={() => files[0] && onView(files[0].path)}>{t("ai.viewChanges")}</button></div></header>
     {changes.autoApplyError && <p className="ai-change-error" role="alert">{t("ai.autoApplyConflict")} {changes.autoApplyError}</p>}
+    {files.some((file) => isAIStructureMetadataPath(file.path)) && <p className="ai-change-error">{t("ai.structureReview")}</p>}
     {(expanded ? files : files.slice(0, 3)).map(file => {
       const pendingHunks = file.hunks.filter(hunk => hunk.decision === "pending");
       const stats = pendingHunks.map(hunkLineStats);

@@ -122,6 +122,44 @@ z=w
     expect(document.diagnostics).toEqual([]);
   });
 
+  it("preserves algorithmic steps inside an algorithm float", () => {
+    const source = String.raw`\begin{algorithm}[H]
+\caption{Full BFGS direction optimization on the sphere}
+\label{alg:full-bfgs}
+\begin{algorithmic}[1]
+\Require Differentiable criterion $Q_{k,n}(\theta,h)$
+\Ensure Direction estimate $\widehat\theta$
+\State Initialize current direction $\theta\gets\theta_0$.
+\For{$k=0,\ldots,J_{\max}-1$}
+  \State Compute $g_k=\nabla_\theta Q_{k,n}(\theta,h)$.
+  \If{$\lVert G_k\rVert\leq\epsilon$}
+    \State \textbf{break}
+  \EndIf
+\EndFor
+\State \Return current direction $\theta$.
+\end{algorithmic}
+\end{algorithm}`;
+    const document = parsePreview(source, "main.tex", DEFAULT_ENVIRONMENTS);
+    const algorithm = blocks(document.nodes).find((node) => node.environmentId === "algorithm");
+    const algorithmic = algorithm?.children.find((node): node is StructuralBlock => node.kind === "block" && node.environmentId === "algorithmic");
+    expect(algorithm?.semanticKind).toBe("structural");
+    expect(algorithm?.latexLabel).toBe("alg:full-bfgs");
+    expect(algorithm?.children.some((node) => node.kind === "content" && node.raw.includes("Full BFGS"))).toBe(true);
+    expect(algorithmic?.semanticKind).toBe("structural");
+    expect(algorithmic?.children.some((node) => node.kind === "content" && node.raw.includes("\\Require") && node.raw.includes("\\EndFor"))).toBe(true);
+    expect(document.diagnostics).toEqual([]);
+  });
+
+  it("keeps verbatim code as one atomic content block", () => {
+    const source = String.raw`\begin{lstlisting}
+\begin{theorem}This is literal code.\end{theorem}
+\end{lstlisting}`;
+    const document = parsePreview(source, "main.tex", DEFAULT_ENVIRONMENTS);
+    const listing = blocks(document.nodes).find((node) => node.environmentId === "lstlisting");
+    expect(listing?.semanticKind).toBe("content");
+    expect(listing?.children).toEqual([]);
+  });
+
   it("treats the equation body as owned content rather than a virtual paragraph", () => {
     const source = "\\begin{equation}\n  x^2 + y^2 = z^2\n\\end{equation}";
     const document = parsePreview(source, "main.tex", DEFAULT_ENVIRONMENTS);

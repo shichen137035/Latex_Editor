@@ -12,6 +12,7 @@ export function Icon({ name }: { name: string }) {
   const paths: Record<string, string> = {
     files: "M4 5h6l2 2h8v12H4z", search: "M10.5 17a6.5 6.5 0 1 1 0-13 6.5 6.5 0 0 1 0 13Zm5-1.5L21 21", library: "M5 5h14v14H5zM8 9h8M8 12h8M8 15h5",
     ai: "M12 3l1.6 4.4L18 9l-4.4 1.6L12 15l-1.6-4.4L6 9l4.4-1.6L12 3Zm6 11 .9 2.1L21 17l-2.1.9L18 20l-.9-2.1L15 17l2.1-.9L18 14Z",
+    history: "M12 4a8 8 0 1 1-7.5 5M3 4v5h5M12 7v5l3 2",
     settings: "M12 8.5a3.5 3.5 0 1 0 0 7 3.5 3.5 0 0 0 0-7Zm0-6v2m0 15v2m9-9h-2m-14 0H3m15.4-6.4L17 7.5M7 17l-1.4 1.4m12.8 0L17 17M7 7.5 5.6 6.1", image: "M4 5h16v14H4zM6 16l4-4 3 3 2-2 3 3M8 9h.01",
     help: "M9.5 9a2.7 2.7 0 1 1 4.3 2.2c-1.1.8-1.8 1.3-1.8 2.8m0 3h.01", home: "M3 11.5 12 4l9 7.5V21h-6v-6H9v6H3z",
     save: "M5 3h12l3 3v15H4V3h1Zm3 0v6h8V3M8 21v-7h8v7", play: "m8 5 11 7-11 7V5Z", panel: "M4 5h16v14H4zM4 14h16",

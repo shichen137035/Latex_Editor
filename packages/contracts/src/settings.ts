@@ -1,3 +1,5 @@
+import { defaultHistoryPreferences, type HistoryPreferences } from "./history.js";
+
 /** Shared settings contract. Machine paths and keyboard preferences are global only. */
 export type DependencyStatus = "unknown" | "checking" | "ready" | "limited" | "missing" | "broken" | "installing" | "restart-required";
 export type LatexDistributionType = "miktex" | "texlive" | "unknown";
@@ -125,16 +127,17 @@ export interface PreferenceValues {
   layout: Record<string, unknown>;
   images: ImagePreferences;
   tables: TablePreferences;
+  history: HistoryPreferences;
 }
 export type PreferenceKey = keyof PreferenceValues;
 export const preferenceDefaults: PreferenceValues = {
   locale: "en", theme: "light", themeDirectory: "", aiCodexExecutable: "", aiModel: "", aiCopilotModel: "", aiReasoningEffort: "", aiCopilotReasoningEffort: "", aiDefaultMode: "chat", aiPermissionMode: "auto", aiIncludeCurrentFile: false, fontSize: 15, tabSize: 2, wordWrap: true,
   autoSave: "off", hideBuildArtifacts: true, documentWordCompletion: true, autoPairSymbols: true, mathPreviewOnHover: false, autoEnvironmentLabels: true, confirmPreviewEdits: true, warnIncompatibleEnvironmentConversion: true, visibleFilterGroups: ["blockType", "location", "file", "properties"], referenceLinkModifier: "ctrl", spellCheckMode: "auto", spellCheckLanguage: "en-US", spellCheckActiveLanguages: ["en-US"], maximize: true, restoreProject: false,
-  lastProject: "", engine: "pdflatex", keybindings: {}, environments: [], layout: {}, images: defaultImagePreferences, tables: defaultTablePreferences
+  lastProject: "", engine: "pdflatex", keybindings: {}, environments: [], layout: {}, images: defaultImagePreferences, tables: defaultTablePreferences, history: defaultHistoryPreferences
 };
 // Project-scoped preferences are kept separate from machine-wide tree and editor settings.
 // The project settings UI is reserved for a later release; build-artifact visibility is global.
-export const projectPreferenceKeys: PreferenceKey[] = ["fontSize", "tabSize", "wordWrap", "autoSave", "autoPairSymbols", "mathPreviewOnHover", "confirmPreviewEdits", "engine", "environments", "layout", "images", "tables"];
+export const projectPreferenceKeys: PreferenceKey[] = ["fontSize", "tabSize", "wordWrap", "autoSave", "autoPairSymbols", "mathPreviewOnHover", "confirmPreviewEdits", "engine", "environments", "layout", "images", "tables", "history"];
 export interface SettingsSnapshot { global: Partial<PreferenceValues>; project: Partial<PreferenceValues>; toolchain?: LatexToolchain }
 export function validPreference(key: string, value: unknown): boolean {
   switch (key) {
@@ -162,6 +165,14 @@ export function validPreference(key: string, value: unknown): boolean {
       return typeof e.id === "string" && typeof e.enabled === "boolean" && typeof e.labelKey === "string" && typeof e.family === "string" && !!e.match && !!e.style && !!e.behavior;
     });
     case "layout": return !!value && typeof value === "object" && !Array.isArray(value);
+    case "history": {
+      if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+      const history = value as Partial<HistoryPreferences>;
+      return [history.autoSnapshot, history.beforeRestore, history.beforeLargeDelete, history.beforeAiChange].every((item) => typeof item === "boolean")
+        && Number.isInteger(history.intervalMinutes) && Number(history.intervalMinutes) >= 1 && Number(history.intervalMinutes) <= 1440
+        && Number.isInteger(history.maxSnapshots) && Number(history.maxSnapshots) >= 1 && Number(history.maxSnapshots) <= 1000
+        && Number.isInteger(history.retentionDays) && Number(history.retentionDays) >= 1 && Number(history.retentionDays) <= 3650;
+    }
     case "images": {
       if (!value || typeof value !== "object" || Array.isArray(value)) return false;
       const images = value as Partial<ImagePreferences>;

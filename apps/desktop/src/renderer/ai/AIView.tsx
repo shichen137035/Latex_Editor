@@ -9,7 +9,7 @@ import "./ai.css";
 import type { AIApprovalRequest } from "@latex-editor/contracts";
 import { PermissionPicker } from "./PermissionPicker.js";
 import { ChangesCard } from "./ChangesCard.js";
-import { isHunkApplied } from "./changeOperations.js";
+import { isHunkApplied, type AIApplyResult } from "./changeOperations.js";
 import { ReasoningEffortPicker } from "./ReasoningEffortPicker.js";
 
 const AI_LONG_INPUT_THRESHOLD = 12_000;
@@ -22,7 +22,7 @@ type Props = {
   currentFile?: string;
   currentFileContent?: string;
   selectedText?: string;
-  onApplyChanges(changes: AIChangeSet, hunkIds: string[]): Promise<void>;
+  onApplyChanges(changes: AIChangeSet, hunkIds: string[]): Promise<AIApplyResult>;
   onUndoChanges(changes: AIChangeSet, hunkIds: string[]): Promise<void>;
   onViewChanges(changes: AIChangeSet, path: string): void;
   onReviewChanges?(changes: AIChangeSet[]): void;
@@ -43,6 +43,7 @@ export function AIView(props: Props) {
   const [executable, setExecutable] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
+  const [notice, setNotice] = useState("");
   const [draft, setDraft] = useState("");
   const [attachments, setAttachments] = useState<AIAttachment[]>([]);
   const [attachmentsLoading, setAttachmentsLoading] = useState(false);
@@ -256,15 +257,34 @@ export function AIView(props: Props) {
 
   const reviewChanges = async (changeSet: AIChangeSet, ids: string[], keep: boolean) => {
     if (!api || changesBusy) return;
-    setChangesBusy(true); setError("");
+    setChangesBusy(true); setError(""); setNotice("");
     try {
       if (keep) {
-        const unapplied = changeSet.files.flatMap(file => file.hunks.filter(hunk => ids.includes(hunk.id) && hunk.decision === "pending" && !isHunkApplied(hunk)).map(hunk => hunk.id));
-        if (unapplied.length) await props.onApplyChanges(changeSet, unapplied);
+        const selected = new Set(ids);
+        const appliedIds = changeSet.files.flatMap(file => file.hunks.filter(hunk => selected.has(hunk.id) && hunk.decision === "pending" && isHunkApplied(hunk)).map(hunk => hunk.id));
+        const unapplied = changeSet.files.flatMap(file => file.hunks.filter(hunk => selected.has(hunk.id) && hunk.decision === "pending" && !isHunkApplied(hunk)).map(hunk => hunk.id));
+        let staleStructureIds: string[] = [];
+        if (unapplied.length) {
+          const result = await props.onApplyChanges(changeSet, unapplied);
+          appliedIds.push(...result.appliedIds);
+          staleStructureIds = result.staleStructureIds;
+        }
+        const accepted = new Set(appliedIds);
+        const stale = new Set(staleStructureIds);
+        const decisions: Record<string, "accepted" | "rejected"> = {};
+        for (const id of ids) {
+          if (accepted.has(id)) decisions[id] = "accepted";
+          else if (stale.has(id)) decisions[id] = "rejected";
+        }
+        const resolved = await api.resolveChangeSet(changeSet.id, decisions, true);
+        if (resolved) setSnapshot(current => ({ ...current, changeSets: current.changeSets.map(item => item.id === resolved.id ? resolved : item) }));
+        if (staleStructureIds.length) setNotice(t("ai.staleStructureDiscarded", { count: staleStructureIds.length }));
       } else await props.onUndoChanges(changeSet, ids);
-      const decisions = Object.fromEntries(ids.map(id => [id, keep ? "accepted" as const : "rejected" as const]));
-      const resolved = await api.resolveChangeSet(changeSet.id, decisions, keep);
-      if (resolved) setSnapshot(current => ({ ...current, changeSets: current.changeSets.map(item => item.id === resolved.id ? resolved : item) }));
+      if (!keep) {
+        const decisions = Object.fromEntries(ids.map(id => [id, "rejected" as const]));
+        const resolved = await api.resolveChangeSet(changeSet.id, decisions, false);
+        if (resolved) setSnapshot(current => ({ ...current, changeSets: current.changeSets.map(item => item.id === resolved.id ? resolved : item) }));
+      }
     } catch (reason) { setError(messageOf(reason)); }
     finally { setChangesBusy(false); }
   };
@@ -330,7 +350,8 @@ export function AIView(props: Props) {
       <footer className="ai-composer-dock">
         {approvals.filter(request => request.conversationId === activeId).map(request => <section className="ai-approval-card" key={request.id} role="alert"><strong>{t("ai.approvalRequired")}</strong><p>{request.description}</p>{request.command && <pre>{request.command}</pre>}{request.paths.length > 0 && <small>{request.paths.join("\n")}</small>}<div><button onClick={() => void resolveApproval(request.id, false)}>{t("ai.denyAction")}</button><button onClick={() => void resolveApproval(request.id, true)}>{t("ai.allowAction")}</button></div></section>)}
         {props.selectedText && <div className="ai-context-options"><label><input type="checkbox" checked={includeSelection} onChange={(event) => setIncludeSelection(event.target.checked)}/>{t("ai.includeSelection")}</label></div>}
-        {(error || activeStatus.error) && <div className="inline-error ai-error" role="alert">{error || activeStatus.error}</div>}
+          {(error || activeStatus.error) && <div className="inline-error ai-error" role="alert">{error || activeStatus.error}</div>}
+          {notice && <div className="ai-resolution-notice" role="status">{notice}</div>}
         {draft.trim().length > AI_LONG_INPUT_THRESHOLD && <div className="ai-long-input-note">{t("ai.longMessageHint")}</div>}
         <div className="ai-composer">
           <textarea ref={composerRef} rows={1} value={draft} onChange={(event) => { setDraft(event.target.value); if (longDraftFileRef.current?.content !== event.target.value.trim()) longDraftFileRef.current = undefined; }} onKeyDown={(event) => { if (event.key === "Enter" && !event.shiftKey && !event.nativeEvent.isComposing) { event.preventDefault(); void send(); } }} placeholder={t("ai.messagePlaceholder")} aria-label={t("ai.messagePlaceholder")}/>

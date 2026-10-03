@@ -2,20 +2,20 @@ import { settings } from "./service.js";
 export const defaultBindings = {
   "edit.undo": "Mod+Z", "edit.redo": "Mod+Y",
   "file.save": "Mod+S", "file.saveAll": "Mod+Shift+S", "edit.find": "Mod+F", "edit.replace": "Mod+H",
-  "latex.compile": "Mod+B", "settings.open": "Mod+,", "ai.open": "Mod+Shift+A", "block.insertBefore": "Alt+ENTER",
+  "navigation.back": "Mod+B", "navigation.forward": "Mod+R", "latex.compile": "Mod+Shift+B", "settings.open": "Mod+,", "ai.open": "Mod+Shift+A", "block.insertBefore": "Alt+ENTER",
   "block.insertAfter": "Shift+ENTER", "block.createFromSelection": "Mod+Alt+B", "preview.applyDraft": "Mod+ENTER", "preview.cancelDraft": "ESCAPE"
 };
 export type CommandId = keyof typeof defaultBindings;
 export const commandLabels: Record<CommandId, string> = {
   "edit.undo": "menu.undo", "edit.redo": "menu.redo",
   "file.save": "menu.save", "file.saveAll": "menu.saveAll", "edit.find": "menu.find", "edit.replace": "menu.replace",
-  "latex.compile": "build.compile", "settings.open": "activity.settings", "ai.open": "activity.ai", "block.insertBefore": "command.blockInsertBefore",
+  "navigation.back": "command.navigationBack", "navigation.forward": "command.navigationForward", "latex.compile": "build.compile", "settings.open": "activity.settings", "ai.open": "activity.ai", "block.insertBefore": "command.blockInsertBefore",
   "block.insertAfter": "command.blockInsertAfter", "block.createFromSelection": "block.createFromSelection", "preview.applyDraft": "command.previewApplyDraft", "preview.cancelDraft": "command.previewCancelDraft"
 };
 export const commandContexts: Record<CommandId, string> = {
   "edit.undo": "command.context.global", "edit.redo": "command.context.global",
   "file.save": "command.context.global", "file.saveAll": "command.context.global", "edit.find": "command.context.source",
-  "edit.replace": "command.context.source", "latex.compile": "command.context.global", "settings.open": "command.context.global", "ai.open": "command.context.global",
+  "edit.replace": "command.context.source", "navigation.back": "command.context.global", "navigation.forward": "command.context.global", "latex.compile": "command.context.global", "settings.open": "command.context.global", "ai.open": "command.context.global",
   "block.insertBefore": "command.context.previewBlock", "block.insertAfter": "command.context.previewBlock",
   "block.createFromSelection": "command.context.documentSelection",
   "preview.applyDraft": "command.context.previewBlock", "preview.cancelDraft": "command.context.previewDraft"

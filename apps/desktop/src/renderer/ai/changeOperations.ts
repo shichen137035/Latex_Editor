@@ -1,7 +1,16 @@
-import type { AIChangeHunk, AIFileChange } from "@latex-editor/contracts";
+import type { AIChangeHunk, AIChangeSet, AIFileChange } from "@latex-editor/contracts";
+import { isAIEditableProjectPath } from "@latex-editor/contracts/ai-paths";
+
+export type AIApplyResult = { appliedIds: string[]; staleStructureIds: string[] };
 
 export function isHunkApplied(hunk: AIChangeHunk): boolean {
   return hunk.applied === true || (hunk.applied === undefined && hunk.decision === "accepted");
+}
+
+/** Structure metadata always waits for an explicit Keep decision. */
+export function automaticHunkIds(changes: AIChangeSet): string[] {
+  return changes.files.flatMap((file) => !isAIEditableProjectPath(file.path) ? []
+    : file.hunks.filter((hunk) => hunk.decision === "pending" && !isHunkApplied(hunk)).map((hunk) => hunk.id));
 }
 
 function lines(content: string): string[] { return content.match(/[^\n]*\n|[^\n]+$/g) ?? []; }

@@ -194,7 +194,7 @@ function inlineLatex(value: string | undefined, mathContext: MathContext, search
       const children = render(token.children ?? []);
       content = token.command === "textbf" ? <strong>{children}</strong> : token.command === "texttt" ? <code>{children}</code> : token.command === "textit" || token.command === "emph" ? <em>{children}</em> : children;
     } else if (token.kind === "citation") content = map(<span className="preview-citation" title={"\\" + token.command}>[{token.value}]</span>, token);
-    else if (token.kind === "reference") content = map(<button type="button" className="preview-reference" data-reference={token.value} title={"\\" + token.command}>[{token.value}]</button>, token);
+    else if (token.kind === "reference") content = map(<button type="button" className="preview-reference" data-reference={token.value} data-reference-source-start={sourceStartOffset === undefined ? undefined : token.start} data-reference-source-end={sourceStartOffset === undefined ? undefined : token.end} title={`\\${token.command} · Ctrl+click to jump`}>[{token.value}]</button>, token);
     else content = <span className="preview-algorithm-command" data-command={token.command?.toUpperCase()}>{sourceMapped(<strong>{token.command?.toUpperCase()}</strong>, sourceStartOffset === undefined ? undefined : token.start, sourceStartOffset === undefined ? undefined : token.start + (token.command?.length ?? 0) + 1, true)}{token.children && <span className="preview-algorithm-argument">{render(token.children)}</span>}</span>;
     return <Fragment key={token.kind + ":" + token.start}>{content}</Fragment>;
   });
@@ -262,6 +262,16 @@ function nodeAtOffset(nodes: PreviewNode[], offset: number): PreviewNode | undef
     return node;
   }
   return undefined;
+}
+
+/** One resolver controls both modifier-click navigation and its hover affordance. */
+function previewJumpTarget(target: Element | undefined, source: string, nodes: PreviewNode[]): { element: HTMLElement; offset: number; node: PreviewNode } | undefined {
+  const element = target?.closest<HTMLElement>("[data-reference]");
+  const reference = element?.dataset.reference;
+  if (!element || !reference) return undefined;
+  const offset = labelOffset(source, reference);
+  const node = offset === undefined ? undefined : nodeAtOffset(nodes, offset);
+  return offset !== undefined && node ? { element, offset, node } : undefined;
 }
 
 function nodeById(nodes: PreviewNode[], id: string): PreviewNode | undefined {
@@ -674,7 +684,7 @@ function PreviewNodeList({ nodes, ...props }: { nodes: PreviewNode[] } & Omit<Pr
   return rendered;
 }
 
-export function PreviewPane({ filePath, source, definitions, mathContext = EMPTY_MATH_CONTEXT, searchQuery = defaultInlineSearch, filterQuery = defaultFilterQuery, activeSearchResult, highlightRange, relation, onSourceChange, onSelectionChange, onSelectionContextMenu, onViewportAnchorChange, onClickSourcePosition, onInsertionAnchorChange, onFigureSelect, onFigureSlotSelect, onTableSelect, onTableChange, api, projectId, tree, onSpellContextMenu, onDetectedLanguage, onForwardSync }: { filePath?: string | undefined; source?: string | undefined; definitions: EnvironmentDefinition[]; mathContext?: MathContext; searchQuery?: SearchQuery; filterQuery?: FilterQuery; activeSearchResult?: SearchResult | undefined; highlightRange?: { fileId: string; start: number; end: number; nonce: number } | undefined; relation?: PreviewRelationUi | undefined; onSourceChange(next: string): void; onSelectionChange?(selection?: DocumentSelection): void; onSelectionContextMenu?(selection: DocumentSelection, x: number, y: number): void; onViewportAnchorChange?(anchor: { fileId: string; offset: number }): void; onClickSourcePosition?(anchor: { fileId: string; offset: number }): void; onInsertionAnchorChange?(anchor?: { fileId: string; offset: number }): void; onFigureSelect?(selection?: FigureSelection): void; onFigureSlotSelect?(selection: FigureSelection): void; onTableSelect?(selection?: TableSelection): void; onTableChange?(selection: TableSelection, source: string): void; api: EditorApi | undefined; projectId: string; tree: ProjectTreeNode[]; onSpellContextMenu(request: SpellContextRequest): void; onDetectedLanguage(language: string): void; onForwardSync(path: string, line: number, column?: number): void }) {
+export function PreviewPane({ filePath, source, definitions, mathContext = EMPTY_MATH_CONTEXT, searchQuery = defaultInlineSearch, filterQuery = defaultFilterQuery, activeSearchResult, highlightRange, locateRequest, restoreOffset, restoreScrollTop, onLocated, relation, onSourceChange, onSelectionChange, onSelectionContextMenu, onViewportAnchorChange, onClickSourcePosition, onJumpFromPosition, onInsertionAnchorChange, onFigureSelect, onFigureSlotSelect, onTableSelect, onTableChange, api, projectId, tree, onSpellContextMenu, onDetectedLanguage, onForwardSync }: { filePath?: string | undefined; source?: string | undefined; definitions: EnvironmentDefinition[]; mathContext?: MathContext; searchQuery?: SearchQuery; filterQuery?: FilterQuery; activeSearchResult?: SearchResult | undefined; highlightRange?: { fileId: string; start: number; end: number; nonce: number } | undefined; locateRequest?: { fileId: string; offset: number; nonce: number } | undefined; restoreOffset?: number | undefined; restoreScrollTop?: number | undefined; onLocated?(nonce: number): void; relation?: PreviewRelationUi | undefined; onSourceChange(next: string): void; onSelectionChange?(selection?: DocumentSelection): void; onSelectionContextMenu?(selection: DocumentSelection, x: number, y: number): void; onViewportAnchorChange?(anchor: { fileId: string; offset: number; scrollTop: number }): void; onClickSourcePosition?(anchor: { fileId: string; offset: number }): void; onJumpFromPosition?(anchor: { fileId: string; offset: number; targetOffset: number; linkText: string; targetLabel: string }): void; onInsertionAnchorChange?(anchor?: { fileId: string; offset: number }): void; onFigureSelect?(selection?: FigureSelection): void; onFigureSlotSelect?(selection: FigureSelection): void; onTableSelect?(selection?: TableSelection): void; onTableChange?(selection: TableSelection, source: string): void; api: EditorApi | undefined; projectId: string; tree: ProjectTreeNode[]; onSpellContextMenu(request: SpellContextRequest): void; onDetectedLanguage(language: string): void; onForwardSync(path: string, line: number, column?: number): void }) {
   const [selectedId, setSelectedId] = useState<string>();
   const [additionalSelectedIds, setAdditionalSelectedIds] = useState<string[]>([]);
   const [editingId, setEditingId] = useState<string>();
@@ -685,6 +695,9 @@ export function PreviewPane({ filePath, source, definitions, mathContext = EMPTY
   const [renderLimit, setRenderLimit] = useState(previewNodeLimit);
   const [pendingReferenceOffset, setPendingReferenceOffset] = useState<number>();
   const previewRootRef = useRef<HTMLDivElement | null>(null);
+  const hoveredJumpElementRef = useRef<Element | undefined>(undefined);
+  const activeJumpElementRef = useRef<HTMLElement | undefined>(undefined);
+  const restoredFileRef = useRef<string | undefined>(undefined);
   const marqueeGesture = useRef<{ pointerId: number; startX: number; startY: number; currentX: number; currentY: number; moved: boolean } | undefined>(undefined);
   const marqueeJustCompleted = useRef(false);
   const pendingBoundaryRef = useRef<{ startOffset: number; position: number; side: "before" | "after"; kind: PreviewNode["kind"] } | undefined>(undefined);
@@ -700,6 +713,28 @@ export function PreviewPane({ filePath, source, definitions, mathContext = EMPTY
     return () => window.removeEventListener("texweave:history-replayed", reset);
   }, []);
   const document = useMemo(() => filePath && source !== undefined ? parsePreview(source, filePath, definitions) : undefined, [filePath, source, definitions]);
+  const updateJumpCursor = (target: Element | undefined, controlHeld: boolean) => {
+    const root = previewRootRef.current;
+    const jump = controlHeld && root?.contains(target ?? null) && document && source !== undefined
+      ? previewJumpTarget(target, source, document.nodes) : undefined;
+    if (activeJumpElementRef.current === jump?.element) return;
+    activeJumpElementRef.current?.classList.remove("preview-jump-ready");
+    jump?.element.classList.add("preview-jump-ready");
+    activeJumpElementRef.current = jump?.element;
+  };
+  useEffect(() => {
+    const onModifier = (event: KeyboardEvent) => updateJumpCursor(hoveredJumpElementRef.current, event.ctrlKey && !event.altKey && !event.shiftKey);
+    const reset = () => updateJumpCursor(undefined, false);
+    window.addEventListener("keydown", onModifier);
+    window.addEventListener("keyup", onModifier);
+    window.addEventListener("blur", reset);
+    return () => {
+      window.removeEventListener("keydown", onModifier);
+      window.removeEventListener("keyup", onModifier);
+      window.removeEventListener("blur", reset);
+      reset();
+    };
+  }, [document, source]);
   const nodeRanges = useMemo(() => {
     const index = new Map<string, SourceSpan>();
     const pending = [...(document?.nodes ?? [])];
@@ -798,17 +833,46 @@ export function PreviewPane({ filePath, source, definitions, mathContext = EMPTY
     if (pendingReferenceOffset === undefined || !document) return;
     const node = nodeAtOffset(document.nodes, pendingReferenceOffset);
     if (!node) return;
-    const target = globalThis.document.querySelector<HTMLElement>(`[data-source-start-offset="${node.source.startOffset}"]`) ?? (() => {
+    const target = previewRootRef.current?.querySelector<HTMLElement>(`[data-source-start-offset="${node.source.startOffset}"]`) ?? (() => {
       const block = blockAtOffset(document.nodes, pendingReferenceOffset);
-      return block ? globalThis.document.querySelector<HTMLElement>(`[data-source-start-offset="${block.source.startOffset}"]`) : null;
+      return block ? previewRootRef.current?.querySelector<HTMLElement>(`[data-source-start-offset="${block.source.startOffset}"]`) : null;
     })();
     if (!target) return;
     target.scrollIntoView({ behavior: "smooth", block: "start" });
     target.classList.add("reference-target");
-    const timer = window.setTimeout(() => target.classList.remove("reference-target"), 700);
+    window.setTimeout(() => target.classList.remove("reference-target"), 700);
     setPendingReferenceOffset(undefined);
-    return () => window.clearTimeout(timer);
   }, [document, pendingReferenceOffset, renderLimit]);
+  useEffect(() => {
+    if (!filePath || !document || !previewRootRef.current) return;
+    const request = locateRequest?.fileId === filePath ? locateRequest : undefined;
+    if (!request && restoredFileRef.current === filePath) return;
+    if (!request && restoreScrollTop !== undefined) {
+      previewRootRef.current.scrollTop = restoreScrollTop;
+      restoredFileRef.current = filePath;
+      return;
+    }
+    const offset = request?.offset ?? restoreOffset;
+    if (offset === undefined) { previewRootRef.current.scrollTop = 0; restoredFileRef.current = filePath; return; }
+    const node = nodeAtOffset(document.nodes, offset);
+    if (node) {
+      const required = nodesBefore(document.nodes, node.id);
+      if (required !== undefined && required >= renderLimit) {
+        setRenderLimit(Math.min(countNodes(document.nodes), required + 1));
+        return;
+      }
+    }
+    const elements = Array.from(previewRootRef.current.querySelectorAll<HTMLElement>("[data-source-start-offset][data-source-end-offset]"));
+    const target = elements.filter((element) => {
+      const start = Number(element.dataset.sourceStartOffset);
+      const end = Number(element.dataset.sourceEndOffset);
+      return start <= offset && offset <= end;
+    }).sort((left, right) => (Number(left.dataset.sourceEndOffset) - Number(left.dataset.sourceStartOffset)) - (Number(right.dataset.sourceEndOffset) - Number(right.dataset.sourceStartOffset)))[0]
+      ?? elements.reduce<HTMLElement | undefined>((best, element) => Math.abs(Number(element.dataset.sourceStartOffset) - offset) < Math.abs(Number(best?.dataset.sourceStartOffset ?? Infinity) - offset) ? element : best, undefined);
+    target?.scrollIntoView({ block: "center" });
+    restoredFileRef.current = filePath;
+    if (request) onLocated?.(request.nonce);
+  }, [filePath, document, locateRequest, restoreOffset, restoreScrollTop, renderLimit]);
   useEffect(() => {
     if (!activeSearchResult || activeSearchResult.fileId !== filePath || !document) return;
     const node = nodeAtOffset(document.nodes, activeSearchResult.matchStart);
@@ -862,7 +926,7 @@ export function PreviewPane({ filePath, source, definitions, mathContext = EMPTY
       if (!Number.isFinite(start) || !Number.isFinite(end)) return;
       const rect = best.element.getBoundingClientRect();
       const progress = best.contains && rect.height > 1 ? Math.min(1, Math.max(0, (centerY - rect.top) / rect.height)) : centerY < rect.top ? 0 : 1;
-      onViewportAnchorChange({ fileId: filePath, offset: Math.round(start + (end - start) * progress) });
+      onViewportAnchorChange({ fileId: filePath, offset: Math.round(start + (end - start) * progress), scrollTop: root.scrollTop });
     };
     const schedule = () => { if (!frame) frame = requestAnimationFrame(reportAnchor); };
     root.addEventListener("scroll", schedule, { passive: true });
@@ -1036,6 +1100,8 @@ export function PreviewPane({ filePath, source, definitions, mathContext = EMPTY
     setMarqueeRect({ left: event.clientX, top: event.clientY, width: 0, height: 0 });
   };
   const moveBlockMarquee = (event: ReactPointerEvent<HTMLDivElement>) => {
+    hoveredJumpElementRef.current = event.target instanceof Element ? event.target : undefined;
+    updateJumpCursor(hoveredJumpElementRef.current, event.ctrlKey && !event.altKey && !event.shiftKey);
     const gesture = marqueeGesture.current;
     if (!gesture || gesture.pointerId !== event.pointerId) return;
     gesture.currentX = event.clientX;
@@ -1072,23 +1138,26 @@ export function PreviewPane({ filePath, source, definitions, mathContext = EMPTY
   const onPreviewClick = (event: MouseEvent<HTMLDivElement>) => {
     if (marqueeJustCompleted.current) { event.preventDefault(); event.stopPropagation(); marqueeJustCompleted.current = false; return; }
     const clickTarget = event.target instanceof Element ? event.target : undefined;
+    const jump = document && source !== undefined ? previewJumpTarget(clickTarget, source, document.nodes) : undefined;
+    if (jump && document && event.ctrlKey && !event.altKey && !event.shiftKey) {
+      event.preventDefault();
+      event.stopPropagation();
+      const fromOffset = Number(jump.element.dataset.referenceSourceStart);
+      const sourceEnd = Number(jump.element.dataset.referenceSourceEnd);
+      if (filePath && Number.isFinite(fromOffset) && Number.isFinite(sourceEnd) && sourceEnd > fromOffset) {
+        onJumpFromPosition?.({ fileId: filePath, offset: fromOffset, targetOffset: jump.offset, linkText: source.slice(fromOffset, sourceEnd), targetLabel: jump.element.dataset.reference ?? "" });
+      }
+      setPendingReferenceOffset(jump.offset);
+      if (filePath) onClickSourcePosition?.({ fileId: filePath, offset: jump.offset });
+      const required = nodesBefore(document.nodes, jump.node.id);
+      if (required !== undefined && required >= renderLimit) setRenderLimit(Math.min(totalNodes, required + 1));
+      return;
+    }
     if (clickTarget?.closest(".preview-local-editor, .preview-block-header-actions, .preview-block-footer-actions, .preview-selection-toolbar, button, input, textarea, select, [contenteditable='true']")) return;
     const root = previewRootRef.current;
     const sourceRegion = root && sourceElement(event.target as Node, root);
     const sourceOffset = sourceRegion ? sourceOffsetAtPoint(sourceRegion, event) : undefined;
     if (filePath && sourceOffset !== undefined) onClickSourcePosition?.({ fileId: filePath, offset: sourceOffset });
-    const reference = (event.target as Element).closest<HTMLElement>("[data-reference]")?.dataset.reference;
-    if (reference && document) {
-      event.stopPropagation();
-      const offset = labelOffset(source, reference);
-      const node = offset === undefined ? undefined : nodeAtOffset(document.nodes, offset);
-      if (offset !== undefined && node) {
-        setPendingReferenceOffset(offset);
-        const required = nodesBefore(document.nodes, node.id);
-        if (required !== undefined && required >= renderLimit) setRenderLimit(Math.min(totalNodes, required + 1));
-      }
-      return;
-    }
     setSelectedId(undefined);
     setAdditionalSelectedIds([]);
     setBoundary(undefined);
@@ -1100,7 +1169,7 @@ export function PreviewPane({ filePath, source, definitions, mathContext = EMPTY
     onSelectionChange?.(selection);
     return selection;
   };
-  return <div ref={previewRootRef} className={`structured-preview${marqueeRect ? " marquee-selecting" : ""}`} onPointerDown={startBlockMarquee} onPointerMove={moveBlockMarquee} onPointerUp={finishBlockMarquee} onPointerCancel={cancelBlockMarquee} onClickCapture={onPreviewClick} onMouseUp={() => emitSelection()} onKeyUp={() => emitSelection()} onContextMenu={(event) => {
+  return <div ref={previewRootRef} className={`structured-preview${marqueeRect ? " marquee-selecting" : ""}`} onPointerDown={startBlockMarquee} onPointerMove={moveBlockMarquee} onPointerLeave={() => { hoveredJumpElementRef.current = undefined; updateJumpCursor(undefined, false); }} onPointerUp={finishBlockMarquee} onPointerCancel={cancelBlockMarquee} onClickCapture={onPreviewClick} onMouseUp={() => emitSelection()} onKeyUp={() => emitSelection()} onContextMenu={(event) => {
     if (event.target instanceof Element && event.target.closest(".preview-block-delete")) return;
     const selection = emitSelection();
     if (!selection || !onSelectionContextMenu) return;

@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { preferenceDefaults, projectPreferenceKeys, type AIProjectSkill, type DictionaryPackage, type ImagePreferences, type LatexToolchain, type PreferenceKey, type StyleResource, type TablePreferences, type TableStylePreset, type ThemeDefinition } from "@latex-editor/contracts";
+import { preferenceDefaults, projectPreferenceKeys, type AIProjectSkill, type DictionaryPackage, type HistoryPreferences, type ImagePreferences, type LatexToolchain, type PreferenceKey, type StyleResource, type TablePreferences, type TableStylePreset, type ThemeDefinition } from "@latex-editor/contracts";
 import type { SpellCheckStatus } from "@latex-editor/contracts";
 import { t } from "../i18n/index.js";
 import { EnvironmentManager } from "../preview/EnvironmentManager.js";
@@ -9,7 +9,7 @@ import { useSettings } from "./service.js";
 import { bindings, commandContexts, commandLabels, defaultBindings, displayBinding, eventBinding, validBinding, type CommandId } from "./commands.js";
 import "./settings.css";
 
-const sections = ["general", "appearance", "editor", "images", "tables", "searchFilter", "language", "shortcuts", "environment", "compiler", "spellcheck", "ai", "aiSkills", "environments", "styleResources"] as const;
+const sections = ["general", "appearance", "editor", "images", "tables", "searchFilter", "language", "shortcuts", "history", "environment", "compiler", "spellcheck", "ai", "aiSkills", "environments", "styleResources"] as const;
 export type SettingsSection = typeof sections[number];
 type Section = SettingsSection;
 
@@ -18,9 +18,18 @@ const projectSettingsBySection: Partial<Record<Section, PreferenceKey[]>> = {
   editor: ["fontSize", "tabSize", "wordWrap", "autoPairSymbols", "mathPreviewOnHover", "confirmPreviewEdits"],
   images: ["images"],
   tables: ["tables"],
+  history: ["history"],
   compiler: ["engine"],
   environments: ["environments"]
 };
+
+function HistorySettingsPanel({ store, scope }: { store: ReturnType<typeof useSettings>; scope: "global" | "project" }) {
+  const value = (scope === "global" ? store.global("history") : store.get("history")) as HistoryPreferences;
+  const update = (patch: Partial<HistoryPreferences>) => void store.set("history", { ...value, ...patch }, scope);
+  const toggles = ["autoSnapshot", "beforeRestore", "beforeLargeDelete", "beforeAiChange"] as const;
+  const numbers = [["intervalMinutes", 1, 1440], ["maxSnapshots", 1, 1000], ["retentionDays", 1, 3650]] as const;
+  return <><h2>{t("settings.history")}</h2>{toggles.map((key) => <label className="preference-row" key={key}><span><strong>{t(`history.${key}`)}</strong></span><input data-setting={`history.${key}`} type="checkbox" checked={value[key]} onChange={(event) => update({ [key]: event.target.checked })}/></label>)}{numbers.map(([key, min, max]) => <label className="preference-row" key={key}><span><strong>{t(`history.${key}`)}</strong></span><input data-setting={`history.${key}`} type="number" min={min} max={max} value={value[key]} onChange={(event) => { const next = Number(event.target.value); if (Number.isInteger(next) && next >= min && next <= max) update({ [key]: next }); }}/></label>)}</>;
+}
 
 function ImageSettingsPanel({ store, scope }: { store: ReturnType<typeof useSettings>; scope: "global" | "project" }) {
   const value = (scope === "global" ? store.global("images") : store.get("images")) as ImagePreferences;
@@ -318,6 +327,7 @@ export function SettingsDialog({ onClose, initial = "general" }: { onClose(): vo
     if (section === "ai") return ["aiDefaultMode", "aiPermissionMode", "aiReasoningEffort", "aiCopilotReasoningEffort"].includes(key);
     if (section === "images") return key === "images";
     if (section === "tables") return key === "tables";
+    if (section === "history") return key === "history";
     if (section === "environments") return key === "environments";
     return false;
   }) as PreferenceKey[]);
@@ -331,6 +341,7 @@ export function SettingsDialog({ onClose, initial = "general" }: { onClose(): vo
       {section === "editor" && <>{row("fontSize", "settings.fontSize", undefined, true)}{row("wordWrap", "settings.wordWrap")}{row("tabSize", "settings.tabSize", [["2", "2"], ["4", "4"], ["8", "8"]], true)}{row("autoPairSymbols", "settings.autoPairSymbols")}{row("mathPreviewOnHover", "settings.mathPreviewOnHover")}{row("documentWordCompletion", "settings.documentWordCompletion")}{row("autoEnvironmentLabels", "settings.autoEnvironmentLabels")}{row("confirmPreviewEdits", "settings.confirmPreviewEdits")}{row("warnIncompatibleEnvironmentConversion", "settings.warnIncompatibleEnvironmentConversion")}</>}
       {section === "images" && <ImageSettingsPanel store={store} scope={scope}/>}
       {section === "tables" && <TableSettingsPanel store={store} scope={scope}/>}
+      {section === "history" && <HistorySettingsPanel store={store} scope={scope}/>}
       {section === "searchFilter" && <><h2>{t("settings.searchFilter")}</h2><p>{t("settings.filterGroupsHint")}</p>{(["blockType", "location", "file", "properties"] as const).map((group) => { const visible = store.global("visibleFilterGroups"); return <label className="preference-row" key={group}><span><strong>{t(`filter.${group}`)}</strong></span><input type="checkbox" checked={visible.includes(group)} onChange={(event) => void store.set("visibleFilterGroups", event.target.checked ? [...visible, group] : visible.filter((item) => item !== group))}/><button type="button" onClick={() => void store.reset("visibleFilterGroups")}>{t("settings.reset")}</button></label>; })}</>}
       {section === "environment" && <EnvironmentSettingsPanel store={store}/>}
       {section === "shortcuts" && <><p>{t("settings.globalOnly")}</p>{row("referenceLinkModifier", "settings.referenceLinkModifier", [["ctrl", "settings.modifierCtrl"], ["alt", "settings.modifierAlt"], ["shift", "settings.modifierShift"], ["meta", "settings.modifierMeta"]])}{(Object.keys(defaultBindings) as CommandId[]).map((id) => <div className="preference-row" key={id}><span><strong>{t(commandLabels[id])}</strong><small>{t(commandContexts[id])}</small></span><button data-command={id} onClick={() => { setCapture(id); setConflict(undefined); setInvalid(false); }}>{displayBinding(bindings()[id] ?? "") || t("settings.off")}</button><button onClick={() => { const next = { ...store.global("keybindings") }; delete next[id]; const duplicate = (Object.entries(bindings()) as Array<[CommandId, string]>).find(([other, value]) => other !== id && commandContexts[other] === commandContexts[id] && value === defaultBindings[id]); if (duplicate) next[duplicate[0]] = ""; void store.set("keybindings", next); }}>{t("settings.reset")}</button></div>)}

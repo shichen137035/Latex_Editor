@@ -120,15 +120,41 @@ describe("AI composer attachments and reasoning", () => {
     const found = JSON.parse(await tools.find_blocks!({ type: "paragraph" }));
     const block = JSON.parse(await tools.get_block_source!({ blockId: found.data[0].id }));
     const result = JSON.parse(await tools.replace_block_content!({ blockId: block.data.blockId, expectedRevision: block.data.revision, content: "Improved paragraph." }));
-    expect(result.ok).toBe(true);
+    expect(result).toMatchObject({ ok: true });
+    expect(tools.set_block_semantic).toBeTypeOf("function");
     f.emit("turn/completed", { turn: { status: "completed" } });
     await vi.waitFor(() => expect(f.finished()).toBe(true));
+    expect(f.service.snapshot("project").changeSets[0]!.files.map((file) => file.path)).toEqual(["main.tex"]);
     const change = f.service.snapshot("project").changeSets[0]!.files.find((file) => file.path === "main.tex")!;
     expect(change.originalContent).toBe(source);
     expect(change.proposedContent).toContain("Improved paragraph.");
     expect(change.status).toBe("pending");
     await expect(readFile(join(f.root, "project", "main.tex"), "utf8")).rejects.toMatchObject({ code: "ENOENT" });
     await f.service.dispose();
+  });
+
+  it("routes semantic summaries through the block API and reviews direct structure edits", async () => {
+    const f = await fixture();
+    const source = "\\begin{document}\nA paragraph.\n\\end{document}";
+    await f.service.send({ conversationId: f.conversation.id, content: "Summarize", snapshot: [{ path: "main.tex", content: source }] });
+    const tools = f.input().toolHandlers!;
+    const found = JSON.parse(await tools.find_blocks!({ type: "paragraph" }));
+    const block = JSON.parse(await tools.get_block!({ blockId: found.data[0].id })).data;
+    const result = JSON.parse(await tools.set_block_semantic!({ blockId: block.id, expectedRevision: block.revision, summary: { text: "Short summary", source: "ai" } }));
+    expect(result.ok, JSON.stringify(result.error)).toBe(true);
+    f.emit("turn/completed", { turn: { status: "completed" } });
+    await vi.waitFor(() => expect(f.finished()).toBe(true));
+    expect(f.service.snapshot("project").changeSets[0]!.files.map((file) => file.path)).toEqual([".texweave/structure.json"]);
+    await f.service.dispose();
+
+    const direct = await fixture();
+    await direct.service.send({ conversationId: direct.conversation.id, content: "Direct metadata edit", snapshot: [{ path: "main.tex", content: source }] });
+    const metadataPath = join(direct.input().cwd, ".texweave", "structure.json");
+    await writeFile(metadataPath, `${await readFile(metadataPath, "utf8")}\n`);
+    direct.emit("turn/completed", { turn: { status: "completed" } });
+    await vi.waitFor(() => expect(direct.finished()).toBe(true));
+    expect(direct.service.snapshot("project").changeSets[0]!.files.map((file) => file.path)).toEqual([".texweave/structure.json"]);
+    await direct.service.dispose();
   });
 
   it("preserves large structure metadata so AI can inspect user-defined blocks", async () => {

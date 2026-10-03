@@ -61,8 +61,8 @@ async function run() {
   await until("!!window.latexEditor", "preload");
   const project = await evaluate(`window.latexEditor.projects.create({name:"menu-test",parentPath:${JSON.stringify(projects)}})`);
   await page.webContents.reload();
-  await until('!!document.querySelector(".project-row")', "project list");
-  await click(".project-row");
+  await until('!!document.querySelector(".directory-project-row")', "project list");
+  await click(".directory-project-row .directory-name-text");
   await until('!!document.querySelector(".file-tree")', "workbench");
   // A dedicated empty target avoids depending on how many tree rows exist.
   await evaluate('document.querySelector(".file-tree").insertAdjacentHTML("beforeend", \'<div id="test-empty" style="height:30px"></div>\')');

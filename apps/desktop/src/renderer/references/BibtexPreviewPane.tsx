@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useUnsavedChanges } from "../lifecycle/unsavedChanges.js";
 import type { ReferenceLibraryEntry, ReferenceLibrarySnapshot } from "@latex-editor/contracts";
 import { bibtexEntryWithKey, citationKeyIdentity, citationOccurrences, field, isValidCitationKey, parseBibtex, type BibEntry as BibEntryPreview, type CitationOccurrence } from "./bibtex.js";
@@ -6,8 +6,10 @@ import "./references.css";
 
 export interface ReferenceSourceLocation { filePath: string; offset: number; line?: number; column?: number; }
 
-export function BibtexPreviewPane({ source, filePath, projectId, documents, onLocate, onSourceChange }: { source: string; filePath: string; projectId: string; documents: Array<{ fileId: string; content: string }>; onLocate?(location: ReferenceSourceLocation): void; onSourceChange?(source: string): void }) {
+export function BibtexPreviewPane({ source, filePath, projectId, documents, restoreScrollTop, onScrollPositionChange, onLocate, onSourceChange }: { source: string; filePath: string; projectId: string; documents: Array<{ fileId: string; content: string }>; restoreScrollTop?: number | undefined; onScrollPositionChange?(scrollTop: number): void; onLocate?(location: ReferenceSourceLocation): void; onSourceChange?(source: string): void }) {
   const api = window.latexEditor;
+  const paneRef = useRef<HTMLElement | null>(null);
+  useEffect(() => { if (paneRef.current) paneRef.current.scrollTop = restoreScrollTop ?? 0; }, [filePath]);
   const parsed = useMemo(() => parseBibtex(source), [source]);
   const occurrences = useMemo(() => citationOccurrences(documents.map((document) => ({ filePath: document.fileId, content: document.content }))), [documents]);
   const [snapshot, setSnapshot] = useState<ReferenceLibrarySnapshot>();
@@ -162,7 +164,7 @@ export function BibtexPreviewPane({ source, filePath, projectId, documents, onLo
     if (editingSourceStart === removeRequest.start) setEditingSourceStart(undefined);
   };
 
-  return <section className="bib-preview-pane">
+  return <section ref={paneRef} className="bib-preview-pane" onScroll={(event) => onScrollPositionChange?.(event.currentTarget.scrollTop)}>
     <header className="bib-preview-header"><div><p className="reference-eyebrow">BIBTEX PREVIEW</p><h2>{filePath}</h2><p>{parsed.entries.length} entries · {parsed.invalid.length} warnings · source order preserved</p></div><div className="bib-preview-actions"><button onClick={() => setOnlyCited((value) => !value)} className={onlyCited ? "active" : ""}>{onlyCited ? "Cited only" : "All entries"}</button><button onClick={() => { setLibraryQuery(""); setLibraryPickerOpen((value) => !value); }} disabled={busy || !onSourceChange}>+ Add from Library</button><button onClick={() => void addAll()} disabled={busy}>Import valid to Library</button></div></header>
     <div className="bib-preview-toolbar"><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search citation key, title, author..."/><span>{entries.length} shown</span></div>
     {notice && <p className="bib-preview-notice" role="status">{notice}</p>}

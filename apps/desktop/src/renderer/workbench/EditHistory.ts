@@ -43,6 +43,7 @@ export class EditHistory {
   subscribe(listener: () => void): () => void { this.listeners.add(listener); return () => { this.listeners.delete(listener); }; }
   private notify(): void { for (const listener of this.listeners) listener(); }
   breakGroup(): void { this.typingUntil = 0; }
+  clear(): void { this.past = []; this.future = []; this.breakGroup(); this.revision++; this.notify(); }
 
   recordText(fileId: string, before: string, after: string, typing = false, now = Date.now(), knownPatch?: TextPatch): void {
     if (before === after) return;

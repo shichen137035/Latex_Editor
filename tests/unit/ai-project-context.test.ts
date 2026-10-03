@@ -1,4 +1,6 @@
+import { execFileSync } from "node:child_process";
 import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -7,10 +9,32 @@ import { isReadOnlyWorkspaceCommand, isWorkspacePath } from "../../apps/desktop/
 import type { CodexAppServer } from "../../apps/desktop/src/main/ai/codex-app-server.js";
 import type { CopilotChatService } from "../../apps/desktop/src/main/ai/copilot-chat.js";
 import { createWorkspaceBlockApi } from "../../apps/desktop/src/main/ai/workspace-block-api.js";
+import { isSnapshotTextPath } from "../../apps/desktop/src/main/ai/workspaceFiles.js";
+import { isAIEditableProjectPath, isAIReviewableProjectPath } from "@latex-editor/contracts/ai-paths";
 
 describe("AI project context and workspace reads", () => {
   let root: string | undefined;
   afterEach(() => { if (root) rmSync(root, { recursive: true, force: true }); root = undefined; });
+
+  it("exports browser-compatible ESM and synchronous main-process CommonJS entry points", () => {
+    const requireFromTest = createRequire(import.meta.url);
+    const esmPath = execFileSync(process.execPath, ["--input-type=module", "-e", "process.stdout.write(import.meta.resolve('@latex-editor/contracts/ai-paths'))"], { encoding: "utf8" });
+    expect(esmPath).toMatch(/ai-paths\.js$/);
+    expect(requireFromTest.resolve("@latex-editor/contracts/ai-paths")).toMatch(/ai-paths\.cjs$/);
+    expect(requireFromTest("@latex-editor/contracts/ai-paths").isAIEditableProjectPath("main.tex")).toBe(true);
+  });
+
+  it("keeps internal metadata available in the working copy but outside AI file changes", () => {
+    expect(isSnapshotTextPath(".texweave/structure.json")).toBe(true);
+    expect(isSnapshotTextPath(".texweave/ai-inputs/chat-input-1.txt")).toBe(true);
+    expect(isSnapshotTextPath(".texweave/history/manifests/abc.json")).toBe(false);
+    expect(isAIEditableProjectPath("chapters/main.tex")).toBe(true);
+    expect(isAIReviewableProjectPath(".texweave/structure.json")).toBe(true);
+    expect(isAIReviewableProjectPath(".texweave/history/manifests/abc.json")).toBe(false);
+    for (const path of [".texweave/structure.json", ".texweave\\structure.json", "chapters/.texweave/structure.json", ".latex-editor/config.json", "../main.tex", "C:\\outside.tex"]) {
+      expect(isAIEditableProjectPath(path)).toBe(false);
+    }
+  });
 
   it("copies project text and provides metadata-first tools instead of injecting complete source", async () => {
     root = mkdtempSync(join(tmpdir(), "texweave-ai-context-"));

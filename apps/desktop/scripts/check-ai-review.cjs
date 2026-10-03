@@ -150,7 +150,35 @@ async function run() {
   await evaluate("window.confirm=()=>true; document.querySelector('.ai-permission-menu button.full').click()");
   await until("document.querySelector('.ai-permission-picker').classList.contains('full')");
   assert.equal((await evaluate("window.latexEditor.settings.get()")).global.aiPermissionMode, "full");
+  const protectedPath = ".texweave/protected.json";
+  const protectedContent = '{"safe":true}\n';
+  await evaluate(`window.latexEditor.files.createFile(${JSON.stringify(project.id)},${JSON.stringify(protectedPath)}).then(()=>window.latexEditor.files.write(${JSON.stringify(project.id)},${JSON.stringify(protectedPath)},${JSON.stringify(protectedContent)}))`);
+  const protectedChanges = { id: randomUUID(), conversationId: conversation.id, createdAt: Date.now(), permissionMode: "ask", status: "pending", files: [
+    { path: protectedPath, type: "modify", originalContent: protectedContent, proposedContent: '{"safe":false}\n', status: "pending", hunks: [hunk("protected", 0, protectedContent, '{"safe":false}\n')] }
+  ] };
+  changeSets.push(protectedChanges); publish(protectedChanges);
+  await until("document.querySelector('.ai-change-set')?.textContent.includes('.texweave/protected.json')");
+  await evaluate("document.querySelector('.ai-change-set > header button').click()");
+  await until("document.querySelector('.ai-error')?.textContent.includes('internal file')");
+  assert.equal(readFileSync(join(project.canonicalPath, protectedPath), "utf8"), protectedContent);
+  assert.equal(protectedChanges.files[0].hunks[0].applied, undefined);
+  const structurePath = ".texweave/block-graph.json";
+  const structureContent = '{"version":2,"blocks":[],"dependencies":[],"structuralParents":[]}\n';
+  const structureChanges = { id: randomUUID(), conversationId: conversation.id, createdAt: Date.now(), permissionMode: "auto", status: "pending", files: [
+    { path: structurePath, type: "create", proposedContent: structureContent, status: "pending", hunks: [hunk("structure", 0, "", structureContent)] }
+  ] };
+  changeSets.push(structureChanges); publish(structureChanges);
+  await until("Array.from(document.querySelectorAll('.ai-change-set')).some(card=>card.textContent.includes('.texweave/block-graph.json'))");
+  await delay(300);
+  assert.equal(structureChanges.files[0].hunks[0].applied, undefined, "structure edits wait for manual review");
+  await evaluate("Array.from(document.querySelectorAll('.ai-change-set')).find(card=>card.textContent.includes('.texweave/block-graph.json')).querySelector('header button').click()");
+  await until("document.querySelector('.editor-tabs')?.textContent.includes('block-graph.json')");
+  for (let i = 0; i < 80 && structureChanges.files[0].hunks[0].decision === "pending"; i++) await delay(100);
+  assert.equal(structureChanges.files[0].hunks[0].decision, "accepted");
+  assert.equal(readFileSync(join(project.canonicalPath, structurePath), "utf8"), structureContent);
   console.log("PASS AI UI: visible new/rename/history; persistent rename; 3 permission modes/default auto/outside dismissal; automatic edits+create+delete; source diff including missing/deleted files; per-hunk Keep/Undo; no Undo after acceptance; multi-step Ctrl+Z/Y; Ask mode waits for approval.");
+  console.log("PASS AI UI: unrelated TeXWeave internal files remain protected.");
+  console.log("PASS AI UI: structure metadata waits for manual review and can be accepted explicitly.");
   console.log("Screenshot:", join(root, "ai-review.png"));
 }
 require("../dist/main/index.js");

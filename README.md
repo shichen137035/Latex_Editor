@@ -13,6 +13,7 @@ TeXWeave 是一款面向本地项目的 LaTeX 桌面编辑器。它将源码编�
 - **表格和图片**：通过工具插入图片/图组和表格；预览中可编辑常见表格结构，包括单元格内容、行列和合并/拆分。复杂或非标准 LaTeX 表格仍以源码和实际编译结果为准。
 - **文献管理**：项目内文献快捷栏可筛选图书馆条目并插入引用；独立文献库页面支持管理条目、BibTeX 导入/编辑、检索、筛选、收藏和排序。
 - **块关系**：为结构块建立从属与前提/结果关系，支持关系浏览、图形视图、校验与项目内持久化；也可从选区创建自定义块。
+- **项目版本历史**：在左侧“历史”栏创建正式版本、临时保存和快照，比较文件差异，并恢复整个项目或选定文件。自动快照与风险操作前的快照可在设置中调整；历史数据保存在项目的 `.texweave/history/`，相同文件内容只存储一次。
 - **块结构 API 与 AI 编辑**：共享 Preview/后端解析器，以稳定 ID、直接父子索引和 revision 管理文档块；AI 可先按标题、类型、标签、编号等定位，再只读取和修改必要内容。Codex/Copilot 的块工具沿用工作副本与 diff 审查。接口、迁移和使用方式见 [v0.5.3 后端说明](docs/block-structure-api.md)。
 - **设置与本地化**：全局和项目级设置、浅色/深色及可导入主题、样式资源、环境管理、搜索与筛选、拼写检查资源配置。界面提供英语、简体中文、繁体中文、日语、韩语和法语。
 
@@ -57,6 +58,7 @@ npm run test:cli
 
 ```powershell
 npm run desktop:test-ui
+npm run desktop:test-history
 npm run desktop:test-preview
 npm run desktop:test-preview-startup
 npm run desktop:test-preview-large

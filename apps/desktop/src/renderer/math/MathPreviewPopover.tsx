@@ -1,10 +1,27 @@
-import { useMemo, type CSSProperties } from "react";
+import { useEffect, useMemo, useRef, type CSSProperties } from "react";
 import { mathRenderService } from "./MathRenderService.js";
 import type { MathContext } from "./types.js";
 import "katex/dist/katex.min.css";
 import "./math-preview.css";
 
-export function MathPreviewPopover({ source, displayMode, context, anchor, className = "" }: { source: string; displayMode: boolean; context: MathContext; anchor?: DOMRect | undefined; className?: string }) {
+export function MathPreviewPopover({ source, displayMode, context, anchor, className = "", onInteractionChange }: { source: string; displayMode: boolean; context: MathContext; anchor?: DOMRect | undefined; className?: string; onInteractionChange?(active: boolean): void }) {
+  const pointerInside = useRef(false);
+  const dragging = useRef(false);
+  const interactionCallback = useRef(onInteractionChange);
+  interactionCallback.current = onInteractionChange;
+  useEffect(() => {
+    const finishDrag = () => {
+      dragging.current = false;
+      interactionCallback.current?.(pointerInside.current);
+    };
+    window.addEventListener("pointerup", finishDrag);
+    window.addEventListener("pointercancel", finishDrag);
+    return () => {
+      window.removeEventListener("pointerup", finishDrag);
+      window.removeEventListener("pointercancel", finishDrag);
+      if (pointerInside.current || dragging.current) interactionCallback.current?.(false);
+    };
+  }, []);
   const result = useMemo(() => mathRenderService.render(source, context, { displayMode }), [source, displayMode, context]);
   if (!source.trim()) return null;
   const spaceAbove = anchor?.top ?? 0;
@@ -16,7 +33,7 @@ export function MathPreviewPopover({ source, displayMode, context, anchor, class
     maxHeight: Math.max(64, (above ? spaceAbove : spaceBelow) - 16),
     transform: above ? "translateY(-100%)" : undefined
   } as CSSProperties : undefined;
-  return <aside className={`math-preview-popover ${above ? "above" : "below"} ${className}`} style={style} role="status">
+  return <aside className={`math-preview-popover ${above ? "above" : "below"} ${className}`} style={style} role="status" onPointerEnter={() => { pointerInside.current = true; interactionCallback.current?.(true); }} onPointerLeave={(event) => { pointerInside.current = false; if (event.buttons & 1) dragging.current = true; interactionCallback.current?.(dragging.current); }} onPointerDownCapture={(event) => { if (event.button === 0) { dragging.current = true; interactionCallback.current?.(true); } }}>
     {result.html ? <div className="math-preview-result" dangerouslySetInnerHTML={{ __html: result.html }}/> : <code className="math-preview-raw">{source}</code>}
     {result.error && <small title={result.error.message}>⚠ {result.error.message}</small>}
   </aside>;

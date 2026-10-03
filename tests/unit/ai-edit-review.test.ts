@@ -3,7 +3,7 @@ import type { AIApprovalRequest, AIFileChange, AIChangeHunk } from "@latex-edito
 import { preferenceDefaults, validPreference } from "@latex-editor/contracts";
 import { AIApprovalRequests } from "../../apps/desktop/src/main/ai/approval-requests.js";
 import { codexPermissionPolicy, isReadOnlyPermissionRequest, requiresAIApproval } from "../../apps/desktop/src/main/ai/ai-approvals.js";
-import { fileWithAppliedHunks, hunkLineStats, reviewFileContents, transitionAIFile } from "../../apps/desktop/src/renderer/ai/changeOperations.js";
+import { automaticHunkIds, fileWithAppliedHunks, hunkLineStats, reviewFileContents, transitionAIFile } from "../../apps/desktop/src/renderer/ai/changeOperations.js";
 import { EditHistory, applyTextPatch } from "../../apps/desktop/src/renderer/workbench/EditHistory.js";
 
 function hunk(id: string, oldStart: number, oldText: string, newText: string): AIChangeHunk {
@@ -11,6 +11,12 @@ function hunk(id: string, oldStart: number, oldText: string, newText: string): A
 }
 
 describe("VS Code-style AI review", () => {
+  it("leaves structure metadata for manual review during automatic apply", () => {
+    const source: AIFileChange = { path: "main.tex", type: "modify", originalContent: "old", proposedContent: "new", status: "pending", hunks: [hunk("source", 0, "old", "new")] };
+    const structure: AIFileChange = { path: ".texweave/structure.json", type: "modify", originalContent: "{}", proposedContent: "{ }", status: "pending", hunks: [hunk("structure", 0, "{}", "{ }")] };
+    const otherMetadata: AIFileChange = { ...structure, path: ".texweave/settings.json", hunks: [hunk("settings", 0, "{}", "{ }")] };
+    expect(automaticHunkIds({ id: "test", conversationId: "chat", createdAt: 0, files: [source, structure, otherMetadata], status: "pending" })).toEqual(["source"]);
+  });
   it("applies, keeps and reverts independent hunks in original coordinates", () => {
     const original = "A\nB\nC\nD\n";
     const file: AIFileChange = { path: "main.tex", type: "modify", originalContent: original, status: "pending", hunks: [hunk("first", 0, "A\n", "X\nY\n"), hunk("second", 3, "D\n", "Z\n")] };

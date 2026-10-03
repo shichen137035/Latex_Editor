@@ -4,6 +4,7 @@ import { dialog } from "electron";
 import type { AIContextSnapshotFile, ProjectTreeNode } from "@latex-editor/contracts" with { "resolution-mode": "import" };
 import type { DesktopContext } from "../desktopContext.js";
 import type { SettingsRepository } from "../settings.js";
+import { isSnapshotTextPath } from "./workspaceFiles.js";
 
 /** Register AI and Copilot renderer requests separately from core project IPC. */
 export function registerAiIpcHandlers(context: DesktopContext | undefined, settings: SettingsRepository): void {
@@ -53,7 +54,7 @@ export function registerAiIpcHandlers(context: DesktopContext | undefined, setti
     let snapshot: AIContextSnapshotFile[] = [];
     if (input.projectId) {
       const collect = (nodes: ProjectTreeNode[]): string[] => nodes.flatMap((node) => node.kind === "file" ? [node.relativePath] : node.children ? collect(node.children) : []);
-      const paths = collect(await context.files.listTree(input.projectId) as ProjectTreeNode[]).filter((path) => /\.(?:tex|bib|sty|cls|txt|md|cfg|def|ltx|ts|tsx|js|jsx|mjs|cjs|json|css|scss|html|yml|yaml|toml|xml|svg)$/i.test(path) || path.replaceAll("\\", "/").toLocaleLowerCase() === ".texweave/settings.json");
+      const paths = collect(await context.files.listTree(input.projectId) as ProjectTreeNode[]).filter(isSnapshotTextPath);
       snapshot = (await Promise.all(paths.map(async (path) => {
         const value = await context!.files.readText(input.projectId!, path) as { content?: unknown };
         return typeof value?.content === "string" ? { path, content: value.content } : undefined;

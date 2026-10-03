@@ -2,6 +2,7 @@ import { DiffEditor, Editor, type OnMount } from "@monaco-editor/react";
 import { useCallback, useEffect, useMemo, useRef, useState, type DragEvent } from "react";
 import { createPortal, flushSync } from "react-dom";
 import type { AIChangeSet, BlockGraphSnapshot, BlockId, BlockTextEdit, BlockTextRange, CompileResult, Diagnostic, Project, ProjectTreeNode, RelationDirection, RelationNeighborhood, SemanticBlock, SpellCheckStatus, StructuralHistoryState, SyncTexPdfPosition } from "@latex-editor/contracts";
+import { isAIReviewableProjectPath, isAIStructureMetadataPath } from "@latex-editor/contracts/ai-paths";
 import toolbarActions from "../resources/toolbar-actions.json" with { type: "json" };
 import { t, type MessageKey } from "../i18n/index.js";
 import { PreviewPane } from "../preview/PreviewPane.js";
@@ -10,9 +11,10 @@ import { useSettings, settings } from "../settings/service.js";
 import { bindings, commands, displayBinding } from "../settings/commands.js";
 import { EnvironmentQuickAction, environmentCursorOffset, environmentInsertion } from "../preview/EnvironmentPicker.js";
 import { addCommandLabel, addEnvironmentLabel, nextAutomaticLabel } from "../preview/labels.js";
-import { useUnsavedChanges } from "../lifecycle/unsavedChanges.js";
+import { resolveExit, unsavedChanges, useUnsavedChanges } from "../lifecycle/unsavedChanges.js";
 import { EditHistory, applyTextPatch, patchFromEdits, textPatch, type HistoryDirection } from "./EditHistory.js";
-import { isHunkApplied, reviewFileContents, transitionAIFile } from "../ai/changeOperations.js";
+import { NavigationHistory, navigationLocationValid, type NavigationLocation } from "./NavigationHistory.js";
+import { automaticHunkIds, reviewFileContents, transitionAIFile, type AIApplyResult } from "../ai/changeOperations.js";
 import type { EnvironmentDefinition } from "../preview/types.js";
 import { CompletionController } from "../completion/CompletionController.js";
 import { SpellCheckController, type SpellContextRequest } from "../spellcheck/SpellCheckController.js";
@@ -48,22 +50,41 @@ import type { TableSelection } from "../table/model.js";
 import { addLatexPackage, tableInsertion, uniqueTableLabel } from "../table/insert.js";
 import { ReferenceLibraryPanel } from "../references/ReferenceLibraryPanel.js";
 import { BibtexPreviewPane } from "../references/BibtexPreviewPane.js";
+import { ProjectHistoryPanel } from "../history/ProjectHistoryPanel.js";
 import { AIView } from "../ai/AIView.js";
 import { ContextMenu, DiagnosticRow, EntryNameInput, Icon, Logo, Menu, Placeholder, SpellContextMenu, Tree, spellLanguageLabel, type FileContext } from "./WorkbenchComponents.js";
 
-type SidebarMode = "files" | "search" | "library" | "ai" | "settings" | "help";
+type SidebarMode = "files" | "search" | "library" | "ai" | "history" | "settings" | "help";
 type PaneType = "source" | "preview" | "pdf";
-type BottomTab = "problems" | "output" | "compileLog" | "versions";
+type BottomTab = "problems" | "output" | "compileLog";
 type MenuName = "file" | "edit" | "view" | "history" | "projects";
 
 interface EditorTab { path: string; content: string; dirty: boolean }
 interface SourceMathPreview { source: string; displayMode: boolean; anchor: DOMRect; kind: "source-cursor" | "source-hover" }
+interface NavigationRequest { path: string; offset?: number | undefined; line?: number | undefined; column?: number | undefined; nonce: number }
 interface PersistedLayout { sidebarWidth: number; fileTreeHeight: number; splitRatio: number; bottomPanelHeight: number; sidebarVisible: boolean; mode: "single" | "split"; singlePane: PaneType; leftPane: "source" | "preview"; rightPane: "preview" | "pdf" }
 
 const emptyBlockSnapshot: BlockGraphSnapshot = { version: 2, blocks: [], dependencies: [], structuralParents: [] };
 const defaultRelationFilters: RelationFilters = { hierarchyScope: "all", role: "all", origin: "all", label: "all", textQuery: "" };
 
 const defaultLayout: PersistedLayout = { sidebarWidth: 280, fileTreeHeight: 330, splitRatio: 52, bottomPanelHeight: 220, sidebarVisible: true, mode: "split", singlePane: "source", leftPane: "source", rightPane: "pdf" };
+
+function sourcePositionAtOffset(source: string, offset: number): { lineNumber: number; column: number } {
+  const lines = source.slice(0, Math.min(Math.max(0, offset), source.length)).split(/\r\n|\r|\n/);
+  return { lineNumber: lines.length, column: (lines.at(-1)?.length ?? 0) + 1 };
+}
+
+function sourceOffsetAtLine(source: string, line: number, column = 1): number {
+  const expression = /\r\n|\r|\n/g;
+  let start = 0;
+  for (let index = 1; index < line; index += 1) {
+    const newline = expression.exec(source);
+    if (!newline) return source.length;
+    start = expression.lastIndex;
+  }
+  const end = source.slice(start).search(/\r\n|\r|\n/);
+  return Math.min(start + Math.max(0, column - 1), end < 0 ? source.length : start + end);
+}
 
 function restoreLayout(): PersistedLayout {
   return { ...defaultLayout, ...settings.get("layout") };
@@ -103,6 +124,7 @@ export function Workbench({ project, projects, environments, onHome, onSwitch, o
   const [importingProjectEntries, setImportingProjectEntries] = useState(false);
   const tabsRef = useRef(tabs);
   const openingFilesRef = useRef(new Map<string, Promise<void>>());
+  const fileOpenSequence = useRef(0);
   const savedContents = useRef(new Map<string, string>());
   const editHistory = useRef(new EditHistory());
   const [, refreshHistoryUi] = useState(0);
@@ -145,7 +167,8 @@ export function Workbench({ project, projects, environments, onHome, onSwitch, o
   const [deleteRequest, setDeleteRequest] = useState<{ path: string; resolve(value: boolean): void }>();
   const [compileState, setCompileState] = useState<"idle" | "running">("idle");
   const [compileResult, setCompileResult] = useState<CompileResult>();
-  const [pendingDiagnostic, setPendingDiagnostic] = useState<{ path: string; line?: number; column?: number; offset?: number }>();
+  const [navigationRequest, setNavigationRequest] = useState<NavigationRequest>();
+  const [editorMountVersion, setEditorMountVersion] = useState(0);
   const [pdfDataUrl, setPdfDataUrl] = useState<string>();
   const [pdfTarget, setPdfTarget] = useState<(SyncTexPdfPosition & { requestId: number })>();
   const [bottomVisible, setBottomVisible] = useState(false);
@@ -159,6 +182,8 @@ export function Workbench({ project, projects, environments, onHome, onSwitch, o
   const [projectSearchDocuments, setProjectSearchDocuments] = useState<SearchDocument[]>([]);
   const [sourceMathPreview, setSourceMathPreview] = useState<SourceMathPreview>();
   const clearHoverMathPreviewRef = useRef<() => void>(() => undefined);
+  const mathPopoverInteracting = useRef(false);
+  const mathPopoverInteractionChangeRef = useRef<(active: boolean) => void>(() => undefined);
   const mathPreviewOnHover = store.get("mathPreviewOnHover");
   useEffect(() => { if (!mathPreviewOnHover) clearHoverMathPreviewRef.current(); }, [mathPreviewOnHover]);
   const [searchQuery, setSearchQuery] = useState<SearchQuery>(defaultSearchQuery);
@@ -166,7 +191,6 @@ export function Workbench({ project, projects, environments, onHome, onSwitch, o
   const [replaceOpen, setReplaceOpen] = useState(false);
   const [filterQuery, setFilterQuery] = useState<FilterQuery>(defaultFilterQuery);
   const [activeSearchResult, setActiveSearchResult] = useState<SearchResult>();
-  const [pendingSearchResult, setPendingSearchResult] = useState<SearchResult>();
   const editorRef = useRef<Parameters<OnMount>[0] | null>(null);
   const aiFileNavigationRef = useRef<(path: string, line?: number) => void>(() => undefined);
   const workbenchRef = useRef<HTMLDivElement | null>(null);
@@ -189,6 +213,13 @@ export function Workbench({ project, projects, environments, onHome, onSwitch, o
   const aiAutoAttempts = useRef(new Set<string>());
   const rangeMappingTimers = useRef(new Map<string, number>());
   const previewViewportAnchor = useRef<{ fileId: string; offset: number } | undefined>(undefined);
+  const previewPositions = useRef(new Map<string, { offset: number; scrollTop: number }>());
+  const sourcePositions = useRef(new Map<string, { offset: number; scrollTop: number }>());
+  const sourceModelPath = useRef<string | undefined>(undefined);
+  const sourceRestoredFor = useRef<string | undefined>(undefined);
+  const navigationNonce = useRef(0);
+  const navigationHistory = useRef(new NavigationHistory());
+  useEffect(() => { navigationHistory.current.clear(); }, [project.id]);
   const previewClickAnchor = useRef<{ fileId: string; offset: number } | undefined>(undefined);
   const previewInsertionAnchor = useRef<{ fileId: string; offset: number } | undefined>(undefined);
   const pendingVisualToCodeAnchor = useRef<{ fileId: string; offset: number } | undefined>(undefined);
@@ -431,6 +462,7 @@ export function Workbench({ project, projects, environments, onHome, onSwitch, o
     } catch (error) { window.alert(error instanceof Error ? error.message : String(error)); }
   };
   const updateMovedEntryReferences = async (from: string, to: string) => {
+    navigationHistory.current.clear();
     const movedPath = (path: string) => path === from || path.startsWith(from + "/") ? to + path.slice(from.length) : path;
     editHistory.current.renameFile(from, to);
     savedContents.current = new Map([...savedContents.current].map(([path, content]) => [movedPath(path), content]));
@@ -460,6 +492,7 @@ export function Workbench({ project, projects, environments, onHome, onSwitch, o
     try {
       const sourcePaths = kind === "file" ? await api.dialogs.pickProjectFiles() : await api.dialogs.pickProjectFolders();
       if (!sourcePaths.length) return;
+      navigationHistory.current.clear();
       const currentTree = await api.files.tree(project.id);
       setTree(currentTree);
       const names = new Set(currentTree.map((node) => node.name.normalize("NFC").toLocaleLowerCase("en-US")));
@@ -516,7 +549,7 @@ export function Workbench({ project, projects, environments, onHome, onSwitch, o
     const confirmed = await new Promise<boolean>((resolve) => setDeleteRequest({ path: fileContext.path!, resolve }));
     if (!confirmed) return;
     const removedPath = fileContext.path;
-    try { await api.files.remove(project.id, removedPath); editHistory.current.forgetFile(removedPath); setTabs((current) => current.filter((tab) => tab.path !== removedPath && !tab.path.startsWith(`${removedPath}/`))); if (activePath === removedPath || activePath?.startsWith(`${removedPath}/`)) setActivePath(undefined); await refreshTree(); }
+    try { if (settings.get("history").beforeLargeDelete) await api.history.snapshot(project.id, "pre-delete", removedPath, tabsRef.current.filter((tab) => tab.dirty).map((tab) => ({ path: tab.path, content: tab.content }))); await api.files.remove(project.id, removedPath); navigationHistory.current.clear(); editHistory.current.forgetFile(removedPath); setTabs((current) => current.filter((tab) => tab.path !== removedPath && !tab.path.startsWith(`${removedPath}/`))); if (activePath === removedPath || activePath?.startsWith(`${removedPath}/`)) setActivePath(undefined); await refreshTree(); }
     catch (error) { window.alert(error instanceof Error ? error.message : String(error)); }
   };
   const setAsMainFile = async () => {
@@ -585,16 +618,25 @@ export function Workbench({ project, projects, environments, onHome, onSwitch, o
   }, [project.id, project.mainFile]);
   useEffect(() => { if (project.mainFile) void openFile(project.mainFile); }, [project.id]);
 
+  const rememberPreviewPosition = () => {
+    const path = activePathRef.current;
+    const root = document.querySelector<HTMLElement>(".structured-preview, .bib-preview-pane");
+    if (!path || !root) return;
+    const offset = previewPositions.current.get(path)?.offset ?? (previewViewportAnchor.current?.fileId === path ? previewViewportAnchor.current.offset : 0);
+    previewPositions.current.set(path, { offset, scrollTop: root.scrollTop });
+  };
 
   const openFile = async (path: string) => {
+    if (path !== activePathRef.current) rememberPreviewPosition();
+    const sequence = ++fileOpenSequence.current;
     setAiDiffFile(undefined);
     const existing = tabsRef.current.find((tab) => tab.path === path);
-    if (existing) { setActivePath(path); return; }
+    if (existing) { if (sequence === fileOpenSequence.current) setActivePath(path); return; }
     if (!api) return;
     const opening = openingFilesRef.current.get(path);
     if (opening) {
       await opening;
-      if (tabsRef.current.some((tab) => tab.path === path)) setActivePath(path);
+      if (sequence === fileOpenSequence.current && tabsRef.current.some((tab) => tab.path === path)) setActivePath(path);
       return;
     }
     const pending = (async () => {
@@ -608,12 +650,60 @@ export function Workbench({ project, projects, environments, onHome, onSwitch, o
           setTabs(nextTabs);
           setSaveState("saved");
         }
-        setActivePath(path);
       } catch { /* Binary and unsupported files stay unopened until dedicated viewers exist. */ }
     })();
     openingFilesRef.current.set(path, pending);
-    try { await pending; }
+    try { await pending; if (sequence === fileOpenSequence.current && tabsRef.current.some((tab) => tab.path === path)) setActivePath(path); }
     finally { if (openingFilesRef.current.get(path) === pending) openingFilesRef.current.delete(path); }
+  };
+
+  const currentNavigationOrigin = (offset?: number): NavigationLocation | undefined => {
+    const path = activePathRef.current;
+    if (!path) return undefined;
+    const pane = layout.mode === "split" ? layout.leftPane : layout.singlePane === "pdf" ? lastTextPane.current : layout.singlePane;
+    const editor = editorRef.current;
+    const sourceOffset = pane === "source" && sourceModelPath.current === path && editor?.getModel() && editor.getPosition()
+      ? editor.getModel()!.getOffsetAt(editor.getPosition()!) : sourcePositions.current.get(path)?.offset;
+    const previewOffset = previewViewportAnchor.current?.fileId === path ? previewViewportAnchor.current.offset : previewPositions.current.get(path)?.offset;
+    return {
+      path,
+      offset: Math.max(0, offset ?? (pane === "source" ? sourceOffset : previewOffset) ?? 0),
+      layout: { mode: layout.mode, singlePane: layout.mode === "single" ? pane : layout.singlePane, leftPane: layout.leftPane, rightPane: layout.rightPane }
+    };
+  };
+  const validNavigationLocation = (location: NavigationLocation): boolean => navigationLocationValid(location, tabsRef.current.find((tab) => tab.path === location.path)?.content);
+  const navigateTo = async (path: string, position: { offset?: number | undefined; line?: number | undefined; column?: number | undefined } = {}, view: "preserve" | "source" = "preserve", recordHistory = true) => {
+    const origin = recordHistory && (path !== activePathRef.current || position.offset !== undefined || position.line !== undefined) ? currentNavigationOrigin() : undefined;
+    const targetLayout: NavigationLocation["layout"] = {
+      mode: layout.mode, singlePane: view === "source" ? "source" : layout.mode === "single" && layout.singlePane === "pdf" ? lastTextPane.current : layout.singlePane,
+      leftPane: view === "source" ? "source" : layout.leftPane, rightPane: layout.rightPane
+    };
+    if (view === "source") setLayout((value) => value.mode === "single" ? { ...value, singlePane: "source" } : { ...value, leftPane: "source" });
+    else setLayout((value) => value.mode === "single" && value.singlePane === "pdf" ? { ...value, singlePane: lastTextPane.current } : value);
+    if (position.offset !== undefined || position.line !== undefined) {
+      setNavigationRequest({ path, ...position, nonce: ++navigationNonce.current });
+    } else setNavigationRequest(undefined);
+    if (path !== activePathRef.current) await openFile(path);
+    const targetContent = tabsRef.current.find((tab) => tab.path === path)?.content;
+    if (origin && targetContent !== undefined) {
+      const targetPane = targetLayout.mode === "single" ? targetLayout.singlePane : targetLayout.leftPane;
+      const targetOffset = position.offset ?? (position.line !== undefined ? sourceOffsetAtLine(targetContent, position.line, position.column)
+        : targetPane === "source" ? sourcePositions.current.get(path)?.offset : previewPositions.current.get(path)?.offset) ?? 0;
+      navigationHistory.current.record(origin, { path, offset: Math.max(0, Math.min(targetOffset, targetContent.length)), layout: targetLayout });
+    }
+  };
+  const restoreNavigationLocation = async (location: NavigationLocation) => {
+    setLayout((value) => ({ ...value, ...location.layout }));
+    setNavigationRequest({ path: location.path, offset: location.offset, nonce: ++navigationNonce.current });
+    if (location.path !== activePathRef.current) await openFile(location.path);
+  };
+  const navigateBack = async () => {
+    const location = navigationHistory.current.back(validNavigationLocation);
+    if (location) await restoreNavigationLocation(location);
+  };
+  const navigateForward = async () => {
+    const location = navigationHistory.current.forward(validNavigationLocation);
+    if (location) await restoreNavigationLocation(location);
   };
 
   const forwardSyncToPdf = async (path: string, line: number, column = 1) => {
@@ -631,8 +721,7 @@ export function Workbench({ project, projects, environments, onHome, onSwitch, o
       const target = await api.synctex.reverse(project.id, pdfFile, page, x, y);
       const pane = lastTextPane.current;
       setLayout((value) => value.mode === "split" ? { ...value, leftPane: pane } : { ...value, singlePane: pane });
-      setPendingDiagnostic({ path: target.file, line: target.line, column: target.column });
-      if (target.file !== activePath) await openFile(target.file);
+      await navigateTo(target.file, { line: target.line, column: target.column });
     } catch (error) { window.alert(error instanceof Error ? error.message : String(error)); }
   };
 
@@ -653,6 +742,67 @@ export function Workbench({ project, projects, environments, onHome, onSwitch, o
     } catch { setSaveState("failed"); throw new Error(t("save.failed")); }
   };
   const saveActive = () => saveTabs(false);
+  const snapshotOnLeave = async () => {
+    if (!api || !settings.get("history").autoSnapshot) return;
+    const overrides = tabsRef.current.filter((tab) => tab.dirty).map((tab) => ({ path: tab.path, content: tab.content }));
+    await api.history.snapshot(project.id, "project-close", undefined, overrides);
+  };
+  const confirmProjectNavigation = async (navigate: () => void) => {
+    const lifecycle = window.latexEditor?.lifecycle;
+    const canLeave = await resolveExit(unsavedChanges, {
+      confirm: () => lifecycle?.confirmClose({
+        title: t("navigation.unsavedTitle"),
+        message: t("navigation.unsavedMessage"),
+        detail: t("navigation.unsavedDetail"),
+        buttons: [t("navigation.save"), t("navigation.discard"), t("navigation.stay")]
+      }) ?? Promise.resolve("cancel"),
+      flush: flushSync,
+      reportError: async (error) => {
+        const message = `${t("navigation.failedMessage")}\n\n${error instanceof Error ? error.message : String(error)}`;
+        if (lifecycle) await lifecycle.showSaveError(t("navigation.failedTitle"), message);
+        else window.alert(message);
+      }
+    });
+    if (!canLeave) return;
+    // Do not preserve changes the user explicitly chose to discard in the
+    // automatic leave snapshot. Save choices have already cleared dirty tabs.
+    if (!unsavedChanges.hasChanges()) await snapshotOnLeave().catch(() => undefined);
+    navigate();
+  };
+  const leaveProject = () => { void confirmProjectNavigation(onHome); };
+  const switchProject = (target: Project) => { void confirmProjectNavigation(() => onSwitch(target)); };
+  const refreshAfterHistoryRestore = async (restored: string[]) => {
+    if (!api) return;
+    const nextTree = await api.files.tree(project.id);
+    const available = new Set(projectFilePaths(nextTree));
+    const nextTabs = (await Promise.all(tabsRef.current.filter((tab) => available.has(tab.path)).map(async (tab) => {
+      try { return { path: tab.path, content: (await api.files.read(project.id, tab.path)).content, dirty: false }; }
+      catch { return undefined; }
+    }))).filter((tab): tab is EditorTab => tab !== undefined);
+    tabsRef.current = nextTabs;
+    setTabs(nextTabs);
+    savedContents.current = new Map(nextTabs.map((tab) => [tab.path, tab.content]));
+    setTree(nextTree);
+    if (activePathRef.current && !nextTabs.some((tab) => tab.path === activePathRef.current)) setActivePath(nextTabs.at(-1)?.path);
+    setSaveState("saved");
+    setNavigationRequest(undefined);
+    navigationHistory.current.clear();
+    editHistory.current.clear();
+    for (const path of restored) { sourcePositions.current.delete(path); previewPositions.current.delete(path); }
+    sourceRestoredFor.current = undefined;
+    completionController.current?.invalidate();
+    setBlockSnapshot(await api.blockGraph.snapshot(project.id));
+    await settings.load(project.id);
+  };
+  useEffect(() => {
+    if (!api) return;
+    const timer = window.setInterval(() => {
+      if (!settings.get("history").autoSnapshot) return;
+      const overrides = tabsRef.current.filter((tab) => tab.dirty).map((tab) => ({ path: tab.path, content: tab.content }));
+      void api.history.snapshot(project.id, "interval", undefined, overrides).catch(() => undefined);
+    }, 60_000);
+    return () => window.clearInterval(timer);
+  }, [api, project.id]);
   useUnsavedChanges({ hasChanges: () => tabs.some((tab) => tab.dirty), save: () => saveTabs(true, flushSync) });
   const highlightCreatedBlock = (block: SemanticBlock) => {
     if (!block.fileId || !block.range) return;
@@ -714,8 +864,10 @@ export function Workbench({ project, projects, environments, onHome, onSwitch, o
     setInspectorBlock(updated);
     setBlockSnapshot((snapshot) => snapshot ? { ...snapshot, blocks: snapshot.blocks.map((block) => block.id === updated.id ? updated : block) } : snapshot);
   };
-  const trackPreviewViewport = useCallback((anchor: { fileId: string; offset: number }) => {
+  const trackPreviewViewport = useCallback((anchor: { fileId: string; offset: number; scrollTop: number }) => {
+    if (anchor.fileId !== activePathRef.current) return;
     previewViewportAnchor.current = anchor;
+    previewPositions.current.set(anchor.fileId, { offset: anchor.offset, scrollTop: anchor.scrollTop });
   }, []);
   const trackPreviewClick = useCallback((anchor: { fileId: string; offset: number }) => {
     previewClickAnchor.current = anchor;
@@ -764,14 +916,10 @@ export function Workbench({ project, projects, environments, onHome, onSwitch, o
     const column = block.source?.startColumn ?? (prefix === undefined ? undefined : (prefix.length - (prefix.lastIndexOf("\n") + 1)) + 1);
     const pane = layout.mode === "single" ? (layout.singlePane === "pdf" ? lastTextPane.current : layout.singlePane) : layout.leftPane;
     if (layout.mode === "single" && layout.singlePane === "pdf") setLayout((value) => ({ ...value, singlePane: pane }));
-    if (path !== activePath) {
-      await openFile(path);
-      if (pane === "preview") setRelationLocateRequest({ blockId, nonce: Date.now() });
-      else if (line !== undefined) setPendingDiagnostic({ path, line, ...(column !== undefined ? { column } : {}) });
-      return;
-    }
-    if (pane === "preview") setRelationLocateRequest({ blockId, nonce: Date.now() });
-    else if (line !== undefined) navigateToLocation(line, column ?? 1);
+    if (pane === "preview" && offset === undefined) setRelationLocateRequest({ blockId, nonce: Date.now() });
+    if (offset !== undefined) await navigateTo(path, { offset });
+    else if (line !== undefined) await navigateTo(path, { line, column });
+    else if (path !== activePath) await navigateTo(path);
   };
   const mutateRelation = async (candidateId: BlockId, requestedDirection?: Exclude<RelationDirection, "both">) => {
     if (!api || !blockSnapshot || !relationFocusId) return;
@@ -824,6 +972,8 @@ export function Workbench({ project, projects, environments, onHome, onSwitch, o
       commands.register("edit.redo", { execute: () => replayHistory("redo"), when: documentHistoryFocused }),
       commands.register("file.save", { execute: () => saveActive().catch(() => undefined) }),
       commands.register("file.saveAll", { execute: () => saveTabs(true).catch(() => undefined) }),
+      commands.register("navigation.back", { execute: () => navigateBack().catch(() => undefined) }),
+      commands.register("navigation.forward", { execute: () => navigateForward().catch(() => undefined) }),
       commands.register("latex.compile", { execute: () => compile().catch(() => undefined) }),
       commands.register("edit.find", { execute: () => editorRef.current?.trigger("command", "actions.find", null), when: () => !!document.querySelector(".editor-surface .monaco-editor") }),
       commands.register("edit.replace", { execute: () => editorRef.current?.trigger("command", "editor.action.startFindReplaceAction", null), when: () => !!document.querySelector(".editor-surface .monaco-editor") }),
@@ -891,7 +1041,7 @@ export function Workbench({ project, projects, environments, onHome, onSwitch, o
     finally { setCompileState("idle"); }
   };
 
-  const closeTab = (path: string) => { setTabs((current) => current.filter((tab) => tab.path !== path)); if (activePath === path) { const remaining = tabs.filter((tab) => tab.path !== path); setActivePath(remaining.at(-1)?.path); } };
+  const closeTab = (path: string) => { navigationHistory.current.clear(); setTabs((current) => current.filter((tab) => tab.path !== path)); if (activePath === path) { const remaining = tabs.filter((tab) => tab.path !== path); setActivePath(remaining.at(-1)?.path); } };
   const queueRangeMapping = (fileId: string, edits: BlockTextEdit[]) => {
     if (!api || !fileId.toLocaleLowerCase().endsWith(".tex") || edits.length === 0) return;
     const pending = pendingRangeTransactions.current.get(fileId) ?? [];
@@ -916,9 +1066,15 @@ export function Workbench({ project, projects, environments, onHome, onSwitch, o
     const before = tabsRef.current.find(tab => tab.path === path)?.content;
     if (before === undefined || before === content) return;
     const patch = edits ? patchFromEdits(before, content, edits) : textPatch(before, content);
+    if (api && patch.removed.length - patch.inserted.length >= 500 && settings.get("history").beforeLargeDelete) {
+      const overrides = tabsRef.current.filter((tab) => tab.dirty || tab.path === path).map((tab) => ({ path: tab.path, content: tab.content }));
+      void api.history.snapshot(project.id, "pre-delete", `Before removing content from ${path}`, overrides).catch((error: unknown) => setBlockNotice(String(error)));
+    }
     if (record) editHistory.current.recordText(path, before, content, typing, Date.now(), patch);
     const editDelta = edits?.reduce((sum, edit) => sum + edit.newLength - (edit.end - edit.start), 0);
-    queueRangeMapping(path, edits && editDelta === content.length - before.length ? edits : [{ start: patch.start, end: patch.start + patch.removed.length, newLength: patch.inserted.length }]);
+    const mappedEdits = edits && editDelta === content.length - before.length ? edits : [{ start: patch.start, end: patch.start + patch.removed.length, newLength: patch.inserted.length }];
+    navigationHistory.current.mapEdit(path, mappedEdits);
+    queueRangeMapping(path, mappedEdits);
     if (path === activePathRef.current) activeContentRef.current = content;
     tabsRef.current = tabsRef.current.map(tab => tab.path === path ? { ...tab, content, dirty: savedContents.current.get(path) !== content } : tab);
     setTabs(tabsRef.current);
@@ -958,6 +1114,7 @@ export function Workbench({ project, projects, environments, onHome, onSwitch, o
         tabsRef.current = [...tabsRef.current.filter(tab => tab.path !== operation.fileId), { path: operation.fileId, content: target, dirty: false }];
         setActivePath(operation.fileId);
       }
+      navigationHistory.current.clear();
       setTabs(tabsRef.current); await refreshTree();
     } else {
       let tab = tabsRef.current.find(item => item.path === operation.fileId);
@@ -976,8 +1133,7 @@ export function Workbench({ project, projects, environments, onHome, onSwitch, o
         setActivePath(operation.fileId);
       });
       const offset = operation.patch.start;
-      const prefix = next.slice(0, offset);
-      setPendingDiagnostic({ path: operation.fileId, line: prefix.split("\n").length, column: offset - prefix.lastIndexOf("\n") });
+      void navigateTo(operation.fileId, { offset });
     }
     setInspectorBlock(undefined); setFigureSelection(undefined); setTableSelection(undefined);
     setBlockContext(undefined); setBoundaryRepair(undefined);
@@ -989,7 +1145,7 @@ export function Workbench({ project, projects, environments, onHome, onSwitch, o
     // text undo. The main Code editor shares the committed document history.
     return !target?.closest("input, textarea, select, [contenteditable='true'], .monaco-editor") || !!target.closest(".editor-surface .monaco-editor:not(.monaco-diff-editor)");
   };
-  const mutateAIChanges = (requested: AIChangeSet, hunkIds: string[], apply: boolean): Promise<void> => {
+  const mutateAIChanges = (requested: AIChangeSet, hunkIds: string[], apply: boolean): Promise<AIApplyResult> => {
     const run = async () => {
       if (!api) throw new Error(t("save.failed"));
       // Refetch decisions inside the queue: auto-apply and a quick Keep click
@@ -999,19 +1155,33 @@ export function Workbench({ project, projects, environments, onHome, onSwitch, o
       const ids = new Set(hunkIds.filter(id => changes.files.some(file => file.hunks.some(hunk => hunk.id === id && hunk.decision === "pending"))));
       const diskPaths = new Set(projectFilePaths(await api.files.tree(project.id)));
       const updates: Array<{ path: string; before: string | undefined; after: string | undefined; buffer: string | undefined }> = [];
+      const staleStructureIds: string[] = [];
       for (const file of changes.files) {
         if (!file.hunks.some(hunk => ids.has(hunk.id))) continue;
+        if (!isAIReviewableProjectPath(file.path)) throw new Error(t("ai.protectedFile", { path: file.path }));
         const buffer = tabsRef.current.find(tab => tab.path === file.path)?.content;
         const current = buffer ?? (diskPaths.has(file.path) ? (await api.files.read(project.id, file.path)).content : undefined);
         let after: string | undefined;
         try { after = transitionAIFile(file, current, ids, apply); }
-        catch { throw new Error(t(apply ? "ai.bufferConflict" : "ai.undoConflict", { path: file.path })); }
+        catch (reason) {
+          // Structure indexes can be refreshed as a side effect of applying
+          // ordinary source edits. Never overwrite a newer index from an AI
+          // snapshot, but let the independent source proposals proceed.
+          if (apply && isAIStructureMetadataPath(file.path) && reason instanceof Error && reason.message === `AI_CHANGE_CONFLICT:${file.path}`) {
+            staleStructureIds.push(...file.hunks.filter(hunk => ids.has(hunk.id)).map(hunk => hunk.id));
+            continue;
+          }
+          throw new Error(t(apply ? "ai.bufferConflict" : "ai.undoConflict", { path: file.path }));
+        }
         if (after !== current) updates.push({ path: file.path, before: current, after, buffer });
       }
       // Preflight every file before mutating any of them; protect edits made
       // while the IPC reads were in flight as well.
       for (const update of updates) {
         if (tabsRef.current.find(tab => tab.path === update.path)?.content !== update.buffer) throw new Error(t("ai.bufferConflict", { path: update.path }));
+      }
+      if (apply && updates.length && settings.get("history").beforeAiChange) {
+        await api.history.snapshot(project.id, "pre-ai-change", undefined, tabsRef.current.filter((tab) => tab.dirty).map((tab) => ({ path: tab.path, content: tab.content })));
       }
       const changedOnDisk: typeof updates = [];
       try {
@@ -1034,6 +1204,7 @@ export function Workbench({ project, projects, environments, onHome, onSwitch, o
         throw reason;
       }
       editHistory.current.breakGroup();
+      if (updates.some((update) => update.before === undefined || update.after === undefined)) navigationHistory.current.clear();
       for (const update of updates) {
         if (update.before === undefined && update.after !== undefined) {
           editHistory.current.recordFile(update.path, undefined, update.after);
@@ -1054,16 +1225,17 @@ export function Workbench({ project, projects, environments, onHome, onSwitch, o
       }
       setTabs(tabsRef.current);
       setSaveState(tabsRef.current.some(tab => tab.dirty) ? "unsaved" : "saved");
-      if (apply) await api.ai.markChangeSetApplied(changes.id, [...ids]);
+      if (apply) await api.ai.markChangeSetApplied(changes.id, [...ids].filter(id => !staleStructureIds.includes(id)));
       else await api.ai.resolveChangeSet(changes.id, Object.fromEntries([...ids].map(id => [id, "rejected" as const])), false);
       if (changedOnDisk.length) await refreshTree();
+      return { appliedIds: apply ? [...ids].filter(id => !staleStructureIds.includes(id)) : [], staleStructureIds };
     };
     const next = aiOperationQueue.current.then(run);
-    aiOperationQueue.current = next.catch(() => undefined);
+    aiOperationQueue.current = next.then(() => undefined, () => undefined);
     return next;
   };
   const applyAIChanges = (changes: AIChangeSet, ids: string[]) => mutateAIChanges(changes, ids, true);
-  const undoAIChanges = (changes: AIChangeSet, ids: string[]) => mutateAIChanges(changes, ids, false);
+  const undoAIChanges = async (changes: AIChangeSet, ids: string[]) => { await mutateAIChanges(changes, ids, false); };
   const applyAIRef = useRef(applyAIChanges);
   applyAIRef.current = applyAIChanges;
   useEffect(() => {
@@ -1071,7 +1243,7 @@ export function Workbench({ project, projects, environments, onHome, onSwitch, o
     let mounted = true;
     const processChanges = (changes: AIChangeSet) => {
       if (!mounted || !changes.permissionMode || changes.permissionMode === "ask" || changes.autoApplyError || aiAutoAttempts.current.has(changes.id)) return;
-      const ids = changes.files.flatMap(file => file.hunks.filter(hunk => hunk.decision === "pending" && !isHunkApplied(hunk)).map(hunk => hunk.id));
+      const ids = automaticHunkIds(changes);
       if (!ids.length) return;
       aiAutoAttempts.current.add(changes.id);
       void applyAIRef.current(changes, ids).catch(async (reason: unknown) => {
@@ -1093,6 +1265,7 @@ export function Workbench({ project, projects, environments, onHome, onSwitch, o
   }, [api, project.id]);
   const viewAIChanges = (changes: AIChangeSet, path: string) => {
     void (async () => {
+      navigationHistory.current.clear();
       // Deleted files and not-yet-approved new files have no live editor tab.
       // Their diff is still available without creating a phantom project file.
       if (api && projectFilePaths(await api.files.tree(project.id)).includes(path)) await openFile(path);
@@ -1264,37 +1437,47 @@ export function Workbench({ project, projects, environments, onHome, onSwitch, o
       setEditorContent(activeTab.content.slice(0, anchor) + prefix + snippet + suffix + activeTab.content.slice(anchor));
     }
   };
-  const revealPendingVisualPosition = (editor = editorRef.current): boolean => {
-    const pending = pendingVisualToCodeAnchor.current;
-    const model = editor?.getModel();
-    if (!pending || !editor || !model || pending.fileId !== activePathRef.current) return false;
-    pendingVisualToCodeAnchor.current = undefined;
-    const offset = Math.min(Math.max(0, pending.offset), model.getValueLength());
-    const position = model.getPositionAt(offset);
-    editor.setPosition(position);
-    editor.revealPositionInCenter(position);
-    editor.focus();
-    return true;
-  };
   useEffect(() => {
-    if (!sourceEditorVisible || !pendingVisualToCodeAnchor.current) return;
+    if (!sourceEditorVisible) { sourceRestoredFor.current = undefined; return; }
+    if (!activeTab) return;
+    const path = activeTab.path;
+    const request = navigationRequest?.path === path ? navigationRequest : undefined;
+    if (!request && sourceRestoredFor.current === path) return;
+    const visualAnchor = pendingVisualToCodeAnchor.current?.fileId === path ? pendingVisualToCodeAnchor.current : undefined;
+    const remembered = sourcePositions.current.get(path);
     let attempts = 0;
     let frame = 0;
     const applyWhenReady = () => {
-      if (revealPendingVisualPosition() || attempts++ >= 8) return;
-      frame = requestAnimationFrame(applyWhenReady);
+      const editor = editorRef.current;
+      const model = editor?.getModel();
+      if (!editor || !editor.getDomNode()?.isConnected || !model || model.getValue().replace(/\r\n?/g, "\n") !== activeTab.content.replace(/\r\n?/g, "\n")) {
+        if (attempts++ < 20) frame = requestAnimationFrame(applyWhenReady);
+        return;
+      }
+      sourceModelPath.current = path;
+      sourceRestoredFor.current = path;
+      const position = request?.offset !== undefined ? sourcePositionAtOffset(activeTab.content, request.offset)
+        : request?.line !== undefined ? { lineNumber: request.line, column: request.column ?? 1 }
+        : visualAnchor ? sourcePositionAtOffset(activeTab.content, visualAnchor.offset)
+        : remembered ? sourcePositionAtOffset(activeTab.content, remembered.offset) : undefined;
+      if (position) {
+        const safeLine = Math.min(Math.max(1, position.lineNumber), model.getLineCount());
+        const safePosition = { lineNumber: safeLine, column: Math.min(Math.max(1, position.column), model.getLineMaxColumn(safeLine)) };
+        editor.setPosition(safePosition);
+        if (request || visualAnchor) editor.revealPositionInCenter(safePosition);
+        else if (remembered) editor.setScrollTop(remembered.scrollTop);
+        if (request || visualAnchor) editor.focus();
+      } else { editor.setPosition({ lineNumber: 1, column: 1 }); editor.setScrollTop(0); }
+      if (visualAnchor) pendingVisualToCodeAnchor.current = undefined;
+      if (request) setNavigationRequest((current) => current?.nonce === request.nonce ? undefined : current);
     };
     frame = requestAnimationFrame(applyWhenReady);
     return () => cancelAnimationFrame(frame);
-  }, [sourceEditorVisible, activePath, activeTab?.content]);
+  }, [sourceEditorVisible, activePath, activeTab?.path, navigationRequest, editorMountVersion]);
   const onEditorMount: OnMount = (editor, monaco) => {
     editorRef.current = editor;
-    let attempts = 0;
-    const applyWhenReady = () => {
-      if (revealPendingVisualPosition(editor) || attempts++ >= 8) return;
-      requestAnimationFrame(applyWhenReady);
-    };
-    requestAnimationFrame(applyWhenReady);
+    sourceRestoredFor.current = undefined;
+    setEditorMountVersion((version) => version + 1);
     searchDecorationsRef.current?.clear();
     searchDecorationsRef.current = editor.createDecorationsCollection();
     completionController.current?.dispose();
@@ -1307,6 +1490,7 @@ export function Workbench({ project, projects, environments, onHome, onSwitch, o
     let mathIndex = new MathNodeIndex([]);
     let cursorMathActive = false;
     let mathTimer: number | undefined;
+    let hoverExitTimer: number | undefined;
     let pendingMathKind: SourceMathPreview["kind"] | undefined;
     let activeMath: { source: string; displayMode: boolean; kind: SourceMathPreview["kind"]; start: number; end: number } | undefined;
     const clearHoverMathPreview = () => {
@@ -1383,6 +1567,11 @@ export function Workbench({ project, projects, environments, onHome, onSwitch, o
     const cursorListener = editor.onDidChangeCursorPosition((event) => {
       setCursor({ line: event.position.lineNumber, column: event.position.column });
       updateCursorMath(event.position);
+      const path = sourceModelPath.current;
+      const model = editor.getModel();
+      if (path && path === activePathRef.current && model?.getValue().replace(/\r\n?/g, "\n") === activeContentRef.current.replace(/\r\n?/g, "\n")) {
+        sourcePositions.current.set(path, { offset: model.getOffsetAt(event.position), scrollTop: editor.getScrollTop() });
+      }
     });
     const selectionListener = editor.onDidChangeCursorSelection((event) => {
       const model = editor.getModel();
@@ -1396,9 +1585,18 @@ export function Workbench({ project, projects, environments, onHome, onSwitch, o
       const position = editor.getPosition();
       if (position) updateCursorMath(position);
     });
-    const scrollListener = editor.onDidScrollChange(refreshMathPreview);
+    const scrollListener = editor.onDidScrollChange(() => {
+      refreshMathPreview();
+      const path = sourceModelPath.current;
+      const model = editor.getModel();
+      const position = editor.getPosition();
+      if (path && path === activePathRef.current && model && position && model.getValue().replace(/\r\n?/g, "\n") === activeContentRef.current.replace(/\r\n?/g, "\n")) {
+        sourcePositions.current.set(path, { offset: model.getOffsetAt(position), scrollTop: editor.getScrollTop() });
+      }
+    });
     const layoutListener = editor.onDidLayoutChange(refreshMathPreview);
     const blurListener = editor.onDidBlurEditorWidget(() => {
+      if (mathPopoverInteracting.current) return;
       cursorMathActive = false;
       if (activeMath?.kind === "source-cursor") activeMath = undefined;
       setSourceMathPreview((current) => current?.kind === "source-cursor" ? undefined : current);
@@ -1444,6 +1642,19 @@ export function Workbench({ project, projects, environments, onHome, onSwitch, o
     };
     const setReferenceCursor = (enabled: boolean) => editor.getDomNode()?.classList.toggle("texweave-reference-cursor", enabled);
     let hoverPosition: { lineNumber: number; column: number } | undefined;
+    mathPopoverInteractionChangeRef.current = (active) => {
+      mathPopoverInteracting.current = active;
+      if (active) {
+        if (hoverExitTimer !== undefined) window.clearTimeout(hoverExitTimer);
+        return;
+      }
+      if (!hoverPosition && !cursorMathActive) clearHoverMathPreview();
+      if (!editor.hasTextFocus() && cursorMathActive) {
+        cursorMathActive = false;
+        if (activeMath?.kind === "source-cursor") activeMath = undefined;
+        setSourceMathPreview((current) => current?.kind === "source-cursor" ? undefined : current);
+      }
+    };
     const mouseDown = editor.onMouseDown((event) => {
       if (event.event.detail === 2 && event.target.position && activePathRef.current) {
         void forwardSyncToPdf(activePathRef.current, event.target.position.lineNumber, event.target.position.column);
@@ -1464,14 +1675,18 @@ export function Workbench({ project, projects, environments, onHome, onSwitch, o
       setReferenceCursor(Boolean(hoverPosition && modifierPressed(event.event) && referenceAtPosition(hoverPosition)));
       if (!cursorMathActive && hoverPosition && !scheduleMathPreview(hoverPosition, "source-hover")) clearHoverMathPreview();
     });
-    const mouseLeave = editor.onMouseLeave(() => { hoverPosition = undefined; setReferenceCursor(false); if (!cursorMathActive) clearHoverMathPreview(); });
+    const mouseLeave = editor.onMouseLeave(() => {
+      hoverPosition = undefined;
+      setReferenceCursor(false);
+      if (!cursorMathActive) hoverExitTimer = window.setTimeout(() => { if (!mathPopoverInteracting.current) clearHoverMathPreview(); }, 250);
+    });
     const modifierChange = (event: KeyboardEvent) => { if (hoverPosition) setReferenceCursor(Boolean(modifierPressed(event) && referenceAtPosition(hoverPosition))); };
     window.addEventListener("keydown", modifierChange);
     window.addEventListener("keyup", modifierChange);
     const initialPosition = editor.getPosition();
     if (initialPosition) updateCursorMath(initialPosition);
     const contextActions = installEditorContextActions(editor, (line, column) => { if (activePathRef.current) void forwardSyncToPdf(activePathRef.current, line, column); });
-    referenceMouseListener.current = { dispose: () => { if (mathTimer !== undefined) window.clearTimeout(mathTimer); activeMath = undefined; if (clearHoverMathPreviewRef.current === clearHoverMathPreview) clearHoverMathPreviewRef.current = () => undefined; blockAction.dispose(); contextActions.dispose(); symbolPairingListener.current?.dispose(); symbolPairingListener.current = null; cursorListener.dispose(); selectionListener.dispose(); contentListener.dispose(); scrollListener.dispose(); layoutListener.dispose(); blurListener.dispose(); mouseDown.dispose(); mouseMove.dispose(); mouseLeave.dispose(); window.removeEventListener("keydown", modifierChange); window.removeEventListener("keyup", modifierChange); setReferenceCursor(false); setSourceMathPreview(undefined); } };
+    referenceMouseListener.current = { dispose: () => { if (mathTimer !== undefined) window.clearTimeout(mathTimer); if (hoverExitTimer !== undefined) window.clearTimeout(hoverExitTimer); activeMath = undefined; mathPopoverInteracting.current = false; mathPopoverInteractionChangeRef.current = () => undefined; if (clearHoverMathPreviewRef.current === clearHoverMathPreview) clearHoverMathPreviewRef.current = () => undefined; blockAction.dispose(); contextActions.dispose(); symbolPairingListener.current?.dispose(); symbolPairingListener.current = null; cursorListener.dispose(); selectionListener.dispose(); contentListener.dispose(); scrollListener.dispose(); layoutListener.dispose(); blurListener.dispose(); mouseDown.dispose(); mouseMove.dispose(); mouseLeave.dispose(); window.removeEventListener("keydown", modifierChange); window.removeEventListener("keyup", modifierChange); setReferenceCursor(false); setSourceMathPreview(undefined); } };
     if (api) {
       completionController.current = new CompletionController({ monaco, api, projectId: project.id, getTree: () => treeRef.current, getCurrentPath: () => activePathRef.current, getEnvironments: () => environmentsRef.current, isDocumentWordCompletionEnabled: () => store.get("documentWordCompletion") });
       spellCheckController.current = new SpellCheckController({ editor, api, getCurrentPath: () => activePathRef.current, getMode: () => store.get("spellCheckMode"), getManualLanguage: () => store.get("spellCheckLanguage"), onDetectedLanguage: setDetectedSpellLanguage, onContextMenu: setSpellContextMenu });
@@ -1491,31 +1706,9 @@ export function Workbench({ project, projects, environments, onHome, onSwitch, o
     return result;
   }, [activeTab]);
 
-  const navigateToLocation = (line: number, column = 1) => {
-    const previewVisible = layout.mode === "single" ? layout.singlePane === "preview" : layout.leftPane === "preview";
-    if (previewVisible) {
-      const candidates = Array.from(document.querySelectorAll<HTMLElement>(`.structured-preview [data-source-line]`));
-      const target = candidates.reduce<HTMLElement | undefined>((best, item) => {
-        const itemLine = Number(item.dataset.sourceLine ?? 0);
-        const bestLine = Number(best?.dataset.sourceLine ?? -1);
-        return itemLine <= line && itemLine >= bestLine ? item : best;
-      }, undefined) ?? candidates.reduce<HTMLElement | undefined>((best, item) => Math.abs(Number(item.dataset.sourceLine) - line) < Math.abs(Number(best?.dataset.sourceLine ?? Infinity) - line) ? item : best, undefined);
-      target?.scrollIntoView({ behavior: "smooth", block: "start" });
-      return;
-    }
-    const editor = editorRef.current;
-    const model = editor?.getModel();
-    if (!editor || !model) return;
-    const safeLine = Math.min(Math.max(1, line), model.getLineCount());
-    editor.revealLineInCenter(safeLine);
-    editor.setPosition({ lineNumber: safeLine, column: Math.min(Math.max(1, column), model.getLineMaxColumn(safeLine)) });
-    editor.focus();
-  };
-
-  const navigateToOutline = (line: number) => navigateToLocation(line);
+  const navigateToOutline = (line: number) => { if (activePath) void navigateTo(activePath, { line }); };
   const openAIFileReference = async (path: string, line?: number) => {
-    await openFile(path);
-    if (line) requestAnimationFrame(() => requestAnimationFrame(() => { if (activePathRef.current === path) navigateToLocation(line); }));
+    await navigateTo(path, line ? { line } : {});
   };
   aiFileNavigationRef.current = openAIFileReference;
   useEffect(() => {
@@ -1541,21 +1734,8 @@ export function Workbench({ project, projects, environments, onHome, onSwitch, o
 
   const selectSearchResult = async (result: SearchResult) => {
     setActiveSearchResult(result);
-    setPendingSearchResult(result);
-    if (result.fileId !== activePath) await openFile(result.fileId);
+    await navigateTo(result.fileId, { offset: result.matchStart });
   };
-
-  useEffect(() => {
-    if (!pendingSearchResult || pendingSearchResult.fileId !== activePath || !activeTab || !sourceEditorVisible) return;
-    const editor = editorRef.current;
-    const model = editor?.getModel();
-    if (!editor || !model) return;
-    const position = model.getPositionAt(Math.min(pendingSearchResult.matchStart, model.getValueLength()));
-    editor.revealPositionInCenter(position);
-    editor.setPosition(position);
-    editor.focus();
-    setPendingSearchResult(undefined);
-  }, [pendingSearchResult, activePath, activeTab?.content, sourceEditorVisible]);
 
   const updateSearchDocument = async (path: string, content: string) => {
     const open = tabs.some((tab) => tab.path === path);
@@ -1580,53 +1760,13 @@ export function Workbench({ project, projects, environments, onHome, onSwitch, o
   const replaceAllSearchResults = async () => {
     const grouped = new Map<string, SearchResult[]>();
     for (const result of searchResponse.results) grouped.set(result.fileId, [...(grouped.get(result.fileId) ?? []), result]);
+    if (grouped.size && settings.get("history").beforeLargeDelete) await api?.history.snapshot(project.id, "pre-delete", "Before replacing search results", tabsRef.current.filter((tab) => tab.dirty).map((tab) => ({ path: tab.path, content: tab.content })));
     await Promise.all([...grouped].map(async ([path, results]) => {
       const document = searchDocuments.find((item) => item.fileId === path);
       if (document) await updateSearchDocument(path, replaceRanges(document.content, results, replacement));
     }));
     setActiveSearchResult(undefined);
   };
-
-  useEffect(() => {
-    if (!pendingDiagnostic || pendingDiagnostic.path !== activePath || !activeTab) return;
-    if (pendingDiagnostic.offset !== undefined) {
-      if (!sourceEditorVisible) return;
-      let attempts = 0;
-      let frame = 0;
-      const revealOffset = () => {
-        const editor = editorRef.current;
-        const model = editor?.getModel();
-        if (!editor || !model) {
-          if (attempts++ < 12) frame = requestAnimationFrame(revealOffset);
-          return;
-        }
-        const source = activeTab.content;
-        const offset = Math.min(Math.max(0, pendingDiagnostic.offset ?? 0), source.length);
-        const modelSource = model.getValue();
-        let position: { lineNumber: number; column: number };
-        if (modelSource === source) {
-          position = model.getPositionAt(Math.min(offset, model.getValueLength()));
-        } else if (modelSource.replace(/\r\n?/g, "\n") === source.replace(/\r\n?/g, "\n")) {
-          const before = source.slice(0, offset).split(/\r\n|\r|\n/);
-          position = { lineNumber: before.length, column: (before.at(-1)?.length ?? 0) + 1 };
-        } else {
-          if (attempts++ < 12) frame = requestAnimationFrame(revealOffset);
-          return;
-        }
-        editor.revealPositionInCenter(position);
-        editor.setPosition(position);
-        editor.focus();
-        setPendingDiagnostic(undefined);
-      };
-      frame = requestAnimationFrame(revealOffset);
-      return () => cancelAnimationFrame(frame);
-    }
-    const timer = window.setTimeout(() => {
-      if (pendingDiagnostic.line !== undefined) navigateToLocation(pendingDiagnostic.line, pendingDiagnostic.column);
-      setPendingDiagnostic(undefined);
-    }, 0);
-    return () => window.clearTimeout(timer);
-  }, [pendingDiagnostic, activePath, activeTab?.content, sourceEditorVisible, layout.mode, layout.singlePane, layout.leftPane]);
 
   const filePaths = (nodes: ProjectTreeNode[]): string[] => nodes.flatMap((node) => node.kind === "file" ? [node.relativePath] : node.children ? filePaths(node.children) : []);
   const resolveDiagnosticPath = (file: string | undefined) => {
@@ -1642,12 +1782,7 @@ export function Workbench({ project, projects, environments, onHome, onSwitch, o
     if (!diagnostic.line) return;
     const path = resolveDiagnosticPath(diagnostic.file);
     if (!path) return;
-    if (path !== activePath) {
-      setPendingDiagnostic({ path, line: diagnostic.line, ...(diagnostic.column ? { column: diagnostic.column } : {}) });
-      await openFile(path);
-      return;
-    }
-    navigateToLocation(diagnostic.line, diagnostic.column);
+    await navigateTo(path, { line: diagnostic.line, column: diagnostic.column });
   };
 
   const startResize = (kind: "sidebar" | "tree" | "split" | "bottom", event: React.PointerEvent) => {
@@ -1729,10 +1864,10 @@ export function Workbench({ project, projects, environments, onHome, onSwitch, o
   const spellLanguages = [...new Set(["en-US", ...(spellStatus?.availableLanguages ?? [])])];
   const spellStatusControl = <div className="spell-status-control"><button onClick={() => setSpellMenuOpen((value) => !value)}>{spellMode === "disabled" ? t("spell.status.off") : spellMode === "manual" ? t("spell.status.manual", { language: spellLanguageLabel(spellDisplayLanguage) }) : t("spell.status.auto", { language: spellLanguageLabel(spellDisplayLanguage) })}</button>{spellMenuOpen && <div className="spell-status-menu"><button onClick={() => void configureSpell("auto", detectedSpellLanguage)}>{spellMode === "auto" && "✓ "}{t("spell.menu.auto", { language: spellLanguageLabel(detectedSpellLanguage) })}</button>{spellLanguages.map((language) => <button key={language} onClick={() => void configureSpell("manual", language)}>{spellMode === "manual" && spellManualLanguage === language && "✓ "}{spellLanguageLabel(language)}</button>)}<div className="menu-divider"/><button onClick={() => void configureSpell("disabled", spellDisplayLanguage)}>{spellMode === "disabled" && "✓ "}{t("spell.menu.disable")}</button></div>}</div>;
   const menuItems = (menu: Exclude<MenuName, "projects">) => {
-    if (menu === "file") return [{ label: t("menu.newFile"), action: () => void createEntry(false, "") }, { label: t("menu.openFile"), disabled: importingProjectEntries || !project.writable, action: () => void importFromComputer("file") }, { label: t("menu.openFolder"), disabled: importingProjectEntries || !project.writable, action: () => void importFromComputer("folder") }, { label: t("menu.save"), action: () => { commands.execute("file.save"); } }, { label: t("menu.saveAll"), action: () => { commands.execute("file.saveAll"); } }, { label: "", divider: true }, { label: t("export.sourceArchive"), action: () => void exportSourceArchive() }, { label: t("export.pdf"), action: () => void exportPdf() }, { label: t("export.mainTex"), action: () => void exportMainTex() }, { label: "", divider: true }, { label: t("menu.closeProject"), action: onHome }];
+    if (menu === "file") return [{ label: t("menu.newFile"), action: () => void createEntry(false, "") }, { label: t("menu.openFile"), disabled: importingProjectEntries || !project.writable, action: () => void importFromComputer("file") }, { label: t("menu.openFolder"), disabled: importingProjectEntries || !project.writable, action: () => void importFromComputer("folder") }, { label: t("menu.save"), action: () => { commands.execute("file.save"); } }, { label: t("menu.saveAll"), action: () => { commands.execute("file.saveAll"); } }, { label: "", divider: true }, { label: t("export.sourceArchive"), action: () => void exportSourceArchive() }, { label: t("export.pdf"), action: () => void exportPdf() }, { label: t("export.mainTex"), action: () => void exportMainTex() }, { label: "", divider: true }, { label: t("menu.closeProject"), action: leaveProject }];
     if (menu === "edit") return [{ label: t("menu.undo"), action: () => { commands.execute("edit.undo"); } }, { label: t("menu.redo"), action: () => { commands.execute("edit.redo"); } }, { label: t("menu.find"), action: () => { commands.execute("edit.find"); } }, { label: t("menu.replace"), action: () => { commands.execute("edit.replace"); } }];
     if (menu === "view") return [{ label: t("menu.source"), action: () => { if ((layout.mode === "single" ? layout.singlePane === "preview" : layout.leftPane === "preview")) pendingVisualToCodeAnchor.current = previewToCodeAnchor(); setLayout((value) => ({ ...value, mode: "single", singlePane: "source" })); } }, { label: t("menu.preview"), action: () => setLayout((value) => ({ ...value, mode: "single", singlePane: "preview" })) }, { label: t("menu.pdf"), action: () => setLayout((value) => ({ ...value, mode: "single", singlePane: "pdf" })) }, { label: "", divider: true }, { label: t("menu.single"), action: () => setLayout((value) => ({ ...value, mode: "single" })) }, { label: t("menu.split"), action: () => setLayout((value) => ({ ...value, mode: "split" })) }];
-    return [{ label: t("menu.automaticHistory"), action: () => { setBottomTab("versions"); setBottomVisible(true); } }, { label: t("menu.namedVersions"), action: () => { setBottomTab("versions"); setBottomVisible(true); } }];
+    return [{ label: t("menu.automaticHistory"), action: () => { setSidebarMode("history"); setLayout((value) => ({ ...value, sidebarVisible: true })); } }, { label: t("menu.namedVersions"), action: () => { setSidebarMode("history"); setLayout((value) => ({ ...value, sidebarVisible: true })); } }];
   };
 
   const switchTextView = (target: "source" | "preview", single: boolean) => {
@@ -1762,7 +1897,7 @@ export function Workbench({ project, projects, environments, onHome, onSwitch, o
   const quickActions = [blockButton, ...toolbarActions.map((action) => { const shortTitleKey = action.shortTitleKey; const icon = "icon" in action ? action.icon : undefined; return action.id === "environment" ? <EnvironmentQuickAction key={action.id} definitions={previewEnvironments} onInsert={insertEnvironment}/> : action.id === "figure" ? <ImageQuickAction key={action.id} onOpen={() => setImageDialog({ kind: "insert" })}/> : action.id === "table" ? <button key={action.id} title={t(action.titleKey as MessageKey)} onClick={() => setTableDialogOpen(true)}><b>{action.glyph}</b><span>{t(shortTitleKey as MessageKey)}</span></button> : <button key={action.id} title={t(action.titleKey as MessageKey)} onClick={() => insertToolbarAction(action.id)}>{icon ? <Icon name={icon}/> : <b>{action.glyph}</b>}<span>{t(shortTitleKey as MessageKey)}</span></button>; })];
   const isBibFile = activeTab?.path.toLocaleLowerCase().endsWith(".bib") ?? false;
   const editorQuickActions = isBibFile ? [] : quickActions;
-  const sourceTabs = <div className="editor-tabs">{tabs.map((tab) => <button className={tab.path === activePath ? "active" : ""} key={tab.path} onClick={() => { setAiDiffFile(undefined); setActivePath(tab.path); }}><span>{tab.path.split("/").at(-1)}</span>{tab.dirty && <i/>}<span className="tab-close" title={t("editor.closeTab")} onClick={(event) => { event.stopPropagation(); closeTab(tab.path); }}><Icon name="close"/></span></button>)}</div>;
+  const sourceTabs = <div className="editor-tabs">{tabs.map((tab) => <button className={tab.path === activePath ? "active" : ""} key={tab.path} onClick={() => { navigationHistory.current.clear(); rememberPreviewPosition(); fileOpenSequence.current += 1; setAiDiffFile(undefined); setNavigationRequest(undefined); setActivePath(tab.path); }}><span>{tab.path.split("/").at(-1)}</span>{tab.dirty && <i/>}<span className="tab-close" title={t("editor.closeTab")} onClick={(event) => { event.stopPropagation(); closeTab(tab.path); }}><Icon name="close"/></span></button>)}</div>;
   const sourceEditor = <div className="editor-surface" onDragOver={(event) => { if (event.dataTransfer.types.includes("Files")) event.preventDefault(); }} onDrop={dropImages}>{aiReviewFile ? <div className="ai-inline-diff"><div className="ai-inline-diff-heading"><strong>{t("ai.inlineDiffTitle")}</strong><span>{aiReviewFile.path}</span><button className="ai-diff-close" onClick={() => setAiDiffFile(undefined)}>{t("ai.closeDiff")}</button></div><DiffEditor height="calc(100% - 34px)" language={aiReviewFile.path.endsWith(".bib") ? "bibtex" : aiReviewFile.path.endsWith(".json") ? "json" : "latex"} original={aiReviewContent?.original ?? ""} modified={aiReviewContent?.modified ?? ""} theme={editorThemeName(store.get("theme"))} options={{ readOnly: true, originalEditable: false, renderSideBySide: true, automaticLayout: true, minimap: { enabled: false }, fontSize: store.get("fontSize"), lineHeight: Math.round(store.get("fontSize") * 1.5), wordWrap: store.get("wordWrap") ? "on" : "off", scrollBeyondLastLine: false }} /></div> : activeTab ? <Editor height="100%" language={activeTab.path.endsWith(".bib") ? "bibtex" : activeTab.path.endsWith(".json") ? "json" : "latex"} value={activeTab.content} onChange={(value, event) => setEditorContent(value ?? "", event.changes.map((change) => ({ start: change.rangeOffset, end: change.rangeOffset + change.rangeLength, newLength: change.text.length })))} onMount={onEditorMount} theme={editorThemeName(store.get("theme"))} options={{ minimap: { enabled: true }, fontSize: store.get("fontSize"), tabSize: store.get("tabSize"), lineHeight: Math.round(store.get("fontSize") * 1.5), wordWrap: store.get("wordWrap") ? "on" : "off", quickSuggestions: { other: true, comments: true, strings: true }, suggestOnTriggerCharacters: true, autoClosingBrackets: "never", autoClosingQuotes: "always", autoSurround: "never", automaticLayout: true, padding: { top: 14 }, renderWhitespace: "selection", scrollBeyondLastLine: false }} /> : <div className="editor-empty"><Logo/><p>{t("editor.noFile")}</p></div>}</div>;
   const sourceToolbar = <div className="latex-toolbar">{editorQuickActions}{formatSourceButton()}<div className="toolbar-spacer"/>{viewSwitch("source", layout.mode === "single")}</div>;
   const previewToolbar = <div className="latex-toolbar">{editorQuickActions}{formatSourceButton()}<div className="toolbar-spacer"/>{viewSwitch("preview", layout.mode === "single")}</div>;
@@ -1770,12 +1905,11 @@ export function Workbench({ project, projects, environments, onHome, onSwitch, o
   const outputToolbar = <div className="output-toolbar"><button className="compile-button" onClick={() => { commands.execute("latex.compile"); }} disabled={compileState === "running"}><Icon name="play"/><span>{t(compileState === "running" ? "build.compiling" : "build.compile")}</span></button>{enginePicker}<button onClick={() => { setBottomTab("compileLog"); setBottomVisible(true); }}>{t("build.log")}</button><div className="toolbar-spacer"/><button className={layout.rightPane === "pdf" ? "active" : ""} onClick={() => setLayout((value) => ({ ...value, rightPane: value.rightPane === "pdf" ? "preview" : "pdf" }))}>{layout.rightPane === "pdf" ? t("menu.preview") : t("menu.pdf")}</button></div>;
   const sourcePaneContent = <section className="work-pane source-pane">{sourceTabs}{sourceEditor}</section>;
   const sourcePane = <section className="work-pane source-pane">{sourceTabs}{sourceToolbar}{sourceEditor}</section>;
-  const previewProps = { filePath: activeTab?.path, source: activeTab?.content, definitions: previewEnvironments, mathContext, filterQuery, searchQuery, activeSearchResult, highlightRange: createdBlockHighlight, relation: blockSnapshot ? { active: relationModeActive, snapshot: blockSnapshot, transientToBlockId: previewSemanticIds, focusId: relationFocusId, direction: relationDirection, matchIds: relationProjection.matchIds, contextIds: relationProjection.contextIds, unmatchedBehavior: relationUnmatched, locateRequest: relationLocateRequest, onFocus: focusRelationBlock, onToggle: toggleRelation } : undefined, onSourceChange: setEditorContent, onSelectionChange: setPreviewSelection, onSelectionContextMenu: (selection: DocumentSelection, x: number, y: number) => { setPreviewSelection(selection); setBlockContext({ selection, x, y }); }, onViewportAnchorChange: trackPreviewViewport, onClickSourcePosition: trackPreviewClick, onFigureSelect: (selection?: FigureSelection) => { if (selection) { setInspectorBlock(undefined); setTableSelection(undefined); } setFigureSelection(selection); }, onFigureSlotSelect: (selection: FigureSelection) => { setInspectorBlock(undefined); setTableSelection(undefined); setFigureSelection(selection); setImageDialog({ kind: "replace", selection, imageIndex: selection.imageIndex ?? 0 }); }, onTableSelect: (selection?: TableSelection) => { if (selection) { setInspectorBlock(undefined); setFigureSelection(undefined); } setTableSelection(selection); }, onTableChange: applyPreviewTableChange, api, projectId: project.id, tree, onSpellContextMenu: setSpellContextMenu, onDetectedLanguage: setDetectedSpellLanguage, onForwardSync: forwardSyncToPdf };
+  const previewRequest = activeTab && navigationRequest?.path === activeTab.path ? { fileId: activeTab.path, offset: navigationRequest.offset ?? sourceOffsetAtLine(activeTab.content, navigationRequest.line ?? 1, navigationRequest.column), nonce: navigationRequest.nonce } : undefined;
+  const previewProps = { filePath: activeTab?.path, source: activeTab?.content, definitions: previewEnvironments, mathContext, filterQuery, searchQuery, activeSearchResult, highlightRange: createdBlockHighlight, locateRequest: previewRequest, restoreOffset: activeTab ? previewPositions.current.get(activeTab.path)?.offset ?? sourcePositions.current.get(activeTab.path)?.offset : undefined, restoreScrollTop: activeTab ? previewPositions.current.get(activeTab.path)?.scrollTop : undefined, onLocated: (nonce: number) => setNavigationRequest((current) => current?.nonce === nonce ? undefined : current), relation: blockSnapshot ? { active: relationModeActive, snapshot: blockSnapshot, transientToBlockId: previewSemanticIds, focusId: relationFocusId, direction: relationDirection, matchIds: relationProjection.matchIds, contextIds: relationProjection.contextIds, unmatchedBehavior: relationUnmatched, locateRequest: relationLocateRequest, onFocus: focusRelationBlock, onToggle: toggleRelation } : undefined, onSourceChange: setEditorContent, onSelectionChange: setPreviewSelection, onSelectionContextMenu: (selection: DocumentSelection, x: number, y: number) => { setPreviewSelection(selection); setBlockContext({ selection, x, y }); }, onViewportAnchorChange: trackPreviewViewport, onClickSourcePosition: trackPreviewClick, onJumpFromPosition: (anchor: { fileId: string; offset: number; targetOffset: number; linkText: string; targetLabel: string }) => { const from = anchor.fileId === activePathRef.current ? currentNavigationOrigin(anchor.offset) : undefined; if (from) navigationHistory.current.record({ ...from, link: { start: anchor.offset, text: anchor.linkText, targetLabel: anchor.targetLabel } }, { ...from, offset: anchor.targetOffset }); }, onFigureSelect: (selection?: FigureSelection) => { if (selection) { setInspectorBlock(undefined); setTableSelection(undefined); } setFigureSelection(selection); }, onFigureSlotSelect: (selection: FigureSelection) => { setInspectorBlock(undefined); setTableSelection(undefined); setFigureSelection(selection); setImageDialog({ kind: "replace", selection, imageIndex: selection.imageIndex ?? 0 }); }, onTableSelect: (selection?: TableSelection) => { if (selection) { setInspectorBlock(undefined); setFigureSelection(undefined); } setTableSelection(selection); }, onTableChange: applyPreviewTableChange, api, projectId: project.id, tree, onSpellContextMenu: setSpellContextMenu, onDetectedLanguage: setDetectedSpellLanguage, onForwardSync: forwardSyncToPdf };
   const anchoredPreviewProps = { ...previewProps, onInsertionAnchorChange: trackPreviewInsertion };
-  const bibPreview = activeTab?.path.toLocaleLowerCase().endsWith(".bib") ? <BibtexPreviewPane source={activeTab.content} filePath={activeTab.path} projectId={project.id} documents={searchDocuments} onSourceChange={setEditorContent} onLocate={({ filePath, offset }) => {
-    setPendingDiagnostic({ path: filePath, offset });
-    setLayout((value) => value.mode === "single" ? { ...value, singlePane: "source" } : { ...value, leftPane: "source" });
-    if (filePath !== activePath) void openFile(filePath);
+  const bibPreview = activeTab?.path.toLocaleLowerCase().endsWith(".bib") ? <BibtexPreviewPane source={activeTab.content} filePath={activeTab.path} projectId={project.id} documents={searchDocuments} restoreScrollTop={previewPositions.current.get(activeTab.path)?.scrollTop} onScrollPositionChange={(scrollTop) => { if (activePathRef.current === activeTab.path) previewPositions.current.set(activeTab.path, { offset: 0, scrollTop }); }} onSourceChange={setEditorContent} onLocate={({ filePath, offset }) => {
+    void navigateTo(filePath, { offset }, filePath === activePath ? "source" : "preserve");
   }} /> : <PreviewPane {...anchoredPreviewProps}/>;
   const previewContent = <section className="work-pane" onDragOver={(event) => { if (event.dataTransfer.types.includes("Files")) event.preventDefault(); }} onDrop={dropImages}>{sourceTabs}{bibPreview}</section>;
   const previewPane = <section className="work-pane" onDragOver={(event) => { if (event.dataTransfer.types.includes("Files")) event.preventDefault(); }} onDrop={dropImages}>{sourceTabs}{previewToolbar}{bibPreview}</section>;
@@ -1795,15 +1929,15 @@ export function Workbench({ project, projects, environments, onHome, onSwitch, o
     {blockNotice && <div className="block-notice" role="status">{blockNotice}</div>}
     {relationChooser && createPortal(<><div className="relation-chooser-dismiss" onMouseDown={() => setRelationChooser(undefined)}/><div className="relation-direction-chooser" role="dialog" style={{ left: Math.min(relationChooser.x, window.innerWidth - 230), top: Math.min(relationChooser.y, window.innerHeight - 110) }}><button disabled={!!chooserPrerequisiteState?.disabledReason} title={chooserPrerequisiteState?.disabledReason ? t(`relation.invalid.${chooserPrerequisiteState.disabledReason}`) : undefined} onClick={() => void mutateRelation(relationChooser.candidateId, "prerequisite").catch((error: unknown) => setBlockNotice(error instanceof Error ? error.message : String(error)))}>← {t("relation.addPrerequisite")}</button><button onClick={() => void mutateRelation(relationChooser.candidateId, "consequence").catch((error: unknown) => setBlockNotice(error instanceof Error ? error.message : String(error)))}>→ {t("relation.addConsequence")}</button></div></>, document.body)}
     {relationGraphOpen && relationNeighborhood && createPortal(<RelationGraphView snapshot={blockSnapshot ?? emptyBlockSnapshot} neighborhood={relationNeighborhood} direction={relationDirection} depth={relationDepth} onDirection={setRelationDirection} onDepth={setRelationDepth} onFocus={(id) => { focusRelationBlock(id); setRelationGraphFocusId(id); }} onLocate={(id) => { setRelationGraphOpen(false); void locateRelationBlock(id); }} onClose={() => setRelationGraphOpen(false)}/>, document.body)}
-    <header className="workbench-topbar" ref={workbenchRef}><button className="logo-button" onClick={onHome} title={t("project.directory")}><Logo/><span>{t("app.name")}</span></button><nav className="app-menus">{(["file", "edit", "view", "history"] as const).map((menu) => <div className="menu-anchor" key={menu}><button onMouseDown={(event) => { if (menu === "edit") event.preventDefault(); }} onClick={() => setActiveMenu(activeMenu === menu ? undefined : menu)}>{t(`menu.${menu}` as MessageKey)}</button>{activeMenu === menu && <Menu items={menuItems(menu)} onClose={() => setActiveMenu(undefined)}/>}</div>)}</nav><div className="project-switcher menu-anchor"><button onClick={() => setActiveMenu(activeMenu === "projects" ? undefined : "projects")}><strong>{project.name}</strong><Icon name="chevron"/></button>{activeMenu === "projects" && <div className="menu-popover project-menu">{projects.map((item) => <button key={item.id} onClick={() => { setActiveMenu(undefined); onSwitch(item); }}><span>{item.name}</span>{item.id === project.id && <b>✓</b>}</button>)}<div className="menu-divider"/><button onClick={() => { setActiveMenu(undefined); onHome(); }}>{t("project.directory")}</button></div>}</div><button className={`save-status ${saveState}`} onClick={() => { commands.execute("file.save"); }}><Icon name="save"/>{t(`save.${saveState}` as MessageKey)}</button></header>
-    <div className="workbench-body"><aside className="activity-bar"><div>{(["files", "search", "library", "ai"] as const).map((mode) => <button key={mode} className={layout.sidebarVisible && sidebarMode === mode ? "active" : ""} title={t(`activity.${mode}` as MessageKey)} onClick={() => selectActivity(mode)}><Icon name={mode}/><span>{t(`activity.${mode}` as MessageKey)}</span></button>)}</div><div><button className={layout.sidebarVisible && sidebarMode === "settings" ? "active" : ""} title={t("activity.settings")} onClick={() => selectActivity("settings")}><Icon name="settings"/><span>{t("activity.settings")}</span></button><button className={layout.sidebarVisible && sidebarMode === "help" ? "active" : ""} title={t("activity.help")} onClick={() => selectActivity("help")}><Icon name="help"/><span>{t("activity.help")}</span></button></div></aside>
-      {layout.sidebarVisible && <><aside className="sidebar" style={{ width: layout.sidebarWidth }}>{sidebarMode === "files" && <><div className="sidebar-heading"><strong>{t("sidebar.files")}</strong><div><button onClick={() => void createEntry(false, "")} title={t("files.newFile")}><Icon name="plus"/></button><button onClick={() => void refreshTree()} title={t("sidebar.refresh")}><Icon name="refresh"/></button><button onClick={() => setLayout((value) => ({ ...value, sidebarVisible: false }))} title={t("sidebar.collapse")}>‹</button></div></div><div className="tree-section" style={{ height: layout.fileTreeHeight }} onDragOver={(event) => { if (event.dataTransfer.types.includes("Files")) event.preventDefault(); }} onDrop={dropImagesToProject}><div className="tree-sort-controls"><label><span>{t("sidebar.sortBy")}</span><select aria-label={t("sidebar.sortBy")} value={treeSortBy} onChange={(event) => setTreeSortBy(event.target.value as "type" | "name")}><option value="type">{t("sidebar.sortType")}</option><option value="name">{t("sidebar.sortName")}</option></select></label><button type="button" title={t(treeSortDirection === "asc" ? "sidebar.sortAscending" : "sidebar.sortDescending")} aria-label={t("sidebar.reverseSort")} onClick={() => setTreeSortDirection((value) => value === "asc" ? "desc" : "asc")}>{treeSortDirection === "asc" ? "↑" : "↓"}</button></div><input className="sidebar-input" value={treeFilter} onChange={(event) => setTreeFilter(event.target.value)} placeholder={t("sidebar.fileSearch")}/><Tree nodes={tree} activePath={activePath} mainFile={project.mainFile} filter={treeFilter} hideBuildArtifacts={store.get("hideBuildArtifacts")} sortBy={treeSortBy} sortDirection={treeSortDirection} canMove={project.writable} onOpen={(path) => void openFile(path)} onMove={(sourcePath, destinationDirectory) => void moveEntry(sourcePath, destinationDirectory)}/></div><div className="horizontal-resizer" onPointerDown={(event) => startResize("tree", event)}/><div className="outline-section"><div className="segment-tabs"><button className={outlineMode === "outline" ? "active" : ""} onClick={() => setOutlineMode("outline")}>{t("sidebar.outline")}</button><button className={outlineMode === "relations" ? "active" : ""} onClick={() => { setOutlineMode("relations"); setInspectorBlock(undefined); }}>{t("sidebar.relations")}</button></div>{outlineMode === "outline" ? <div className="outline-list">{outline.map((item, index) => <button key={`${item.title}-${index}`} style={{ paddingLeft: 14 + item.level * 15 }} onClick={() => navigateToOutline(item.line)}>{item.title}</button>)}</div> : <RelationBrowser snapshot={blockSnapshot ?? emptyBlockSnapshot} focusId={relationFocusId} direction={relationDirection} depth={relationDepth} filters={relationFilters} unmatchedBehavior={relationUnmatched} canGoBack={relationFocusHistory.length > 0} onBack={relationBack} onFocus={focusRelationBlock} onLocate={(id) => void locateRelationBlock(id)} onDirection={setRelationDirection} onDepth={setRelationDepth} onFilters={setRelationFilters} onUnmatchedBehavior={setRelationUnmatched} onToggleRelation={(id, event) => toggleRelation(id, event.clientX, event.clientY)}/>}</div></>}{sidebarMode === "search" && <AdvancedSearchPanel query={searchQuery} response={searchResponse} activeResultId={activeSearchResult?.id} replacement={replacement} replaceOpen={replaceOpen} filter={filterQuery} options={filterOptions} visibleGroups={store.get("visibleFilterGroups") as FilterGroupId[]} setQuery={setSearchQuery} setReplacement={setReplacement} setReplaceOpen={setReplaceOpen} setFilter={setFilterQuery} selectResult={(result) => void selectSearchResult(result)} replaceCurrent={() => void replaceCurrentSearchResult()} replaceAll={() => void replaceAllSearchResults()}/>} {sidebarMode === "library" && <ReferenceLibraryPanel project={project} onOpenLibrary={onOpenLibrary} onReturnToEditor={() => setLayout((value) => ({ ...value, sidebarVisible: false }))} onCite={(key) => insertText(`\\cite{${key}}`, `\\cite{${key}}`.length)}/>} {sidebarMode === "ai" && <AIView projectId={project.id} projectRoot={project.canonicalPath} overrides={tabs.map(({ path, content }) => ({ path, content }))} {...(activeTab ? { currentFile: activeTab.path, currentFileContent: activeTab.content } : {})} {...(creationSelection && activeTab && creationSelection.fileId === activeTab.path ? { selectedText: activeTab.content.slice(creationSelection.start, creationSelection.end) } : {})} onApplyChanges={applyAIChanges} onUndoChanges={undoAIChanges} onViewChanges={viewAIChanges} onOpenFile={(path, line) => { void openFile(path).then(() => { if (line) setPendingDiagnostic({ path, line, column: 1 }); }).catch((reason: unknown) => setBlockNotice(String(reason))); }} onReviewChanges={setAiReviewChanges} onOpenSettings={() => { setSettingsInitial("ai"); setSettingsOpen(true); }}/ >}{sidebarMode === "settings" && <div className="generic-sidebar"><h2>{t("activity.settings")}</h2><p>{t("placeholder.settings")}</p><dl><div><dt>{t("settings.language")}</dt><dd>{t("settings.english")}</dd></div><div><dt>{t("settings.theme")}</dt><dd>{t("settings.light")}</dd></div></dl></div>}{sidebarMode === "help" && <div className="generic-sidebar"><h2>{t("activity.help")}</h2><p>{t("placeholder.help")}</p></div>}</aside><div className="vertical-resizer" onPointerDown={(event) => startResize("sidebar", event)}/></>}
-      <main className="workspace"><div className="workspace-main">{layout.mode === "single" ? singlePane : <><div className="split-toolbar-row">{splitToolbar}</div><div className="split-layout"><div style={{ width: `${layout.splitRatio}%` }}>{splitLeftContent}</div><div className="split-resizer" onPointerDown={(event) => startResize("split", event)}/><div style={{ width: `${100 - layout.splitRatio}%` }}>{secondaryContent}</div></div></>}</div>{bottomVisible && <><div className="bottom-resizer" onPointerDown={(event) => startResize("bottom", event)}/><section className="bottom-panel" style={{ height: layout.bottomPanelHeight }}><div className="bottom-tabs">{(["problems", "output", "compileLog", "versions"] as const).map((tab) => <button className={bottomTab === tab ? "active" : ""} key={tab} onClick={() => setBottomTab(tab)}>{t(`panel.${tab}` as MessageKey)}{tab === "problems" && diagnostics.length > 0 && <span>{diagnostics.length}</span>}</button>)}<button className="panel-close" onClick={() => setBottomVisible(false)} title={t("common.close")}><Icon name="close"/></button></div><div className="panel-content">{bottomTab === "problems" && (diagnostics.length ? diagnostics.map((diagnostic, index) => <DiagnosticRow diagnostic={diagnostic} onOpen={() => void openDiagnostic(diagnostic)} key={`${diagnostic.message}-${index}`}/>) : <p>{t("panel.noProblems")}</p>)}{bottomTab === "compileLog" && <pre>{compileResult ? `${compileResult.stdoutTail}\n${compileResult.stderrTail}` : t("panel.noOutput")}</pre>}{bottomTab === "output" && <p>{t("panel.noOutput")}</p>}{bottomTab === "versions" && <p>{t("panel.versionsPlaceholder")}</p>}</div></section></>}</main>
+    <header className="workbench-topbar" ref={workbenchRef}><button className="logo-button" onClick={leaveProject} title={t("project.directory")}><Logo/><span>{t("app.name")}</span></button><nav className="app-menus">{(["file", "edit", "view", "history"] as const).map((menu) => <div className="menu-anchor" key={menu}><button onMouseDown={(event) => { if (menu === "edit") event.preventDefault(); }} onClick={() => setActiveMenu(activeMenu === menu ? undefined : menu)}>{t(`menu.${menu}` as MessageKey)}</button>{activeMenu === menu && <Menu items={menuItems(menu)} onClose={() => setActiveMenu(undefined)}/>}</div>)}</nav><div className="project-switcher menu-anchor"><button onClick={() => setActiveMenu(activeMenu === "projects" ? undefined : "projects")}><strong>{project.name}</strong><Icon name="chevron"/></button>{activeMenu === "projects" && <div className="menu-popover project-menu">{projects.map((item) => <button key={item.id} onClick={() => { setActiveMenu(undefined); switchProject(item); }}><span>{item.name}</span>{item.id === project.id && <b>✓</b>}</button>)}<div className="menu-divider"/><button onClick={() => { setActiveMenu(undefined); leaveProject(); }}>{t("project.directory")}</button></div>}</div><button className={`save-status ${saveState}`} onClick={() => { commands.execute("file.save"); }}><Icon name="save"/>{t(`save.${saveState}` as MessageKey)}</button></header>
+    <div className="workbench-body"><aside className="activity-bar"><div>{(["files", "search", "library", "ai", "history"] as const).map((mode) => <button key={mode} className={layout.sidebarVisible && sidebarMode === mode ? "active" : ""} title={t(`activity.${mode}` as MessageKey)} onClick={() => selectActivity(mode)}><Icon name={mode}/><span>{t(`activity.${mode}` as MessageKey)}</span></button>)}</div><div><button className={layout.sidebarVisible && sidebarMode === "settings" ? "active" : ""} title={t("activity.settings")} onClick={() => selectActivity("settings")}><Icon name="settings"/><span>{t("activity.settings")}</span></button><button className={layout.sidebarVisible && sidebarMode === "help" ? "active" : ""} title={t("activity.help")} onClick={() => selectActivity("help")}><Icon name="help"/><span>{t("activity.help")}</span></button></div></aside>
+      {layout.sidebarVisible && <><aside className="sidebar" style={{ width: layout.sidebarWidth }}>{sidebarMode === "files" && <><div className="sidebar-heading"><strong>{t("sidebar.files")}</strong><div><button onClick={() => void createEntry(false, "")} title={t("files.newFile")}><Icon name="plus"/></button><button onClick={() => void refreshTree()} title={t("sidebar.refresh")}><Icon name="refresh"/></button><button onClick={() => setLayout((value) => ({ ...value, sidebarVisible: false }))} title={t("sidebar.collapse")}>‹</button></div></div><div className="tree-section" style={{ height: layout.fileTreeHeight }} onDragOver={(event) => { if (event.dataTransfer.types.includes("Files")) event.preventDefault(); }} onDrop={dropImagesToProject}><div className="tree-sort-controls"><label><span>{t("sidebar.sortBy")}</span><select aria-label={t("sidebar.sortBy")} value={treeSortBy} onChange={(event) => setTreeSortBy(event.target.value as "type" | "name")}><option value="type">{t("sidebar.sortType")}</option><option value="name">{t("sidebar.sortName")}</option></select></label><button type="button" title={t(treeSortDirection === "asc" ? "sidebar.sortAscending" : "sidebar.sortDescending")} aria-label={t("sidebar.reverseSort")} onClick={() => setTreeSortDirection((value) => value === "asc" ? "desc" : "asc")}>{treeSortDirection === "asc" ? "↑" : "↓"}</button></div><input className="sidebar-input" value={treeFilter} onChange={(event) => setTreeFilter(event.target.value)} placeholder={t("sidebar.fileSearch")}/><Tree nodes={tree} activePath={activePath} mainFile={project.mainFile} filter={treeFilter} hideBuildArtifacts={store.get("hideBuildArtifacts")} sortBy={treeSortBy} sortDirection={treeSortDirection} canMove={project.writable} onOpen={(path) => { navigationHistory.current.clear(); setNavigationRequest(undefined); void openFile(path); }} onMove={(sourcePath, destinationDirectory) => void moveEntry(sourcePath, destinationDirectory)}/></div><div className="horizontal-resizer" onPointerDown={(event) => startResize("tree", event)}/><div className="outline-section"><div className="segment-tabs"><button className={outlineMode === "outline" ? "active" : ""} onClick={() => setOutlineMode("outline")}>{t("sidebar.outline")}</button><button className={outlineMode === "relations" ? "active" : ""} onClick={() => { setOutlineMode("relations"); setInspectorBlock(undefined); }}>{t("sidebar.relations")}</button></div>{outlineMode === "outline" ? <div className="outline-list">{outline.map((item, index) => <button key={`${item.title}-${index}`} style={{ paddingLeft: 14 + item.level * 15 }} onClick={() => navigateToOutline(item.line)}>{item.title}</button>)}</div> : <RelationBrowser snapshot={blockSnapshot ?? emptyBlockSnapshot} focusId={relationFocusId} direction={relationDirection} depth={relationDepth} filters={relationFilters} unmatchedBehavior={relationUnmatched} canGoBack={relationFocusHistory.length > 0} onBack={relationBack} onFocus={focusRelationBlock} onLocate={(id) => void locateRelationBlock(id)} onDirection={setRelationDirection} onDepth={setRelationDepth} onFilters={setRelationFilters} onUnmatchedBehavior={setRelationUnmatched} onToggleRelation={(id, event) => toggleRelation(id, event.clientX, event.clientY)}/>}</div></>}{sidebarMode === "search" && <AdvancedSearchPanel query={searchQuery} response={searchResponse} activeResultId={activeSearchResult?.id} replacement={replacement} replaceOpen={replaceOpen} filter={filterQuery} options={filterOptions} visibleGroups={store.get("visibleFilterGroups") as FilterGroupId[]} setQuery={setSearchQuery} setReplacement={setReplacement} setReplaceOpen={setReplaceOpen} setFilter={setFilterQuery} selectResult={(result) => void selectSearchResult(result)} replaceCurrent={() => void replaceCurrentSearchResult()} replaceAll={() => void replaceAllSearchResults()}/>} {sidebarMode === "library" && <ReferenceLibraryPanel project={project} onOpenLibrary={onOpenLibrary} onReturnToEditor={() => setLayout((value) => ({ ...value, sidebarVisible: false }))} onCite={(key) => insertText(`\\cite{${key}}`, `\\cite{${key}}`.length)}/>} {sidebarMode === "ai" && <AIView projectId={project.id} projectRoot={project.canonicalPath} overrides={tabs.map(({ path, content }) => ({ path, content }))} {...(activeTab ? { currentFile: activeTab.path, currentFileContent: activeTab.content } : {})} {...(creationSelection && activeTab && creationSelection.fileId === activeTab.path ? { selectedText: activeTab.content.slice(creationSelection.start, creationSelection.end) } : {})} onApplyChanges={applyAIChanges} onUndoChanges={undoAIChanges} onViewChanges={viewAIChanges} onOpenFile={(path, line) => { void navigateTo(path, line ? { line, column: 1 } : {}).catch((reason: unknown) => setBlockNotice(String(reason))); }} onReviewChanges={setAiReviewChanges} onOpenSettings={() => { setSettingsInitial("ai"); setSettingsOpen(true); }}/ >}{sidebarMode === "history" && <ProjectHistoryPanel projectId={project.id} onBeforeCapture={() => saveTabs(true)} onRestored={refreshAfterHistoryRestore} onOpenSettings={() => { setSettingsInitial("history"); setSettingsOpen(true); }}/>} {sidebarMode === "settings" && <div className="generic-sidebar"><h2>{t("activity.settings")}</h2><p>{t("placeholder.settings")}</p><dl><div><dt>{t("settings.language")}</dt><dd>{t("settings.english")}</dd></div><div><dt>{t("settings.theme")}</dt><dd>{t("settings.light")}</dd></div></dl></div>}{sidebarMode === "help" && <div className="generic-sidebar"><h2>{t("activity.help")}</h2><p>{t("placeholder.help")}</p></div>}</aside><div className="vertical-resizer" onPointerDown={(event) => startResize("sidebar", event)}/></>}
+      <main className="workspace"><div className="workspace-main">{layout.mode === "single" ? singlePane : <><div className="split-toolbar-row">{splitToolbar}</div><div className="split-layout"><div style={{ width: `${layout.splitRatio}%` }}>{splitLeftContent}</div><div className="split-resizer" onPointerDown={(event) => startResize("split", event)}/><div style={{ width: `${100 - layout.splitRatio}%` }}>{secondaryContent}</div></div></>}</div>{bottomVisible && <><div className="bottom-resizer" onPointerDown={(event) => startResize("bottom", event)}/><section className="bottom-panel" style={{ height: layout.bottomPanelHeight }}><div className="bottom-tabs">{(["problems", "output", "compileLog"] as const).map((tab) => <button className={bottomTab === tab ? "active" : ""} key={tab} onClick={() => setBottomTab(tab)}>{t(`panel.${tab}` as MessageKey)}{tab === "problems" && diagnostics.length > 0 && <span>{diagnostics.length}</span>}</button>)}<button className="panel-close" onClick={() => setBottomVisible(false)} title={t("common.close")}><Icon name="close"/></button></div><div className="panel-content">{bottomTab === "problems" && (diagnostics.length ? diagnostics.map((diagnostic, index) => <DiagnosticRow diagnostic={diagnostic} onOpen={() => void openDiagnostic(diagnostic)} key={`${diagnostic.message}-${index}`}/>) : <p>{t("panel.noProblems")}</p>)}{bottomTab === "compileLog" && <pre>{compileResult ? `${compileResult.stdoutTail}\n${compileResult.stderrTail}` : t("panel.noOutput")}</pre>}{bottomTab === "output" && <p>{t("panel.noOutput")}</p>}</div></section></>}</main>
       {figureSelection ? <FigureInspector selection={figureSelection} onClose={() => setFigureSelection(undefined)} onLocate={(imageIndex) => setImageDialog({ kind: "replace", selection: figureSelection, imageIndex })} onChange={(replacement) => {
         if (!activeTab || activeTab.path !== figureSelection.fileId) return;
         setEditorContent(activeTab.content.slice(0, figureSelection.start) + replacement + activeTab.content.slice(figureSelection.end));
         setFigureSelection({ ...figureSelection, source: replacement, end: figureSelection.start + replacement.length });
       }}/> : tableSelection ? <TableInspector selection={tableSelection} onClose={() => setTableSelection(undefined)} onChange={(replacement) => { if (!activeTab || activeTab.path !== tableSelection.fileId) return; setEditorContent(activeTab.content.slice(0, tableSelection.start) + replacement + activeTab.content.slice(tableSelection.end)); setTableSelection({ ...tableSelection, source: replacement, end: tableSelection.start + replacement.length }); }}/> : inspectorBlock ? <aside className="custom-block-inspector" aria-label={t("block.inspector")}><header><div><small>{t("block.customBlock")}</small><strong>{inspectorBlock.name || inspectorBlock.label || t("block.untitled")}</strong></div><button onClick={() => setInspectorBlock(undefined)} title={t("common.close")}><Icon name="close"/></button></header><div><label><span>{t("block.type")}</span><input value={inspectorBlock.role ?? inspectorBlock.type} onChange={(event) => setInspectorBlock((block) => block ? { ...block, role: event.target.value, type: event.target.value } : block)} onBlur={(event) => void updateInspectorBlock({ role: event.target.value || "custom", type: event.target.value || "custom" })}/></label><label><span>{t("block.name")}</span><input value={inspectorBlock.name ?? ""} placeholder={t("block.optional")} onChange={(event) => setInspectorBlock((block) => block ? { ...block, name: event.target.value, title: event.target.value } : block)} onBlur={(event) => void updateInspectorBlock({ name: event.target.value, title: event.target.value })}/></label><label><span>{t("block.label")}</span><input value={inspectorBlock.label ?? ""} placeholder={t("block.optional")} onChange={(event) => setInspectorBlock((block) => block ? { ...block, label: event.target.value } : block)} onBlur={(event) => void updateInspectorBlock({ label: event.target.value })}/></label><dl><div><dt>{t("block.origin")}</dt><dd>{inspectorBlock.origin}</dd></div><div><dt>{t("block.range")}</dt><dd>{inspectorBlock.range ? `${inspectorBlock.range.start}–${inspectorBlock.range.end}` : "—"}</dd></div></dl></div></aside> : relationModeActive && <RelationInspector snapshot={blockSnapshot ?? emptyBlockSnapshot} focusId={relationFocusId} direction={relationDirection} depth={relationDepth} history={structuralHistory} onDirection={setRelationDirection} onDepth={setRelationDepth} onFocus={focusRelationBlock} onRemove={(from, to) => void removeRelation(from, to).catch((error: unknown) => setBlockNotice(error instanceof Error ? error.message : String(error)))} onUndo={() => void undoStructure()} onRedo={() => void redoStructure()} onClose={() => setOutlineMode("outline")}/>}
     </div><footer className="status-bar"><div><span>{activePath ?? project.mainFile ?? "—"}</span><span>{t("status.line", cursor)}</span><span>{t("status.encoding")}</span><span>{t("status.lineEnding")}</span></div><div><span>{t("status.engine")}</span><button onClick={() => { setBottomTab("problems"); setBottomVisible(true); }}>{compileResult?.status === "succeeded" ? `✓ ${t("build.succeeded")}` : compileResult ? `! ${t("build.failed")}` : t("build.notRun")}</button><button onClick={() => { setBottomTab("problems"); setBottomVisible(true); }}>{t("status.errors", { count: errors })}</button><button onClick={() => { setBottomTab("problems"); setBottomVisible(true); }}>{t("status.warnings", { count: warnings })}</button>{spellStatusControl}<button onClick={() => setBottomVisible((value) => !value)} title={t("panel.output")}><Icon name="panel"/></button></div></footer>
-  {sourceMathPreview && <MathPreviewPopover source={sourceMathPreview.source} displayMode={sourceMathPreview.displayMode} context={mathContext} anchor={sourceMathPreview.anchor}/>} {settingsOpen && <SettingsDialog initial={settingsInitial} onClose={() => setSettingsOpen(false)}/>} {imageDialog && createPortal(<ImageInsertDialog tree={tree} replacement={imageDialog.kind === "replace"} onClose={() => setImageDialog(undefined)} onChoose={(choice) => void applyImageChoice(choice).catch((error: unknown) => setBlockNotice(error instanceof Error ? error.message : String(error)))}/>, document.body)} {tableDialogOpen && activeTab && createPortal(<TableInsertDialog documentSource={activeTab.content} defaults={{ style: store.get("tables").defaultStyle, headerRow: store.get("tables").defaultInsert.headerRow, addCaption: store.get("tables").defaultInsert.addCaption, addLabel: store.get("tables").defaultInsert.addLabel }} onClose={() => setTableDialogOpen(false)} onChoose={applyTableChoice}/>, document.body)} {fileContext && <ContextMenu context={fileContext} items={fileContextItems()} onClose={() => setFileContext(undefined)}/>} {blockContext && <ContextMenu context={blockContext} items={[{ label: t("block.createFromSelection"), action: () => void createUserBlockFromSelection(blockContext.selection).catch((error: unknown) => setBlockNotice(error instanceof Error ? error.message : String(error))) }]} onClose={() => setBlockContext(undefined)}/>} {spellContextMenu && <SpellContextMenu request={spellContextMenu} onClose={() => setSpellContextMenu(undefined)}/>}</div>;
+  {sourceMathPreview && <MathPreviewPopover source={sourceMathPreview.source} displayMode={sourceMathPreview.displayMode} context={mathContext} anchor={sourceMathPreview.anchor} onInteractionChange={(active) => mathPopoverInteractionChangeRef.current(active)}/>} {settingsOpen && <SettingsDialog initial={settingsInitial} onClose={() => setSettingsOpen(false)}/>} {imageDialog && createPortal(<ImageInsertDialog tree={tree} replacement={imageDialog.kind === "replace"} onClose={() => setImageDialog(undefined)} onChoose={(choice) => void applyImageChoice(choice).catch((error: unknown) => setBlockNotice(error instanceof Error ? error.message : String(error)))}/>, document.body)} {tableDialogOpen && activeTab && createPortal(<TableInsertDialog documentSource={activeTab.content} defaults={{ style: store.get("tables").defaultStyle, headerRow: store.get("tables").defaultInsert.headerRow, addCaption: store.get("tables").defaultInsert.addCaption, addLabel: store.get("tables").defaultInsert.addLabel }} onClose={() => setTableDialogOpen(false)} onChoose={applyTableChoice}/>, document.body)} {fileContext && <ContextMenu context={fileContext} items={fileContextItems()} onClose={() => setFileContext(undefined)}/>} {blockContext && <ContextMenu context={blockContext} items={[{ label: t("block.createFromSelection"), action: () => void createUserBlockFromSelection(blockContext.selection).catch((error: unknown) => setBlockNotice(error instanceof Error ? error.message : String(error))) }]} onClose={() => setBlockContext(undefined)}/>} {spellContextMenu && <SpellContextMenu request={spellContextMenu} onClose={() => setSpellContextMenu(undefined)}/>}</div>;
 }

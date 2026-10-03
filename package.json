@@ -1,6 +1,6 @@
 {
   "name": "latex-editor",
-  "version": "0.5.4",
+  "version": "0.5.5",
   "main": "apps/desktop/dist/main/index.js",
   "private": true,
   "description": "Local-first LaTeX editor foundation",
@@ -30,6 +30,7 @@
     "desktop:test-ai-review": "npm run desktop:build && node apps/desktop/scripts/run-ai-review-check.mjs",
     "desktop:test-structure": "npm run desktop:build && node apps/desktop/scripts/run-structure-check.mjs",
     "desktop:test-ui": "npm run desktop:build && node apps/desktop/scripts/run-file-menu-check.mjs",
+    "desktop:test-history": "npm run desktop:build && node apps/desktop/scripts/run-history-check.mjs",
     "desktop:test-preview": "npm run desktop:build && node apps/desktop/scripts/run-preview-check.mjs",
     "desktop:test-preview-caret": "npm run desktop:build && node apps/desktop/scripts/run-electron-check.mjs preview-caret",
     "desktop:test-preview-startup": "npm run desktop:build && node apps/desktop/scripts/run-electron-check.mjs preview-startup",

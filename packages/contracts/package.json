@@ -11,6 +11,16 @@
       "types": "./dist/desktop-ipc.d.cts",
       "import": "./dist/desktop-ipc.cjs",
       "require": "./dist/desktop-ipc.cjs"
+    },
+    "./ai-paths": {
+      "import": {
+        "types": "./dist/ai-paths.d.ts",
+        "default": "./dist/ai-paths.js"
+      },
+      "require": {
+        "types": "./dist/ai-paths.d.cts",
+        "default": "./dist/ai-paths.cjs"
+      }
     }
   }
 }

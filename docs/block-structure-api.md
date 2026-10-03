@@ -66,11 +66,11 @@ if (found.ok && found.data[0]) {
 }
 ```
 
-直接后端调用：`ProjectDocumentStructureService.api(projectId)`；完整索引可通过服务或桌面 `structure.snapshot(projectId)` 获取。现有工作台编辑逻辑不必切换到新的写入接口；这些接口供后端消费者/AI 使用。
+直接后端调用：`ProjectDocumentStructureService.api(projectId)`；完整索引可通过服务或桌面 `structure.snapshot(projectId)` 获取。现有工作台编辑逻辑不必切换到新的写入接口。
 
 ## AI 工作流与性能
 
-默认使用 `list/find → get → source → write`，不要先读取整篇论文。Codex dynamic tools 和 Copilot SDK tools 使用相同合约；工具修改与 shell 修改落在同一个工作副本，随后形成待审批 diff，不直接覆盖原项目。原来的 `texweave_compile` 继续开放，skill 指导使用项目配置的编译接口。
+默认使用 `list/find → get → source → write`，不要先读取整篇论文。Codex dynamic tools 和 Copilot SDK tools 使用相同合约；工具修改与 shell 修改落在同一个工作副本，随后形成待审批 diff，不直接覆盖原项目。普通源码编辑产生的结构索引更新不会作为独立文件修改提交；摘要与标签通过 `set_block_semantic` 注入，结构元数据的差异需要用户手动审阅。明确需要时仍可直接修改 `.texweave/structure.json`，其他内部元数据不进入 AI 审阅。原来的 `texweave_compile` 继续开放，skill 指导使用项目配置的编译接口。
 
 项目自带 skill 已同步上述流程；用户在设置中自定义的同名 skill 保持原覆盖规则，不强制覆盖用户的编辑。
 
