@@ -58,12 +58,10 @@ export interface EnvironmentStyle {
 }
 
 export interface EnvironmentBehavior {
-  selectable: boolean;
   inlineEditable: boolean;
   allowChildren: boolean;
   showHeader: boolean;
   showLabel: boolean;
-  addToOutline: boolean;
 }
 
 export interface EnvironmentDefinition {

@@ -172,3 +172,32 @@
   .settings-dialog-header { gap: 8px; padding: 10px 12px !important; }
   .settings-dialog-header h1 { font-size: 18px; }
 }
+
+.preferences-dialog-manager { width: min(1500px, 100%); height: min(960px, calc(100vh - 32px)); }
+.preferences-dialog > .settings-manager-dialog-header { display: flex; flex: 0 0 auto; align-items: center; gap: 10px; min-height: 68px; padding: 8px 18px; border-bottom: 1px solid var(--color-border); }
+.preferences-dialog .settings-manager-return { display: grid; flex: 0 0 auto; place-items: center; width: 36px; height: 36px; padding: 0; border: 1px solid var(--color-border); border-radius: 9px; color: var(--color-primary-strong); background: var(--color-bg-subtle); }
+.preferences-dialog .settings-manager-return:hover { background: var(--color-bg-hover); }
+.settings-manager-return svg { width: 19px; height: 19px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+.environment-manager-toolbar-portal { flex: 1 1 auto; min-width: 0; }
+.settings-manager-dialog-header > select { flex: 0 1 auto; max-width: 150px; }
+.preferences-dialog > .settings-manager-dialog-header .settings-close { flex: 0 0 auto; width: 34px; height: 34px; margin-left: 0; padding: 0; border-radius: 9px; font-size: 16px; }
+.settings-manager-dialog-main { flex: 1; min-height: 0; overflow: auto; padding: 30px 40px; }
+.settings-manager-dialog-main > .settings-manager-page { width: 100%; min-height: 100%; }
+.settings-manager-dialog-main .settings-manager-scope-note { margin: 0 0 18px; }
+.preferences-dialog .environment-manager-toolbar h1 { font-size: 27px; }
+.preferences-dialog .environment-manager-toolbar button { font-size: 12px; }
+
+@media (max-width: 850px) {
+  .preferences-dialog-manager { width: min(100%, calc(100vw - 18px)); height: min(960px, calc(100vh - 18px)); }
+  .settings-manager-dialog-main { padding: 22px 20px; }
+}
+@media (max-width: 600px) {
+  .preferences-dialog > .settings-manager-dialog-header { min-height: 58px; padding: 8px 12px; }
+  .preferences-dialog .settings-manager-return { width: 34px; height: 34px; }
+  .settings-manager-dialog-main { padding: 16px 14px; }
+}
+@media (max-width: 950px) {
+  .environment-manager-toolbar { gap: 10px; }
+  .preferences-dialog .environment-manager-toolbar h1 { font-size: 22px; }
+  .preferences-dialog .environment-manager-toolbar button { padding-inline: 8px; font-size: 11px; }
+}

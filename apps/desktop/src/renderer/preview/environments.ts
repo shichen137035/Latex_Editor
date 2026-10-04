@@ -57,7 +57,12 @@ export function cloneEnvironmentDefinitions(definitions: EnvironmentDefinition[]
     ...definition,
     match: { ...definition.match },
     style: { ...definition.style },
-    behavior: { ...definition.behavior }
+    behavior: {
+      inlineEditable: definition.behavior.inlineEditable ?? true,
+      allowChildren: definition.behavior.allowChildren ?? true,
+      showHeader: definition.behavior.showHeader ?? true,
+      showLabel: definition.behavior.showLabel ?? true
+    }
   }));
 }
 

@@ -41,7 +41,7 @@ export function createCustomEnvironment(existing: EnvironmentDefinition[]): Envi
       borderToken: "rgba(70, 95, 120, 0.10)",
       selectedBorderToken: "#2f6bb2"
     },
-    behavior: { selectable: true, inlineEditable: true, allowChildren: true, showHeader: true, showLabel: true, addToOutline: false }
+    behavior: { inlineEditable: true, allowChildren: true, showHeader: true, showLabel: true }
   };
 }
 
@@ -66,7 +66,7 @@ export function serializeEnvironments(definitions: EnvironmentDefinition[]): str
   const rows = definitions.map((definition) => `  <environment id="${escapeXml(definition.id)}" enabled="${definition.enabled}" builtIn="${definition.builtIn}" family="${definition.family}" label="${escapeXml(definition.label ?? "")}" labelKey="${escapeXml(definition.labelKey)}">
     <match type="${definition.match.kind}" value="${escapeXml(matchValue(definition.match))}" />
     <style accentToken="${escapeXml(definition.style.accentToken)}" fillToken="${escapeXml(definition.style.fillToken)}" borderToken="${escapeXml(definition.style.borderToken)}" selectedBorderToken="${escapeXml(definition.style.selectedBorderToken)}" labelBackgroundToken="${escapeXml(definition.style.labelBackgroundToken)}" labelTextToken="${escapeXml(definition.style.labelTextToken)}" />
-    <behavior selectable="${definition.behavior.selectable}" inlineEditable="${definition.behavior.inlineEditable}" allowChildren="${definition.behavior.allowChildren}" showHeader="${definition.behavior.showHeader}" showLabel="${definition.behavior.showLabel}" addToOutline="${definition.behavior.addToOutline}" />
+    <behavior inlineEditable="${definition.behavior.inlineEditable}" allowChildren="${definition.behavior.allowChildren}" showHeader="${definition.behavior.showHeader}" showLabel="${definition.behavior.showLabel}" />
   </environment>`);
   return `<environments version="1">\n${rows.join("\n")}\n</environments>`;
 }
@@ -114,12 +114,10 @@ export function parseEnvironmentXml(xml: string): EnvironmentDefinition[] {
         labelTextToken: styleElement.getAttribute("labelTextToken") || "--env-generic-label-text"
       },
       behavior: {
-        selectable: booleanAttribute(behaviorElement, "selectable", true),
         inlineEditable: booleanAttribute(behaviorElement, "inlineEditable", true),
         allowChildren: booleanAttribute(behaviorElement, "allowChildren", true),
         showHeader: booleanAttribute(behaviorElement, "showHeader", true),
-        showLabel: booleanAttribute(behaviorElement, "showLabel", true),
-        addToOutline: booleanAttribute(behaviorElement, "addToOutline", false)
+        showLabel: booleanAttribute(behaviorElement, "showLabel", true)
       }
     };
   });

@@ -419,6 +419,7 @@ export function SettingsDialog({ onClose, initial = "general" }: { onClose(): vo
   const [search, setSearch] = useState("");
   const [overflowOpen, setOverflowOpen] = useState(false);
   const [managerDirty, setManagerDirty] = useState(false);
+  const [environmentToolbarTarget, setEnvironmentToolbarTarget] = useState<HTMLDivElement | null>(null);
   const [capture, setCapture] = useState<CommandId>();
   const [pending, setPending] = useState("");
   const [conflict, setConflict] = useState<string>();
@@ -523,7 +524,7 @@ export function SettingsDialog({ onClose, initial = "general" }: { onClose(): vo
     if (manager === "themes") return <ThemeSettingsPanel store={store} showActiveTheme={false}/>;
     if (manager === "dictionaries") return <SpellCheckSettingsPanel store={store}/>;
     if (manager === "shortcuts") return renderShortcutManager();
-    if (manager === "blockEnvironments") return <div className="settings-environments"><EnvironmentManager definitions={configured.length ? includeNewBuiltInEnvironments(configured) : DEFAULT_ENVIRONMENTS} onChange={(next) => void store.set("environments", next, scope)}/></div>;
+    if (manager === "blockEnvironments") return <div className="settings-environments"><EnvironmentManager definitions={configured.length ? includeNewBuiltInEnvironments(configured) : DEFAULT_ENVIRONMENTS} onChange={(next) => void store.set("environments", next, scope)} toolbarTarget={environmentToolbarTarget}/></div>;
     if (manager === "styleResources") return <StyleResourcesPanel/>;
     if (manager === "toolchain") return <LatexToolchainSettingsPanel store={store}/>;
     return <AISkillsSettingsPanel onEditingChange={setManagerDirty}/>;
@@ -543,33 +544,39 @@ export function SettingsDialog({ onClose, initial = "general" }: { onClose(): vo
   }, [capture, overflowOpen, manager, managerDirty, onClose]);
 
 
-  return <div className="settings-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget) requestClose(); }}><section className="preferences-dialog" role="dialog" aria-modal="true" aria-label={t("activity.settings")}>
-    <header className="settings-dialog-header"><h1>{t("activity.settings")}</h1>
-      <label className="settings-search"><span className="visually-hidden">{t("settings.searchPlaceholder")}</span><input value={search} disabled={Boolean(manager)} onChange={(event) => setSearch(event.target.value)} placeholder={t("settings.searchPlaceholder")}/>{search && <button type="button" aria-label={t("settings.clearSearch")} onClick={() => setSearch("")}>X</button>}</label>
-      {projectScopeAvailable && (!manager || manager === "blockEnvironments") && <select aria-label={t("settings.scope")} value={scope} onChange={(event) => setScope(event.target.value as "global" | "project")}><option value="global">{t("settings.global")}</option><option value="project">{t("settings.project")}</option></select>}
-      {!manager && <div className="settings-level-switch" role="group" aria-label={t("settings.settingLevel")}><button type="button" className={level === "basic" ? "active" : ""} onClick={() => setLevel("basic")}>{t("settings.basic")}</button><button type="button" className={level === "advanced" ? "active" : ""} onClick={() => setLevel("advanced")}>{t("settings.advanced")}</button></div>}
-      <div className="settings-header-actions">
-        <div className="settings-overflow" ref={overflowRef}>
-          {!manager && <>
+  return <div className="settings-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget) requestClose(); }}><section className={`preferences-dialog${manager ? " preferences-dialog-manager" : ""}`} role="dialog" aria-modal="true" aria-label={t("activity.settings")}>
+    {manager ? <>
+      <header className="settings-manager-dialog-header">
+        <button type="button" className="settings-manager-return" aria-label={t("settings.backToSettings")} title={t("settings.backToSettings")} onClick={backToSettings}><svg aria-hidden="true" viewBox="0 0 24 24"><path d="M19 12H5m7 7-7-7 7-7"/></svg></button>
+        {manager === "blockEnvironments" && <div className="environment-manager-toolbar-portal" ref={setEnvironmentToolbarTarget}/>}
+        {manager === "blockEnvironments" && projectScopeAvailable && <select aria-label={t("settings.scope")} value={scope} onChange={(event) => setScope(event.target.value as "global" | "project")}><option value="global">{t("settings.global")}</option><option value="project">{t("settings.project")}</option></select>}
+        <button type="button" className="settings-close" aria-label={t("common.close")} onClick={requestClose}>X</button>
+      </header>
+      <main className={`settings-manager-dialog-main${manager === "blockEnvironments" ? " settings-manager-environments" : ""}`} ref={mainRef}>
+        <div className="settings-manager-page">
+          {manager !== "blockEnvironments" && projectScopeAvailable && <p className="settings-manager-scope-note">{t("settings.globalOnly")}</p>}
+          {renderManager()}
+        </div>
+      </main>
+    </> : <>
+      <header className="settings-dialog-header"><h1>{t("activity.settings")}</h1>
+        <label className="settings-search"><span className="visually-hidden">{t("settings.searchPlaceholder")}</span><input value={search} onChange={(event) => setSearch(event.target.value)} placeholder={t("settings.searchPlaceholder")}/>{search && <button type="button" aria-label={t("settings.clearSearch")} onClick={() => setSearch("")}>X</button>}</label>
+        {projectScopeAvailable && <select aria-label={t("settings.scope")} value={scope} onChange={(event) => setScope(event.target.value as "global" | "project")}><option value="global">{t("settings.global")}</option><option value="project">{t("settings.project")}</option></select>}
+        <div className="settings-level-switch" role="group" aria-label={t("settings.settingLevel")}><button type="button" className={level === "basic" ? "active" : ""} onClick={() => setLevel("basic")}>{t("settings.basic")}</button><button type="button" className={level === "advanced" ? "active" : ""} onClick={() => setLevel("advanced")}>{t("settings.advanced")}</button></div>
+        <div className="settings-header-actions">
+          <div className="settings-overflow" ref={overflowRef}>
             <button type="button" className="settings-overflow-trigger" aria-label={t("settings.moreActions")} aria-expanded={overflowOpen} onClick={() => setOverflowOpen((open) => !open)}>...</button>
             {overflowOpen && <div className="settings-overflow-menu">
               <button type="button" onClick={() => { setOverflowOpen(false); void resetKeys(categoryPreferences[category]); }}>{t("settings.resetSection")}</button>
               <button type="button" onClick={() => { setOverflowOpen(false); if (window.confirm(t("settings.restoreDefaultsConfirm"))) void resetKeys(scope === "project" ? projectPreferenceKeys : Object.keys(preferenceDefaults) as PreferenceKey[]); }}>{t("settings.resetAll")}</button>
             </div>}
-          </>}
-        </div>
-        <button className="settings-close" aria-label={t("common.close")} onClick={requestClose}>X</button>
-      </div>
-    </header>
-    <div className="preferences-body"><nav aria-label={t("activity.settings")}>{sectionGroups.map((group) => <div className="settings-nav-group" key={group.label}><span>{t(group.label)}</span>{group.sections.map((item) => <button type="button" data-section={item} aria-current={category === item ? "page" : undefined} className={category === item ? "active" : ""} key={item} onClick={() => navigateCategory(item)}>{t(`settings.category.${item}`)}</button>)}</div>)}</nav>
-      <main ref={mainRef}>
-        {manager ? (
-          <div className="settings-manager-page">
-            <button type="button" className="settings-back-button" onClick={backToSettings}>{t("settings.backToSettings")}</button>
-            {manager !== "blockEnvironments" && projectScopeAvailable && <p className="settings-manager-scope-note">{t("settings.globalOnly")}</p>}
-            {renderManager()}
           </div>
-        ) : search.trim() ? (
+          <button className="settings-close" aria-label={t("common.close")} onClick={requestClose}>X</button>
+        </div>
+      </header>
+      <div className="preferences-body"><nav aria-label={t("activity.settings")}>{sectionGroups.map((group) => <div className="settings-nav-group" key={group.label}><span>{t(group.label)}</span>{group.sections.map((item) => <button type="button" data-section={item} aria-current={category === item ? "page" : undefined} className={category === item ? "active" : ""} key={item} onClick={() => navigateCategory(item)}>{t(`settings.category.${item}`)}</button>)}</div>)}</nav>
+        <main ref={mainRef}>
+        {search.trim() ? (
           <div className="settings-search-results">
             <h2>{t("settings.searchResults")}</h2>
             {filteredSearchEntries.length ? filteredSearchEntries.map((entry) => {
@@ -587,7 +594,10 @@ export function SettingsDialog({ onClose, initial = "general" }: { onClose(): vo
             {level === "advanced" && !searchEntries.some((entry) => entry.category === category && entry.level !== "basic") && <p className="settings-level-hint">{t("settings.noAdvancedInCategory")}</p>}
           </>
         )}
-      {store.error() && <p role="alert">{t("settings.saveFailed")} {store.error()}</p>}
-    </main></div><footer>{t("settings.saved")}{scope === "project" && <span>{t("settings.projectResetHint")}</span>}</footer>
+        {store.error() && <p role="alert">{t("settings.saveFailed")} {store.error()}</p>}
+        </main>
+      </div>
+      <footer>{t("settings.saved")}{scope === "project" && <span>{t("settings.projectResetHint")}</span>}</footer>
+    </>}
   </section></div>;
 }

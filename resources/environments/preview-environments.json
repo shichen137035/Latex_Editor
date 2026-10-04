@@ -27,30 +27,28 @@
     "generic": { "accentToken": "--env-generic-accent", "fillToken": "--env-generic-fill", "labelBackgroundToken": "--env-generic-label-bg", "labelTextToken": "--env-generic-label-text" }
   },
   "defaultBehavior": {
-    "selectable": true,
     "inlineEditable": true,
     "allowChildren": true,
     "showHeader": true,
-    "showLabel": true,
-    "addToOutline": false
+    "showLabel": true
   },
   "previewEnvironments": [
-    { "id": "chapter", "family": "section", "match": { "kind": "command", "command": "chapter" }, "behavior": { "addToOutline": true } },
-    { "id": "section", "family": "section", "match": { "kind": "command", "command": "section" }, "behavior": { "addToOutline": true } },
-    { "id": "subsection", "family": "section", "match": { "kind": "command", "command": "subsection" }, "behavior": { "addToOutline": true } },
-    { "id": "subsubsection", "family": "section", "match": { "kind": "command", "command": "subsubsection" }, "behavior": { "addToOutline": true } },
-    { "id": "paragraph", "family": "section", "match": { "kind": "command", "command": "paragraph" }, "behavior": { "addToOutline": true } },
+    { "id": "chapter", "family": "section", "match": { "kind": "command", "command": "chapter" } },
+    { "id": "section", "family": "section", "match": { "kind": "command", "command": "section" } },
+    { "id": "subsection", "family": "section", "match": { "kind": "command", "command": "subsection" } },
+    { "id": "subsubsection", "family": "section", "match": { "kind": "command", "command": "subsubsection" } },
+    { "id": "paragraph", "family": "section", "match": { "kind": "command", "command": "paragraph" } },
     { "id": "abstract", "family": "section", "match": { "kind": "latex-environment", "name": "abstract" } },
-    { "id": "theorem", "family": "theorem", "match": { "kind": "latex-environment", "name": "theorem" }, "behavior": { "addToOutline": true } },
-    { "id": "lemma", "family": "theorem", "match": { "kind": "latex-environment", "name": "lemma" }, "behavior": { "addToOutline": true } },
-    { "id": "proposition", "family": "theorem", "match": { "kind": "latex-environment", "name": "proposition" }, "behavior": { "addToOutline": true } },
-    { "id": "corollary", "family": "theorem", "match": { "kind": "latex-environment", "name": "corollary" }, "behavior": { "addToOutline": true } },
-    { "id": "definition", "family": "definition", "match": { "kind": "latex-environment", "name": "definition" }, "behavior": { "addToOutline": true } },
-    { "id": "assumption", "family": "definition", "match": { "kind": "latex-environment", "name": "assumption" }, "behavior": { "addToOutline": true } },
+    { "id": "theorem", "family": "theorem", "match": { "kind": "latex-environment", "name": "theorem" } },
+    { "id": "lemma", "family": "theorem", "match": { "kind": "latex-environment", "name": "lemma" } },
+    { "id": "proposition", "family": "theorem", "match": { "kind": "latex-environment", "name": "proposition" } },
+    { "id": "corollary", "family": "theorem", "match": { "kind": "latex-environment", "name": "corollary" } },
+    { "id": "definition", "family": "definition", "match": { "kind": "latex-environment", "name": "definition" } },
+    { "id": "assumption", "family": "definition", "match": { "kind": "latex-environment", "name": "assumption" } },
     { "id": "remark", "family": "remark", "match": { "kind": "latex-environment", "name": "remark" } },
     { "id": "example", "family": "example", "match": { "kind": "latex-environment", "name": "example" } },
     { "id": "proof", "family": "proof", "match": { "kind": "latex-environment", "name": "proof" } },
-    { "id": "algorithm", "family": "code", "match": { "kind": "latex-environment", "name": "algorithm" }, "behavior": { "addToOutline": true } },
+    { "id": "algorithm", "family": "code", "match": { "kind": "latex-environment", "name": "algorithm" } },
     { "id": "algorithmic", "family": "code", "match": { "kind": "latex-environment", "name": "algorithmic" }, "behavior": { "showHeader": false, "showLabel": false } },
     { "id": "equation", "family": "equation", "match": { "kind": "latex-environment", "name": "equation" }, "behavior": { "allowChildren": false } },
     { "id": "equation-star", "family": "equation", "match": { "kind": "latex-environment", "name": "equation*" }, "behavior": { "allowChildren": false } },
@@ -74,6 +72,6 @@
     { "id": "quotation", "family": "quote", "match": { "kind": "latex-environment", "name": "quotation" }, "behavior": { "showLabel": false } },
     { "id": "verbatim", "family": "code", "match": { "kind": "latex-environment", "name": "verbatim" }, "behavior": { "allowChildren": false } },
     { "id": "lstlisting", "family": "code", "match": { "kind": "latex-environment", "name": "lstlisting" }, "behavior": { "allowChildren": false } },
-    { "id": "placeholder", "family": "virtual", "match": { "kind": "virtual-block", "type": "placeholder" }, "behavior": { "showHeader": false, "showLabel": false, "addToOutline": false } }
+    { "id": "placeholder", "family": "virtual", "match": { "kind": "virtual-block", "type": "placeholder" }, "behavior": { "showHeader": false, "showLabel": false } }
   ]
 }
