@@ -12,6 +12,7 @@ import { ReferenceLibraryPage } from "./references/ReferenceLibraryPage.js";
 import { flushSync } from "react-dom";
 import { resolveExit, unsavedChanges } from "./lifecycle/unsavedChanges.js";
 import { chooseProjectAvatarColor, isProjectAvatarColor, projectAvatarLetter, projectAvatarPalette, type ProjectAvatarColor } from "./projectAvatar.js";
+import { installWheelAcceleration } from "./wheelAcceleration.js";
 
 function Icon({ children, size = 20 }: { children: ReactNode; size?: number }) {
   return <svg aria-hidden="true" className="icon" width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">{children}</svg>;
@@ -276,7 +277,7 @@ function ProjectDirectory({ projects, onProjectsChange, onOpen, onOpenLibrary, s
     <div className="brand-lockup compact"><div className="brand-mark"><WeaveLogo size={28}/></div><div className="brand-name">{t("app.name")}</div></div>
     <label className="directory-global-search"><SearchIcon/><input ref={searchRef} value={query} onChange={(event) => setQuery(event.target.value)} placeholder={t("directory.search")}/><kbd>Ctrl K</kbd></label>
     <div className="directory-actions">
-      <div className="directory-popover-anchor"><button className="connection-pill directory-workspace-button" onClick={() => setWorkspaceMenuOpen((open) => !open)}><span className="status-dot"/>{t("project.local")}<ChevronIcon/></button>{workspaceMenuOpen && <div className="directory-popover workspace-popover"><strong>{t("project.local")}</strong><small>{t("directory.localCount", { count: projects.length })}</small><span>{t("directory.localWorkspaceHint")}</span></div>}</div>
+      <div className="directory-popover-anchor"><button className="connection-pill directory-workspace-button" onClick={() => setWorkspaceMenuOpen((open) => !open)}><span className="status-dot"/>{t("project.local")}<ChevronIcon/></button>{workspaceMenuOpen && <div className="directory-popover workspace-popover"><div className="workspace-popover-local"><strong>{t("project.local")}</strong><small>{t("directory.localCount", { count: projects.length })}</small><span>{t("directory.localWorkspaceHint")}</span></div><div className="workspace-popover-divider"/><div className="workspace-popover-cloud" aria-disabled="true"><span><i className="workspace-popover-cloud-dot" aria-hidden="true"/><strong>{t("project.cloud")}</strong></span><small>{t("directory.workspaceComingSoon")}</small></div></div>}</div>
       <div className="directory-popover-anchor directory-new-control"><button className="primary-button directory-new-main" onClick={() => setCreateOpen(true)}><PlusIcon/>{t("project.new")}</button><button className="primary-button directory-new-toggle" aria-label={t("directory.moreCreateOptions")} onClick={() => setMenuOpen((open) => !open)}><ChevronIcon/></button>{menuOpen && <div className="new-menu directory-popover"><button onClick={() => { setCreateOpen(true); setMenuOpen(false); }}><span className="menu-icon"><PlusIcon/></span><span><strong>{t("project.new")}</strong><small>{t("directory.createNewHint")}</small></span></button><button onClick={() => void registerFolder()}><span className="menu-icon"><FolderIcon/></span><span><strong>{t("project.openFolder")}</strong><small>{t("directory.openFolderHint")}</small></span></button></div>}</div>
       <button className="secondary-button directory-import" onClick={() => void registerFolder()}><FolderIcon/>{t("directory.import")}</button>
       <button className="icon-button directory-library" onClick={onOpenLibrary} title={t("activity.library")} aria-label={t("activity.library")}>◈</button>
@@ -345,6 +346,7 @@ export function App() {
   }, []);
   useEffect(() => { void refreshStyleResources(); }, []);
   useEffect(installShortcuts, []);
+  useEffect(() => installWheelAcceleration(() => settings.global("wheelAcceleration")), []);
   useEffect(() => {
     const lifecycle = window.latexEditor?.lifecycle;
     if (!lifecycle) return;

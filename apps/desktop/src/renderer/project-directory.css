@@ -171,3 +171,10 @@
   .directory-table-head, .directory-project-row { grid-template-columns: 25px minmax(150px, 1.3fr) minmax(75px, .6fr) minmax(85px, .8fr) minmax(85px, .68fr) 26px 26px 24px; gap: 5px; padding-inline: 7px; }
   .directory-location .icon { display: none; }
 }
+
+.workspace-popover-local { display: grid; gap: 6px; }
+.workspace-popover-divider { height: 1px; margin: 4px 0; background: var(--color-border); }
+.workspace-popover-cloud { display: grid; gap: 5px; padding: 2px 0 0; opacity: .76; }
+.workspace-popover-cloud > span { display: flex; align-items: center; gap: 7px; }
+.workspace-popover-cloud-dot { width: 8px; height: 8px; flex: 0 0 8px; border-radius: 50%; background: #aeb8c4; box-shadow: 0 0 0 3px color-mix(in srgb, #aeb8c4 17%, transparent); }
+.workspace-popover-cloud > small { margin-left: 15px; color: var(--color-text-muted); }

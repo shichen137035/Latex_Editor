@@ -77,6 +77,21 @@ export interface TablePreferences {
   editor: { defaultMode: "gui" | "source" };
   editing: { allowAutomaticColumnConversion: boolean; autoAddRowOnTab: boolean };
 }
+export interface WheelAccelerationPreferences {
+  enabled: boolean;
+  /** Additional multiplier gained by each rapid, same-direction wheel event (1-10). */
+  strength: number;
+  /** Maximum scroll multiplier, including the native base speed (2-8). */
+  maxMultiplier: number;
+  /** Time constant used to decay accumulated acceleration (150-1500 ms). */
+  decayMs: number;
+}
+export const defaultWheelAccelerationPreferences: WheelAccelerationPreferences = {
+  enabled: true,
+  strength: 4,
+  maxMultiplier: 6,
+  decayMs: 500
+};
 export const defaultTablePreferences: TablePreferences = {
   defaultStyle: "booktabs-three-line",
   defaultInsert: { alignment: "center", placement: "htbp", headerRow: true, addCaption: true, addLabel: true },
@@ -121,6 +136,7 @@ export interface PreferenceValues {
   maximize: boolean;
   restoreProject: boolean;
   sidePanelDisplay: "overlay" | "push";
+  wheelAcceleration: WheelAccelerationPreferences;
   lastProject: string;
   engine: "pdflatex" | "xelatex" | "lualatex";
   keybindings: Record<string, string>;
@@ -134,7 +150,7 @@ export type PreferenceKey = keyof PreferenceValues;
 export const preferenceDefaults: PreferenceValues = {
   locale: "en", theme: "light", themeDirectory: "", aiCodexExecutable: "", aiModel: "", aiCopilotModel: "", aiReasoningEffort: "", aiCopilotReasoningEffort: "", aiDefaultMode: "chat", aiPermissionMode: "auto", aiIncludeCurrentFile: false, fontSize: 15, tabSize: 2, wordWrap: true,
   autoSave: "off", hideBuildArtifacts: true, documentWordCompletion: true, autoPairSymbols: true, mathPreviewOnHover: false, autoEnvironmentLabels: true, confirmPreviewEdits: true, warnIncompatibleEnvironmentConversion: true, visibleFilterGroups: ["blockType", "location", "file", "properties"], referenceLinkModifier: "ctrl", spellCheckMode: "auto", spellCheckLanguage: "en-US", spellCheckActiveLanguages: ["en-US"], maximize: true, restoreProject: false,
-  lastProject: "", engine: "pdflatex", keybindings: {}, environments: [], layout: {}, sidePanelDisplay: "overlay", images: defaultImagePreferences, tables: defaultTablePreferences, history: defaultHistoryPreferences
+  lastProject: "", engine: "pdflatex", keybindings: {}, environments: [], layout: {}, sidePanelDisplay: "overlay", wheelAcceleration: defaultWheelAccelerationPreferences, images: defaultImagePreferences, tables: defaultTablePreferences, history: defaultHistoryPreferences
 };
 // Project-scoped preferences are kept separate from machine-wide tree and editor settings.
 // The project settings UI is reserved for a later release; build-artifact visibility is global.
@@ -147,6 +163,14 @@ export function validPreference(key: string, value: unknown): boolean {
     case "engine": return ["pdflatex", "xelatex", "lualatex"].includes(String(value));
     case "spellCheckMode": return value === "auto" || value === "manual" || value === "disabled";
     case "sidePanelDisplay": return value === "overlay" || value === "push";
+    case "wheelAcceleration": {
+      if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+      const wheel = value as Partial<WheelAccelerationPreferences>;
+      return typeof wheel.enabled === "boolean"
+        && Number.isInteger(wheel.strength) && Number(wheel.strength) >= 1 && Number(wheel.strength) <= 10
+        && typeof wheel.maxMultiplier === "number" && Number.isFinite(wheel.maxMultiplier) && wheel.maxMultiplier >= 2 && wheel.maxMultiplier <= 8
+        && Number.isInteger(wheel.decayMs) && Number(wheel.decayMs) >= 150 && Number(wheel.decayMs) <= 1500;
+    }
     case "spellCheckLanguage": return typeof value === "string" && /^[A-Za-z]{2,3}(?:[-_][A-Za-z0-9]{2,8})?$/.test(value);
     case "fontSize": return typeof value === "number" && Number.isInteger(value) && value >= 10 && value <= 32;
     case "tabSize": return typeof value === "number" && [2, 4, 8].includes(value);
