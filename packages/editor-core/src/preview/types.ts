@@ -12,6 +12,8 @@ export interface SourceSpan {
 
 export interface PreviewBaseNode {
   id: string;
+  /** Original parser identity when the renderer reuses a stable visual identity. */
+  parserId?: string;
   source: SourceSpan;
   parentId?: string;
 }

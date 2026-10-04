@@ -12,6 +12,20 @@ const catalogs: Record<Locale, Record<string, string>> = {
   "zh-CN": simplifiedChinese as Record<string, string>, "zh-TW": traditionalChinese as Record<string, string>,
   ko: korean as Record<string, string>, fr: french as Record<string, string>
 };
+const resourcePickerLabels: Record<Locale, [string, string, string]> = {
+  en: ["Choose a resource…", "Add resource", "Remove resource"],
+  ja: ["リソースを選択…", "リソースを追加", "リソースを削除"],
+  "zh-CN": ["选择资源…", "添加资源", "移除资源"],
+  "zh-TW": ["選擇資源…", "新增資源", "移除資源"],
+  ko: ["리소스 선택…", "리소스 추가", "리소스 제거"],
+  fr: ["Choisir une ressource…", "Ajouter la ressource", "Retirer la ressource"]
+};
+for (const [language, [choose, add, remove]] of Object.entries(resourcePickerLabels)) {
+  const catalog = catalogs[language as Locale];
+  catalog["resource.chooseCustom"] = choose;
+  catalog["resource.addToProject"] = add;
+  catalog["resource.removeFromProject"] = remove;
+}
 const aiComposerMessages: Record<Locale, string[]> = {
   en: ["Add attachments", "Remove {{name}}", "Please examine the attached files.", "Thought summary", "Working…", "Responding…"],
   ja: ["添付ファイルを追加", "{{name}} を削除", "添付ファイルを確認してください。", "思考の概要", "作業中…", "回答中…"],

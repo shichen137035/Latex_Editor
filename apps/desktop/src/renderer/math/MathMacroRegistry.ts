@@ -65,10 +65,10 @@ function resolveReference(from: string, reference: string, extension: string): s
   return normalizePath(`${directory}${value}`);
 }
 
-function hashSources(sources: ProjectMathSource[]): number {
+function hashMacroConfiguration(macros: Record<string, string>, operators: Record<string, string>): number {
   let hash = 2166136261;
-  for (const source of sources) {
-    const value = `${source.path}\0${source.content}`;
+  for (const [name, replacement] of [...Object.entries(macros), ...Object.entries(operators)].sort(([a], [b]) => a.localeCompare(b))) {
+    const value = `${name}\0${replacement}\0`;
     for (let index = 0; index < value.length; index += 1) hash = Math.imul(hash ^ value.charCodeAt(index), 16777619);
   }
   return hash >>> 0;
@@ -116,7 +116,7 @@ export class MathMacroRegistry {
     if (entryFile) visit(entryFile);
     if (!visited.size) for (const source of [...sources].sort((a, b) => a.path.localeCompare(b.path))) visit(source.path);
     this.#definitions = definitions;
-    this.#context = { macros, operators, sourceVersion: hashSources(sources) };
+    this.#context = { macros, operators, sourceVersion: hashMacroConfiguration(macros, operators) };
     return this.getContext();
   }
 

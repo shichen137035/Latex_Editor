@@ -101,6 +101,11 @@ function stripForVisibility(value: string): string {
     .trim();
 }
 
+/** Shared visibility check used by conservative incremental Preview updates. */
+export function hasVisiblePreviewContent(value: string): boolean {
+  return stripForVisibility(value).length > 0;
+}
+
 function paragraphRanges(source: string, start: number, end: number): Array<[number, number]> {
   const ranges: Array<[number, number]> = [];
   const value = source.slice(start, end);

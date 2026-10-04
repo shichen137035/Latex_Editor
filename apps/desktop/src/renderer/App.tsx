@@ -57,6 +57,49 @@ function formatLastOpened(project: Project): string {
   return new Date().toDateString() === date.toDateString() ? `${t("project.today")}, ${time}` : date.toLocaleString([], { dateStyle: "short", timeStyle: "short" });
 }
 
+function ProjectStyleResourcePicker({ styleResources, baseResource, setBaseResource, extraResources, setExtraResources }: {
+  styleResources: StyleResource[];
+  baseResource: string;
+  setBaseResource(value: string): void;
+  extraResources: string[];
+  setExtraResources: Dispatch<SetStateAction<string[]>>;
+}) {
+  const [resourceToAdd, setResourceToAdd] = useState("");
+  const presets = styleResources.filter((resource) => resource.source === "built-in");
+  const customResources = styleResources.filter((resource) => resource.source === "user");
+  const selectedPreset = presets.find((resource) => resource.id === baseResource);
+  const selectedResources = customResources.filter((resource) => extraResources.includes(resource.id));
+
+  const addSelectedResource = () => {
+    if (!resourceToAdd || extraResources.includes(resourceToAdd)) return;
+    setExtraResources((current) => [...current, resourceToAdd]);
+    setResourceToAdd("");
+  };
+
+  return <fieldset className="resource-picker">
+    <legend>{t("resource.choose")}</legend>
+    <p>{t("resource.chooseHint")}</p>
+    <div className="resource-picker-fields">
+      <label className="resource-picker-control"><span>{t("resource.builtIn")}</span>
+        <select value={baseResource} onChange={(event) => setBaseResource(event.target.value)}>
+          {presets.map((resource) => <option key={resource.id} value={resource.id}>{resource.name}</option>)}
+        </select>
+        {selectedPreset?.description && <small className="resource-picker-description">{selectedPreset.description}</small>}
+      </label>
+      <div className="resource-picker-control"><label htmlFor="project-extra-style">{t("resource.myResources")}</label>
+        <div className="resource-picker-add"><select id="project-extra-style" value={resourceToAdd} onChange={(event) => setResourceToAdd(event.target.value)}>
+          <option value="">{t("resource.chooseCustom")}</option>
+          {customResources.map((resource) => <option key={resource.id} value={resource.id} disabled={extraResources.includes(resource.id)}>{resource.name}</option>)}
+        </select><button type="button" aria-label={t("resource.addToProject")} title={t("resource.addToProject")} disabled={!resourceToAdd} onClick={addSelectedResource}>＋</button></div>
+        {customResources.length === 0 && <small className="resource-picker-description">{t("resource.none")}</small>}
+      </div>
+    </div>
+    {selectedResources.length > 0 && <div className="resource-picker-selected" role="group" aria-label={t("resource.myResources")}>
+      {selectedResources.map((resource) => <span className="resource-picker-chip" key={resource.id} title={resource.description ?? resource.name}><span>{resource.name}</span><button type="button" aria-label={`${t("resource.removeFromProject")}: ${resource.name}`} onClick={() => setExtraResources((current) => current.filter((id) => id !== resource.id))}>×</button></span>)}
+    </div>}
+  </fieldset>;
+}
+
 function ProjectDirectory({ projects, onProjectsChange, onOpen, onOpenLibrary, styleResources, onRefreshResources }: { projects: Project[]; onProjectsChange: Dispatch<SetStateAction<Project[]>>; onOpen(project: Project): void; onOpenLibrary(): void; styleResources: StyleResource[]; onRefreshResources(): Promise<void> }) {
   useSettings();
   useEffect(() => commands.register("settings.open", { execute: () => setSettingsOpen(true) }), []);
@@ -266,7 +309,7 @@ function ProjectDirectory({ projects, onProjectsChange, onOpen, onOpenLibrary, s
     </section>
     <footer className="dashboard-footer directory-footer"><span><span className="status-dot"/>{t("project.savedLocally")}</span><span>{t("app.name")} {t("app.version")}</span></footer>
   </main>
-  {createOpen && <div className="modal-backdrop"><section className="modal-card project-creation-card"><div className="modal-heading"><div><p className="eyebrow">{t("common.projectSetup")}</p><h2>{t("project.createTitle")}</h2></div><button className="close-button" onClick={() => setCreateOpen(false)}>×</button></div><label className="field-label">{t("project.name")}<input autoFocus value={name} onChange={(event) => setName(event.target.value)}/></label><label className="field-label">{t("project.parent")}<div className="path-input"><input value={parentPath} onChange={(event) => setParentPath(event.target.value)}/><button onClick={() => void chooseFolder()}><FolderIcon/>{t("project.browse")}</button></div></label><fieldset className="resource-picker"><legend>{t("resource.choose")}</legend><p>{t("resource.chooseHint")}</p>{styleResources.filter((resource) => resource.source === "built-in").map((resource) => <label key={resource.id}><input type="radio" name="base-style" checked={baseResource === resource.id} onChange={() => setBaseResource(resource.id)}/><span><strong>{resource.name}</strong><small>{resource.description}</small></span></label>)}{styleResources.filter((resource) => resource.source === "user").map((resource) => <label key={resource.id}><input type="checkbox" checked={extraResources.includes(resource.id)} onChange={(event) => setExtraResources((current) => event.target.checked ? [...current, resource.id] : current.filter((id) => id !== resource.id))}/><span><strong>{resource.name}</strong><small>{t("resource.custom")}</small></span></label>)}</fieldset><div className="modal-actions"><button className="secondary-button" onClick={() => setCreateOpen(false)}>{t("project.cancel")}</button><button className="primary-button" disabled={busy} onClick={() => void createProject()}>{t(busy ? "project.creating" : "project.create")}</button></div></section></div>}
+  {createOpen && <div className="modal-backdrop"><section className="modal-card project-creation-card"><div className="modal-heading"><div><p className="eyebrow">{t("common.projectSetup")}</p><h2>{t("project.createTitle")}</h2></div><button className="close-button" onClick={() => setCreateOpen(false)}>×</button></div><label className="field-label">{t("project.name")}<input autoFocus value={name} onChange={(event) => setName(event.target.value)}/></label><label className="field-label">{t("project.parent")}<div className="path-input"><input value={parentPath} onChange={(event) => setParentPath(event.target.value)}/><button onClick={() => void chooseFolder()}><FolderIcon/>{t("project.browse")}</button></div></label><ProjectStyleResourcePicker styleResources={styleResources} baseResource={baseResource} setBaseResource={setBaseResource} extraResources={extraResources} setExtraResources={setExtraResources}/><div className="modal-actions"><button className="secondary-button" onClick={() => setCreateOpen(false)}>{t("project.cancel")}</button><button className="primary-button" disabled={busy} onClick={() => void createProject()}>{t(busy ? "project.creating" : "project.create")}</button></div></section></div>}
     {settingsOpen && <SettingsDialog onClose={() => { setSettingsOpen(false); void onRefreshResources(); }}/>} 
 
   </div>;

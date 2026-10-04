@@ -29,6 +29,7 @@ export interface PreviewLocalEditorProps {
   mathDraft?: boolean;
   sourceStartLine?: number;
   initialCursorOffset?: number | undefined;
+  initialHeight?: number | undefined;
   api: EditorApi | undefined;
   projectId: string;
   tree: ProjectTreeNode[];
@@ -41,9 +42,10 @@ export interface PreviewLocalEditorProps {
 }
 
 /** Monaco-backed editor for a source range opened from the visual preview. */
-export function PreviewLocalEditor({ value, onApply, onDraftChange, onCancel, onInsertBefore, onInsertAfter, mathDraft = false, sourceStartLine = 1, initialCursorOffset, api, projectId, tree, currentPath, definitions, mathContext, onSpellContextMenu, onDetectedLanguage, onForwardSync }: PreviewLocalEditorProps) {
+export function PreviewLocalEditor({ value, onApply, onDraftChange, onCancel, onInsertBefore, onInsertAfter, mathDraft = false, sourceStartLine = 1, initialCursorOffset, initialHeight, api, projectId, tree, currentPath, definitions, mathContext, onSpellContextMenu, onDetectedLanguage, onForwardSync }: PreviewLocalEditorProps) {
   const preferences = useSettings();
   const [draft, setDraft] = useState(value);
+  const [measuredContentHeight, setMeasuredContentHeight] = useState<number>();
   const [cursorMath, setCursorMath] = useState<{ expression: string; displayMode: boolean; start: number; end: number }>();
   const [mathAnchor, setMathAnchor] = useState<DOMRect>();
   const [confirmLeave, setConfirmLeave] = useState(false);
@@ -59,6 +61,9 @@ export function PreviewLocalEditor({ value, onApply, onDraftChange, onCancel, on
   const symbolPairing = useRef<{ dispose(): void } | null>(null);
   const mode = preferences.get("spellCheckMode");
   const language = preferences.get("spellCheckLanguage");
+  const lineHeight = Math.round(preferences.get("fontSize") * 1.5);
+  const estimatedContentHeight = Math.max(40, draft.split(/\r\n?|\n/).length * lineHeight + 20);
+  const contentHeight = Math.max(estimatedContentHeight, measuredContentHeight ?? 0, initialHeight === undefined ? 0 : initialHeight - 66);
   draftRef.current = draft;
   applyRef.current = onApply;
   cancelRef.current = onCancel;
@@ -78,6 +83,13 @@ export function PreviewLocalEditor({ value, onApply, onDraftChange, onCancel, on
   }, []);
   const onMount: OnMount = (editor, monaco) => {
     localEditorRef.current = editor;
+    const updateContentHeight = () => {
+      const next = Math.max(40, Math.ceil(editor.getContentHeight()));
+      setMeasuredContentHeight((current) => current === next ? current : next);
+    };
+    editor.onDidContentSizeChange(updateContentHeight);
+    editor.onDidLayoutChange(updateContentHeight);
+    requestAnimationFrame(updateContentHeight);
     const model = editor.getModel();
     if (model && initialCursorOffset !== undefined) {
       const offset = Math.max(0, Math.min(initialCursorOffset, model.getValueLength()));
@@ -192,7 +204,7 @@ export function PreviewLocalEditor({ value, onApply, onDraftChange, onCancel, on
   }, [confirmLeave]);
   return <><div ref={editorShellRef} className="preview-local-editor" onClick={(event) => event.stopPropagation()}>
     {activeMath && mathAnchor && <MathPreviewPopover source={activeMath.expression} displayMode={activeMath.displayMode} context={mathContext} anchor={mathAnchor} className="preview-draft-math" onInteractionChange={(active) => { mathPopoverInteracting.current = active; if (!active && !localEditorRef.current?.hasTextFocus()) setCursorMath(undefined); }}/>}
-    <Editor height="150px" language="latex" value={draft} onChange={(next) => { const nextValue = next ?? ""; draftRef.current = nextValue; setDraft(nextValue); onDraftChange?.(nextValue); }} theme={editorThemeName(preferences.get("theme"))} options={{ minimap: { enabled: false }, lineNumbers: "off", folding: false, fontSize: preferences.get("fontSize"), tabSize: preferences.get("tabSize"), wordWrap: preferences.get("wordWrap") ? "on" : "off", lineHeight: 23, automaticLayout: true, scrollBeyondLastLine: false, padding: { top: 10 }, quickSuggestions: { other: true, comments: true, strings: true }, suggestOnTriggerCharacters: true, autoClosingBrackets: "never", autoClosingQuotes: "always", autoSurround: "never" }} onMount={onMount} />
+    <Editor height={`${contentHeight}px`} language="latex" value={draft} onChange={(next) => { const nextValue = next ?? ""; draftRef.current = nextValue; setDraft(nextValue); onDraftChange?.(nextValue); }} theme={editorThemeName(preferences.get("theme"))} options={{ minimap: { enabled: false }, lineNumbers: "off", folding: false, fontSize: preferences.get("fontSize"), tabSize: preferences.get("tabSize"), wordWrap: "on", lineHeight, automaticLayout: true, scrollbar: { handleMouseWheel: false, alwaysConsumeMouseWheel: false }, scrollBeyondLastLine: false, padding: { top: 10 }, quickSuggestions: { other: true, comments: true, strings: true }, suggestOnTriggerCharacters: true, autoClosingBrackets: "never", autoClosingQuotes: "always", autoSurround: "never" }} onMount={onMount} />
     <div className="preview-local-editor-actions"><span>{t("preview.editHint")}</span>{onInsertBefore && onInsertAfter && <div className="preview-line-actions"><button title={t("preview.insertLineBefore")} onClick={() => onInsertBefore(draftRef.current)}>↥＋</button><button title={t("preview.insertLineAfter")} onClick={() => onInsertAfter(draftRef.current)}>↧＋</button></div>}<button onClick={onCancel}>{t("preview.cancel")}</button><button className="primary" onClick={() => onApply(draft)}>{t("preview.apply")}</button></div>
   </div>{confirmLeave && createPortal(<div className="preview-confirm-backdrop"><section className="preview-confirm-dialog" role="dialog" aria-modal="true" aria-label={t("preview.unsavedTitle")}><h2>{t("preview.unsavedTitle")}</h2><p>{t("preview.unsavedMessage")}</p><div><button autoFocus className="primary" onClick={() => { setConfirmLeave(false); applyRef.current(draftRef.current); }}>{t("preview.yes")}</button><button onClick={() => { setConfirmLeave(false); cancelRef.current(); }}>{t("preview.no")}</button></div></section></div>, document.body)}</>;
 }

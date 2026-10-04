@@ -1,111 +1,68 @@
 import { DiffEditor, Editor, type OnMount } from "@monaco-editor/react";
-import { useCallback, useEffect, useMemo, useRef, useState, type DragEvent } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal, flushSync } from "react-dom";
-import type { AIChangeSet, BlockGraphSnapshot, BlockId, BlockTextEdit, BlockTextRange, CompileResult, Diagnostic, Project, ProjectTreeNode, RelationDirection, RelationNeighborhood, SemanticBlock, SpellCheckStatus, StructuralHistoryState, SyncTexPdfPosition } from "@latex-editor/contracts";
-import { isAIReviewableProjectPath, isAIStructureMetadataPath } from "@latex-editor/contracts/ai-paths";
+import type { AIChangeSet, BlockGraphSnapshot, BlockId, BlockTextEdit, CompileResult, Diagnostic, Project, ProjectTreeNode, SemanticBlock, SpellCheckStatus, StructuralHistoryState, SyncTexPdfPosition } from "@latex-editor/contracts";
 import toolbarActions from "../resources/toolbar-actions.json" with { type: "json" };
 import { t, type MessageKey } from "../i18n/index.js";
 import { PreviewPane } from "../preview/PreviewPane.js";
 import { SettingsDialog, type SettingsSection } from "../settings/SettingsDialog.js";
 import { useSettings, settings } from "../settings/service.js";
 import { bindings, commands, displayBinding } from "../settings/commands.js";
-import { EnvironmentQuickAction, environmentCursorOffset, environmentInsertion } from "../preview/EnvironmentPicker.js";
-import { addCommandLabel, addEnvironmentLabel, nextAutomaticLabel } from "../preview/labels.js";
-import { resolveExit, unsavedChanges, useUnsavedChanges } from "../lifecycle/unsavedChanges.js";
+import { EnvironmentQuickAction } from "../preview/EnvironmentPicker.js";
+import { addCommandLabel, nextAutomaticLabel } from "../preview/labels.js";
+import { useUnsavedChanges } from "../lifecycle/unsavedChanges.js";
 import { EditHistory, applyTextPatch, patchFromEdits, textPatch, type HistoryDirection } from "./EditHistory.js";
-import { NavigationHistory, navigationLocationValid, type NavigationLocation } from "./NavigationHistory.js";
-import { automaticHunkIds, reviewFileContents, transitionAIFile, type AIApplyResult } from "../ai/changeOperations.js";
+import { NavigationHistory } from "./NavigationHistory.js";
+import { automaticHunkIds, reviewFileContents } from "../ai/changeOperations.js";
 import type { EnvironmentDefinition } from "../preview/types.js";
-import { CompletionController } from "../completion/CompletionController.js";
-import { SpellCheckController, type SpellContextRequest } from "../spellcheck/SpellCheckController.js";
+import type { CompletionController } from "../completion/CompletionController.js";
+import type { SpellCheckController, SpellContextRequest } from "../spellcheck/SpellCheckController.js";
 import { toolbarInsertion } from "./toolbarInsertion.js";
 import { MathMacroRegistry, type ProjectMathSource } from "../math/MathMacroRegistry.js";
-import { MathNodeIndex } from "../math/MathNodeLocator.js";
-import { extractMathExpression } from "../math/MathRenderService.js";
 import { MathPreviewPopover } from "../math/MathPreviewPopover.js";
 import { AdvancedSearchPanel } from "../search/AdvancedSearchPanel.js";
-import { SearchEngine, replaceRanges } from "../search/SearchEngine.js";
-import { defaultSearchQuery, type SearchDocument, type SearchQuery, type SearchResult } from "../search/types.js";
-import { FilterEngine } from "../filter/FilterEngine.js";
-import { defaultFilterQuery, type FilterGroupId, type FilterQuery } from "../filter/types.js";
-import { parsePreview } from "../preview/parser.js";
-import { previewBlocksForReconciliation } from "../preview/reconciliation.js";
-import { installEditorContextActions } from "./editorContextActions.js";
+import { type FilterGroupId, type FilterQuery } from "../filter/types.js";
 import { editorThemeName } from "../themes/runtime.js";
-import { boundaryRepairCandidates, normalizeDocumentSelection, type BoundaryRepairCandidate, type DocumentSelection } from "../custom-blocks/selection.js";
-import { installSymbolPairing } from "../editor/symbolPairing.js";
+import { normalizeDocumentSelection, type DocumentSelection } from "../custom-blocks/selection.js";
 import { formatLatexSource } from "../editor/latexFormatter.js";
 import { RelationBrowser } from "../relations/RelationBrowser.js";
 import { RelationInspector } from "../relations/RelationInspector.js";
 import { RelationGraphView } from "../relations/RelationGraphView.js";
-import { candidateRelationState, focusableRelationBlock, projectRelationCandidates, relationDocumentIds, relationEndpoints, relationScope, type RelationFilters } from "../relations/model.js";
 import { ImageQuickAction } from "../figure/ImageQuickAction.js";
-import { ImageInsertDialog, type ImageInsertChoice } from "../figure/ImageInsertDialog.js";
+import { ImageInsertDialog } from "../figure/ImageInsertDialog.js";
 import { FigureInspector, type FigureSelection } from "../figure/FigureInspector.js";
-import { emptyFigureInsertion, emptyMultiImageInsertion, imageInsertion, multiImageInsertion, uniqueFigureLabels } from "../figure/insert.js";
-import { patchFigureSource } from "../figure/patch.js";
-import { TableInsertDialog, type TableInsertChoice } from "../table/TableInsertDialog.js";
+import { TableInsertDialog } from "../table/TableInsertDialog.js";
 import { TableInspector } from "../table/TableInspector.js";
 import type { TableSelection } from "../table/model.js";
-import { addLatexPackage, tableInsertion, uniqueTableLabel } from "../table/insert.js";
 import { ReferenceLibraryPanel } from "../references/ReferenceLibraryPanel.js";
 import { BibtexPreviewPane } from "../references/BibtexPreviewPane.js";
 import { ProjectHistoryPanel } from "../history/ProjectHistoryPanel.js";
 import { AIView } from "../ai/AIView.js";
 import { ContextMenu, DiagnosticRow, EntryNameInput, Icon, Logo, Menu, Placeholder, SpellContextMenu, Tree, spellLanguageLabel, type FileContext } from "./WorkbenchComponents.js";
+import { projectPathJoin, createWorkbenchFileActions, type DeleteEntryRequest, type EditorTab, type EntryNameRequest } from "./fileActions.js";
+import { createFileOpeningController } from "./fileOpening.js";
+import { createProjectSessionController } from "./projectSession.js";
+import { createHistoryRestoreHandler } from "./historyRestore.js";
+import { useEditorStateEffects } from "./editorStateEffects.js";
+import { restoreLayout, projectFilePaths, sourceOffsetAtLine } from "./layout.js";
+import { createNavigationController, type NavigationRequest } from "./navigationController.js";
+import { createWorkbenchEditorMount, type SourceMathPreview } from "./editorMount.js";
+import { createAIChangeController } from "./aiChangeController.js";
+import { emptyBlockSnapshot, useRelationController } from "./relationController.js";
+import { createDocumentInsertions, type ImageDialogState } from "./documentInsertions.js";
+import { createDocumentActions } from "./documentActions.js";
+import { useSearchController } from "./searchController.js";
+import { createUserBlockController, type BoundaryRepairPrompt } from "./userBlockController.js";
 
 type SidebarMode = "files" | "search" | "library" | "ai" | "history" | "settings" | "help";
-type PaneType = "source" | "preview" | "pdf";
 type BottomTab = "problems" | "output" | "compileLog";
 type MenuName = "file" | "edit" | "view" | "history" | "projects";
 
-interface EditorTab { path: string; content: string; dirty: boolean }
-interface SourceMathPreview { source: string; displayMode: boolean; anchor: DOMRect; kind: "source-cursor" | "source-hover" }
-interface NavigationRequest { path: string; offset?: number | undefined; line?: number | undefined; column?: number | undefined; nonce: number }
-interface PersistedLayout { sidebarWidth: number; fileTreeHeight: number; splitRatio: number; bottomPanelHeight: number; sidebarVisible: boolean; mode: "single" | "split"; singlePane: PaneType; leftPane: "source" | "preview"; rightPane: "preview" | "pdf" }
 
-const emptyBlockSnapshot: BlockGraphSnapshot = { version: 2, blocks: [], dependencies: [], structuralParents: [] };
-const defaultRelationFilters: RelationFilters = { hierarchyScope: "all", role: "all", origin: "all", label: "all", textQuery: "" };
-
-const defaultLayout: PersistedLayout = { sidebarWidth: 280, fileTreeHeight: 330, splitRatio: 52, bottomPanelHeight: 220, sidebarVisible: true, mode: "split", singlePane: "source", leftPane: "source", rightPane: "pdf" };
-
-function sourcePositionAtOffset(source: string, offset: number): { lineNumber: number; column: number } {
-  const lines = source.slice(0, Math.min(Math.max(0, offset), source.length)).split(/\r\n|\r|\n/);
-  return { lineNumber: lines.length, column: (lines.at(-1)?.length ?? 0) + 1 };
-}
-
-function sourceOffsetAtLine(source: string, line: number, column = 1): number {
-  const expression = /\r\n|\r|\n/g;
-  let start = 0;
-  for (let index = 1; index < line; index += 1) {
-    const newline = expression.exec(source);
-    if (!newline) return source.length;
-    start = expression.lastIndex;
-  }
-  const end = source.slice(start).search(/\r\n|\r|\n/);
-  return Math.min(start + Math.max(0, column - 1), end < 0 ? source.length : start + end);
-}
-
-function restoreLayout(): PersistedLayout {
-  return { ...defaultLayout, ...settings.get("layout") };
-}
-
-function relativeAssetPath(filePath: string, assetPath: string): string {
-  const from = filePath.replaceAll("\\", "/").split("/").slice(0, -1);
-  const to = assetPath.replaceAll("\\", "/").split("/");
-  while (from.length && to.length && from[0]?.toLocaleLowerCase() === to[0]?.toLocaleLowerCase()) { from.shift(); to.shift(); }
-  return [...from.map(() => ".."), ...to].join("/");
-}
-
-function projectFilePaths(nodes: ProjectTreeNode[]): string[] {
-  return nodes.flatMap((node) => node.kind === "file" ? [node.relativePath] : node.children ? projectFilePaths(node.children) : []);
-}
 
 type FileDropDetail = { paths: string[]; destination: string };
 type BlockContext = { x: number; y: number; selection: DocumentSelection };
 type BlockCreationAvailability = { kind: "none" | "checking" | "valid" | "repair" | "invalid" } | { kind: "edit"; block: SemanticBlock };
-type BoundaryRepairPrompt = { conflictName: string; candidates: BoundaryRepairCandidate[] };
-type ImageDialogState = { kind: "insert" } | { kind: "replace"; selection: FigureSelection; imageIndex: number };
 
 
 export function Workbench({ project, projects, environments, onHome, onSwitch, onOpenLibrary }: { project: Project; projects: Project[]; environments: EnvironmentDefinition[]; onHome(): void; onSwitch(project: Project): void; onOpenLibrary(): void }) {
@@ -141,18 +98,6 @@ export function Workbench({ project, projects, environments, onHome, onSwitch, o
   const [previewSelection, setPreviewSelection] = useState<DocumentSelection>();
   const [blockSnapshot, setBlockSnapshot] = useState<BlockGraphSnapshot>();
   const [previewSemanticIds, setPreviewSemanticIds] = useState<Record<string, BlockId>>({});
-  const [relationFocusId, setRelationFocusId] = useState<BlockId | null>(null);
-  const [relationSelectedId, setRelationSelectedId] = useState<BlockId | null>(null);
-  const [relationDocumentFiltered, setRelationDocumentFiltered] = useState(true);
-  const [relationFocusHistory, setRelationFocusHistory] = useState<BlockId[]>([]);
-  const [relationDirection, setRelationDirection] = useState<RelationDirection>("both");
-  const [relationDepth, setRelationDepth] = useState<number | "all">(2);
-  const [relationFilters, setRelationFilters] = useState<RelationFilters>(defaultRelationFilters);
-  const [relationLocateRequest, setRelationLocateRequest] = useState<{ blockId: BlockId; nonce: number }>();
-  const [relationChooser, setRelationChooser] = useState<{ candidateId: BlockId; x: number; y: number }>();
-  const [relationGraphOpen, setRelationGraphOpen] = useState(false);
-  const [relationGraphFocusId, setRelationGraphFocusId] = useState<BlockId | null>(null);
-  const [relationNeighborhood, setRelationNeighborhood] = useState<RelationNeighborhood>();
   const [, setStructuralHistory] = useState<StructuralHistoryState>({ canUndo: false, canRedo: false });
   const structuralHistory = { canUndo: editHistory.current.canUndo, canRedo: editHistory.current.canRedo };
   const [blockCreationAvailability, setBlockCreationAvailability] = useState<BlockCreationAvailability>({ kind: "none" });
@@ -164,8 +109,8 @@ export function Workbench({ project, projects, environments, onHome, onSwitch, o
   const [tableSelection, setTableSelection] = useState<TableSelection>();
   const [blockNotice, setBlockNotice] = useState<string>();
   const [createdBlockHighlight, setCreatedBlockHighlight] = useState<{ fileId: string; start: number; end: number; nonce: number }>();
-  const [nameRequest, setNameRequest] = useState<{ message: string; fallback: string; resolve(value?: string): void }>();
-  const [deleteRequest, setDeleteRequest] = useState<{ path: string; resolve(value: boolean): void }>();
+  const [nameRequest, setNameRequest] = useState<EntryNameRequest>();
+  const [deleteRequest, setDeleteRequest] = useState<DeleteEntryRequest>();
   const [compileState, setCompileState] = useState<"idle" | "running">("idle");
   const [compileResult, setCompileResult] = useState<CompileResult>();
   const [navigationRequest, setNavigationRequest] = useState<NavigationRequest>();
@@ -180,18 +125,12 @@ export function Workbench({ project, projects, environments, onHome, onSwitch, o
   const [spellContextMenu, setSpellContextMenu] = useState<SpellContextRequest>();
   const [spellMenuOpen, setSpellMenuOpen] = useState(false);
   const [projectMathSources, setProjectMathSources] = useState<ProjectMathSource[]>([]);
-  const [projectSearchDocuments, setProjectSearchDocuments] = useState<SearchDocument[]>([]);
   const [sourceMathPreview, setSourceMathPreview] = useState<SourceMathPreview>();
   const clearHoverMathPreviewRef = useRef<() => void>(() => undefined);
   const mathPopoverInteracting = useRef(false);
   const mathPopoverInteractionChangeRef = useRef<(active: boolean) => void>(() => undefined);
   const mathPreviewOnHover = store.get("mathPreviewOnHover");
   useEffect(() => { if (!mathPreviewOnHover) clearHoverMathPreviewRef.current(); }, [mathPreviewOnHover]);
-  const [searchQuery, setSearchQuery] = useState<SearchQuery>(defaultSearchQuery);
-  const [replacement, setReplacement] = useState("");
-  const [replaceOpen, setReplaceOpen] = useState(false);
-  const [filterQuery, setFilterQuery] = useState<FilterQuery>(defaultFilterQuery);
-  const [activeSearchResult, setActiveSearchResult] = useState<SearchResult>();
   const editorRef = useRef<Parameters<OnMount>[0] | null>(null);
   const aiFileNavigationRef = useRef<(path: string, line?: number) => void>(() => undefined);
   const workbenchRef = useRef<HTMLDivElement | null>(null);
@@ -203,8 +142,6 @@ export function Workbench({ project, projects, environments, onHome, onSwitch, o
   const activePathRef = useRef<string | undefined>(undefined);
   const environmentsRef = useRef<EnvironmentDefinition[]>([]);
   const mathRegistryRef = useRef(new MathMacroRegistry());
-  const searchEngineRef = useRef(new SearchEngine());
-  const filterEngineRef = useRef(new FilterEngine());
   const searchDecorationsRef = useRef<ReturnType<Parameters<OnMount>[0]["createDecorationsCollection"]> | null>(null);
   const resizeCleanup = useRef<(() => void) | undefined>(undefined);
   const lastTextPane = useRef<"source" | "preview">("source");
@@ -213,6 +150,7 @@ export function Workbench({ project, projects, environments, onHome, onSwitch, o
   const aiOperationQueue = useRef<Promise<void>>(Promise.resolve());
   const aiAutoAttempts = useRef(new Set<string>());
   const rangeMappingTimers = useRef(new Map<string, number>());
+  const treeRefreshSequence = useRef(0);
   const previewViewportAnchor = useRef<{ fileId: string; offset: number } | undefined>(undefined);
   const previewPositions = useRef(new Map<string, { offset: number; scrollTop: number }>());
   const sourcePositions = useRef(new Map<string, { offset: number; scrollTop: number }>());
@@ -235,14 +173,6 @@ export function Workbench({ project, projects, environments, onHome, onSwitch, o
   const visualEditorVisible = layout.mode === "single" ? layout.singlePane === "preview" : layout.leftPane === "preview";
   const creationSelection = sourceEditorVisible ? sourceSelection : previewSelection;
   const relationModeActive = outlineMode === "relations";
-  const currentRelationScope = useMemo(() => relationScope(blockSnapshot ?? emptyBlockSnapshot, relationFocusId, relationDirection, relationDepth), [blockSnapshot, relationFocusId, relationDirection, relationDepth]);
-  const relationProjection = useMemo(() => {
-    const snapshot = blockSnapshot ?? emptyBlockSnapshot;
-    return projectRelationCandidates(snapshot, relationFocusId, relationFilters, currentRelationScope.focusIds.length ? relationDocumentIds(snapshot, currentRelationScope) : undefined);
-  }, [blockSnapshot, relationFocusId, relationFilters, currentRelationScope]);
-  const chooserPrerequisiteState = relationChooser && blockSnapshot
-    ? candidateRelationState(blockSnapshot, relationFocusId, relationChooser.candidateId, "prerequisite")
-    : undefined;
   const diagnostics = compileResult?.diagnostics ?? [];
   const errors = diagnostics.filter((item) => item.severity === "error").length;
   const warnings = diagnostics.filter((item) => item.severity === "warning").length;
@@ -253,32 +183,6 @@ export function Workbench({ project, projects, environments, onHome, onSwitch, o
     for (const tab of tabs) if (/\.(?:tex|sty)$/i.test(tab.path)) sources.set(tab.path.replaceAll("\\", "/").toLocaleLowerCase(), { path: tab.path, content: tab.content });
     return mathRegistryRef.current.rebuild([...sources.values()], project.mainFile ?? activePath);
   }, [projectMathSources, tabs, project.mainFile, activePath]);
-  const searchDocuments = useMemo(() => {
-    const documents = new Map(projectSearchDocuments.map((document) => [document.fileId, document]));
-    for (const tab of tabs) documents.set(tab.path, { fileId: tab.path, content: tab.content });
-    return [...documents.values()];
-  }, [projectSearchDocuments, tabs]);
-  const filterDocuments = useMemo(() => searchDocuments.filter((item) => item.fileId.toLocaleLowerCase().endsWith(".tex")).map((item) => ({ ...item, preview: parsePreview(item.content, item.fileId, previewEnvironments) })), [searchDocuments, previewEnvironments]);
-  const reconciliationInput = useMemo(() => {
-    const document = filterDocuments.find((item) => item.fileId === activePath);
-    return document ? previewBlocksForReconciliation(document.preview, document.content) : undefined;
-  }, [filterDocuments, activePath]);
-  const filterEvaluations = useMemo(() => new Map(filterDocuments.map((item) => [item.fileId, filterEngineRef.current.evaluate(item.preview.nodes, item.content, item.fileId, filterQuery)])), [filterDocuments, filterQuery]);
-  const searchedDocuments = useMemo(() => searchQuery.scope === "current-file" ? searchDocuments.filter((item) => item.fileId === activePath) : searchDocuments, [searchDocuments, searchQuery.scope, activePath]);
-  const allowedSearchRanges = useMemo(() => {
-    if (!filterQuery.enabled) return undefined;
-    const ranges = new Map<string, Array<[number, number]>>();
-    for (const document of searchedDocuments) ranges.set(document.fileId, filterEvaluations.get(document.fileId)?.ranges ?? []);
-    return ranges;
-  }, [filterQuery.enabled, filterEvaluations, searchedDocuments]);
-  const searchResponse = useMemo(() => searchEngineRef.current.search(searchQuery, searchedDocuments, allowedSearchRanges), [searchQuery, searchedDocuments, allowedSearchRanges]);
-  const filterOptions = useMemo(() => {
-    const current = filterDocuments.find((item) => item.fileId === activePath) ?? filterDocuments[0];
-    const options = filterEngineRef.current.options(current?.preview.nodes ?? [], searchDocuments.map((item) => item.fileId));
-    for (const item of filterDocuments) for (const type of filterEngineRef.current.options(item.preview.nodes, []).blockTypes) if (!options.blockTypes.includes(type)) options.blockTypes.push(type);
-    options.blockTypes.sort();
-    return options;
-  }, [filterDocuments, searchDocuments, activePath]);
   const spellMode = store.get("spellCheckMode");
   const spellManualLanguage = store.get("spellCheckLanguage");
   treeRef.current = tree;
@@ -335,57 +239,10 @@ export function Workbench({ project, projects, environments, onHome, onSwitch, o
   useEffect(() => {
     if (!api) return;
     let cancelled = false;
-    void Promise.all([api.blockGraph.snapshot(project.id), api.blockGraph.historyState(project.id)]).then(([snapshot, history]) => {
-      if (cancelled) return;
-      setBlockSnapshot(snapshot);
-      setStructuralHistory(history);
-    }).catch(() => undefined);
-    return () => { cancelled = true; };
-  }, [api, project.id]);
-  useEffect(() => {
-    if (!api || !reconciliationInput) return;
-    const timer = setTimeout(() => {
-      void api.blockGraph.reconcileParsedBlocks(project.id, reconciliationInput).then((result) => {
-        setBlockSnapshot(result.snapshot);
-        setPreviewSemanticIds(result.transientToBlockId);
-      }).catch((error: unknown) => {
-        console.warn("Unable to reconcile parsed blocks", error);
-      });
-    }, 450);
-    return () => clearTimeout(timer);
-  }, [api, project.id, reconciliationInput]);
-  useEffect(() => {
-    if (!api) return;
-    return api.relations.onUpdate(update => {
-      if (update.projectId !== project.id) return;
-      if (update.event.type !== "graph-invalidated") editHistory.current.recordStructure();
-      void Promise.all([api.blockGraph.snapshot(project.id), api.blockGraph.historyState(project.id)]).then(([snapshot, history]) => { setBlockSnapshot(snapshot); setStructuralHistory(history); }).catch(() => undefined);
-    });
-  }, [api, project.id]);
-  useEffect(() => {
-    if (!api || !relationGraphOpen) return;
-    let cancelled = false;
-    void api.blockGraph.getRelationNeighborhood(project.id, relationGraphFocusId, relationGraphFocusId ? relationDirection : "both", relationGraphFocusId ? relationDepth : "all").then((neighborhood) => {
-      if (!cancelled) setRelationNeighborhood(neighborhood);
-    }).catch((error: unknown) => setBlockNotice(error instanceof Error ? error.message : String(error)));
-    return () => { cancelled = true; };
-  }, [api, project.id, relationGraphOpen, relationGraphFocusId, relationDirection, relationDepth, blockSnapshot]);
-  useEffect(() => {
-    if (!api) return;
-    let cancelled = false;
     const paths = projectFilePaths(tree).filter((path) => /\.(?:tex|sty)$/i.test(path));
     void Promise.all(paths.map(async (path): Promise<ProjectMathSource | undefined> => {
       try { return { path, content: (await api.files.read(project.id, path)).content }; } catch { return undefined; }
     })).then((sources) => { if (!cancelled) setProjectMathSources(sources.filter((source): source is ProjectMathSource => !!source)); });
-    return () => { cancelled = true; };
-  }, [api, project.id, tree]);
-  useEffect(() => {
-    if (!api) return;
-    let cancelled = false;
-    const paths = projectFilePaths(tree).filter((path) => /\.(?:tex|sty|cls|bib|txt|md)$/i.test(path));
-    void Promise.all(paths.map(async (path): Promise<SearchDocument | undefined> => {
-      try { return { fileId: path, content: (await api.files.read(project.id, path)).content }; } catch { return undefined; }
-    })).then((documents) => { if (!cancelled) setProjectSearchDocuments(documents.filter((item): item is SearchDocument => !!item)); });
     return () => { cancelled = true; };
   }, [api, project.id, tree]);
   useEffect(() => {
@@ -444,154 +301,30 @@ export function Workbench({ project, projects, environments, onHome, onSwitch, o
     window.addEventListener("texweave:file-context", handleFileContext);
     return () => window.removeEventListener("texweave:file-context", handleFileContext);
   }, []);
+  const refreshTree = useCallback(async () => {
+    if (!api) return undefined;
+    const request = ++treeRefreshSequence.current;
+    const nextTree = await api.files.tree(project.id);
+    if (request === treeRefreshSequence.current) setTree(nextTree);
+    return nextTree;
+  }, [api, project.id]);
   useEffect(() => {
     const handleFileDrop = (event: Event) => {
       const detail = (event as CustomEvent<FileDropDetail>).detail;
-      if (!api || detail.paths.length === 0) return;
+      if (!api || !Array.isArray(detail?.paths) || typeof detail.destination !== "string" || detail.paths.length === 0) return;
       const destination = detail.destination;
       void Promise.all(detail.paths.map(async (sourcePath) => {
         const name = sourcePath.split(/[\\/]/).at(-1);
-        if (name) await api.files.import(project.id, sourcePath, pathJoin(destination, name));
-      })).then(() => refreshTree()).catch((error: unknown) => window.alert(error instanceof Error ? error.message : String(error)));
+        if (name) await api.files.import(project.id, sourcePath, projectPathJoin(destination, name));
+      })).then(() => refreshTree()).catch(async (error: unknown) => {
+        await refreshTree().catch(() => undefined);
+        window.alert(error instanceof Error ? error.message : String(error));
+      });
     };
     window.addEventListener("texweave:file-drop", handleFileDrop);
     return () => window.removeEventListener("texweave:file-drop", handleFileDrop);
-  }, [api, project.id, tree]);
-  const refreshTree = async () => { if (api) setTree(await api.files.tree(project.id)); };
-  const pathParent = (path: string) => path.includes("/") ? path.slice(0, path.lastIndexOf("/")) : "";
-  const pathJoin = (parent: string, name: string) => parent ? `${parent}/${name}` : name;
-  const promptEntryName = (message: string, fallback: string) => {
-    return new Promise<string | undefined>((resolve) => setNameRequest({ message, fallback, resolve }));
-  };
-  const createEntry = async (directory: boolean, forcedParent?: string) => {
-    if (!api) return;
-    const parent = forcedParent ?? (fileContext?.path && fileContext.kind === "directory" ? fileContext.path : "");
-    const name = await promptEntryName(directory ? t("files.newFolderPrompt") : t("files.newFilePrompt"), directory ? t("files.newFolderDefault") : t("files.newFileDefault"));
-    if (!name) return;
-    try {
-      if (directory) await api.files.createDirectory(project.id, pathJoin(parent, name));
-      else await api.files.createFile(project.id, pathJoin(parent, name));
-      await refreshTree();
-    } catch (error) { window.alert(error instanceof Error ? error.message : String(error)); }
-  };
-  const updateMovedEntryReferences = async (from: string, to: string) => {
-    navigationHistory.current.clear();
-    const movedPath = (path: string) => path === from || path.startsWith(from + "/") ? to + path.slice(from.length) : path;
-    editHistory.current.renameFile(from, to);
-    savedContents.current = new Map([...savedContents.current].map(([path, content]) => [movedPath(path), content]));
-    setTabs((current) => current.map((tab) => ({ ...tab, path: movedPath(tab.path) })));
-    setActivePath((value) => value ? movedPath(value) : value);
-    const nextMainFile = project.mainFile ? movedPath(project.mainFile) : undefined;
-    if (api && project.mainFile && nextMainFile && nextMainFile !== project.mainFile && nextMainFile.toLocaleLowerCase().endsWith(".tex")) {
-      onSwitch(await api.projects.setMainFile(project.id, nextMainFile));
-    }
-  };
-  const moveEntry = async (sourcePath: string, destinationDirectory: string) => {
-    if (!api || !project.writable) return;
-    const name = sourcePath.split("/").at(-1);
-    if (!name || destinationDirectory === sourcePath || destinationDirectory.startsWith(sourcePath + "/")) return;
-    const destinationPath = pathJoin(destinationDirectory, name);
-    if (destinationPath === sourcePath) return;
-    try {
-      await api.files.rename(project.id, sourcePath, destinationPath);
-      await updateMovedEntryReferences(sourcePath, destinationPath);
-      await refreshTree();
-    } catch (error) { window.alert(error instanceof Error ? error.message : String(error)); }
-  };
-  const importFromComputer = async (kind: "file" | "folder") => {
-    if (!api || importingProjectEntries || !project.writable) return;
-    setImportingProjectEntries(true);
-    let importAttempted = false;
-    try {
-      const sourcePaths = kind === "file" ? await api.dialogs.pickProjectFiles() : await api.dialogs.pickProjectFolders();
-      if (!sourcePaths.length) return;
-      navigationHistory.current.clear();
-      const currentTree = await api.files.tree(project.id);
-      setTree(currentTree);
-      const names = new Set(currentTree.map((node) => node.name.normalize("NFC").toLocaleLowerCase("en-US")));
-      const destinations = sourcePaths.map((sourcePath) => sourcePath.replace(/[\\/]+$/, "").split(/[\\/]/).at(-1) ?? "");
-      for (const name of destinations) {
-        const key = name.normalize("NFC").toLocaleLowerCase("en-US");
-        if (!name || names.has(key)) throw new Error(t("files.importConflict", { name }));
-        names.add(key);
-      }
-      for (const [index, sourcePath] of sourcePaths.entries()) {
-        const destination = destinations[index];
-        if (!destination) continue;
-        importAttempted = true;
-        await api.files.import(project.id, sourcePath, destination);
-      }
-      await refreshTree();
-      if (kind === "file" && sourcePaths.length === 1 && destinations[0]) {
-        setLayout((value) => value.mode === "single" ? { ...value, singlePane: "source" } : { ...value, leftPane: "source" });
-        await openFile(destinations[0]);
-      }
-    } catch (error) {
-      if (importAttempted) await refreshTree().catch(() => undefined);
-      window.alert(error instanceof Error ? error.message : String(error));
-    } finally {
-      setImportingProjectEntries(false);
-    }
-  };
-  const renameEntry = async () => {
-    if (!api || !fileContext?.path) return;
-    const currentPath = fileContext.path;
-    const oldName = currentPath.split("/").at(-1) ?? currentPath;
-    const newName = await promptEntryName(t("files.renamePrompt"), oldName);
-    if (!newName || newName === oldName) return;
-    try {
-      const nextPath = pathJoin(pathParent(currentPath), newName);
-      await api.files.rename(project.id, currentPath, nextPath);
-      await updateMovedEntryReferences(currentPath, nextPath);
-      await refreshTree();
-    }
-    catch (error) { window.alert(error instanceof Error ? error.message : String(error)); }
-  };
-  const copyEntry = async () => {
-    if (!api || !fileContext?.path || fileContext.kind !== "file") return;
-    const oldName = fileContext.path.split("/").at(-1) ?? fileContext.path;
-    const dot = oldName.lastIndexOf(".");
-    const fallback = dot > 0 ? `${oldName.slice(0, dot)} copy${oldName.slice(dot)}` : `${oldName} copy`;
-    const newName = await promptEntryName(t("files.copyPrompt"), fallback);
-    if (!newName) return;
-    try { await api.files.copy(project.id, fileContext.path, pathJoin(pathParent(fileContext.path), newName)); await refreshTree(); }
-    catch (error) { window.alert(error instanceof Error ? error.message : String(error)); }
-  };
-  const removeEntry = async () => {
-    if (!api || !fileContext?.path) return;
-    const confirmed = await new Promise<boolean>((resolve) => setDeleteRequest({ path: fileContext.path!, resolve }));
-    if (!confirmed) return;
-    const removedPath = fileContext.path;
-    try { if (settings.get("history").beforeLargeDelete) await api.history.snapshot(project.id, "pre-delete", removedPath, tabsRef.current.filter((tab) => tab.dirty).map((tab) => ({ path: tab.path, content: tab.content }))); await api.files.remove(project.id, removedPath); navigationHistory.current.clear(); editHistory.current.forgetFile(removedPath); setTabs((current) => current.filter((tab) => tab.path !== removedPath && !tab.path.startsWith(`${removedPath}/`))); if (activePath === removedPath || activePath?.startsWith(`${removedPath}/`)) setActivePath(undefined); await refreshTree(); }
-    catch (error) { window.alert(error instanceof Error ? error.message : String(error)); }
-  };
-  const setAsMainFile = async () => {
-    if (!api || !fileContext?.path || fileContext.kind !== "file" || !fileContext.path.toLocaleLowerCase().endsWith(".tex")) return;
-    try { const updated = await api.projects.setMainFile(project.id, fileContext.path); onSwitch(updated); }
-    catch (error) { window.alert(error instanceof Error ? error.message : String(error)); }
-  };
-  const fileContextItems = () => {
-    const hasEntry = Boolean(fileContext?.path);
-    const isFile = fileContext?.kind === "file";
-    const isTex = isFile && fileContext?.path?.toLocaleLowerCase().endsWith(".tex");
-    if (!hasEntry) return [
-      { label: t("files.newFile"), action: () => void createEntry(false) },
-      { label: t("files.newFolder"), action: () => void createEntry(true) }
-    ];
-    if (!isFile) return [
-      { label: t("files.rename"), action: () => void renameEntry() },
-      { label: t("files.newFile"), action: () => void createEntry(false) },
-      { label: t("files.newFolder"), action: () => void createEntry(true) },
-      { label: t("files.delete"), action: () => void removeEntry() }
-    ];
-    return [
-      { label: t("files.setMainFile"), disabled: !isTex, action: () => void setAsMainFile() },
-      { label: t("files.delete"), action: () => void removeEntry() },
-      { label: t("files.rename"), action: () => void renameEntry() },
-      { label: t("files.copy"), action: () => void copyEntry() }
-    ];
-  };
-  useEffect(() => { void refreshTree(); }, [project.id]);
+  }, [api, project.id, refreshTree]);
+  useEffect(() => { void refreshTree().catch(() => undefined); }, [refreshTree]);
   useEffect(() => { setFigureSelection(undefined); }, [project.id, activePath]);
   useEffect(() => { setTableSelection(undefined); }, [project.id, activePath]);
   useEffect(() => { if (!visualEditorVisible) setFigureSelection(undefined); }, [visualEditorVisible]);
@@ -618,7 +351,15 @@ export function Workbench({ project, projects, environments, onHome, onSwitch, o
     document.addEventListener("pointerdown", closeOutsideTableEditor, true);
     return () => document.removeEventListener("pointerdown", closeOutsideTableEditor, true);
   }, [tableSelection]);
-  useEffect(() => () => { completionController.current?.dispose(); spellCheckController.current?.dispose(); symbolPairingListener.current?.dispose(); }, [project.id]);
+  useEffect(() => () => {
+    completionController.current?.dispose();
+    spellCheckController.current?.dispose();
+    referenceMouseListener.current?.dispose();
+    symbolPairingListener.current?.dispose();
+    for (const timer of rangeMappingTimers.current.values()) window.clearTimeout(timer);
+    rangeMappingTimers.current.clear();
+    pendingRangeTransactions.current.clear();
+  }, [project.id]);
   useEffect(() => {
     setPdfDataUrl(undefined);
     if (!api || !project.mainFile) return;
@@ -639,174 +380,36 @@ export function Workbench({ project, projects, environments, onHome, onSwitch, o
     previewPositions.current.set(path, { offset, scrollTop: root.scrollTop });
   };
 
-  const openFile = async (path: string) => {
-    if (path !== activePathRef.current) rememberPreviewPosition();
-    const sequence = ++fileOpenSequence.current;
-    setAiDiffFile(undefined);
-    const existing = tabsRef.current.find((tab) => tab.path === path);
-    if (existing) { if (sequence === fileOpenSequence.current) setActivePath(path); return; }
-    if (!api) return;
-    const opening = openingFilesRef.current.get(path);
-    if (opening) {
-      await opening;
-      if (sequence === fileOpenSequence.current && tabsRef.current.some((tab) => tab.path === path)) setActivePath(path);
-      return;
-    }
-    const pending = (async () => {
-      try {
-        const file = await api.files.read(project.id, path);
-        const alreadyOpened = tabsRef.current.some((tab) => tab.path === path);
-        if (!alreadyOpened) {
-          const nextTabs = [...tabsRef.current, { path, content: file.content, dirty: false }];
-          tabsRef.current = nextTabs;
-          savedContents.current.set(path, file.content);
-          setTabs(nextTabs);
-          setSaveState("saved");
-        }
-      } catch { /* Binary and unsupported files stay unopened until dedicated viewers exist. */ }
-    })();
-    openingFilesRef.current.set(path, pending);
-    try { await pending; if (sequence === fileOpenSequence.current && tabsRef.current.some((tab) => tab.path === path)) setActivePath(path); }
-    finally { if (openingFilesRef.current.get(path) === pending) openingFilesRef.current.delete(path); }
-  };
+  const { openFile } = createFileOpeningController({
+    api, project, activePathRef, tabsRef, openingFilesRef, sequenceRef: fileOpenSequence, savedContents,
+    setAiDiffFile, setActivePath, setTabs, rememberPreviewPosition
+  });
 
-  const currentNavigationOrigin = (offset?: number): NavigationLocation | undefined => {
-    const path = activePathRef.current;
-    if (!path) return undefined;
-    const pane = layout.mode === "split" ? layout.leftPane : layout.singlePane === "pdf" ? lastTextPane.current : layout.singlePane;
-    const editor = editorRef.current;
-    const sourceOffset = pane === "source" && sourceModelPath.current === path && editor?.getModel() && editor.getPosition()
-      ? editor.getModel()!.getOffsetAt(editor.getPosition()!) : sourcePositions.current.get(path)?.offset;
-    const previewOffset = previewViewportAnchor.current?.fileId === path ? previewViewportAnchor.current.offset : previewPositions.current.get(path)?.offset;
-    return {
-      path,
-      offset: Math.max(0, offset ?? (pane === "source" ? sourceOffset : previewOffset) ?? 0),
-      layout: { mode: layout.mode, singlePane: layout.mode === "single" ? pane : layout.singlePane, leftPane: layout.leftPane, rightPane: layout.rightPane }
-    };
-  };
-  const validNavigationLocation = (location: NavigationLocation): boolean => navigationLocationValid(location, tabsRef.current.find((tab) => tab.path === location.path)?.content);
-  const navigateTo = async (path: string, position: { offset?: number | undefined; line?: number | undefined; column?: number | undefined } = {}, view: "preserve" | "source" = "preserve", recordHistory = true) => {
-    const origin = recordHistory && (path !== activePathRef.current || position.offset !== undefined || position.line !== undefined) ? currentNavigationOrigin() : undefined;
-    const targetLayout: NavigationLocation["layout"] = {
-      mode: layout.mode, singlePane: view === "source" ? "source" : layout.mode === "single" && layout.singlePane === "pdf" ? lastTextPane.current : layout.singlePane,
-      leftPane: view === "source" ? "source" : layout.leftPane, rightPane: layout.rightPane
-    };
-    if (view === "source") setLayout((value) => value.mode === "single" ? { ...value, singlePane: "source" } : { ...value, leftPane: "source" });
-    else setLayout((value) => value.mode === "single" && value.singlePane === "pdf" ? { ...value, singlePane: lastTextPane.current } : value);
-    if (position.offset !== undefined || position.line !== undefined) {
-      setNavigationRequest({ path, ...position, nonce: ++navigationNonce.current });
-    } else setNavigationRequest(undefined);
-    if (path !== activePathRef.current) await openFile(path);
-    const targetContent = tabsRef.current.find((tab) => tab.path === path)?.content;
-    if (origin && targetContent !== undefined) {
-      const targetPane = targetLayout.mode === "single" ? targetLayout.singlePane : targetLayout.leftPane;
-      const targetOffset = position.offset ?? (position.line !== undefined ? sourceOffsetAtLine(targetContent, position.line, position.column)
-        : targetPane === "source" ? sourcePositions.current.get(path)?.offset : previewPositions.current.get(path)?.offset) ?? 0;
-      navigationHistory.current.record(origin, { path, offset: Math.max(0, Math.min(targetOffset, targetContent.length)), layout: targetLayout });
-    }
-  };
-  const restoreNavigationLocation = async (location: NavigationLocation) => {
-    setLayout((value) => ({ ...value, ...location.layout }));
-    setNavigationRequest({ path: location.path, offset: location.offset, nonce: ++navigationNonce.current });
-    if (location.path !== activePathRef.current) await openFile(location.path);
-  };
-  const navigateBack = async () => {
-    const location = navigationHistory.current.back(validNavigationLocation);
-    if (location) await restoreNavigationLocation(location);
-  };
-  const navigateForward = async () => {
-    const location = navigationHistory.current.forward(validNavigationLocation);
-    if (location) await restoreNavigationLocation(location);
-  };
+  const { createEntry, moveEntry, importFromComputer, fileContextItems } = createWorkbenchFileActions({
+    api, project, fileContext, activePath, tabsRef, savedContents, editHistory, navigationHistory,
+    setTabs, setActivePath, setLayout, importingProjectEntries, setImportingProjectEntries,
+    setNameRequest, setDeleteRequest, refreshTree, openFile, onSwitch
+  });
 
-  const forwardSyncToPdf = async (path: string, line: number, column = 1) => {
-    if (!api || !pdfFile || !path.toLocaleLowerCase().endsWith(".tex")) return;
-    try {
-      const target = await api.synctex.forward(project.id, path, pdfFile, line, column);
-      setPdfTarget({ ...target, requestId: Date.now() });
-      setLayout((value) => value.mode === "split" ? { ...value, rightPane: "pdf" } : { ...value, singlePane: "pdf" });
-    } catch (error) { window.alert(error instanceof Error ? error.message : String(error)); }
-  };
+  const { currentNavigationOrigin, navigateTo, navigateBack, navigateForward, forwardSyncToPdf, reverseSyncFromPdf } = createNavigationController({
+    project, api, pdfFile, layout, setLayout, activePathRef, tabsRef, editorRef, sourceModelPath, lastTextPane,
+    sourcePositions, previewPositions, previewViewportAnchor, navigationHistory, navigationNonce,
+    setNavigationRequest, setPdfTarget, openFile
+  });
 
-  const reverseSyncFromPdf = async (page: number, x: number, y: number) => {
-    if (!api || !pdfFile) return;
-    try {
-      const target = await api.synctex.reverse(project.id, pdfFile, page, x, y);
-      const pane = lastTextPane.current;
-      setLayout((value) => value.mode === "split" ? { ...value, leftPane: pane } : { ...value, singlePane: pane });
-      await navigateTo(target.file, { line: target.line, column: target.column });
-    } catch (error) { window.alert(error instanceof Error ? error.message : String(error)); }
-  };
-
-  const saveTabs = async (all: boolean, flush: (update: () => void) => void = update => update()) => {
-    if (!api) return;
-    const pending = tabs.filter((tab) => tab.dirty && (all || tab.path === activePath));
-    if (!pending.length) return;
-    editHistory.current.breakGroup();
-    setSaveState("saving");
-    try {
-      for (const tab of pending) {
-        await api.files.write(project.id, tab.path, tab.content);
-        savedContents.current.set(tab.path, tab.content);
-        flush(() => setTabs((current) => current.map((value) => value.path === tab.path && value.content === tab.content ? { ...value, dirty: false } : value)));
-      }
-      completionController.current?.invalidate();
-      setSaveState("saved");
-    } catch { setSaveState("failed"); throw new Error(t("save.failed")); }
-  };
-  const saveActive = () => saveTabs(false);
-  const snapshotOnLeave = async () => {
-    if (!api || !settings.get("history").autoSnapshot) return;
-    const overrides = tabsRef.current.filter((tab) => tab.dirty).map((tab) => ({ path: tab.path, content: tab.content }));
-    await api.history.snapshot(project.id, "project-close", undefined, overrides);
-  };
-  const confirmProjectNavigation = async (navigate: () => void) => {
-    const lifecycle = window.latexEditor?.lifecycle;
-    const canLeave = await resolveExit(unsavedChanges, {
-      confirm: () => lifecycle?.confirmClose({
-        title: t("navigation.unsavedTitle"),
-        message: t("navigation.unsavedMessage"),
-        detail: t("navigation.unsavedDetail"),
-        buttons: [t("navigation.save"), t("navigation.discard"), t("navigation.stay")]
-      }) ?? Promise.resolve("cancel"),
-      flush: flushSync,
-      reportError: async (error) => {
-        const message = `${t("navigation.failedMessage")}\n\n${error instanceof Error ? error.message : String(error)}`;
-        if (lifecycle) await lifecycle.showSaveError(t("navigation.failedTitle"), message);
-        else window.alert(message);
-      }
-    });
-    if (!canLeave) return;
-    // Do not preserve changes the user explicitly chose to discard in the
-    // automatic leave snapshot. Save choices have already cleared dirty tabs.
-    if (!unsavedChanges.hasChanges()) await snapshotOnLeave().catch(() => undefined);
-    navigate();
-  };
-  const leaveProject = () => { void confirmProjectNavigation(onHome); };
-  const switchProject = (target: Project) => { void confirmProjectNavigation(() => onSwitch(target)); };
-  const refreshAfterHistoryRestore = async (restored: string[]) => {
-    if (!api) return;
-    const nextTree = await api.files.tree(project.id);
-    const available = new Set(projectFilePaths(nextTree));
-    const nextTabs = (await Promise.all(tabsRef.current.filter((tab) => available.has(tab.path)).map(async (tab) => {
-      try { return { path: tab.path, content: (await api.files.read(project.id, tab.path)).content, dirty: false }; }
-      catch { return undefined; }
-    }))).filter((tab): tab is EditorTab => tab !== undefined);
-    tabsRef.current = nextTabs;
-    setTabs(nextTabs);
-    savedContents.current = new Map(nextTabs.map((tab) => [tab.path, tab.content]));
-    setTree(nextTree);
-    if (activePathRef.current && !nextTabs.some((tab) => tab.path === activePathRef.current)) setActivePath(nextTabs.at(-1)?.path);
-    setSaveState("saved");
-    setNavigationRequest(undefined);
-    navigationHistory.current.clear();
-    editHistory.current.clear();
-    for (const path of restored) { sourcePositions.current.delete(path); previewPositions.current.delete(path); }
-    sourceRestoredFor.current = undefined;
-    completionController.current?.invalidate();
-    setBlockSnapshot(await api.blockGraph.snapshot(project.id));
-    await settings.load(project.id);
-  };
+  const { saveTabs, saveActive, saveAll, leaveProject, switchProject } = createProjectSessionController({
+    api, project, tabs, activePath, tabsRef, savedContents, editHistory, completionController,
+    setTabs, setSaveState, onHome, onSwitch
+  });
+  const { compile, exportSourceArchive, exportMainTex, exportPdf } = createDocumentActions({
+    api, project, activePath, tree, compileState, saveActive, saveAll,
+    setCompileState, setCompileResult, setPdfDataUrl, setLayout, setBottomTab, setBottomVisible
+  });
+  const refreshAfterHistoryRestore = createHistoryRestoreHandler({
+    api, project, tabsRef, savedContents, activePathRef, sourcePositions, previewPositions, sourceRestoredFor,
+    completionController, navigationHistory, editHistory, setTabs, setTree, setActivePath, setSaveState,
+    setNavigationRequest, setBlockSnapshot
+  });
   useEffect(() => {
     if (!api) return;
     const timer = window.setInterval(() => {
@@ -832,51 +435,6 @@ export function Workbench({ project, projects, environments, onHome, onSwitch, o
       window.setTimeout(() => decorations.clear(), 900);
     }
   };
-  const createUserBlockAtRange = async (range: BlockTextRange) => {
-    if (!api || !activeTab) return;
-    await flushRangeMappings();
-    const block = await api.blockGraph.createUserBlock(project.id, { fileId: activeTab.path, range, role: "custom" });
-    editHistory.current.recordStructure();
-    setInspectorBlock(block);
-    setBoundaryRepair(undefined);
-    setBlockContext(undefined);
-    const normalizedSelection: DocumentSelection = { fileId: activeTab.path, ...range, origin: sourceEditorVisible ? "source" : "preview" };
-    if (sourceEditorVisible) setSourceSelection(normalizedSelection); else setPreviewSelection(normalizedSelection);
-    highlightCreatedBlock(block);
-    const [snapshot, history] = await Promise.all([api.blockGraph.snapshot(project.id), api.blockGraph.historyState(project.id)]);
-    setBlockSnapshot(snapshot);
-    setStructuralHistory(history);
-  };
-  const createUserBlockFromSelection = async (override?: DocumentSelection) => {
-    if (!api || !activeTab) return;
-    const selection = normalizeDocumentSelection(activeTab.content, override ?? creationSelection ?? { fileId: activeTab.path, start: 0, end: 0, origin: "source" });
-    if (!selection || selection.fileId !== activeTab.path) { setBlockNotice(t("block.selectRange")); return; }
-    const existing = blockSnapshot?.blocks.find((block) => block.origin === "user" && block.fileId === selection.fileId
-      && block.range?.start === selection.start && block.range.end === selection.end);
-    if (existing) { setInspectorBlock(existing); return; }
-    const input = { fileId: selection.fileId, range: { start: selection.start, end: selection.end }, role: "custom" };
-    const validation = await api.blockGraph.validateUserBlock(project.id, input);
-    if (validation.status === "valid") { await createUserBlockAtRange(input.range); return; }
-    if (validation.reason !== "partial-overlap") { setBlockNotice(t(validation.reason === "duplicate-range" ? "block.duplicateRange" : "block.invalidRange")); return; }
-    const snapshot = blockSnapshot ?? await api.blockGraph.snapshot(project.id);
-    setBlockSnapshot(snapshot);
-    const candidates = boundaryRepairCandidates(input.range, snapshot.blocks, selection.fileId);
-    const checked = await Promise.all(candidates.map(async (candidate) => ({ candidate, validation: await api.blockGraph.validateUserBlock(project.id, { ...input, range: candidate.range }) })));
-    const validCandidates = checked.filter((item) => item.validation.status === "valid").map((item) => item.candidate);
-    if (!validCandidates.length) { setBlockNotice(t("block.noRepair")); return; }
-    const conflict = snapshot.blocks.find((block) => block.id === validation.conflictingBlockId);
-    setBoundaryRepair({ conflictName: conflict?.name ?? conflict?.title ?? conflict?.label ?? conflict?.role ?? conflict?.type ?? t("block.existingBlock"), candidates: validCandidates });
-  };
-  const updateInspectorBlock = async (patch: Partial<Omit<SemanticBlock, "id">>) => {
-    if (!api || !inspectorBlock) return;
-    await flushRangeMappings();
-    const original = blockSnapshot?.blocks.find(block => block.id === inspectorBlock.id);
-    const changed = !original || Object.entries(patch).some(([key, value]) => JSON.stringify(original[key as keyof SemanticBlock]) !== JSON.stringify(value));
-    const updated = await api.blockGraph.updateBlock(project.id, inspectorBlock.id, patch);
-    if (changed) editHistory.current.recordStructure();
-    setInspectorBlock(updated);
-    setBlockSnapshot((snapshot) => snapshot ? { ...snapshot, blocks: snapshot.blocks.map((block) => block.id === updated.id ? updated : block) } : snapshot);
-  };
   const trackPreviewViewport = useCallback((anchor: { fileId: string; offset: number; scrollTop: number }) => {
     if (anchor.fileId !== activePathRef.current) return;
     previewViewportAnchor.current = anchor;
@@ -894,105 +452,7 @@ export function Workbench({ project, projects, environments, onHome, onSwitch, o
     const viewport = previewViewportAnchor.current;
     return viewport?.fileId === activePath ? viewport : undefined;
   };
-  const refreshRelationState = async () => {
-    if (!api) return;
-    const [snapshot, history] = await Promise.all([api.blockGraph.snapshot(project.id), api.blockGraph.historyState(project.id)]);
-    setBlockSnapshot(snapshot);
-    setStructuralHistory(history);
-  };
-  const removeRelation = async (from: BlockId, to: BlockId) => {
-    if (!api) return;
-    await flushRangeMappings();
-    await api.blockGraph.removeDependency(project.id, from, to);
-    editHistory.current.recordStructure();
-    await refreshRelationState();
-  };
-  const focusRelationBlock = (blockId: BlockId) => {
-    const snapshot = blockSnapshot;
-    const block = snapshot && focusableRelationBlock(snapshot, blockId);
-    if (!block) return false;
-    setRelationSelectedId(blockId);
-    if (blockId === relationFocusId) return true;
-    if (relationFocusId && focusableRelationBlock(snapshot, relationFocusId)) setRelationFocusHistory((history) => [...history, relationFocusId]);
-    setRelationFocusId(blockId);
-    setInspectorBlock(undefined);
-    return true;
-  };
-  const relationBack = () => setRelationFocusHistory((history) => {
-    if (!blockSnapshot) return history;
-    for (let index = history.length - 1; index >= 0; index -= 1) {
-      const previous = history[index];
-      if (previous && focusableRelationBlock(blockSnapshot, previous)) {
-        setRelationFocusId(previous);
-        setRelationSelectedId(previous);
-        return history.slice(0, index);
-      }
-    }
-    return [];
-  });
-  useEffect(() => {
-    if (!blockSnapshot) return;
-    if (relationFocusId && !focusableRelationBlock(blockSnapshot, relationFocusId)) {
-      setRelationFocusId(null);
-      setRelationFocusHistory((history) => history.filter((id) => focusableRelationBlock(blockSnapshot, id)));
-    }
-    if (relationGraphFocusId && !focusableRelationBlock(blockSnapshot, relationGraphFocusId)) setRelationGraphFocusId(null);
-  }, [blockSnapshot, relationFocusId, relationGraphFocusId]);
-  const locateRelationBlock = async (blockId: BlockId) => {
-    const block = blockSnapshot?.blocks.find((item) => item.id === blockId);
-    const path = block?.fileId ?? block?.source?.relativePath;
-    if (!block || !path) return;
-    const text = tabs.find((tab) => tab.path === path)?.content ?? projectSearchDocuments.find((document) => document.fileId === path)?.content;
-    const offset = block.range?.start;
-    const prefix = text !== undefined && offset !== undefined ? text.slice(0, offset) : undefined;
-    const line = block.source?.startLine ?? (prefix === undefined ? undefined : prefix.split("\n").length);
-    const column = block.source?.startColumn ?? (prefix === undefined ? undefined : (prefix.length - (prefix.lastIndexOf("\n") + 1)) + 1);
-    const pane = layout.mode === "single" ? (layout.singlePane === "pdf" ? lastTextPane.current : layout.singlePane) : layout.leftPane;
-    if (layout.mode === "single" && layout.singlePane === "pdf") setLayout((value) => ({ ...value, singlePane: pane }));
-    if (pane === "preview" && offset === undefined) setRelationLocateRequest({ blockId, nonce: Date.now() });
-    if (offset !== undefined) await navigateTo(path, { offset });
-    else if (line !== undefined) await navigateTo(path, { line, column });
-    else if (path !== activePath) await navigateTo(path);
-  };
-  const mutateRelation = async (candidateId: BlockId, requestedDirection?: Exclude<RelationDirection, "both">) => {
-    if (!api || !blockSnapshot || !relationFocusId) return;
-    await flushRangeMappings();
-    const state = candidateRelationState(blockSnapshot, relationFocusId, candidateId, relationDirection);
-    if (state.existing) {
-      await api.blockGraph.removeDependency(project.id, state.existing.from, state.existing.to);
-      editHistory.current.recordStructure();
-      await refreshRelationState();
-      return;
-    }
-    const direction = requestedDirection ?? (relationDirection === "both" ? undefined : relationDirection);
-    if (!direction) return;
-    const edge = relationEndpoints(relationFocusId, candidateId, direction);
-    const validation = await api.blockGraph.validateDependency(project.id, edge.from, edge.to);
-    if (validation.status === "invalid") { setBlockNotice(validation.message); return; }
-    const result = await api.blockGraph.addDependency(project.id, edge.from, edge.to);
-    if (result.outcome === "created") editHistory.current.recordStructure();
-    setRelationChooser(undefined);
-    await refreshRelationState();
-  };
-  const toggleRelation = (candidateId: BlockId, x: number, y: number) => {
-    if (!blockSnapshot || !relationFocusId) return;
-    const state = candidateRelationState(blockSnapshot, relationFocusId, candidateId, relationDirection);
-    if (state.disabledReason) { setBlockNotice(t(`relation.invalid.${state.disabledReason}`)); return; }
-    if (relationDirection === "both" && !state.existing) { setRelationChooser({ candidateId, x, y }); return; }
-    void mutateRelation(candidateId).catch((error: unknown) => setBlockNotice(error instanceof Error ? error.message : String(error)));
-  };
-  const undoStructure = () => replayHistory("undo");
-  const redoStructure = () => replayHistory("redo");
-  useEffect(() => {
-    const openGraph = (event: Event) => {
-      const full = (event as CustomEvent<{ full?: boolean }>).detail?.full === true;
-      setRelationGraphFocusId(full ? null : relationFocusId);
-      setRelationNeighborhood(undefined);
-      setRelationGraphOpen(true);
-    };
-    window.addEventListener("texweave:relation-graph-open", openGraph);
-    return () => window.removeEventListener("texweave:relation-graph-open", openGraph);
-  }, [relationFocusId]);
+
   useEffect(() => {
     if (store.get("autoSave") !== "afterDelay" || !tabs.some((tab) => tab.dirty)) return;
     const timer = setTimeout(() => { void saveTabs(true).catch(() => undefined); }, 1200);
@@ -1015,63 +475,6 @@ export function Workbench({ project, projects, environments, onHome, onSwitch, o
     ];
     return () => registrations.forEach((dispose) => dispose());
   });
-
-  const compile = async () => {
-    if (!api || compileState === "running") return;
-    const mainFile = resolveMainTexFile();
-    if (!mainFile) { setCompileResult({ compilationId: "ui-error", status: "failed", exitCode: null, startedAt: new Date().toISOString(), finishedAt: new Date().toISOString(), durationMs: 0, mainFile: "", diagnostics: [{ severity: "error", source: "system", message: "No LaTeX main file is configured." }], stdoutTail: "", stderrTail: "" }); setBottomTab("problems"); return; }
-    await saveActive(); setCompileState("running");
-    try { const result = await api.compile.run(project.id, mainFile); setCompileResult(result); setPdfDataUrl(result.pdfDataUrl); setLayout((value) => ({ ...value, rightPane: "pdf" })); setBottomTab(result.diagnostics.length ? "problems" : "compileLog"); setBottomVisible(false); }
-    catch (reason) { setCompileResult({ compilationId: "ui-error", status: "failed", exitCode: null, startedAt: new Date().toISOString(), finishedAt: new Date().toISOString(), durationMs: 0, mainFile, diagnostics: [{ severity: "error", source: "system", message: reason instanceof Error ? reason.message : String(reason) }], stdoutTail: "", stderrTail: "" }); setBottomTab("problems"); setBottomVisible(false); }
-    finally { setCompileState("idle"); }
-  };
-
-  const resolveMainTexFile = () => project.mainFile
-    ?? (activeTab?.path.toLocaleLowerCase().endsWith(".tex") ? activeTab.path : undefined)
-    ?? projectFilePaths(tree).find((path) => path.toLocaleLowerCase().endsWith(".tex"));
-  const exportSourceArchive = async () => {
-    if (!api || compileState === "running") return;
-    try {
-      await saveTabs(true);
-      const path = await api.exports.sourceArchive(project.id, resolveMainTexFile());
-      if (path) window.alert(t("export.saved", { path }));
-    } catch (error) { window.alert(error instanceof Error ? error.message : String(error)); }
-  };
-  const exportMainTex = async () => {
-    if (!api || compileState === "running") return;
-    const mainFile = resolveMainTexFile();
-    if (!mainFile) { window.alert(t("export.noMainTex")); return; }
-    try {
-      await saveTabs(true);
-      const path = await api.exports.mainTex(project.id, mainFile);
-      if (path) window.alert(t("export.saved", { path }));
-    } catch (error) { window.alert(error instanceof Error ? error.message : String(error)); }
-  };
-  const exportPdf = async () => {
-    if (!api || compileState === "running") return;
-    const mainFile = resolveMainTexFile();
-    if (!mainFile) { window.alert(t("export.noMainTex")); return; }
-    setCompileState("running");
-    try {
-      await saveTabs(true);
-      const result = await api.exports.pdf(project.id, mainFile);
-      if (result.status === "cancelled") return;
-      setCompileResult(result.compilation);
-      if (result.status === "failed") {
-        setBottomTab("problems");
-        setBottomVisible(true);
-        const diagnostic = result.compilation.diagnostics.find((item) => item.severity === "error");
-        window.alert(diagnostic?.message ?? t("export.pdfFailed"));
-        return;
-      }
-      setPdfDataUrl(result.pdfDataUrl);
-      setLayout((value) => ({ ...value, rightPane: "pdf" }));
-      setBottomTab(result.compilation.diagnostics.length ? "problems" : "compileLog");
-      setBottomVisible(false);
-      window.alert(t("export.saved", { path: result.path }));
-    } catch (error) { window.alert(error instanceof Error ? error.message : String(error)); }
-    finally { setCompileState("idle"); }
-  };
 
   const closeTab = (path: string) => { navigationHistory.current.clear(); setTabs((current) => current.filter((tab) => tab.path !== path)); if (activePath === path) { const remaining = tabs.filter((tab) => tab.path !== path); setActivePath(remaining.at(-1)?.path); } };
   const queueRangeMapping = (fileId: string, edits: BlockTextEdit[]) => {
@@ -1171,104 +574,45 @@ export function Workbench({ project, projects, environments, onHome, onSwitch, o
     setBlockContext(undefined); setBoundaryRepair(undefined);
     window.dispatchEvent(new CustomEvent("texweave:history-replayed"));
   }).catch((error: unknown) => setBlockNotice(error instanceof Error ? error.message : String(error)));
+  const { createUserBlockAtRange, createUserBlockFromSelection, updateInspectorBlock } = createUserBlockController({
+    api, project, activeTab, inspectorBlock, blockSnapshot, creationSelection, sourceEditorVisible,
+    editHistory, flushRangeMappings, highlightCreatedBlock, setInspectorBlock, setBoundaryRepair, setBlockContext,
+    setSourceSelection, setPreviewSelection, setBlockSnapshot, setStructuralHistory, setBlockNotice
+  });
   const documentHistoryFocused = () => {
     const target = document.activeElement;
     // Local drafts, table cells, labels, search boxes and chat retain their own
     // text undo. The main Code editor shares the committed document history.
     return !target?.closest("input, textarea, select, [contenteditable='true'], .monaco-editor") || !!target.closest(".editor-surface .monaco-editor:not(.monaco-diff-editor)");
   };
-  const mutateAIChanges = (requested: AIChangeSet, hunkIds: string[], apply: boolean): Promise<AIApplyResult> => {
-    const run = async () => {
-      if (!api) throw new Error(t("save.failed"));
-      // Refetch decisions inside the queue: auto-apply and a quick Keep click
-      // can arrive together, and must never apply the same edit twice.
-      const changes = (await api.ai.conversations(project.id))?.changeSets.find(item => item.id === requested.id);
-      if (!changes) throw new Error(t("ai.changeUnavailable"));
-      const ids = new Set(hunkIds.filter(id => changes.files.some(file => file.hunks.some(hunk => hunk.id === id && hunk.decision === "pending"))));
-      const diskPaths = new Set(projectFilePaths(await api.files.tree(project.id)));
-      const updates: Array<{ path: string; before: string | undefined; after: string | undefined; buffer: string | undefined }> = [];
-      const staleStructureIds: string[] = [];
-      for (const file of changes.files) {
-        if (!file.hunks.some(hunk => ids.has(hunk.id))) continue;
-        if (!isAIReviewableProjectPath(file.path)) throw new Error(t("ai.protectedFile", { path: file.path }));
-        const buffer = tabsRef.current.find(tab => tab.path === file.path)?.content;
-        const current = buffer ?? (diskPaths.has(file.path) ? (await api.files.read(project.id, file.path)).content : undefined);
-        let after: string | undefined;
-        try { after = transitionAIFile(file, current, ids, apply); }
-        catch (reason) {
-          // Structure indexes can be refreshed as a side effect of applying
-          // ordinary source edits. Never overwrite a newer index from an AI
-          // snapshot, but let the independent source proposals proceed.
-          if (apply && isAIStructureMetadataPath(file.path) && reason instanceof Error && reason.message === `AI_CHANGE_CONFLICT:${file.path}`) {
-            staleStructureIds.push(...file.hunks.filter(hunk => ids.has(hunk.id)).map(hunk => hunk.id));
-            continue;
-          }
-          throw new Error(t(apply ? "ai.bufferConflict" : "ai.undoConflict", { path: file.path }));
-        }
-        if (after !== current) updates.push({ path: file.path, before: current, after, buffer });
-      }
-      // Preflight every file before mutating any of them; protect edits made
-      // while the IPC reads were in flight as well.
-      for (const update of updates) {
-        if (tabsRef.current.find(tab => tab.path === update.path)?.content !== update.buffer) throw new Error(t("ai.bufferConflict", { path: update.path }));
-      }
-      const snapshotBeforeAiFileRemoval = apply && updates.some(update => update.after === undefined) && settings.get("history").beforeLargeDelete;
-      if (snapshotBeforeAiFileRemoval) {
-        await api.history.snapshot(project.id, "pre-delete", "Before AI removes files", tabsRef.current.filter((tab) => tab.dirty).map((tab) => ({ path: tab.path, content: tab.content })));
-      }
-      const changedOnDisk: typeof updates = [];
-      try {
-        for (const update of updates) {
-          if (update.before === undefined && update.after !== undefined) {
-            await api.files.createFile(project.id, update.path);
-            changedOnDisk.push(update);
-            await api.files.write(project.id, update.path, update.after);
-          } else if (update.after === undefined) {
-            await api.files.remove(project.id, update.path);
-            changedOnDisk.push(update);
-          }
-        }
-        for (const update of updates) if (tabsRef.current.find(tab => tab.path === update.path)?.content !== update.buffer) throw new Error(t("ai.bufferConflict", { path: update.path }));
-      } catch (reason) {
-        for (const update of changedOnDisk.reverse()) {
-          if (update.before === undefined) await api.files.remove(project.id, update.path);
-          else { await api.files.createFile(project.id, update.path); await api.files.write(project.id, update.path, update.before); }
-        }
-        throw reason;
-      }
-      editHistory.current.breakGroup();
-      if (updates.some((update) => update.before === undefined || update.after === undefined)) navigationHistory.current.clear();
-      for (const update of updates) {
-        if (update.before === undefined && update.after !== undefined) {
-          editHistory.current.recordFile(update.path, undefined, update.after);
-          savedContents.current.set(update.path, update.after);
-          tabsRef.current = [...tabsRef.current, { path: update.path, content: update.after, dirty: false }];
-        } else if (update.after === undefined) {
-          editHistory.current.recordFile(update.path, update.before, undefined);
-          savedContents.current.delete(update.path);
-          tabsRef.current = tabsRef.current.filter(tab => tab.path !== update.path);
-          if (activePathRef.current === update.path) setActivePath(undefined);
-        } else {
-          if (!tabsRef.current.some(tab => tab.path === update.path)) {
-            savedContents.current.set(update.path, update.before!);
-            tabsRef.current = [...tabsRef.current, { path: update.path, content: update.before!, dirty: false }];
-          }
-          changeDocument(update.path, update.after, false, undefined, true, !snapshotBeforeAiFileRemoval);
-        }
-      }
-      setTabs(tabsRef.current);
-      setSaveState(tabsRef.current.some(tab => tab.dirty) ? "unsaved" : "saved");
-      if (apply) await api.ai.markChangeSetApplied(changes.id, [...ids].filter(id => !staleStructureIds.includes(id)));
-      else await api.ai.resolveChangeSet(changes.id, Object.fromEntries([...ids].map(id => [id, "rejected" as const])), false);
-      if (changedOnDisk.length) await refreshTree();
-      return { appliedIds: apply ? [...ids].filter(id => !staleStructureIds.includes(id)) : [], staleStructureIds };
-    };
-    const next = aiOperationQueue.current.then(run);
-    aiOperationQueue.current = next.then(() => undefined, () => undefined);
-    return next;
-  };
-  const applyAIChanges = (changes: AIChangeSet, ids: string[]) => mutateAIChanges(changes, ids, true);
-  const undoAIChanges = async (changes: AIChangeSet, ids: string[]) => { await mutateAIChanges(changes, ids, false); };
+  const {
+    searchQuery, setSearchQuery, replacement, setReplacement, replaceOpen, setReplaceOpen,
+    filterQuery, setFilterQuery, activeSearchResult, projectSearchDocuments,
+    searchDocuments, searchResponse, filterOptions,
+    selectSearchResult, replaceCurrentSearchResult, replaceAllSearchResults
+  } = useSearchController({
+    api, project, tree, tabs, activePath, previewEnvironments, tabsRef, savedContents,
+    changeDocument, navigateTo, setBlockSnapshot, setPreviewSemanticIds, setProjectMathSources
+  });
+  const {
+    relationFocusId, relationSelectedId, setRelationSelectedId,
+    relationDocumentFiltered, setRelationDocumentFiltered, relationFocusHistory,
+    relationDirection, setRelationDirection, relationDepth, setRelationDepth, relationFilters, setRelationFilters,
+    relationLocateRequest, relationChooser, setRelationChooser,
+    relationGraphOpen, setRelationGraphOpen, setRelationGraphFocusId,
+    relationNeighborhood, currentRelationScope, relationProjection, chooserPrerequisiteState,
+    focusRelationBlock, relationBack, locateRelationBlock, mutateRelation, toggleRelation, removeRelation,
+    undoStructure, redoStructure
+  } = useRelationController({
+    api, projectId: project.id, blockSnapshot, setBlockSnapshot, setStructuralHistory,
+    editHistory, navigationHistory, flushRangeMappings, tabs, projectSearchDocuments, layout, setLayout,
+    lastTextPane, activePath, navigateTo, setBlockNotice, setInspectorBlock, replayHistory
+  });
+
+  const { applyAIChanges, undoAIChanges, viewAIChanges } = createAIChangeController({
+    api, project, tabsRef, savedContents, editHistory, navigationHistory, activePathRef, aiOperationQueue,
+    setActivePath, setTabs, setSaveState, setBlockNotice, setAiDiffFile, setLayout, refreshTree, openFile, changeDocument
+  });
   const applyAIRef = useRef(applyAIChanges);
   applyAIRef.current = applyAIChanges;
   useEffect(() => {
@@ -1296,16 +640,6 @@ export function Workbench({ project, projects, environments, onHome, onSwitch, o
     const unsubscribe = api.ai.onUpdate(update => { if (update.kind === "changes") load(); });
     return () => { mounted = false; unsubscribe(); };
   }, [api, project.id]);
-  const viewAIChanges = (changes: AIChangeSet, path: string) => {
-    void (async () => {
-      navigationHistory.current.clear();
-      // Deleted files and not-yet-approved new files have no live editor tab.
-      // Their diff is still available without creating a phantom project file.
-      if (api && projectFilePaths(await api.files.tree(project.id)).includes(path)) await openFile(path);
-      setAiDiffFile({ id: changes.id, path });
-      setLayout(value => value.mode === "single" ? { ...value, singlePane: "source" } : { ...value, leftPane: "source" });
-    })().catch((reason: unknown) => setBlockNotice(reason instanceof Error ? reason.message : String(reason)));
-  };
   const insertText = (text: string, cursorOffset?: number, triggerSuggestions = false) => {
     const editor = editorRef.current;
     const model = editor?.getModel();
@@ -1330,401 +664,18 @@ export function Workbench({ project, projects, environments, onHome, onSwitch, o
       : insertion.text;
     insertText(text, insertion.cursorOffset, insertion.triggerSuggestions);
   };
-  const insertImageSnippets = (generated: Array<{ text: string; cursorOffset: number }>, requestedAnchor?: number) => {
-    if (!activeTab || !generated.length) return;
-    const snippets = generated.map((snippet) => uniqueFigureLabels(snippet, activeTab.content));
-    const joined = snippets.map((item) => item.text).join("\n\n");
-    const firstCursor = snippets[0]?.cursorOffset;
-    const editor = editorRef.current;
-    if (sourceEditorVisible && editor?.getModel() && editor.getSelection()) { insertText(joined, firstCursor); return; }
-    const insertionAnchor = previewInsertionAnchor.current?.fileId === activeTab.path ? previewInsertionAnchor.current.offset : undefined;
-    const anchor = requestedAnchor ?? insertionAnchor ?? (previewViewportAnchor.current?.fileId === activeTab.path ? previewViewportAnchor.current.offset : activeTab.content.length);
-    const prefix = anchor > 0 && !activeTab.content.slice(0, anchor).endsWith("\n") ? "\n\n" : "";
-    const suffix = anchor < activeTab.content.length && !activeTab.content.slice(anchor).startsWith("\n") ? "\n\n" : "";
-    previewInsertionAnchor.current = undefined;
-    setEditorContent(activeTab.content.slice(0, anchor) + prefix + joined + suffix + activeTab.content.slice(anchor));
-  };
-  const importImages = async (paths: string[], type: "figure" | "inline", requestedAnchor?: number) => {
-    if (!api || !activeTab || !paths.length) return;
-    const imported = await api.images.import(project.id, paths, store.get("images").defaultDirectory);
-    await refreshTree();
-    const relativePaths = imported.filter((item) => item.kind === "file" && /\.(?:png|jpe?g|webp|svg|pdf)$/i.test(item.relativePath)).map((item) => relativeAssetPath(activeTab.path, item.relativePath));
-    if (!relativePaths.length) return;
-    insertImageSnippets(type === "figure" && relativePaths.length > 1 ? [multiImageInsertion(relativePaths, store.get("images"))] : relativePaths.map((path) => imageInsertion(path, store.get("images"), type)), requestedAnchor);
-  };
-  const chooseImagePath = async (choice: Extract<ImageInsertChoice, { kind: "project" | "local" }>): Promise<string | undefined> => {
-    if (!api || !activeTab) return undefined;
-    if (choice.kind === "project") return relativeAssetPath(activeTab.path, choice.path);
-    const picked = await api.images.pick(false);
-    if (!picked.length) return undefined;
-    const [imported] = await api.images.import(project.id, picked, store.get("images").defaultDirectory);
-    if (!imported || imported.kind !== "file") return undefined;
-    await refreshTree();
-    return relativeAssetPath(activeTab.path, imported.relativePath);
-  };
-  const applyImageChoice = async (choice: ImageInsertChoice) => {
-    const dialog = imageDialog;
-    if (!activeTab || !dialog) return;
-    if (dialog.kind === "insert") {
-      if (choice.kind === "empty") insertImageSnippets([emptyFigureInsertion(store.get("images"))]);
-      else if (choice.kind === "multi") insertImageSnippets([emptyMultiImageInsertion(choice.rows, choice.columns, store.get("images"))]);
-      else {
-        const path = await chooseImagePath(choice);
-        if (path) insertImageSnippets([imageInsertion(path, store.get("images"), "figure")]);
-      }
-      setImageDialog(undefined);
-      return;
-    }
-    if (choice.kind !== "project" && choice.kind !== "local") return;
-    const path = await chooseImagePath(choice);
-    if (!path || activeTab.path !== dialog.selection.fileId) { setImageDialog(undefined); return; }
-    const replacement = patchFigureSource(dialog.selection.source, { imageIndex: dialog.imageIndex, sourcePath: path });
-    setEditorContent(activeTab.content.slice(0, dialog.selection.start) + replacement + activeTab.content.slice(dialog.selection.end));
-    setFigureSelection({ ...dialog.selection, source: replacement, end: dialog.selection.start + replacement.length, imageIndex: dialog.imageIndex });
-    setImageDialog(undefined);
-  };
-  const applyPreviewTableChange = (selection: TableSelection, replacement: string) => {
-    if (!activeTab || activeTab.path !== selection.fileId) return;
-    let next = activeTab.content.slice(0, selection.start) + replacement + activeTab.content.slice(selection.end);
-    let start = selection.start;
-    if (replacement.includes("\\multirow{") && !selection.source.includes("\\multirow{")) {
-      const packageEdit = addLatexPackage(next, "multirow");
-      next = packageEdit.source;
-      if (packageEdit.insertedAt <= start) start += packageEdit.length;
-    }
-    setEditorContent(next);
-    setTableSelection({ ...selection, start, source: replacement, end: start + replacement.length });
-  };
-  const applyTableChoice = (choice: TableInsertChoice) => {
-    if (!activeTab) return;
-    const preferences = store.get("tables");
-    const insertion = uniqueTableLabel(tableInsertion(choice, preferences), activeTab.content);
-    const editor = editorRef.current;
-    const model = editor?.getModel();
-    const selection = editor?.getSelection();
-    const insertionAnchor = previewInsertionAnchor.current?.fileId === activeTab.path ? previewInsertionAnchor.current.offset : undefined;
-    let anchor = sourceEditorVisible && model && selection
-      ? model.getOffsetAt(selection.getStartPosition())
-      : insertionAnchor ?? (previewViewportAnchor.current?.fileId === activeTab.path ? previewViewportAnchor.current.offset : activeTab.content.length);
-    let source = activeTab.content;
-    if (choice.addBooktabs) {
-      const packageEdit = addLatexPackage(source, "booktabs");
-      source = packageEdit.source;
-      if (packageEdit.length && packageEdit.insertedAt <= anchor) anchor += packageEdit.length;
-    }
-    const prefix = anchor > 0 && !source.slice(0, anchor).endsWith("\n") ? "\n\n" : "";
-    const suffix = anchor < source.length && !source.slice(anchor).startsWith("\n") ? "\n\n" : "";
-    setEditorContent(source.slice(0, anchor) + prefix + insertion.text + suffix + source.slice(anchor));
-    previewInsertionAnchor.current = undefined;
-    setTableDialogOpen(false);
-  };
-  const dropImages = (event: DragEvent<HTMLElement>) => {
-    if (!api || !event.dataTransfer.files.length) return;
-    const paths = Array.from(event.dataTransfer.files).map((file) => api.files.pathForFile(file)).filter(Boolean);
-    if (!paths.length) return;
-    event.preventDefault();
-    let anchor: number | undefined;
-    if ((event.target as Element).closest(".editor-surface")) {
-      const target = editorRef.current?.getTargetAtClientPoint(event.clientX, event.clientY);
-      if (target?.position) editorRef.current?.setPosition(target.position);
-    } else {
-      const sourceTarget = (event.target as Element).closest<HTMLElement>("[data-source-start-offset][data-source-end-offset]");
-      if (sourceTarget) {
-        const rect = sourceTarget.getBoundingClientRect();
-        anchor = event.clientY < rect.top + rect.height / 2 ? Number(sourceTarget.dataset.sourceStartOffset) : Number(sourceTarget.dataset.sourceEndOffset);
-      }
-    }
-    void importImages(paths, store.get("images").defaultInsert.type, anchor).catch((error: unknown) => setBlockNotice(error instanceof Error ? error.message : String(error)));
-  };
-  const dropImagesToProject = (event: DragEvent<HTMLElement>) => {
-    if (event.defaultPrevented) return;
-    if (!api || !event.dataTransfer.files.length) return;
-    const paths = Array.from(event.dataTransfer.files).map((file) => api.files.pathForFile(file)).filter(Boolean);
-    if (!paths.length) return;
-    event.preventDefault();
-    void api.images.import(project.id, paths, store.get("images").defaultDirectory).then(() => refreshTree()).catch((error: unknown) => setBlockNotice(error instanceof Error ? error.message : String(error)));
-  };
-  const insertEnvironment = (definition: EnvironmentDefinition) => {
-    const editor = editorRef.current;
-    const withAutomaticLabel = (snippet: string, source: string) => store.get("autoEnvironmentLabels") ? addEnvironmentLabel(snippet, nextAutomaticLabel(source, definition)) : snippet;
-    try {
-      const selection = editor?.getSelection();
-      const model = editor?.getModel();
-      if (sourceEditorVisible && editor && model && selection) {
-        const selectedText = model.getValueInRange(selection);
-        const snippet = withAutomaticLabel(environmentInsertion(definition, selectedText) ?? "", model.getValue());
-        if (!snippet) return;
-        const startOffset = model.getOffsetAt(selection.getStartPosition());
-        editor.executeEdits("latex-environment-picker", [{ range: selection, text: snippet, forceMoveMarkers: true }]);
-        editor.setPosition(model.getPositionAt(startOffset + environmentCursorOffset(snippet, selectedText)));
-        editor.focus();
-        return;
-      }
-    } catch { /* A single-pane Visual view may have disposed the Monaco instance. */ }
-    const snippet = activeTab ? withAutomaticLabel(environmentInsertion(definition) ?? "", activeTab.content) : "";
-    if (snippet && activeTab) {
-      const anchor = previewInsertionAnchor.current?.fileId === activeTab.path ? previewInsertionAnchor.current.offset : activeTab.content.length;
-      const prefix = anchor > 0 && !activeTab.content.slice(0, anchor).endsWith("\n") ? "\n\n" : "";
-      const suffix = anchor < activeTab.content.length && !activeTab.content.slice(anchor).startsWith("\n") ? "\n\n" : "";
-      previewInsertionAnchor.current = undefined;
-      setEditorContent(activeTab.content.slice(0, anchor) + prefix + snippet + suffix + activeTab.content.slice(anchor));
-    }
-  };
-  useEffect(() => {
-    if (!sourceEditorVisible) { sourceRestoredFor.current = undefined; return; }
-    if (!activeTab) return;
-    const path = activeTab.path;
-    const request = navigationRequest?.path === path ? navigationRequest : undefined;
-    if (!request && sourceRestoredFor.current === path) return;
-    const visualAnchor = pendingVisualToCodeAnchor.current?.fileId === path ? pendingVisualToCodeAnchor.current : undefined;
-    const remembered = sourcePositions.current.get(path);
-    let attempts = 0;
-    let frame = 0;
-    const applyWhenReady = () => {
-      const editor = editorRef.current;
-      const model = editor?.getModel();
-      if (!editor || !editor.getDomNode()?.isConnected || !model || model.getValue().replace(/\r\n?/g, "\n") !== activeTab.content.replace(/\r\n?/g, "\n")) {
-        if (attempts++ < 20) frame = requestAnimationFrame(applyWhenReady);
-        return;
-      }
-      sourceModelPath.current = path;
-      sourceRestoredFor.current = path;
-      const position = request?.offset !== undefined ? sourcePositionAtOffset(activeTab.content, request.offset)
-        : request?.line !== undefined ? { lineNumber: request.line, column: request.column ?? 1 }
-        : visualAnchor ? sourcePositionAtOffset(activeTab.content, visualAnchor.offset)
-        : remembered ? sourcePositionAtOffset(activeTab.content, remembered.offset) : undefined;
-      if (position) {
-        const safeLine = Math.min(Math.max(1, position.lineNumber), model.getLineCount());
-        const safePosition = { lineNumber: safeLine, column: Math.min(Math.max(1, position.column), model.getLineMaxColumn(safeLine)) };
-        editor.setPosition(safePosition);
-        if (request || visualAnchor) editor.revealPositionInCenter(safePosition);
-        else if (remembered) editor.setScrollTop(remembered.scrollTop);
-        if (request || visualAnchor) editor.focus();
-      } else { editor.setPosition({ lineNumber: 1, column: 1 }); editor.setScrollTop(0); }
-      if (visualAnchor) pendingVisualToCodeAnchor.current = undefined;
-      if (request) setNavigationRequest((current) => current?.nonce === request.nonce ? undefined : current);
-    };
-    frame = requestAnimationFrame(applyWhenReady);
-    return () => cancelAnimationFrame(frame);
-  }, [sourceEditorVisible, activePath, activeTab?.path, navigationRequest, editorMountVersion]);
-  const onEditorMount: OnMount = (editor, monaco) => {
-    editorRef.current = editor;
-    sourceRestoredFor.current = undefined;
-    setEditorMountVersion((version) => version + 1);
-    searchDecorationsRef.current?.clear();
-    searchDecorationsRef.current = editor.createDecorationsCollection();
-    completionController.current?.dispose();
-    spellCheckController.current?.dispose();
-    referenceMouseListener.current?.dispose();
-    symbolPairingListener.current?.dispose();
-    symbolPairingListener.current = installSymbolPairing(editor, () => store.get("autoPairSymbols"));
-    const blockAction = editor.addAction({ id: "texweave.createCustomBlock", label: t("block.createFromSelection"), precondition: "editorHasSelection", contextMenuGroupId: "navigation", contextMenuOrder: 0.45, run: () => { commands.execute("block.createFromSelection"); } });
-    let indexedVersion = -1;
-    let mathIndex = new MathNodeIndex([]);
-    let cursorMathActive = false;
-    let mathTimer: number | undefined;
-    let hoverExitTimer: number | undefined;
-    let pendingMathKind: SourceMathPreview["kind"] | undefined;
-    let activeMath: { source: string; displayMode: boolean; kind: SourceMathPreview["kind"]; start: number; end: number } | undefined;
-    const clearHoverMathPreview = () => {
-      if (pendingMathKind === "source-hover") {
-        if (mathTimer !== undefined) window.clearTimeout(mathTimer);
-        mathTimer = undefined;
-        pendingMathKind = undefined;
-      }
-      if (activeMath?.kind === "source-hover") activeMath = undefined;
-      setSourceMathPreview((current) => current?.kind === "source-hover" ? undefined : current);
-    };
-    clearHoverMathPreviewRef.current = clearHoverMathPreview;
-    const currentMathIndex = () => {
-      const model = editor.getModel();
-      if (model && model.getVersionId() !== indexedVersion) {
-        indexedVersion = model.getVersionId();
-        mathIndex = MathNodeIndex.fromSource(model.getValue());
-      }
-      return mathIndex;
-    };
-    const mathAnchor = (start: number, end: number): DOMRect | undefined => {
-      const model = editor.getModel();
-      const bounds = editor.getDomNode()?.getBoundingClientRect();
-      if (!model || !bounds) return undefined;
-      const startVisible = editor.getScrolledVisiblePosition(model.getPositionAt(start));
-      const endVisible = editor.getScrolledVisiblePosition(model.getPositionAt(end));
-      if (!startVisible && !endVisible) return undefined;
-      const rawTop = startVisible ? bounds.top + startVisible.top : bounds.top;
-      const rawBottom = endVisible ? bounds.top + endVisible.top + endVisible.height : bounds.bottom;
-      const top = Math.max(bounds.top, rawTop);
-      const bottom = Math.min(bounds.bottom, Math.max(rawBottom, top + 1));
-      if (bottom <= bounds.top || top >= bounds.bottom) return undefined;
-      const left = bounds.left + (startVisible?.left ?? endVisible?.left ?? 12);
-      return new DOMRect(left, top, 1, Math.max(1, bottom - top));
-    };
-    const refreshMathPreview = () => {
-      if (activeMath?.kind === "source-hover" && !store.get("mathPreviewOnHover")) {
-        clearHoverMathPreview();
-        return;
-      }
-      if (!activeMath) return;
-      const anchor = mathAnchor(activeMath.start, activeMath.end);
-      setSourceMathPreview(anchor ? { source: activeMath.source, displayMode: activeMath.displayMode, anchor, kind: activeMath.kind } : undefined);
-    };
-    const scheduleMathPreview = (position: { lineNumber: number; column: number }, kind: SourceMathPreview["kind"]): boolean => {
-      if (kind === "source-hover" && !store.get("mathPreviewOnHover")) return false;
-      const model = editor.getModel();
-      if (!model || !/\.tex$/i.test(activePathRef.current ?? "")) return false;
-      const offset = model.getOffsetAt(position);
-      const mathNode = currentMathIndex().findMathNodeAtOffset(offset);
-      if (!mathNode || !mathAnchor(mathNode.start, mathNode.end)) return false;
-      const extracted = extractMathExpression(model.getValue().slice(mathNode.start, mathNode.end));
-      if (mathTimer !== undefined) window.clearTimeout(mathTimer);
-      mathTimer = window.setTimeout(() => {
-        mathTimer = undefined;
-        pendingMathKind = undefined;
-        if (kind === "source-hover" && !store.get("mathPreviewOnHover")) {
-          clearHoverMathPreview();
-          return;
-        }
-        activeMath = { source: extracted.expression, displayMode: extracted.displayMode, kind, start: mathNode.start, end: mathNode.end };
-        refreshMathPreview();
-      }, 75);
-      pendingMathKind = kind;
-      return true;
-    };
-    const updateCursorMath = (position: { lineNumber: number; column: number }) => {
-      cursorMathActive = scheduleMathPreview(position, "source-cursor");
-      if (!cursorMathActive) {
-        if (activeMath?.kind === "source-cursor") activeMath = undefined;
-        setSourceMathPreview((current) => current?.kind === "source-cursor" ? undefined : current);
-      }
-    };
-    const cursorListener = editor.onDidChangeCursorPosition((event) => {
-      setCursor({ line: event.position.lineNumber, column: event.position.column });
-      updateCursorMath(event.position);
-      const path = sourceModelPath.current;
-      const model = editor.getModel();
-      if (path && path === activePathRef.current && model?.getValue().replace(/\r\n?/g, "\n") === activeContentRef.current.replace(/\r\n?/g, "\n")) {
-        sourcePositions.current.set(path, { offset: model.getOffsetAt(event.position), scrollTop: editor.getScrollTop() });
-      }
-    });
-    const selectionListener = editor.onDidChangeCursorSelection((event) => {
-      const model = editor.getModel();
-      const path = activePathRef.current;
-      if (!model || !path || event.selection.isEmpty()) { setSourceSelection(undefined); return; }
-      setSourceSelection({ fileId: path, start: model.getOffsetAt(event.selection.getStartPosition()), end: model.getOffsetAt(event.selection.getEndPosition()), origin: "source" });
-    });
-    const contentListener = editor.onDidChangeModelContent(() => {
-      indexedVersion = -1;
-      activeMath = undefined;
-      const position = editor.getPosition();
-      if (position) updateCursorMath(position);
-    });
-    const scrollListener = editor.onDidScrollChange(() => {
-      refreshMathPreview();
-      const path = sourceModelPath.current;
-      const model = editor.getModel();
-      const position = editor.getPosition();
-      if (path && path === activePathRef.current && model && position && model.getValue().replace(/\r\n?/g, "\n") === activeContentRef.current.replace(/\r\n?/g, "\n")) {
-        sourcePositions.current.set(path, { offset: model.getOffsetAt(position), scrollTop: editor.getScrollTop() });
-      }
-    });
-    const layoutListener = editor.onDidLayoutChange(refreshMathPreview);
-    const blurListener = editor.onDidBlurEditorWidget(() => {
-      if (mathPopoverInteracting.current) return;
-      cursorMathActive = false;
-      if (activeMath?.kind === "source-cursor") activeMath = undefined;
-      setSourceMathPreview((current) => current?.kind === "source-cursor" ? undefined : current);
-    });
-    const modifierPressed = (event: { ctrlKey: boolean; altKey: boolean; shiftKey: boolean; metaKey: boolean }) => {
-      const modifier = store.get("referenceLinkModifier");
-      return modifier === "ctrl" ? event.ctrlKey : modifier === "alt" ? event.altKey : modifier === "shift" ? event.shiftKey : event.metaKey;
-    };
-    const isCommented = (value: string, index: number) => {
-      const percent = value.lastIndexOf("%", index);
-      if (percent < 0) return false;
-      let slashes = 0;
-      for (let cursor = percent - 1; cursor >= 0 && value[cursor] === "\\"; cursor -= 1) slashes += 1;
-      return slashes % 2 === 0;
-    };
-    const referenceAtPosition = (position: { lineNumber: number; column: number }) => {
-      if (!/\.tex$/i.test(activePathRef.current ?? "")) return undefined;
-      const model = editor.getModel();
-      if (!model) return undefined;
-      const line = model.getLineContent(position.lineNumber);
-      const referencePattern = /\\([A-Za-z]*ref[A-Za-z]*)\s*\{([^}\n]+)\}/g;
-      for (const match of line.matchAll(referencePattern)) {
-        if (isCommented(line, match.index ?? 0)) continue;
-        const startColumn = (match.index ?? 0) + 1;
-        const endColumn = startColumn + match[0].length;
-        if (position.column >= startColumn && position.column <= endColumn) {
-          const label = (match[2] ?? "").split(",").map((value) => value.trim()).filter(Boolean)[0];
-          if (label) return label;
-        }
-      }
-      return undefined;
-    };
-    const labelPosition = (label: string) => {
-      const model = editor.getModel();
-      if (!model) return undefined;
-      const labelPattern = /\\label\s*\{([^}\n]+)\}/g;
-      for (const match of model.getValue().matchAll(labelPattern)) {
-        if (match[1]?.trim() !== label) continue;
-        const position = model.getPositionAt(match.index ?? 0);
-        if (!isCommented(model.getLineContent(position.lineNumber), position.column - 1)) return position;
-      }
-      return undefined;
-    };
-    const setReferenceCursor = (enabled: boolean) => editor.getDomNode()?.classList.toggle("texweave-reference-cursor", enabled);
-    let hoverPosition: { lineNumber: number; column: number } | undefined;
-    mathPopoverInteractionChangeRef.current = (active) => {
-      mathPopoverInteracting.current = active;
-      if (active) {
-        if (hoverExitTimer !== undefined) window.clearTimeout(hoverExitTimer);
-        return;
-      }
-      if (!hoverPosition && !cursorMathActive) clearHoverMathPreview();
-      if (!editor.hasTextFocus() && cursorMathActive) {
-        cursorMathActive = false;
-        if (activeMath?.kind === "source-cursor") activeMath = undefined;
-        setSourceMathPreview((current) => current?.kind === "source-cursor" ? undefined : current);
-      }
-    };
-    const mouseDown = editor.onMouseDown((event) => {
-      if (event.event.detail === 2 && event.target.position && activePathRef.current) {
-        void forwardSyncToPdf(activePathRef.current, event.target.position.lineNumber, event.target.position.column);
-        return;
-      }
-      if (!modifierPressed(event.event)) return;
-      const position = event.target.position;
-      const label = position ? referenceAtPosition(position) : undefined;
-      const target = label ? labelPosition(label) : undefined;
-      if (!target) return;
-      event.event.preventDefault();
-      editor.revealLineInCenter(target.lineNumber);
-      editor.setPosition({ lineNumber: target.lineNumber, column: target.column });
-      editor.focus();
-    });
-    const mouseMove = editor.onMouseMove((event) => {
-      hoverPosition = event.target.position ?? undefined;
-      setReferenceCursor(Boolean(hoverPosition && modifierPressed(event.event) && referenceAtPosition(hoverPosition)));
-      if (!cursorMathActive && hoverPosition && !scheduleMathPreview(hoverPosition, "source-hover")) clearHoverMathPreview();
-    });
-    const mouseLeave = editor.onMouseLeave(() => {
-      hoverPosition = undefined;
-      setReferenceCursor(false);
-      if (!cursorMathActive) hoverExitTimer = window.setTimeout(() => { if (!mathPopoverInteracting.current) clearHoverMathPreview(); }, 250);
-    });
-    const modifierChange = (event: KeyboardEvent) => { if (hoverPosition) setReferenceCursor(Boolean(modifierPressed(event) && referenceAtPosition(hoverPosition))); };
-    window.addEventListener("keydown", modifierChange);
-    window.addEventListener("keyup", modifierChange);
-    const initialPosition = editor.getPosition();
-    if (initialPosition) updateCursorMath(initialPosition);
-    const contextActions = installEditorContextActions(editor, (line, column) => { if (activePathRef.current) void forwardSyncToPdf(activePathRef.current, line, column); });
-    referenceMouseListener.current = { dispose: () => { if (mathTimer !== undefined) window.clearTimeout(mathTimer); if (hoverExitTimer !== undefined) window.clearTimeout(hoverExitTimer); activeMath = undefined; mathPopoverInteracting.current = false; mathPopoverInteractionChangeRef.current = () => undefined; if (clearHoverMathPreviewRef.current === clearHoverMathPreview) clearHoverMathPreviewRef.current = () => undefined; blockAction.dispose(); contextActions.dispose(); symbolPairingListener.current?.dispose(); symbolPairingListener.current = null; cursorListener.dispose(); selectionListener.dispose(); contentListener.dispose(); scrollListener.dispose(); layoutListener.dispose(); blurListener.dispose(); mouseDown.dispose(); mouseMove.dispose(); mouseLeave.dispose(); window.removeEventListener("keydown", modifierChange); window.removeEventListener("keyup", modifierChange); setReferenceCursor(false); setSourceMathPreview(undefined); } };
-    if (api) {
-      completionController.current = new CompletionController({ monaco, api, projectId: project.id, getTree: () => treeRef.current, getCurrentPath: () => activePathRef.current, getEnvironments: () => environmentsRef.current, isDocumentWordCompletionEnabled: () => store.get("documentWordCompletion") });
-      spellCheckController.current = new SpellCheckController({ editor, api, getCurrentPath: () => activePathRef.current, getMode: () => store.get("spellCheckMode"), getManualLanguage: () => store.get("spellCheckLanguage"), onDetectedLanguage: setDetectedSpellLanguage, onContextMenu: setSpellContextMenu });
-    }
-  };
+  const { applyImageChoice, applyPreviewTableChange, applyTableChoice, dropImages, dropImagesToProject, insertEnvironment } = createDocumentInsertions({
+    api, project, store, activeTab, sourceEditorVisible, editorRef, previewInsertionAnchor,
+    previewViewportAnchor, imageDialog, insertText, setEditorContent, setFigureSelection, setTableSelection,
+    setImageDialog, setTableDialogOpen, refreshTree, setBlockNotice
+  });
+  const onEditorMount = createWorkbenchEditorMount({
+    api, project, store, editorRef, sourceRestoredFor, setEditorMountVersion, searchDecorationsRef,
+    completionController, spellCheckController, referenceMouseListener, symbolPairingListener, activePathRef, sourceModelPath,
+    setSourceMathPreview, clearHoverMathPreviewRef, mathPopoverInteracting, mathPopoverInteractionChangeRef,
+    setCursor, sourcePositions, activeContentRef, setSourceSelection, forwardSyncToPdf, treeRef, environmentsRef,
+    setDetectedSpellLanguage, setSpellContextMenu
+  });
 
   const outline = useMemo(() => {
     if (!activeTab) return [];
@@ -1744,62 +695,11 @@ export function Workbench({ project, projects, environments, onHome, onSwitch, o
     await navigateTo(path, line ? { line } : {});
   };
   aiFileNavigationRef.current = openAIFileReference;
-  useEffect(() => {
-    const openAIFile = (event: Event) => {
-      const detail = (event as CustomEvent<{ path?: string; line?: number }>).detail;
-      if (typeof detail?.path === "string") aiFileNavigationRef.current(detail.path, detail.line);
-    };
-    window.addEventListener("texweave:ai-open-file", openAIFile);
-    return () => window.removeEventListener("texweave:ai-open-file", openAIFile);
-  }, []);
-
-  useEffect(() => {
-    const editor = editorRef.current;
-    const model = editor?.getModel();
-    const decorations = searchDecorationsRef.current;
-    if (!editor || !model || !decorations) return;
-    decorations.set(searchResponse.results.filter((result) => result.fileId === activePath).map((result) => {
-      const start = model.getPositionAt(result.matchStart);
-      const end = model.getPositionAt(result.matchEnd);
-      return { range: { startLineNumber: start.lineNumber, startColumn: start.column, endLineNumber: end.lineNumber, endColumn: end.column }, options: { inlineClassName: result.id === activeSearchResult?.id ? "texweave-search-match-active" : "texweave-search-match" } };
-    }));
-  }, [searchResponse, activeSearchResult, activePath, activeTab?.content]);
-
-  const selectSearchResult = async (result: SearchResult) => {
-    setActiveSearchResult(result);
-    await navigateTo(result.fileId, { offset: result.matchStart });
-  };
-
-  const updateSearchDocument = async (path: string, content: string) => {
-    const open = tabs.some((tab) => tab.path === path);
-    if (open) {
-      changeDocument(path, content);
-    } else if (api) {
-      const file = await api.files.read(project.id, path);
-      savedContents.current.set(path, file.content);
-      tabsRef.current = [...tabsRef.current, { path, content: file.content, dirty: false }];
-      changeDocument(path, content);
-    }
-    setProjectSearchDocuments((current) => current.map((document) => document.fileId === path ? { ...document, content } : document));
-    if (/\.(?:tex|sty)$/i.test(path)) setProjectMathSources((current) => current.map((document) => document.path === path ? { ...document, content } : document));
-  };
-  const replaceCurrentSearchResult = async () => {
-    const result = searchResponse.results.find((item) => item.id === activeSearchResult?.id);
-    const document = result && searchDocuments.find((item) => item.fileId === result.fileId);
-    if (!result || !document) return;
-    await updateSearchDocument(document.fileId, replaceRanges(document.content, [result], replacement));
-    setActiveSearchResult(undefined);
-  };
-  const replaceAllSearchResults = async () => {
-    const grouped = new Map<string, SearchResult[]>();
-    for (const result of searchResponse.results) grouped.set(result.fileId, [...(grouped.get(result.fileId) ?? []), result]);
-    if (grouped.size && settings.get("history").beforeLargeDelete) await api?.history.snapshot(project.id, "pre-delete", "Before replacing search results", tabsRef.current.filter((tab) => tab.dirty).map((tab) => ({ path: tab.path, content: tab.content })));
-    await Promise.all([...grouped].map(async ([path, results]) => {
-      const document = searchDocuments.find((item) => item.fileId === path);
-      if (document) await updateSearchDocument(path, replaceRanges(document.content, results, replacement));
-    }));
-    setActiveSearchResult(undefined);
-  };
+  useEditorStateEffects({
+    editorRef, sourceRestoredFor, sourceModelPath, sourcePositions, pendingVisualToCodeAnchor,
+    searchDecorationsRef, aiFileNavigationRef, sourceEditorVisible, activePath, activeTab, navigationRequest,
+    editorMountVersion, searchResponse, activeSearchResult, setNavigationRequest
+  });
 
   const filePaths = (nodes: ProjectTreeNode[]): string[] => nodes.flatMap((node) => node.kind === "file" ? [node.relativePath] : node.children ? filePaths(node.children) : []);
   const resolveDiagnosticPath = (file: string | undefined) => {
@@ -1955,7 +855,7 @@ export function Workbench({ project, projects, environments, onHome, onSwitch, o
   const splitLeftContent = layout.leftPane === "preview" ? previewContent : sourcePaneContent;
   const splitToolbar = <div className="split-toolbar"><div className="split-toolbar-left latex-toolbar">{editorQuickActions}<div className="toolbar-spacer"/>{viewSwitch(layout.leftPane)}</div><div className="split-toolbar-right">{outputToolbar}</div></div>;
 
-  return <div className="workbench" data-theme={store.get("theme")}>
+  return <div className="workbench" data-theme={store.get("theme")} data-side-panel-display={store.get("sidePanelDisplay")}>
     {deleteRequest && <div className="modal-backdrop"><section className="modal-card" role="dialog" aria-label={t("files.deleteTitle")}>
       <p>{t("files.deleteMessage", { path: deleteRequest.path })}</p>
       <button onClick={() => { deleteRequest.resolve(false); setDeleteRequest(undefined); }}>{t("project.cancel")}</button>
@@ -1968,7 +868,7 @@ export function Workbench({ project, projects, environments, onHome, onSwitch, o
     {relationGraphOpen && relationNeighborhood && createPortal(<RelationGraphView snapshot={blockSnapshot ?? emptyBlockSnapshot} definitions={previewEnvironments} neighborhood={relationNeighborhood} direction={relationDirection} depth={relationDepth} onDirection={setRelationDirection} onDepth={setRelationDepth} onFocus={(id) => { if (focusRelationBlock(id)) setRelationGraphFocusId(id); }} onLocate={(id) => { setRelationGraphOpen(false); void locateRelationBlock(id); }} onClose={() => setRelationGraphOpen(false)}/>, document.body)}
     <header className="workbench-topbar" ref={workbenchRef}><button className="logo-button" onClick={leaveProject} title={t("project.directory")}><Logo/><span>{t("app.name")}</span></button><nav className="app-menus">{(["file", "edit", "view", "history"] as const).map((menu) => <div className="menu-anchor" key={menu}><button onMouseDown={(event) => { if (menu === "edit") event.preventDefault(); }} onClick={() => setActiveMenu(activeMenu === menu ? undefined : menu)}>{t(`menu.${menu}` as MessageKey)}</button>{activeMenu === menu && <Menu items={menuItems(menu)} onClose={() => setActiveMenu(undefined)}/>}</div>)}</nav><div className="project-switcher menu-anchor"><button onClick={() => setActiveMenu(activeMenu === "projects" ? undefined : "projects")}><strong>{project.name}</strong><Icon name="chevron"/></button>{activeMenu === "projects" && <div className="menu-popover project-menu">{projects.map((item) => <button key={item.id} onClick={() => { setActiveMenu(undefined); switchProject(item); }}><span>{item.name}</span>{item.id === project.id && <b>✓</b>}</button>)}<div className="menu-divider"/><button onClick={() => { setActiveMenu(undefined); leaveProject(); }}>{t("project.directory")}</button></div>}</div><button className={`save-status ${saveState}`} onClick={() => { commands.execute("file.save"); }}><Icon name="save"/>{t(`save.${saveState}` as MessageKey)}</button></header>
     <div className="workbench-body"><aside className="activity-bar"><div>{(["files", "search", "library", "ai", "history"] as const).map((mode) => <button key={mode} className={layout.sidebarVisible && sidebarMode === mode ? "active" : ""} title={t(`activity.${mode}` as MessageKey)} onClick={() => selectActivity(mode)}><Icon name={mode}/><span>{t(`activity.${mode}` as MessageKey)}</span></button>)}</div><div><button className={layout.sidebarVisible && sidebarMode === "settings" ? "active" : ""} title={t("activity.settings")} onClick={() => selectActivity("settings")}><Icon name="settings"/><span>{t("activity.settings")}</span></button><button className={layout.sidebarVisible && sidebarMode === "help" ? "active" : ""} title={t("activity.help")} onClick={() => selectActivity("help")}><Icon name="help"/><span>{t("activity.help")}</span></button></div></aside>
-      {layout.sidebarVisible && <><aside className="sidebar" style={{ width: layout.sidebarWidth }}>{sidebarMode === "files" && <><div className="sidebar-heading"><strong>{t("sidebar.files")}</strong><div><button onClick={() => void createEntry(false, "")} title={t("files.newFile")}><Icon name="plus"/></button><button onClick={() => void refreshTree()} title={t("sidebar.refresh")}><Icon name="refresh"/></button><button onClick={() => setLayout((value) => ({ ...value, sidebarVisible: false }))} title={t("sidebar.collapse")}>‹</button></div></div><div className="tree-section" style={{ height: layout.fileTreeHeight }} onDragOver={(event) => { if (event.dataTransfer.types.includes("Files")) event.preventDefault(); }} onDrop={dropImagesToProject}><div className="tree-sort-controls"><label><span>{t("sidebar.sortBy")}</span><select aria-label={t("sidebar.sortBy")} value={treeSortBy} onChange={(event) => setTreeSortBy(event.target.value as "type" | "name")}><option value="type">{t("sidebar.sortType")}</option><option value="name">{t("sidebar.sortName")}</option></select></label><button type="button" title={t(treeSortDirection === "asc" ? "sidebar.sortAscending" : "sidebar.sortDescending")} aria-label={t("sidebar.reverseSort")} onClick={() => setTreeSortDirection((value) => value === "asc" ? "desc" : "asc")}>{treeSortDirection === "asc" ? "↑" : "↓"}</button></div><input className="sidebar-input" value={treeFilter} onChange={(event) => setTreeFilter(event.target.value)} placeholder={t("sidebar.fileSearch")}/><Tree nodes={tree} activePath={activePath} mainFile={project.mainFile} filter={treeFilter} hideBuildArtifacts={store.get("hideBuildArtifacts")} sortBy={treeSortBy} sortDirection={treeSortDirection} canMove={project.writable} onOpen={(path) => { navigationHistory.current.clear(); setNavigationRequest(undefined); void openFile(path); }} onMove={(sourcePath, destinationDirectory) => void moveEntry(sourcePath, destinationDirectory)}/></div><div className="horizontal-resizer" onPointerDown={(event) => startResize("tree", event)}/><div className="outline-section"><div className="segment-tabs"><button className={outlineMode === "outline" ? "active" : ""} onClick={() => setOutlineMode("outline")}>{t("sidebar.outline")}</button><button className={outlineMode === "relations" ? "active" : ""} onClick={() => { setOutlineMode("relations"); setInspectorBlock(undefined); }}>{t("sidebar.relations")}</button></div>{outlineMode === "outline" ? <div className="outline-list">{outline.map((item, index) => <button key={`${item.title}-${index}`} style={{ paddingLeft: 14 + item.level * 15 }} onClick={() => navigateToOutline(item.line)}>{item.title}</button>)}</div> : <RelationBrowser snapshot={blockSnapshot ?? emptyBlockSnapshot} definitions={previewEnvironments} selectedId={relationSelectedId} scope={currentRelationScope} documentFiltered={relationDocumentFiltered} onDocumentFiltered={setRelationDocumentFiltered} onSelect={setRelationSelectedId} focusId={relationFocusId} direction={relationDirection} depth={relationDepth} filters={relationFilters} viewMode={filterQuery.viewMode} canGoBack={relationFocusHistory.length > 0} onBack={relationBack} onFocus={focusRelationBlock} onLocate={(id) => void locateRelationBlock(id)} onDirection={setRelationDirection} onDepth={setRelationDepth} onFilters={setRelationFilters} onToggleRelation={(id, event) => toggleRelation(id, event.clientX, event.clientY)}/>}</div></>}{sidebarMode === "search" && <AdvancedSearchPanel query={searchQuery} response={searchResponse} activeResultId={activeSearchResult?.id} replacement={replacement} replaceOpen={replaceOpen} filter={filterQuery} options={filterOptions} visibleGroups={store.get("visibleFilterGroups") as FilterGroupId[]} setQuery={setSearchQuery} setReplacement={setReplacement} setReplaceOpen={setReplaceOpen} setFilter={setFilterQuery} selectResult={(result) => void selectSearchResult(result)} replaceCurrent={() => void replaceCurrentSearchResult()} replaceAll={() => void replaceAllSearchResults()}/>} {sidebarMode === "library" && <ReferenceLibraryPanel project={project} onOpenLibrary={onOpenLibrary} onReturnToEditor={() => setLayout((value) => ({ ...value, sidebarVisible: false }))} onCite={(key) => insertText(`\\cite{${key}}`, `\\cite{${key}}`.length)}/>} {sidebarMode === "ai" && <AIView projectId={project.id} projectRoot={project.canonicalPath} overrides={tabs.map(({ path, content }) => ({ path, content }))} {...(activeTab ? { currentFile: activeTab.path, currentFileContent: activeTab.content } : {})} {...(creationSelection && activeTab && creationSelection.fileId === activeTab.path ? { selectedText: activeTab.content.slice(creationSelection.start, creationSelection.end) } : {})} onApplyChanges={applyAIChanges} onUndoChanges={undoAIChanges} onViewChanges={viewAIChanges} onOpenFile={(path, line) => { void navigateTo(path, line ? { line, column: 1 } : {}).catch((reason: unknown) => setBlockNotice(String(reason))); }} onReviewChanges={setAiReviewChanges} onOpenSettings={() => { setSettingsInitial("ai"); setSettingsOpen(true); }}/ >}{sidebarMode === "history" && <ProjectHistoryPanel projectId={project.id} onBeforeCapture={() => saveTabs(true)} onRestored={refreshAfterHistoryRestore} onOpenSettings={() => { setSettingsInitial("history"); setSettingsOpen(true); }}/>} {sidebarMode === "settings" && <div className="generic-sidebar"><h2>{t("activity.settings")}</h2><p>{t("placeholder.settings")}</p><dl><div><dt>{t("settings.language")}</dt><dd>{t("settings.english")}</dd></div><div><dt>{t("settings.theme")}</dt><dd>{t("settings.light")}</dd></div></dl></div>}{sidebarMode === "help" && <div className="generic-sidebar"><h2>{t("activity.help")}</h2><p>{t("placeholder.help")}</p></div>}</aside><div className="vertical-resizer" onPointerDown={(event) => startResize("sidebar", event)}/></>}
+      {layout.sidebarVisible && <><aside className="sidebar" style={{ width: layout.sidebarWidth }}>{sidebarMode === "files" && <><div className="sidebar-heading"><strong>{t("sidebar.files")}</strong><div><button onClick={() => void createEntry(false, "")} title={t("files.newFile")}><Icon name="plus"/></button><button onClick={() => { void refreshTree().catch((error: unknown) => setBlockNotice(error instanceof Error ? error.message : String(error))); }} title={t("sidebar.refresh")}><Icon name="refresh"/></button><button onClick={() => setLayout((value) => ({ ...value, sidebarVisible: false }))} title={t("sidebar.collapse")}>‹</button></div></div><div className="tree-section" style={{ height: layout.fileTreeHeight }} onDragOver={(event) => { if (event.dataTransfer.types.includes("Files")) event.preventDefault(); }} onDrop={dropImagesToProject}><div className="tree-sort-controls"><label><span>{t("sidebar.sortBy")}</span><select aria-label={t("sidebar.sortBy")} value={treeSortBy} onChange={(event) => setTreeSortBy(event.target.value as "type" | "name")}><option value="type">{t("sidebar.sortType")}</option><option value="name">{t("sidebar.sortName")}</option></select></label><button type="button" title={t(treeSortDirection === "asc" ? "sidebar.sortAscending" : "sidebar.sortDescending")} aria-label={t("sidebar.reverseSort")} onClick={() => setTreeSortDirection((value) => value === "asc" ? "desc" : "asc")}>{treeSortDirection === "asc" ? "↑" : "↓"}</button></div><input className="sidebar-input" value={treeFilter} onChange={(event) => setTreeFilter(event.target.value)} placeholder={t("sidebar.fileSearch")}/><Tree nodes={tree} activePath={activePath} mainFile={project.mainFile} filter={treeFilter} hideBuildArtifacts={store.get("hideBuildArtifacts")} sortBy={treeSortBy} sortDirection={treeSortDirection} canMove={project.writable} onOpen={(path) => { navigationHistory.current.clear(); setNavigationRequest(undefined); void openFile(path); }} onMove={(sourcePath, destinationDirectory) => void moveEntry(sourcePath, destinationDirectory)}/></div><div className="horizontal-resizer" onPointerDown={(event) => startResize("tree", event)}/><div className="outline-section"><div className="segment-tabs"><button className={outlineMode === "outline" ? "active" : ""} onClick={() => setOutlineMode("outline")}>{t("sidebar.outline")}</button><button className={outlineMode === "relations" ? "active" : ""} onClick={() => { setOutlineMode("relations"); setInspectorBlock(undefined); }}>{t("sidebar.relations")}</button></div>{outlineMode === "outline" ? <div className="outline-list">{outline.map((item, index) => <button key={`${item.title}-${index}`} style={{ paddingLeft: 14 + item.level * 15 }} onClick={() => navigateToOutline(item.line)}>{item.title}</button>)}</div> : <RelationBrowser snapshot={blockSnapshot ?? emptyBlockSnapshot} definitions={previewEnvironments} selectedId={relationSelectedId} scope={currentRelationScope} documentFiltered={relationDocumentFiltered} onDocumentFiltered={setRelationDocumentFiltered} onSelect={setRelationSelectedId} focusId={relationFocusId} direction={relationDirection} depth={relationDepth} filters={relationFilters} viewMode={filterQuery.viewMode} canGoBack={relationFocusHistory.length > 0} onBack={relationBack} onFocus={focusRelationBlock} onLocate={(id) => void locateRelationBlock(id)} onDirection={setRelationDirection} onDepth={setRelationDepth} onFilters={setRelationFilters} onToggleRelation={(id, event) => toggleRelation(id, event.clientX, event.clientY)}/>}</div></>}{sidebarMode === "search" && <AdvancedSearchPanel query={searchQuery} response={searchResponse} activeResultId={activeSearchResult?.id} replacement={replacement} replaceOpen={replaceOpen} filter={filterQuery} options={filterOptions} visibleGroups={store.get("visibleFilterGroups") as FilterGroupId[]} setQuery={setSearchQuery} setReplacement={setReplacement} setReplaceOpen={setReplaceOpen} setFilter={setFilterQuery} selectResult={(result) => void selectSearchResult(result)} replaceCurrent={() => void replaceCurrentSearchResult()} replaceAll={() => void replaceAllSearchResults()}/>} {sidebarMode === "library" && <ReferenceLibraryPanel project={project} onOpenLibrary={onOpenLibrary} onReturnToEditor={() => setLayout((value) => ({ ...value, sidebarVisible: false }))} onCite={(key) => insertText(`\\cite{${key}}`, `\\cite{${key}}`.length)}/>} {sidebarMode === "ai" && <AIView projectId={project.id} projectRoot={project.canonicalPath} overrides={tabs.map(({ path, content }) => ({ path, content }))} {...(activeTab ? { currentFile: activeTab.path, currentFileContent: activeTab.content } : {})} {...(creationSelection && activeTab && creationSelection.fileId === activeTab.path ? { selectedText: activeTab.content.slice(creationSelection.start, creationSelection.end) } : {})} onApplyChanges={applyAIChanges} onUndoChanges={undoAIChanges} onViewChanges={viewAIChanges} onOpenFile={(path, line) => { void navigateTo(path, line ? { line, column: 1 } : {}).catch((reason: unknown) => setBlockNotice(String(reason))); }} onReviewChanges={setAiReviewChanges} onOpenSettings={() => { setSettingsInitial("ai"); setSettingsOpen(true); }}/ >}{sidebarMode === "history" && <ProjectHistoryPanel projectId={project.id} onBeforeCapture={() => saveTabs(true)} onRestored={refreshAfterHistoryRestore} onOpenSettings={() => { setSettingsInitial("history"); setSettingsOpen(true); }}/>} {sidebarMode === "settings" && <div className="generic-sidebar"><h2>{t("activity.settings")}</h2><p>{t("placeholder.settings")}</p><dl><div><dt>{t("settings.language")}</dt><dd>{t("settings.english")}</dd></div><div><dt>{t("settings.theme")}</dt><dd>{t("settings.light")}</dd></div></dl></div>}{sidebarMode === "help" && <div className="generic-sidebar"><h2>{t("activity.help")}</h2><p>{t("placeholder.help")}</p></div>}</aside><div className="vertical-resizer" onPointerDown={(event) => startResize("sidebar", event)}/></>}
       <main className="workspace"><div className="workspace-main">{layout.mode === "single" ? singlePane : <><div className="split-toolbar-row">{splitToolbar}</div><div className="split-layout"><div style={{ width: `${layout.splitRatio}%` }}>{splitLeftContent}</div><div className="split-resizer" onPointerDown={(event) => startResize("split", event)}/><div style={{ width: `${100 - layout.splitRatio}%` }}>{secondaryContent}</div></div></>}</div>{bottomVisible && <><div className="bottom-resizer" onPointerDown={(event) => startResize("bottom", event)}/><section className="bottom-panel" style={{ height: layout.bottomPanelHeight }}><div className="bottom-tabs">{(["problems", "output", "compileLog"] as const).map((tab) => <button className={bottomTab === tab ? "active" : ""} key={tab} onClick={() => setBottomTab(tab)}>{t(`panel.${tab}` as MessageKey)}{tab === "problems" && diagnostics.length > 0 && <span>{diagnostics.length}</span>}</button>)}<button className="panel-close" onClick={() => setBottomVisible(false)} title={t("common.close")}><Icon name="close"/></button></div><div className="panel-content">{bottomTab === "problems" && (diagnostics.length ? diagnostics.map((diagnostic, index) => <DiagnosticRow diagnostic={diagnostic} onOpen={() => void openDiagnostic(diagnostic)} key={`${diagnostic.message}-${index}`}/>) : <p>{t("panel.noProblems")}</p>)}{bottomTab === "compileLog" && <pre>{compileResult ? `${compileResult.stdoutTail}\n${compileResult.stderrTail}` : t("panel.noOutput")}</pre>}{bottomTab === "output" && <p>{t("panel.noOutput")}</p>}</div></section></>}</main>
       {figureSelection ? <FigureInspector selection={figureSelection} onClose={() => setFigureSelection(undefined)} onLocate={(imageIndex) => setImageDialog({ kind: "replace", selection: figureSelection, imageIndex })} onChange={(replacement) => {
         if (!activeTab || activeTab.path !== figureSelection.fileId) return;

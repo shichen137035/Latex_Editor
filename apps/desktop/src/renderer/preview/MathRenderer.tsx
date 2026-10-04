@@ -16,4 +16,4 @@ export const MathRenderer = memo(function MathRenderer({ expression, display = f
   const result = mathRenderService.render(source, context, { displayMode: display, throwOnError: false });
   if (result.html) return <span className={display ? "preview-display-math" : "preview-inline-math"} dangerouslySetInnerHTML={{ __html: result.html }} />;
   return <code className={display ? "preview-display-math preview-math-fallback" : "preview-inline-math preview-math-fallback"}>{source}</code>;
-});
+}, (before, after) => before.expression === after.expression && before.display === after.display && (before.context?.sourceVersion ?? 0) === (after.context?.sourceVersion ?? 0));

@@ -1,0 +1,36 @@
+\NeedsTeXFormat{LaTeX2e}
+\ProvidesPackage{texweave-light}[2026/10/04 TeXWeave lightweight defaults]
+
+% Keep dependencies to the standard LaTeX math, graphics, and table basics.
+\RequirePackage{amsmath}
+\RequirePackage{amssymb}
+\RequirePackage{amsthm}
+\RequirePackage{graphicx}
+\RequirePackage{array}
+
+% A compact set of commonly used theorem-like environments.
+\makeatletter
+\theoremstyle{plain}
+\@ifundefined{theorem}{\newtheorem{theorem}{Theorem}[section]}{}
+\@ifundefined{lemma}{\newtheorem{lemma}[theorem]{Lemma}}{}
+\@ifundefined{proposition}{\newtheorem{proposition}[theorem]{Proposition}}{}
+\@ifundefined{corollary}{\newtheorem{corollary}[theorem]{Corollary}}{}
+\theoremstyle{definition}
+\@ifundefined{definition}{\newtheorem{definition}[theorem]{Definition}}{}
+\@ifundefined{assumption}{\newtheorem{assumption}[theorem]{Assumption}}{}
+\@ifundefined{example}{\newtheorem{example}[theorem]{Example}}{}
+\theoremstyle{remark}
+\@ifundefined{remark}{\newtheorem{remark}[theorem]{Remark}}{}
+\@ifundefined{solution}{\newenvironment{solution}{\begin{proof}[Solution]}{\end{proof}}}{}
+\makeatother
+
+% Short names for common number sets and operators.
+\providecommand{\R}{\mathbb{R}}
+\providecommand{\N}{\mathbb{N}}
+\providecommand{\Z}{\mathbb{Z}}
+\providecommand{\Q}{\mathbb{Q}}
+\providecommand{\C}{\mathbb{C}}
+\makeatletter
+\@ifundefined{argmin}{\DeclareMathOperator*{\argmin}{arg\,min}}{}
+\@ifundefined{argmax}{\DeclareMathOperator*{\argmax}{arg\,max}}{}
+\makeatother

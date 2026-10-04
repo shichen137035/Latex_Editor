@@ -1,8 +1,8 @@
 {
   "id": "default",
   "name": "Default",
-  "description": "A conservative academic writing starter with mathematics, figures, tables, and theorem support.",
-  "version": 1,
+  "description": "An academic writing starter with common mathematics, theorem, figure, table, algorithm, and code support.",
+  "version": 2,
   "source": "built-in",
   "files": [
     { "sourcePath": "texweave.sty", "targetPath": "texweave.sty", "kind": "style" }

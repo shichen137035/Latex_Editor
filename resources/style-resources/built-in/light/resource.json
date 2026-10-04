@@ -1,0 +1,11 @@
+{
+  "id": "light",
+  "name": "Light",
+  "description": "A lightweight starter with essential mathematics, theorem, figure, and table support.",
+  "version": 1,
+  "source": "built-in",
+  "files": [
+    { "sourcePath": "texweave-light.sty", "targetPath": "texweave-light.sty", "kind": "style" }
+  ],
+  "mainStyle": { "kind": "package", "name": "texweave-light" }
+}

@@ -1,15 +1,19 @@
-import { Fragment, memo, useEffect, useMemo, useRef, useState, type CSSProperties, type MouseEvent, type PointerEvent as ReactPointerEvent, type ReactNode } from "react";
+import { Fragment, memo, Profiler, useEffect, useMemo, useRef, useState, type CSSProperties, type MouseEvent, type PointerEvent as ReactPointerEvent, type ReactNode } from "react";
 import { createPortal, flushSync } from "react-dom";
 import { isRelationCapableBlock, type BlockGraphSnapshot, type BlockId, type ProjectTreeNode, type RelationDirection } from "@latex-editor/contracts";
 import { t, type MessageKey } from "../i18n/index.js";
 import { definitionForId } from "./environments.js";
 import { environmentAccent } from "./environment-colors.js";
 import { parsePreview } from "./parser.js";
-import type { ContentRegion, EnvironmentDefinition, PreviewNode, SourceSpan, StructuralBlock } from "./types.js";
+import type { ContentRegion, EnvironmentDefinition, PreviewDocument, PreviewNode, SourceSpan, StructuralBlock } from "./types.js";
+import { buildPreviewRenderIndex, estimatedPreviewHeight, previewPath, reusePreviewDocument } from "./renderModel.js";
+import { tryIncrementalPreviewUpdate } from "./incremental.js";
+import { VirtualPreviewController, VirtualPreviewList } from "./VirtualPreview.js";
 import "./preview.css";
 import type { SpellContextRequest } from "../spellcheck/SpellCheckController.js";
 import { useSettings } from "../settings/service.js";
 import { MathRenderer } from "./MathRenderer.js";
+import { mathRenderService } from "../math/MathRenderService.js";
 import { bindings, commands, eventBinding } from "../settings/commands.js";
 import { EMPTY_MATH_CONTEXT, type MathContext } from "../math/types.js";
 import { searchPattern } from "../search/SearchEngine.js";
@@ -21,6 +25,7 @@ import { candidateRelationState } from "../relations/model.js";
 import { convertBlockEnvironmentSource, definitionConversionGroup, environmentDefinitionsCompatible, environmentDisplayName, EnvironmentPickerPanel, environmentConversionGroup } from "./EnvironmentPicker.js";
 import { unwrapLatexEnvironment } from "./sourceOperations.js";
 import { FigurePreview } from "../figure/FigurePreview.js";
+import { parseGraphicPaths } from "../figure/parser.js";
 import type { FigureSelection } from "../figure/FigureInspector.js";
 import { TablePreview } from "../table/TablePreview.js";
 import type { TableSelection } from "../table/model.js";
@@ -43,7 +48,22 @@ export interface PreviewRelationUi {
   onFocus(blockId: BlockId): void;
   onToggle(blockId: BlockId, x: number, y: number): void;
 }
-type PreviewEditorServices = { nodeRanges: ReadonlyMap<string, SourceSpan>; api: EditorApi | undefined; projectId: string; tree: ProjectTreeNode[]; currentPath: string; documentSource: string; definitions: EnvironmentDefinition[]; mathContext: MathContext; searchQuery: SearchQuery; activeSearchResult?: SearchResult | undefined; filterQuery: FilterQuery; filterStates: Map<string, FilterState>; relation?: PreviewRelationUi | undefined; selectedBlockIds: string[]; setSelectedBlockIds(ids: string[]): void; deleteBlocks(ids: string[]): void; removeEnvironment(id: string): void; onBoundaryDraftChange(insertion: BoundaryInsertion, value: string): void; onFigureSelect: ((selection?: FigureSelection) => void) | undefined; onFigureSlotSelect: ((selection: FigureSelection) => void) | undefined; onTableSelect: ((selection?: TableSelection) => void) | undefined; onTableChange: ((selection: TableSelection, source: string) => void) | undefined; onSpellContextMenu(request: SpellContextRequest): void; onDetectedLanguage(language: string): void; onForwardSync(path: string, line: number, column?: number): void };
+type PreviewSourceReader = Pick<string, "slice">;
+type PreviewEditorServices = { nodeRanges: ReadonlyMap<string, SourceSpan>; api: EditorApi | undefined; projectId: string; tree: ProjectTreeNode[]; currentPath: string; graphicPaths: string[]; definitions: EnvironmentDefinition[]; mathContext: MathContext; searchQuery: SearchQuery; activeSearchResult?: SearchResult | undefined; filterQuery: FilterQuery; filterStates: Map<string, FilterState>; visibilitySignatures: ReadonlyMap<string, string>; relation?: PreviewRelationUi | undefined; selectedBlockIds: string[]; virtual: VirtualPreviewController; virtualRoot: { current: HTMLDivElement | null }; forcedIds: ReadonlySet<string>; forceOffset?: number; initialHeight?: number | undefined; setSelectedBlockIds(ids: string[]): void; deleteBlocks(ids: string[]): void; removeEnvironment(id: string): void; onBoundaryDraftChange(insertion: BoundaryInsertion, value: string): void; onFigureSelect: ((selection?: FigureSelection) => void) | undefined; onFigureSlotSelect: ((selection: FigureSelection) => void) | undefined; onTableSelect: ((selection?: TableSelection) => void) | undefined; onTableChange: ((selection: TableSelection, source: string) => void) | undefined; onSpellContextMenu(request: SpellContextRequest): void; onDetectedLanguage(language: string): void; onForwardSync(path: string, line: number, column?: number): void };
+
+function measurePreviewEditHeight(root: HTMLDivElement | null, id: string): number | undefined {
+  if (!root) return undefined;
+  const nodes = root.querySelectorAll<HTMLElement>("[data-node-id], [data-preview-node-id]");
+  for (const node of Array.from(nodes)) {
+    if (node.dataset.nodeId !== id && node.dataset.previewNodeId !== id) continue;
+    const target = node.classList.contains("preview-block")
+      ? node.querySelector<HTMLElement>(":scope > .preview-block-body") ?? node
+      : node;
+    const height = target.getBoundingClientRect().height;
+    return height > 0 ? Math.ceil(height) : undefined;
+  }
+  return undefined;
+}
 
 function previewFilterState(node: PreviewNode, services: PreviewEditorServices): FilterState {
   const documentState = services.filterQuery.enabled ? services.filterStates.get(node.id) ?? "match" : "match";
@@ -84,6 +104,7 @@ function registerDeleteMenuHandler(id: string, handler: (event: globalThis.Mouse
   };
 }
 interface BoundaryInsertion { targetId: string; position: number; side: "before" | "after" }
+interface PendingPreviewScroll { id: string; offset?: number; align: ScrollLogicalPosition; highlight?: "reference-target" | "relation-locate-highlight" | "custom-block-created-highlight"; nonce?: number }
 interface PreviewActions extends Pick<PreviewEditorServices, "setSelectedBlockIds" | "deleteBlocks" | "removeEnvironment" | "onFigureSelect" | "onFigureSlotSelect" | "onTableSelect" | "onTableChange" | "onSpellContextMenu" | "onDetectedLanguage" | "onForwardSync"> {
   select(id: string): void;
   edit(id: string, offset?: number): void;
@@ -95,8 +116,6 @@ interface PreviewActions extends Pick<PreviewEditorServices, "setSelectedBlockId
   relationFocus(id: BlockId): void;
   relationToggle(id: BlockId, x: number, y: number): void;
 }
-interface PreviewRenderBudget { remaining: number; }
-const previewNodeLimit = 900;
 const previewFilterEngine = new FilterEngine();
 
 function sourceElement(node: Node | null, root: HTMLElement): HTMLElement | undefined {
@@ -126,34 +145,6 @@ function previewDocumentSelection(root: HTMLElement, source: string, fileId: str
   }
   if (end < start) [start, end] = [end, start];
   return end > start ? { fileId, start, end, origin: "preview" } : undefined;
-}
-
-function countNodes(nodes: PreviewNode[]): number {
-  let count = 0;
-  const pending = [...nodes];
-  while (pending.length) {
-    const node = pending.pop();
-    if (!node) continue;
-    count += 1;
-    if (node.kind === "block") pending.push(...node.children);
-  }
-  return count;
-}
-
-/** Keeps the initial Visual render bounded without discarding the parsed source. */
-function takePreviewNodes(nodes: PreviewNode[], budget: PreviewRenderBudget): PreviewNode[] {
-  const visible: PreviewNode[] = [];
-  for (const node of nodes) {
-    if (budget.remaining <= 0) break;
-    budget.remaining -= 1;
-    if (node.kind === "block") {
-      const children = takePreviewNodes(node.children, budget);
-      visible.push(children.length === node.children.length ? node : { ...node, children });
-    } else {
-      visible.push(node);
-    }
-  }
-  return visible;
 }
 
 function highlightedText(value: string, query: SearchQuery, active: boolean, keyBase: number): ReactNode[] {
@@ -233,7 +224,7 @@ interface PreviewListItem {
 }
 
 /** Keep absolute ranges so nested math blocks can remain independent preview nodes. */
-function listBodyRange(node: StructuralBlock, source: string): [number, number] {
+function listBodyRange(node: StructuralBlock, source: PreviewSourceReader): [number, number] {
   const full = nodeSource(node, source);
   const opening = /^\\begin\{[^}]+\}(?:\[[^\]]*\])?/s.exec(full)?.[0]?.length ?? 0;
   const closing = /\\end\{[^}]+\}\s*$/s.exec(full);
@@ -242,7 +233,7 @@ function listBodyRange(node: StructuralBlock, source: string): [number, number] 
   return [bodyStart, Math.max(bodyStart, bodyEnd)];
 }
 
-function previewListItems(node: StructuralBlock, source: string): PreviewListItem[] {
+function previewListItems(node: StructuralBlock, source: PreviewSourceReader): PreviewListItem[] {
   const [bodyStart, bodyEnd] = listBodyRange(node, source);
   const value = source.slice(bodyStart, bodyEnd);
   const matches = [...value.matchAll(/\\item(?:\[([^\]]+)\])?/g)];
@@ -258,7 +249,7 @@ function previewListItems(node: StructuralBlock, source: string): PreviewListIte
   });
 }
 
-function nodeSource(node: PreviewNode, source: string): string {
+function nodeSource(node: PreviewNode, source: PreviewSourceReader): string {
   return source.slice(node.source.startOffset, node.source.endOffset);
 }
 
@@ -309,38 +300,14 @@ function nodeAtStart(nodes: PreviewNode[], startOffset: number, kind: PreviewNod
   return undefined;
 }
 
-function blockAtOffset(nodes: PreviewNode[], offset: number): StructuralBlock | undefined {
-  let result: StructuralBlock | undefined;
-  for (const node of nodes) {
-    if (node.kind !== "block" || offset < node.source.startOffset || offset > node.source.endOffset) continue;
-    result = node;
-    result = blockAtOffset(node.children, offset) ?? result;
-  }
-  return result;
-}
-
-function nodesBefore(nodes: PreviewNode[], targetId: string): number | undefined {
-  let count = 0;
-  for (const node of nodes) {
-    if (node.id === targetId) return count;
-    count += 1;
-    if (node.kind === "block") {
-      const nested = nodesBefore(node.children, targetId);
-      if (nested !== undefined) return count + nested;
-      count += countNodes(node.children);
-    }
-  }
-  return undefined;
-}
-
-function editableBodyStart(node: StructuralBlock, source: string): number {
+function editableBodyStart(node: StructuralBlock, source: PreviewSourceReader): number {
   const raw = source.slice(node.body.startOffset, node.body.endOffset);
   const prefix = /^(?:\s|%[^\r\n]*(?:\r?\n|$)|\\label\s*\{[^}]*\})*/.exec(raw)?.[0].length ?? 0;
   return Math.min(node.body.endOffset, node.body.startOffset + prefix);
 }
 
 /** Removes only the outer math wrapper; nested aligned/cases environments are valid TeX. */
-function mathBodySource(node: StructuralBlock, source: string): string {
+function mathBodySource(node: StructuralBlock, source: PreviewSourceReader): string {
   return nodeSource(node, source)
     .replace(/^\s*\\begin\{[^}]+\}(?:\[[^\]]*\])?\s*/s, "")
     .replace(/\s*\\end\{[^}]+\}\s*$/s, "")
@@ -362,7 +329,7 @@ function environmentLabel(definition: EnvironmentDefinition | undefined, id: str
   return id.replaceAll("-", " ").toLocaleUpperCase();
 }
 
-function BlockEnvironmentSelector({ node, source, definition, definitions, disabled, onChange }: { node: StructuralBlock; source: string; definition: EnvironmentDefinition | undefined; definitions: EnvironmentDefinition[]; disabled: boolean; onChange(value: string): void }) {
+function BlockEnvironmentSelector({ node, source, definition, definitions, disabled, onChange }: { node: StructuralBlock; source: PreviewSourceReader; definition: EnvironmentDefinition | undefined; definitions: EnvironmentDefinition[]; disabled: boolean; onChange(value: string): void }) {
   const [open, setOpen] = useState(false);
   const [pendingIncompatible, setPendingIncompatible] = useState<EnvironmentDefinition>();
   const rootRef = useRef<HTMLDivElement>(null);
@@ -424,7 +391,7 @@ function LabelEditor({ label, auto, onCommit }: { label: string; auto: boolean; 
   return <button type="button" className={`preview-block-label${auto ? " auto" : ""}${label ? "" : " empty"}`} title={t(label ? (auto ? "preview.autoLabelHint" : "preview.editLabel") : "preview.addLabel")} onClick={(event) => { event.stopPropagation(); editingRef.current = true; setDraft(label); setEditing(true); }}>{label || t("preview.addLabel")}</button>;
 }
 
-function SpecializedContent({ node, source, services }: { node: StructuralBlock; source: string; services: PreviewEditorServices }) {
+function SpecializedContent({ node, source, services }: { node: StructuralBlock; source: PreviewSourceReader; services: PreviewEditorServices }) {
   const definitionId = node.environmentId;
   if (/equation|align|gather|multline|display-math/.test(definitionId)) {
     const mathBody = mathBodySource(node, source);
@@ -437,7 +404,7 @@ function SpecializedContent({ node, source, services }: { node: StructuralBlock;
     const start = node.body.startOffset + raw.length - raw.trimStart().length;
     return <pre className="preview-code">{sourceMapped(raw.trim(), start, start + raw.trim().length)}</pre>;
   }
-  if (definitionId === "figure" || definitionId === "figure-star" || definitionId === "custom:figure*" || definitionId === "inline-image") return <FigurePreview source={nodeSource(node, source)} documentSource={services.documentSource} api={services.api} projectId={services.projectId} texPath={services.currentPath} onChooseSlot={(imageIndex) => services.onFigureSlotSelect?.({ fileId: services.currentPath, start: node.source.startOffset, end: node.source.endOffset, source: nodeSource(node, source), imageIndex })}/>;
+  if (definitionId === "figure" || definitionId === "figure-star" || definitionId === "custom:figure*" || definitionId === "inline-image") return <FigurePreview source={nodeSource(node, source)} graphicPaths={services.graphicPaths} api={services.api} projectId={services.projectId} texPath={services.currentPath} onChooseSlot={(imageIndex) => services.onFigureSlotSelect?.({ fileId: services.currentPath, start: node.source.startOffset, end: node.source.endOffset, source: nodeSource(node, source), imageIndex })}/>;
   if (["table", "table-star", "tabular", "tabular-star", "tabularx", "longtable"].includes(definitionId)) {
     const selection = { fileId: services.currentPath, start: node.source.startOffset, end: node.source.endOffset, source: nodeSource(node, source), kind: "table" as const };
     return <TablePreview source={selection.source} renderCell={(content) => inlineLatex(content, services.mathContext, services.searchQuery, false)} onSelect={(detail) => services.onTableSelect?.({ ...selection, ...detail })} onChange={(replacement) => services.onTableChange?.(selection, replacement)}/>;
@@ -445,11 +412,20 @@ function SpecializedContent({ node, source, services }: { node: StructuralBlock;
   return null;
 }
 
-function ListContent({ node, source, mathContext, searchQuery, activeSearch, renderChild, onEdit }: { node: StructuralBlock; source: string; mathContext: MathContext; searchQuery: SearchQuery; activeSearch: boolean; renderChild(child: PreviewNode): ReactNode; onEdit(offset?: number): void }) {
+function ListContent({ node, source, mathContext, searchQuery, activeSearch, renderChild, onEdit, services }: { node: StructuralBlock; source: PreviewSourceReader; mathContext: MathContext; searchQuery: SearchQuery; activeSearch: boolean; renderChild(child: PreviewNode): ReactNode; onEdit(offset?: number): void; services: PreviewEditorServices }) {
   const items = previewListItems(node, source);
-  const Tag = node.environmentId === "enumerate" ? "ol" : "ul";
-  const renderItem = (item: PreviewListItem, itemIndex: number) => {
-    const children = node.children.filter((child) => child.source.startOffset < item.endOffset && child.source.endOffset > item.startOffset);
+  let childIndex = 0;
+  const rows = items.map((item, index) => {
+    while (node.children[childIndex] && node.children[childIndex]!.source.endOffset <= item.startOffset) childIndex += 1;
+    const children: PreviewNode[] = [];
+    for (let cursor = childIndex; node.children[cursor] && node.children[cursor]!.source.startOffset < item.endOffset; cursor += 1) children.push(node.children[cursor]!);
+    return { id: `listitem:${node.id}:${index}`, estimatedHeight: Math.max(45, 20 + Math.ceil((item.endOffset - item.startOffset) / 75) * 27) + children.reduce((sum, child) => sum + (child.kind === "block" ? estimatedPreviewHeight(child) : 0), 0), item, index, children };
+  });
+  const forcedListItems = new Set(services.forcedIds);
+  const forcedOffsets = [...services.forcedIds].map((id) => services.nodeRanges.get(id)?.startOffset).filter((offset): offset is number => offset !== undefined);
+  if (services.forceOffset !== undefined) forcedOffsets.push(services.forceOffset);
+  for (const row of rows) if (forcedOffsets.some((offset) => row.item.startOffset <= offset && offset < row.item.endOffset)) forcedListItems.add(row.id);
+  const renderItem = ({ item, index: itemIndex, children }: typeof rows[number]) => {
     const content: ReactNode[] = [];
     let cursor = item.startOffset;
     const addText = (start: number, end: number, key: string) => {
@@ -468,20 +444,20 @@ function ListContent({ node, source, mathContext, searchQuery, activeSearch, ren
       cursor = Math.max(cursor, child.source.endOffset);
     }
     addText(Math.max(cursor, item.startOffset), item.endOffset, `tail:${itemIndex}`);
-    return <li key={`${item.startOffset}:${itemIndex}`} data-source-start-offset={item.startOffset} data-source-end-offset={item.endOffset} onClick={(event) => { if ((event.target as Element).closest("button, .preview-local-editor") || window.getSelection()?.isCollapsed === false) return; event.stopPropagation(); onEdit(sourceOffsetAtPoint(event.currentTarget, event)); }}>{item.label && <strong>{inlineLatex(item.label, mathContext, searchQuery, activeSearch, item.labelStart)} </strong>}{content}</li>;
+    return <div data-source-start-offset={item.startOffset} data-source-end-offset={item.endOffset} onClick={(event) => { if ((event.target as Element).closest("button, .preview-local-editor") || window.getSelection()?.isCollapsed === false) return; event.stopPropagation(); onEdit(sourceOffsetAtPoint(event.currentTarget, event)); }}>{item.label && <strong>{inlineLatex(item.label, mathContext, searchQuery, activeSearch, item.labelStart)} </strong>}{content}</div>;
   };
-  return <Tag className="preview-list">{items.map(renderItem)}</Tag>;
+  return <VirtualPreviewList items={rows} controller={services.virtual} rootRef={services.virtualRoot} forcedIds={forcedListItems} renderItem={renderItem} as={node.environmentId === "enumerate" ? "ol" : "ul"}/>;
 }
 
 const LocalEditor = PreviewLocalEditor;
 
-function ContentRenderer({ node, source, editing, cursorOffset, boundary, beginEdit, applyEdit, onDraftChange, applyBoundary, cancelEdit, requestBoundary, services }: { node: ContentRegion; source: string; editing: boolean; cursorOffset?: number | undefined; boundary?: BoundaryInsertion | undefined; beginEdit(offset?: number): void; applyEdit(value: string): void; onDraftChange?: ((value: string) => void) | undefined; applyBoundary(insertion: BoundaryInsertion, value: string): void; cancelEdit(): void; requestBoundary(node: PreviewNode, side: "before" | "after", draft?: string): void; services: PreviewEditorServices }) {
+function ContentRenderer({ node, source, editing, cursorOffset, boundary, beginEdit, applyEdit, onDraftChange, applyBoundary, cancelEdit, requestBoundary, services }: { node: ContentRegion; source: PreviewSourceReader; editing: boolean; cursorOffset?: number | undefined; boundary?: BoundaryInsertion | undefined; beginEdit(offset?: number): void; applyEdit(value: string): void; onDraftChange?: ((value: string) => void) | undefined; applyBoundary(insertion: BoundaryInsertion, value: string): void; cancelEdit(): void; requestBoundary(node: PreviewNode, side: "before" | "after", draft?: string): void; services: PreviewEditorServices }) {
   const insertion = boundary?.targetId === node.id ? boundary : undefined;
   const queryFilterState = services.filterQuery.enabled ? services.filterStates.get(node.id) ?? "match" : "match";
   const filterState = previewFilterState(node, services);
   const disposition = filterDisposition(filterState, services.filterQuery.viewMode);
-  if (disposition === "remove" && !editing && !insertion) return null;
-  if (disposition === "collapse" && !editing && !insertion) {
+  if (disposition === "remove" && !editing && !insertion && !services.forcedIds.has(node.id)) return null;
+  if (disposition === "collapse" && !editing && !insertion && !services.forcedIds.has(node.id)) {
     return <div className="preview-filter-collapsed">⋯ 1 {t("filter.blockCollapsed")}</div>;
   }
   const activeSearch = services.activeSearchResult ? services.activeSearchResult.matchStart >= node.source.startOffset && services.activeSearchResult.matchEnd <= node.source.endOffset : false;
@@ -506,7 +482,7 @@ function countDescendants(node: StructuralBlock): number {
   }, 0);
 }
 
-function hasEmptyBody(node: StructuralBlock, source: string): boolean {
+function hasEmptyBody(node: StructuralBlock, source: PreviewSourceReader): boolean {
   if (node.children.length) return false;
   return source.slice(node.body.startOffset, node.body.endOffset)
     .replace(/^\s*%[^\r\n]*/gm, "")
@@ -533,7 +509,7 @@ function structuralBlockAt(nodes: PreviewNode[], startOffset: number, environmen
   return undefined;
 }
 
-function BlockRenderer({ node, source, definitions, selectedId, editingId, cursorOffset, boundary, select, edit, applyEdit, applyBoundary, cancelEdit, requestBoundary, services }: { node: StructuralBlock; source: string; definitions: EnvironmentDefinition[]; selectedId?: string | undefined; editingId?: string | undefined; cursorOffset?: number | undefined; boundary?: BoundaryInsertion | undefined; select(id: string): void; edit(id: string, cursorOffset?: number): void; applyEdit(node: PreviewNode, value: string): void; applyBoundary(insertion: BoundaryInsertion, value: string): void; cancelEdit(): void; requestBoundary(node: PreviewNode, side: "before" | "after", draft?: string): void; onDraftChange?: ((value: string) => void) | undefined; services: PreviewEditorServices }) {
+function BlockRenderer({ node, source, definitions, selectedId, editingId, cursorOffset, boundary, select, edit, applyEdit, applyBoundary, cancelEdit, requestBoundary, services }: { node: StructuralBlock; source: PreviewSourceReader; definitions: EnvironmentDefinition[]; selectedId?: string | undefined; editingId?: string | undefined; cursorOffset?: number | undefined; boundary?: BoundaryInsertion | undefined; select(id: string): void; edit(id: string, cursorOffset?: number): void; applyEdit(node: PreviewNode, value: string): void; applyBoundary(insertion: BoundaryInsertion, value: string): void; cancelEdit(): void; requestBoundary(node: PreviewNode, side: "before" | "after", draft?: string): void; onDraftChange?: ((value: string) => void) | undefined; services: PreviewEditorServices }) {
   const definition = definitionForId(definitions, node.environmentId);
   const family = definition?.family ?? (node.origin === "virtual" ? "virtual" : "generic");
   const accent = environmentAccent(node.environmentId, definition);
@@ -590,7 +566,7 @@ function BlockRenderer({ node, source, definitions, selectedId, editingId, curso
     : emptyStructuralParagraph
       ? <PreviewNodeRenderer node={emptyStructuralParagraph} source={source} definitions={definitions} selectedId={selectedId} editingId={editingId} cursorOffset={cursorOffset} boundary={boundary} select={select} edit={edit} applyEdit={applyEdit} onDraftChange={(draft) => { if (structuralBlockDraft(draft, services.currentPath, definitions)) applyEdit(emptyStructuralParagraph, draft); }} applyBoundary={applyBoundary} cancelEdit={cancelEdit} requestBoundary={requestBoundary} services={services}/>
       : listEnvironment
-        ? <ListContent node={node} source={source} mathContext={services.mathContext} searchQuery={effectiveSearch} activeSearch={activeSearch} onEdit={(offset) => edit(node.id, offset)} renderChild={(child) => <PreviewNodeRenderer key={child.id} node={child} source={source} definitions={definitions} selectedId={selectedId} editingId={editingId} cursorOffset={cursorOffset} boundary={boundary} select={select} edit={edit} applyEdit={applyEdit} applyBoundary={applyBoundary} cancelEdit={cancelEdit} requestBoundary={requestBoundary} services={services}/>} />
+        ? <ListContent node={node} source={source} mathContext={services.mathContext} searchQuery={effectiveSearch} activeSearch={activeSearch} onEdit={(offset) => edit(node.id, offset)} services={services} renderChild={(child) => <PreviewNodeRenderer key={child.id} node={child} source={source} definitions={definitions} selectedId={selectedId} editingId={editingId} cursorOffset={cursorOffset} boundary={boundary} select={select} edit={edit} applyEdit={applyEdit} applyBoundary={applyBoundary} cancelEdit={cancelEdit} requestBoundary={requestBoundary} services={services}/>} />
         : specialized;
   const cssValue = (value: string | undefined, fallback: string) => value ? (value.startsWith("--") ? `var(${value})` : value) : `var(${fallback})`;
   const insertion = boundary?.targetId === node.id ? boundary : undefined;
@@ -601,8 +577,8 @@ function BlockRenderer({ node, source, definitions, selectedId, editingId, curso
     ? candidateRelationState(services.relation.snapshot, services.relation.focusId, semanticId, services.relation.direction)
     : undefined;
   const disposition = filterDisposition(filterState, services.filterQuery.viewMode);
-  if (!editing && !insertion && !selected && disposition === "remove") return null;
-  if (!editing && !insertion && !selected && disposition === "collapse") {
+  if (!editing && !insertion && !selected && !services.forcedIds.has(node.id) && disposition === "remove") return null;
+  if (!editing && !insertion && !selected && !services.forcedIds.has(node.id) && disposition === "collapse") {
     return <div className="preview-filter-collapsed">⋯ 1 {t("filter.blockCollapsed")}</div>;
   }
   const filterClass = services.filterQuery.enabled || services.relation?.active ? `filter-${filterState} filter-view-${services.filterQuery.viewMode}` : "";
@@ -649,7 +625,7 @@ function BlockRenderer({ node, source, definitions, selectedId, editingId, curso
   </Fragment>;
 }
 
-type PreviewNodeRendererProps = { node: PreviewNode; source: string; definitions: EnvironmentDefinition[]; selectedId?: string | undefined; editingId?: string | undefined; cursorOffset?: number | undefined; boundary?: BoundaryInsertion | undefined; select(id: string): void; edit(id: string, cursorOffset?: number): void; applyEdit(node: PreviewNode, value: string): void; onDraftChange?: ((value: string) => void) | undefined; applyBoundary(insertion: BoundaryInsertion, value: string): void; cancelEdit(): void; requestBoundary(node: PreviewNode, side: "before" | "after", draft?: string): void; services: PreviewEditorServices };
+type PreviewNodeRendererProps = { node: PreviewNode; source: PreviewSourceReader; definitions: EnvironmentDefinition[]; selectedId?: string | undefined; editingId?: string | undefined; cursorOffset?: number | undefined; boundary?: BoundaryInsertion | undefined; select(id: string): void; edit(id: string, cursorOffset?: number): void; applyEdit(node: PreviewNode, value: string): void; onDraftChange?: ((value: string) => void) | undefined; applyBoundary(insertion: BoundaryInsertion, value: string): void; cancelEdit(): void; requestBoundary(node: PreviewNode, side: "before" | "after", draft?: string): void; services: PreviewEditorServices };
 
 const PreviewNodeRenderer = memo(function RenderPreviewNode(props: PreviewNodeRendererProps) {
   if (props.node.kind === "block") return <BlockRenderer {...props} node={props.node} select={(id) => { props.services.setSelectedBlockIds([id]); props.select(id); }} edit={(id, offset) => { props.services.setSelectedBlockIds([]); props.edit(id, offset); }}/>;
@@ -661,9 +637,15 @@ const PreviewNodeRenderer = memo(function RenderPreviewNode(props: PreviewNodeRe
 function samePreviewNodeRender(previous: PreviewNodeRendererProps, next: PreviewNodeRendererProps): boolean {
   if (previous.node !== next.node || previous.source !== next.source || previous.definitions !== next.definitions || previous.onDraftChange !== next.onDraftChange) return false;
   const a = previous.services, b = next.services;
-  if (a.api !== b.api || a.projectId !== b.projectId || a.tree !== b.tree || a.currentPath !== b.currentPath || a.mathContext !== b.mathContext || a.searchQuery !== b.searchQuery || a.activeSearchResult !== b.activeSearchResult || a.filterQuery !== b.filterQuery || a.filterStates !== b.filterStates) return false;
+  if (a.api !== b.api || a.projectId !== b.projectId || a.tree !== b.tree || a.currentPath !== b.currentPath || a.graphicPaths !== b.graphicPaths || a.mathContext.sourceVersion !== b.mathContext.sourceVersion || a.searchQuery !== b.searchQuery || a.filterQuery !== b.filterQuery) return false;
+  if (a.visibilitySignatures.get(previous.node.id) !== b.visibilitySignatures.get(next.node.id)) return false;
+  if (a.forcedIds.has(previous.node.id) !== b.forcedIds.has(next.node.id)) return false;
+  const activeIn = (services: PreviewEditorServices, node: PreviewNode) => services.activeSearchResult && services.activeSearchResult.matchStart >= node.source.startOffset && services.activeSearchResult.matchEnd <= node.source.endOffset
+    ? `${services.activeSearchResult.matchStart}:${services.activeSearchResult.matchEnd}` : "";
+  if (activeIn(a, previous.node) !== activeIn(b, next.node)) return false;
   const ra = a.relation, rb = b.relation;
-  if (ra?.active !== rb?.active || ra?.snapshot !== rb?.snapshot || ra?.transientToBlockId !== rb?.transientToBlockId || ra?.focusId !== rb?.focusId || ra?.direction !== rb?.direction || ra?.matchIds !== rb?.matchIds || ra?.contextIds !== rb?.contextIds) return false;
+  if (ra?.active !== rb?.active || ra?.direction !== rb?.direction) return false;
+  if (ra?.snapshot !== rb?.snapshot && (a.selectedBlockIds.length || b.selectedBlockIds.length)) return false;
   const interaction = (props: PreviewNodeRendererProps) => {
     const range = props.node.source;
     const contains = (id?: string) => {
@@ -680,26 +662,52 @@ function samePreviewNodeRender(previous: PreviewNodeRendererProps, next: Preview
   return interaction(previous) === interaction(next);
 }
 
+type PreviewListRow = { id: string; estimatedHeight: number; node?: PreviewNode; collapsed?: number };
+
 function PreviewNodeList({ nodes, ...props }: { nodes: PreviewNode[] } & Omit<PreviewNodeRendererProps, "node">) {
-  const rendered: ReactNode[] = [];
+  const rows: PreviewListRow[] = [];
   for (let index = 0; index < nodes.length;) {
     const node = nodes[index];
     if (!node) break;
     const nodeState = previewFilterState(node, props.services);
-    const collapsible = filterDisposition(nodeState, props.services.filterQuery.viewMode) === "collapse" && !props.services.selectedBlockIds.includes(node.id) && props.editingId !== node.id && props.boundary?.targetId !== node.id;
-    // Source offsets change on every edit (including added preamble packages).
-    // Keep the render slot stable so an active table retains its draft and focus.
-    if (!collapsible) { rendered.push(<PreviewNodeRenderer key={`${node.source.filePath}:${index}:${node.kind === "block" ? node.environmentId : node.kind}`} node={node} {...props}/>); index += 1; continue; }
+    const disposition = filterDisposition(nodeState, props.services.filterQuery.viewMode);
+    const protectedNode = props.services.forcedIds.has(node.id);
+    if (disposition === "remove" && !protectedNode) { index += 1; continue; }
+    const collapsible = disposition === "collapse" && !protectedNode;
+    if (!collapsible) { rows.push({ id: node.id, node, estimatedHeight: estimatedPreviewHeight(node) }); index += 1; continue; }
     let end = index + 1;
     while (end < nodes.length) {
       const next = nodes[end];
-      if (!next || filterDisposition(previewFilterState(next, props.services), props.services.filterQuery.viewMode) !== "collapse" || props.services.selectedBlockIds.includes(next.id) || props.editingId === next.id || props.boundary?.targetId === next.id) break;
+      if (!next || filterDisposition(previewFilterState(next, props.services), props.services.filterQuery.viewMode) !== "collapse" || props.services.forcedIds.has(next.id)) break;
       end += 1;
     }
-    rendered.push(<div className="preview-filter-collapsed" key={`collapsed:${node.id}`}>⋯ {end - index} {t("filter.blocksCollapsed")}</div>);
+    rows.push({ id: `collapsed:${node.id}`, collapsed: end - index, estimatedHeight: 40 });
     index = end;
   }
-  return rendered;
+  return <VirtualPreviewList items={rows} controller={props.services.virtual} rootRef={props.services.virtualRoot} forcedIds={props.services.forcedIds} renderItem={(row) => row.node
+    ? <PreviewNodeRenderer node={row.node} {...props}/>
+    : <div className="preview-filter-collapsed">⋯ {row.collapsed} {t("filter.blocksCollapsed")}</div>}/>;
+}
+
+function PreviewPerformancePanel({ virtual, timing, total }: { virtual: VirtualPreviewController; timing: { current: { parseMs: number; indexMs: number; reactMs: number; parseMode: "local" | "full"; incrementalUpdates: number; fullFallbacks: number } }; total: number }) {
+  const [open, setOpen] = useState(false);
+  const [snapshot, setSnapshot] = useState({ mounted: 0, visible: 0, math: mathRenderService.stats(), heightHitRate: 0 });
+  useEffect(() => {
+    if (!open) return;
+    const update = () => {
+      const root = virtual.root;
+      const rect = root?.getBoundingClientRect();
+      const visible = rect ? Array.from(root!.querySelectorAll<HTMLElement>(".preview-block, .preview-content-region")).filter((node) => {
+        const bounds = node.getBoundingClientRect();
+        return bounds.bottom >= rect.top && bounds.top <= rect.bottom;
+      }).length : 0;
+      setSnapshot({ mounted: virtual.mountedCount(), visible, math: mathRenderService.stats(), heightHitRate: virtual.heightHitRate() });
+    };
+    update();
+    const timer = window.setInterval(update, 600);
+    return () => window.clearInterval(timer);
+  }, [open, virtual]);
+  return <details className="preview-performance-panel" open={open} onToggle={(event) => setOpen(event.currentTarget.open)}><summary>Preview metrics</summary><div>Parse {timing.current.parseMs.toFixed(1)} ms ({timing.current.parseMode}) · Index {timing.current.indexMs.toFixed(1)} ms · React {timing.current.reactMs.toFixed(1)} ms</div><div>Local updates {timing.current.incrementalUpdates} · Full fallbacks {timing.current.fullFallbacks}</div><div>Visible {snapshot.visible} · Mounted {snapshot.mounted} / {total}</div><div>KaTeX {snapshot.math.calls - snapshot.math.hits} renders · cache {(snapshot.math.hitRate * 100).toFixed(0)}%</div><div>Height cache {(snapshot.heightHitRate * 100).toFixed(0)}%</div></details>;
 }
 
 export function PreviewPane({ filePath, source, definitions, mathContext = EMPTY_MATH_CONTEXT, searchQuery = defaultInlineSearch, filterQuery = defaultFilterQuery, activeSearchResult, highlightRange, locateRequest, restoreOffset, restoreScrollTop, onLocated, relation, onSourceChange, onSelectionChange, onSelectionContextMenu, onViewportAnchorChange, onClickSourcePosition, onJumpFromPosition, onInsertionAnchorChange, onFigureSelect, onFigureSlotSelect, onTableSelect, onTableChange, api, projectId, tree, onSpellContextMenu, onDetectedLanguage, onForwardSync }: { filePath?: string | undefined; source?: string | undefined; definitions: EnvironmentDefinition[]; mathContext?: MathContext; searchQuery?: SearchQuery; filterQuery?: FilterQuery; activeSearchResult?: SearchResult | undefined; highlightRange?: { fileId: string; start: number; end: number; nonce: number } | undefined; locateRequest?: { fileId: string; offset: number; nonce: number } | undefined; restoreOffset?: number | undefined; restoreScrollTop?: number | undefined; onLocated?(nonce: number): void; relation?: PreviewRelationUi | undefined; onSourceChange(next: string): void; onSelectionChange?(selection?: DocumentSelection): void; onSelectionContextMenu?(selection: DocumentSelection, x: number, y: number): void; onViewportAnchorChange?(anchor: { fileId: string; offset: number; scrollTop: number }): void; onClickSourcePosition?(anchor: { fileId: string; offset: number }): void; onJumpFromPosition?(anchor: { fileId: string; offset: number; targetOffset: number; linkText: string; targetLabel: string }): void; onInsertionAnchorChange?(anchor?: { fileId: string; offset: number }): void; onFigureSelect?(selection?: FigureSelection): void; onFigureSlotSelect?(selection: FigureSelection): void; onTableSelect?(selection?: TableSelection): void; onTableChange?(selection: TableSelection, source: string): void; api: EditorApi | undefined; projectId: string; tree: ProjectTreeNode[]; onSpellContextMenu(request: SpellContextRequest): void; onDetectedLanguage(language: string): void; onForwardSync(path: string, line: number, column?: number): void }) {
@@ -708,11 +716,20 @@ export function PreviewPane({ filePath, source, definitions, mathContext = EMPTY
   const [editingId, setEditingId] = useState<string>();
   // Absolute document position; recursive renderers must never rebase it.
   const [editingCursorOffset, setEditingCursorOffset] = useState<number>();
+  const [editingInitialHeight, setEditingInitialHeight] = useState<number>();
   const [boundary, setBoundary] = useState<BoundaryInsertion>();
   const [marqueeRect, setMarqueeRect] = useState<{ left: number; top: number; width: number; height: number }>();
-  const [renderLimit, setRenderLimit] = useState(previewNodeLimit);
+  const [forcedTargetId, setForcedTargetId] = useState<string>();
+  const [pendingScroll, setPendingScroll] = useState<PendingPreviewScroll>();
   const [pendingReferenceOffset, setPendingReferenceOffset] = useState<number>();
   const previewRootRef = useRef<HTMLDivElement | null>(null);
+  const virtual = useMemo(() => new VirtualPreviewController(), []);
+  const sourceValueRef = useRef(source ?? "");
+  sourceValueRef.current = source ?? "";
+  const sourceReader = useMemo<PreviewSourceReader>(() => ({ slice: (start, end) => sourceValueRef.current.slice(start, end) }), []);
+  const previousDocumentRef = useRef<{ document: PreviewDocument; source: string; definitions: EnvironmentDefinition[] } | undefined>(undefined);
+  const visualIdSequence = useRef(0);
+  const previewTiming = useRef({ parseMs: 0, indexMs: 0, reactMs: 0, parseMode: "full" as "local" | "full", incrementalUpdates: 0, fullFallbacks: 0 });
   const hoveredJumpElementRef = useRef<Element | undefined>(undefined);
   const activeJumpElementRef = useRef<HTMLElement | undefined>(undefined);
   const restoredFileRef = useRef<string | undefined>(undefined);
@@ -723,14 +740,58 @@ export function PreviewPane({ filePath, source, definitions, mathContext = EMPTY
   useEffect(() => {
     const reset = () => {
       setSelectedId(undefined); setAdditionalSelectedIds([]);
-      setEditingId(undefined); setEditingCursorOffset(undefined); setBoundary(undefined);
+      setEditingId(undefined); setEditingCursorOffset(undefined); setEditingInitialHeight(undefined); setBoundary(undefined);
       pendingBoundaryRef.current = undefined;
       pendingStructuralEditRef.current = undefined;
     };
     window.addEventListener("texweave:history-replayed", reset);
     return () => window.removeEventListener("texweave:history-replayed", reset);
   }, []);
-  const document = useMemo(() => filePath && source !== undefined ? parsePreview(source, filePath, definitions) : undefined, [filePath, source, definitions]);
+  const document = useMemo(() => {
+    if (!filePath || source === undefined) return undefined;
+    const started = performance.now();
+    const prior = previousDocumentRef.current;
+    let next = prior?.definitions === definitions
+      ? tryIncrementalPreviewUpdate(prior.document, prior.source, source, filePath, definitions)
+      : undefined;
+    if (next) {
+      previewTiming.current.parseMode = "local";
+      previewTiming.current.incrementalUpdates += 1;
+    } else {
+      const parsed = parsePreview(source, filePath, definitions);
+      next = reusePreviewDocument(prior?.document, prior?.source, parsed, source, () => `visual:${filePath}:${++visualIdSequence.current}`);
+      previewTiming.current.parseMode = "full";
+      if (prior?.document.filePath === filePath) previewTiming.current.fullFallbacks += 1;
+    }
+    previousDocumentRef.current = { document: next, source, definitions };
+    previewTiming.current.parseMs = performance.now() - started;
+    return next;
+  }, [filePath, source, definitions]);
+  const renderIndex = useMemo(() => {
+    const started = performance.now();
+    const index = buildPreviewRenderIndex(document?.nodes ?? []);
+    previewTiming.current.indexMs = performance.now() - started;
+    return index;
+  }, [document]);
+  const graphicPaths = useMemo(() => parseGraphicPaths(source ?? ""), [source]);
+  const stableGraphicPathsRef = useRef<string[]>([]);
+  if (graphicPaths.length !== stableGraphicPathsRef.current.length || graphicPaths.some((path, index) => path !== stableGraphicPathsRef.current[index])) stableGraphicPathsRef.current = graphicPaths;
+  const stableGraphicPaths = stableGraphicPathsRef.current;
+  const mappedRelationIds = useMemo(() => {
+    const mapped: Record<string, BlockId> = {};
+    for (const entry of renderIndex.entries) {
+      const id = relation?.transientToBlockId[entry.node.parserId ?? entry.id];
+      if (id) mapped[entry.id] = id;
+    }
+    return mapped;
+  }, [renderIndex, relation?.transientToBlockId]);
+  const forcedIds = useMemo(() => {
+    const ids = new Set<string>();
+    for (const id of [forcedTargetId, selectedId, editingId, boundary?.targetId, ...additionalSelectedIds]) {
+      if (id) for (const ancestor of previewPath(renderIndex, id)) ids.add(ancestor);
+    }
+    return ids;
+  }, [renderIndex, forcedTargetId, selectedId, editingId, boundary?.targetId, additionalSelectedIds]);
   const updateJumpCursor = (target: Element | undefined, controlHeld: boolean) => {
     const root = previewRootRef.current;
     const jump = controlHeld && root?.contains(target ?? null) && document && source !== undefined
@@ -763,10 +824,6 @@ export function PreviewPane({ filePath, source, definitions, mathContext = EMPTY
     }
     return index;
   }, [document]);
-  const rendering = useMemo(() => {
-    const nodes = document ? takePreviewNodes(document.nodes, { remaining: renderLimit }) : [];
-    return { nodes, total: document ? countNodes(document.nodes) : 0, shown: countNodes(nodes) };
-  }, [document, renderLimit]);
   // Delegates stay stable, but always use the latest document and host callbacks.
   // This makes memoized siblings safe, including deletion and inspector actions.
   const actionsRef = useRef<PreviewActions | undefined>(undefined);
@@ -792,10 +849,27 @@ export function PreviewPane({ filePath, source, definitions, mathContext = EMPTY
     relationToggle: (id, x, y) => actionsRef.current?.relationToggle(id, x, y)
   }), []);
   const filterEvaluation = useMemo(() => document && source !== undefined && filePath ? previewFilterEngine.evaluate(document.nodes, source, filePath, filterQuery) : undefined, [document, source, filePath, filterQuery]);
+  const visibilitySignatures = useMemo(() => {
+    const signatures = new Map<string, string>();
+    const visit = (nodes: PreviewNode[]) => {
+      for (const node of nodes) {
+        const query = filterQuery.enabled ? filterEvaluation?.states.get(node.id) ?? "match" : "match";
+        const semanticId = mappedRelationIds[node.id];
+        const relationState = !relation?.active || !semanticId ? "match"
+          : relation.matchIds.has(semanticId) ? "match" : relation.contextIds.has(semanticId) ? "context" : "unmatched";
+        const children = node.kind === "block" ? visit(node.children) : "";
+        signatures.set(node.id, `${query}:${relationState}:${semanticId === relation?.focusId ? "focus" : ""}:${children}`);
+      }
+      return nodes.map((node) => signatures.get(node.id)).join("|");
+    };
+    visit(document?.nodes ?? []);
+    return signatures;
+  }, [document, filterEvaluation, filterQuery.enabled, mappedRelationIds, relation?.active, relation?.matchIds, relation?.contextIds, relation?.focusId]);
   useEffect(() => {
     onInsertionAnchorChange?.(boundary && filePath ? { fileId: filePath, offset: boundary.position } : undefined);
   }, [boundary, filePath, onInsertionAnchorChange]);
-  useEffect(() => { pendingBoundaryRef.current = undefined; pendingStructuralEditRef.current = undefined; setRenderLimit(previewNodeLimit); setEditingId(undefined); setEditingCursorOffset(undefined); setSelectedId(undefined); setAdditionalSelectedIds([]); setBoundary(undefined); }, [filePath]);
+  useEffect(() => { pendingBoundaryRef.current = undefined; pendingStructuralEditRef.current = undefined; virtual.reset(); setForcedTargetId(undefined); setEditingId(undefined); setEditingCursorOffset(undefined); setEditingInitialHeight(undefined); setSelectedId(undefined); setAdditionalSelectedIds([]); setBoundary(undefined); }, [filePath, virtual]);
+  useEffect(() => () => virtual.disconnect(), [virtual]);
   useEffect(() => {
     const pendingStructuralEdit = pendingStructuralEditRef.current;
     if (pendingStructuralEdit && document) {
@@ -806,6 +880,7 @@ export function PreviewPane({ filePath, source, definitions, mathContext = EMPTY
         const leadingWhitespace = body.match(/^[\t \r\n]*/)?.[0].length ?? 0;
         setEditingId(target.id);
         setEditingCursorOffset(target.body.startOffset + leadingWhitespace);
+        setEditingInitialHeight(undefined);
         setSelectedId(undefined);
         setAdditionalSelectedIds([]);
         setBoundary(undefined);
@@ -817,12 +892,14 @@ export function PreviewPane({ filePath, source, definitions, mathContext = EMPTY
       const target = nodeAtStart(document.nodes, pending.startOffset, pending.kind);
       pendingBoundaryRef.current = undefined;
       setEditingId(undefined);
+      setEditingInitialHeight(undefined);
       setSelectedId(undefined);
       setAdditionalSelectedIds([]);
       setBoundary(target ? { targetId: target.id, position: pending.position, side: pending.side } : undefined);
       return;
     }
     setEditingId(undefined);
+    setEditingInitialHeight(undefined);
     setBoundary(undefined);
   }, [source]);
   const requestBoundary = (node: PreviewNode, side: "before" | "after", draft?: string) => {
@@ -834,6 +911,7 @@ export function PreviewPane({ filePath, source, definitions, mathContext = EMPTY
       return;
     }
     setEditingId(undefined);
+    setEditingInitialHeight(undefined);
     setSelectedId(undefined);
     setAdditionalSelectedIds([]);
     setBoundary({ targetId: node.id, position: side === "before" ? node.source.startOffset : node.source.endOffset, side });
@@ -851,16 +929,10 @@ export function PreviewPane({ filePath, source, definitions, mathContext = EMPTY
     if (pendingReferenceOffset === undefined || !document) return;
     const node = nodeAtOffset(document.nodes, pendingReferenceOffset);
     if (!node) return;
-    const target = previewRootRef.current?.querySelector<HTMLElement>(`[data-source-start-offset="${node.source.startOffset}"]`) ?? (() => {
-      const block = blockAtOffset(document.nodes, pendingReferenceOffset);
-      return block ? previewRootRef.current?.querySelector<HTMLElement>(`[data-source-start-offset="${block.source.startOffset}"]`) : null;
-    })();
-    if (!target) return;
-    target.scrollIntoView({ behavior: "smooth", block: "start" });
-    target.classList.add("reference-target");
-    window.setTimeout(() => target.classList.remove("reference-target"), 700);
+    setForcedTargetId(node.id);
+    setPendingScroll({ id: node.id, offset: pendingReferenceOffset, align: "start", highlight: "reference-target" });
     setPendingReferenceOffset(undefined);
-  }, [document, pendingReferenceOffset, renderLimit]);
+  }, [document, pendingReferenceOffset]);
   useEffect(() => {
     if (!filePath || !document || !previewRootRef.current) return;
     const request = locateRequest?.fileId === filePath ? locateRequest : undefined;
@@ -873,54 +945,55 @@ export function PreviewPane({ filePath, source, definitions, mathContext = EMPTY
     const offset = request?.offset ?? restoreOffset;
     if (offset === undefined) { previewRootRef.current.scrollTop = 0; restoredFileRef.current = filePath; return; }
     const node = nodeAtOffset(document.nodes, offset);
-    if (node) {
-      const required = nodesBefore(document.nodes, node.id);
-      if (required !== undefined && required >= renderLimit) {
-        setRenderLimit(Math.min(countNodes(document.nodes), required + 1));
-        return;
-      }
-    }
-    const elements = Array.from(previewRootRef.current.querySelectorAll<HTMLElement>("[data-source-start-offset][data-source-end-offset]"));
-    const target = elements.filter((element) => {
-      const start = Number(element.dataset.sourceStartOffset);
-      const end = Number(element.dataset.sourceEndOffset);
-      return start <= offset && offset <= end;
-    }).sort((left, right) => (Number(left.dataset.sourceEndOffset) - Number(left.dataset.sourceStartOffset)) - (Number(right.dataset.sourceEndOffset) - Number(right.dataset.sourceStartOffset)))[0]
-      ?? elements.reduce<HTMLElement | undefined>((best, element) => Math.abs(Number(element.dataset.sourceStartOffset) - offset) < Math.abs(Number(best?.dataset.sourceStartOffset ?? Infinity) - offset) ? element : best, undefined);
-    target?.scrollIntoView({ block: "center" });
+    if (node) { setForcedTargetId(node.id); setPendingScroll({ id: node.id, offset, align: request ? "start" : "center", ...(request ? { nonce: request.nonce } : {}) }); }
     restoredFileRef.current = filePath;
-    if (request) onLocated?.(request.nonce);
-  }, [filePath, document, locateRequest, restoreOffset, restoreScrollTop, renderLimit]);
+    if (request && !node) onLocated?.(request.nonce);
+  }, [filePath, document, locateRequest, restoreOffset, restoreScrollTop]);
   useEffect(() => {
     if (!activeSearchResult || activeSearchResult.fileId !== filePath || !document) return;
     const node = nodeAtOffset(document.nodes, activeSearchResult.matchStart);
     if (!node) return;
-    const target = globalThis.document.querySelector<HTMLElement>(`.structured-preview [data-source-start-offset="${node.source.startOffset}"]`);
-    target?.scrollIntoView({ behavior: "smooth", block: "center" });
-  }, [activeSearchResult, filePath, document, renderLimit]);
+    setForcedTargetId(node.id);
+    setPendingScroll({ id: node.id, offset: activeSearchResult.matchStart, align: "center" });
+  }, [activeSearchResult, filePath, document]);
   useEffect(() => {
-    const root = previewRootRef.current;
-    if (!root || !highlightRange || highlightRange.fileId !== filePath) return;
-    const targets = Array.from(root.querySelectorAll<HTMLElement>("[data-source-start-offset][data-source-end-offset]")).filter((element) => {
-      const start = Number(element.dataset.sourceStartOffset);
-      const end = Number(element.dataset.sourceEndOffset);
-      return start < highlightRange.end && highlightRange.start < end;
-    });
-    for (const target of targets) target.classList.add("custom-block-created-highlight");
-    const timer = window.setTimeout(() => targets.forEach((target) => target.classList.remove("custom-block-created-highlight")), 900);
-    return () => window.clearTimeout(timer);
-  }, [highlightRange, filePath, document, renderLimit]);
+    if (!highlightRange || highlightRange.fileId !== filePath || !document) return;
+    const node = nodeAtOffset(document.nodes, highlightRange.start);
+    if (!node) return;
+    setForcedTargetId(node.id);
+    setPendingScroll({ id: node.id, offset: highlightRange.start, align: "center", highlight: "custom-block-created-highlight" });
+  }, [highlightRange, filePath, document]);
   useEffect(() => {
     const request = relation?.locateRequest;
+    if (!request) return;
+    const entry = renderIndex.entries.find((candidate) => mappedRelationIds[candidate.id] === request.blockId);
+    if (!entry) return;
+    setForcedTargetId(entry.id);
+    setPendingScroll({ id: entry.id, align: "center", highlight: "relation-locate-highlight" });
+  }, [relation?.locateRequest, renderIndex, mappedRelationIds]);
+  useEffect(() => {
     const root = previewRootRef.current;
-    if (!request || !root) return;
-    const target = Array.from(root.querySelectorAll<HTMLElement>("[data-semantic-block-id]")).find((element) => element.dataset.semanticBlockId === request.blockId);
-    if (!target) return;
-    target.scrollIntoView({ behavior: "smooth", block: "center" });
-    target.classList.add("relation-locate-highlight");
-    const timer = window.setTimeout(() => target.classList.remove("relation-locate-highlight"), 900);
-    return () => window.clearTimeout(timer);
-  }, [relation?.locateRequest, renderLimit]);
+    if (!root || !pendingScroll) return;
+    const row = Array.from(root.querySelectorAll<HTMLElement>("[data-virtual-node-id]")).find((element) => element.dataset.virtualNodeId === pendingScroll.id)
+      ?? (pendingScroll.offset === undefined ? undefined : Array.from(root.querySelectorAll<HTMLElement>("[data-source-start-offset][data-source-end-offset]")).filter((element) => Number(element.dataset.sourceStartOffset) <= pendingScroll.offset! && pendingScroll.offset! <= Number(element.dataset.sourceEndOffset)).sort((a, b) => (Number(a.dataset.sourceEndOffset) - Number(a.dataset.sourceStartOffset)) - (Number(b.dataset.sourceEndOffset) - Number(b.dataset.sourceStartOffset)))[0]);
+    if (!row) return;
+    const target = pendingScroll.offset === undefined ? row.querySelector<HTMLElement>("[data-source-start-offset]") ?? row
+      : Array.from(row.querySelectorAll<HTMLElement>("[data-source-start-offset][data-source-end-offset]")).filter((element) => Number(element.dataset.sourceStartOffset) <= pendingScroll.offset! && pendingScroll.offset! <= Number(element.dataset.sourceEndOffset)).sort((a, b) => (Number(a.dataset.sourceEndOffset) - Number(a.dataset.sourceStartOffset)) - (Number(b.dataset.sourceEndOffset) - Number(b.dataset.sourceStartOffset)))[0] ?? row;
+    target.scrollIntoView({ block: pendingScroll.align });
+    if (pendingScroll.highlight) {
+      target.classList.add(pendingScroll.highlight);
+      const className = pendingScroll.highlight;
+      window.setTimeout(() => target.classList.remove(className), 900);
+    }
+    if (pendingScroll.nonce !== undefined) onLocated?.(pendingScroll.nonce);
+    setPendingScroll(undefined);
+    const entry = renderIndex.byId.get(pendingScroll.id);
+    const query = filterQuery.enabled ? filterEvaluation?.states.get(pendingScroll.id) ?? "match" : "match";
+    const semanticId = mappedRelationIds[pendingScroll.id];
+    const relationState = !relation?.active || !semanticId ? "match"
+      : relation.matchIds.has(semanticId) ? "match" : relation.contextIds.has(semanticId) ? "context" : "unmatched";
+    if (!entry || !["remove", "collapse"].includes(filterDisposition(combineFilterStates(query, relationState), filterQuery.viewMode))) setForcedTargetId(undefined);
+  }, [pendingScroll, forcedIds, onLocated, renderIndex, filterQuery, filterEvaluation, mappedRelationIds, relation]);
   useEffect(() => {
     const root = previewRootRef.current;
     if (!root || !filePath || !onViewportAnchorChange) return;
@@ -950,7 +1023,7 @@ export function PreviewPane({ filePath, source, definitions, mathContext = EMPTY
     root.addEventListener("scroll", schedule, { passive: true });
     schedule();
     return () => { root.removeEventListener("scroll", schedule); if (frame) cancelAnimationFrame(frame); };
-  }, [filePath, document, renderLimit, onViewportAnchorChange]);
+  }, [filePath, document, onViewportAnchorChange]);
   const selectedBlockIds = () => [...new Set([...(selectedId ? [selectedId] : []), ...additionalSelectedIds])];
   const sourceRangesForBlocks = (ids: string[]) => {
     if (!document) return [];
@@ -976,6 +1049,7 @@ export function PreviewPane({ filePath, source, definitions, mathContext = EMPTY
     setAdditionalSelectedIds([]);
     setEditingId(undefined);
     setEditingCursorOffset(undefined);
+    setEditingInitialHeight(undefined);
     setBoundary(undefined);
     onFigureSelect?.(undefined);
     onTableSelect?.(undefined);
@@ -992,6 +1066,7 @@ export function PreviewPane({ filePath, source, definitions, mathContext = EMPTY
     setAdditionalSelectedIds([]);
     setEditingId(undefined);
     setEditingCursorOffset(undefined);
+    setEditingInitialHeight(undefined);
     setBoundary(undefined);
     onFigureSelect?.(undefined);
     onTableSelect?.(undefined);
@@ -1061,6 +1136,7 @@ export function PreviewPane({ filePath, source, definitions, mathContext = EMPTY
     if (node.kind === "content" && node.origin === "virtual" && node.raw.length === 0
       && commitStructuralDraft(replacement, node.source.startOffset, node.source.endOffset, replacement, 0)) {
       setEditingId(undefined);
+      setEditingInitialHeight(undefined);
       setEditingCursorOffset(undefined);
       return;
     }
@@ -1075,6 +1151,7 @@ export function PreviewPane({ filePath, source, definitions, mathContext = EMPTY
     }
     onSourceChange(nextSource);
     setEditingId(undefined);
+    setEditingInitialHeight(undefined);
     setEditingCursorOffset(undefined);
   };
   const applyBoundary = (insertion: BoundaryInsertion, value: string) => {
@@ -1086,24 +1163,24 @@ export function PreviewPane({ filePath, source, definitions, mathContext = EMPTY
   };
   actionsRef.current = {
     select: (id) => {
-      setSelectedId(id); setEditingId(undefined); setEditingCursorOffset(undefined); setBoundary(undefined);
+      setSelectedId(id); setEditingId(undefined); setEditingCursorOffset(undefined); setEditingInitialHeight(undefined); setBoundary(undefined);
       const node = document ? nodeById(document.nodes, id) : undefined;
       if (node?.kind === "block" && ["figure", "figure-star", "custom:figure*", "inline-image"].includes(node.environmentId)) onFigureSelect?.({ fileId: filePath, start: node.source.startOffset, end: node.source.endOffset, source: nodeSource(node, source) }); else onFigureSelect?.(undefined);
       if (node?.kind === "block" && ["table", "table-star", "tabular", "tabular-star", "tabularx", "longtable"].includes(node.environmentId)) onTableSelect?.({ fileId: filePath, start: node.source.startOffset, end: node.source.endOffset, source: nodeSource(node, source), kind: "table" }); else onTableSelect?.(undefined);
     },
-    edit: (id, offset) => { setEditingId(id); setEditingCursorOffset(offset); setSelectedId(undefined); setBoundary(undefined); onFigureSelect?.(undefined); onTableSelect?.(undefined); },
-    cancelEdit: () => { setEditingId(undefined); setEditingCursorOffset(undefined); setBoundary(undefined); },
+    edit: (id, offset) => { setEditingInitialHeight(measurePreviewEditHeight(previewRootRef.current, id)); setEditingId(id); setEditingCursorOffset(offset); setSelectedId(undefined); setBoundary(undefined); onFigureSelect?.(undefined); onTableSelect?.(undefined); },
+    cancelEdit: () => { setEditingId(undefined); setEditingCursorOffset(undefined); setEditingInitialHeight(undefined); setBoundary(undefined); },
     setSelectedBlockIds: (ids) => { setSelectedId(ids[0]); setAdditionalSelectedIds(ids.slice(1)); },
     applyEdit, applyBoundary, onBoundaryDraftChange, requestBoundary, deleteBlocks, removeEnvironment, onFigureSelect, onFigureSlotSelect, onTableSelect, onTableChange, onSpellContextMenu, onDetectedLanguage, onForwardSync,
     relationFocus: (id) => relation?.onFocus(id),
     relationToggle: (id, x, y) => relation?.onToggle(id, x, y)
   };
   const services: PreviewEditorServices = {
-    nodeRanges, api, projectId, tree, currentPath: filePath, documentSource: source, definitions, mathContext, searchQuery,
+    nodeRanges, api, projectId, tree, currentPath: filePath, graphicPaths: stableGraphicPaths, definitions, mathContext, searchQuery,
     activeSearchResult: activeSearchResult?.fileId === filePath ? activeSearchResult : undefined,
-    filterQuery, filterStates: filterEvaluation?.states ?? new Map(),
-    relation: relation ? { ...relation, onFocus: actions.relationFocus, onToggle: actions.relationToggle } : undefined,
-    selectedBlockIds: selectedBlockIds(), setSelectedBlockIds: actions.setSelectedBlockIds, deleteBlocks: actions.deleteBlocks, removeEnvironment: actions.removeEnvironment, onBoundaryDraftChange: actions.onBoundaryDraftChange,
+    filterQuery, filterStates: filterEvaluation?.states ?? new Map(), visibilitySignatures,
+    relation: relation ? { ...relation, transientToBlockId: mappedRelationIds, onFocus: actions.relationFocus, onToggle: actions.relationToggle } : undefined,
+    selectedBlockIds: selectedBlockIds(), virtual, virtualRoot: previewRootRef, forcedIds, ...(pendingScroll?.offset === undefined ? {} : { forceOffset: pendingScroll.offset }), initialHeight: editingId ? editingInitialHeight : undefined, setSelectedBlockIds: actions.setSelectedBlockIds, deleteBlocks: actions.deleteBlocks, removeEnvironment: actions.removeEnvironment, onBoundaryDraftChange: actions.onBoundaryDraftChange,
     onFigureSelect: actions.onFigureSelect, onFigureSlotSelect: actions.onFigureSlotSelect, onTableSelect: actions.onTableSelect, onTableChange: actions.onTableChange,
     onSpellContextMenu: actions.onSpellContextMenu, onDetectedLanguage: actions.onDetectedLanguage, onForwardSync: actions.onForwardSync
   };
@@ -1143,6 +1220,7 @@ export function PreviewPane({ filePath, source, definitions, mathContext = EMPTY
     setSelectedId(ids[0]);
     setAdditionalSelectedIds(ids.slice(1));
     setEditingId(undefined);
+    setEditingInitialHeight(undefined);
     setEditingCursorOffset(undefined);
     setBoundary(undefined);
     onFigureSelect?.(undefined);
@@ -1151,7 +1229,6 @@ export function PreviewPane({ filePath, source, definitions, mathContext = EMPTY
     window.setTimeout(() => { marqueeJustCompleted.current = false; }, 0);
   };
   const cancelBlockMarquee = () => { marqueeGesture.current = undefined; setMarqueeRect(undefined); };
-  const { total: totalNodes, nodes: visibleNodes, shown: shownNodes } = rendering;
   const selectedCount = (selectedId ? 1 : 0) + additionalSelectedIds.length;
   const onPreviewClick = (event: MouseEvent<HTMLDivElement>) => {
     if (marqueeJustCompleted.current) { event.preventDefault(); event.stopPropagation(); marqueeJustCompleted.current = false; return; }
@@ -1167,8 +1244,7 @@ export function PreviewPane({ filePath, source, definitions, mathContext = EMPTY
       }
       setPendingReferenceOffset(jump.offset);
       if (filePath) onClickSourcePosition?.({ fileId: filePath, offset: jump.offset });
-      const required = nodesBefore(document.nodes, jump.node.id);
-      if (required !== undefined && required >= renderLimit) setRenderLimit(Math.min(totalNodes, required + 1));
+      setForcedTargetId(jump.node.id);
       return;
     }
     if (clickTarget?.closest(".preview-local-editor, .preview-block-header-actions, .preview-block-footer-actions, .preview-selection-toolbar, button, input, textarea, select, [contenteditable='true']")) return;
@@ -1187,6 +1263,7 @@ export function PreviewPane({ filePath, source, definitions, mathContext = EMPTY
     onSelectionChange?.(selection);
     return selection;
   };
+  const article = <article>{document?.title && <DocumentTitlePreview {...document.title} mathContext={mathContext} searchQuery={searchQuery}/>}<PreviewNodeList nodes={document?.nodes ?? []} source={sourceReader} definitions={definitions} selectedId={selectedId} editingId={editingId} cursorOffset={editingCursorOffset} boundary={boundary} select={actions.select} edit={actions.edit} applyEdit={actions.applyEdit} applyBoundary={actions.applyBoundary} cancelEdit={actions.cancelEdit} requestBoundary={actions.requestBoundary} services={services}/></article>;
   return <div ref={previewRootRef} className={`structured-preview${marqueeRect ? " marquee-selecting" : ""}`} onPointerDown={startBlockMarquee} onPointerMove={moveBlockMarquee} onPointerLeave={() => { hoveredJumpElementRef.current = undefined; updateJumpCursor(undefined, false); }} onPointerUp={finishBlockMarquee} onPointerCancel={cancelBlockMarquee} onClickCapture={onPreviewClick} onMouseUp={() => emitSelection()} onKeyUp={() => emitSelection()} onContextMenu={(event) => {
     if (event.target instanceof Element && event.target.closest(".preview-block-delete")) return;
     const selection = emitSelection();
@@ -1197,8 +1274,8 @@ export function PreviewPane({ filePath, source, definitions, mathContext = EMPTY
   }}>
     {selectedCount > 1 && <div className="preview-selection-toolbar" onPointerDown={(event) => event.stopPropagation()} onClick={(event) => event.stopPropagation()}><span className="preview-selection-count">{t("preview.selectedBlocks", { count: selectedCount })}</span><button onClick={() => void copyBlocks(false)}>{t("editor.context.copy")}</button><button onClick={() => void copyBlocks(true)}>{t("editor.context.cut")}</button><button className="danger" onClick={() => deleteBlocks(selectedBlockIds())}>{t("files.delete")}</button></div>}
     {marqueeRect && <div className="preview-marquee" style={{ left: marqueeRect.left, top: marqueeRect.top, width: marqueeRect.width, height: marqueeRect.height}}/>}
-    <article>{document?.title && <DocumentTitlePreview {...document.title} mathContext={mathContext} searchQuery={searchQuery}/>}<PreviewNodeList nodes={visibleNodes} source={source} definitions={definitions} selectedId={selectedId} editingId={editingId} cursorOffset={editingCursorOffset} boundary={boundary} select={actions.select} edit={actions.edit} applyEdit={actions.applyEdit} applyBoundary={actions.applyBoundary} cancelEdit={actions.cancelEdit} requestBoundary={actions.requestBoundary} services={services}/></article>
-    {totalNodes > shownNodes && <aside className="preview-limit-notice"><strong>{t("preview.largeDocumentTitle")}</strong><span>{t("preview.largeDocumentMessage", { shown: shownNodes, total: totalNodes })}</span><button onClick={(event) => { event.stopPropagation(); setRenderLimit((value) => value + previewNodeLimit); }}>{t("preview.loadMore")}</button></aside>}
+    {import.meta.env.DEV ? <Profiler id="preview" onRender={(_id, _phase, duration) => { previewTiming.current.reactMs = duration; }}>{article}</Profiler> : article}
+    {import.meta.env.DEV && <PreviewPerformancePanel virtual={virtual} timing={previewTiming} total={renderIndex.entries.length}/>}
     {filterQuery.enabled && filterEvaluation && filterEvaluation.matches.size === 0 && <aside className="preview-filter-empty">{t("filter.noMatches")}</aside>}
     {document?.diagnostics.length ? <aside className="preview-diagnostics"><strong>{t("preview.recovered")}</strong>{document.diagnostics.map((message, index) => <p key={index}>{message}</p>)}</aside> : null}
   </div>;

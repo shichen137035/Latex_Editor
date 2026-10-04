@@ -1,33 +1,83 @@
 \NeedsTeXFormat{LaTeX2e}
-\ProvidesPackage{texweave}[2026/09/18 TeXWeave conservative academic defaults]
+\ProvidesPackage{texweave}[2026/10/04 TeXWeave academic writing defaults]
 
+% Core packages available in standard LaTeX installations.
 \RequirePackage{amsmath}
 \RequirePackage{amssymb}
 \RequirePackage{amsthm}
 \RequirePackage{graphicx}
 \RequirePackage{array}
-% These packages are useful but are not present in every minimal local
-% installation. Keep the shipped starter compilable when they are absent.
+
+% Common mathematics extensions.
 \IfFileExists{mathtools.sty}{\RequirePackage{mathtools}}{}
 \IfFileExists{bm.sty}{\RequirePackage{bm}}{}
-\IfFileExists{booktabs.sty}{\RequirePackage{booktabs}}{}
+\IfFileExists{siunitx.sty}{\RequirePackage{siunitx}}{}
+\IfFileExists{cancel.sty}{\RequirePackage{cancel}}{}
+
+% Figures and tables. Optional packages are loaded only when installed so the
+% starter remains usable with a small TeX distribution.
+\IfFileExists{float.sty}{\RequirePackage{float}}{}
+\IfFileExists{caption.sty}{\RequirePackage{caption}}{}
+\IfFileExists{subcaption.sty}{\RequirePackage{subcaption}}{}
 \IfFileExists{xcolor.sty}{\RequirePackage{xcolor}}{}
+\IfFileExists{booktabs.sty}{\RequirePackage{booktabs}}{}
+\IfFileExists{tabularx.sty}{\RequirePackage{tabularx}}{}
+\IfFileExists{longtable.sty}{\RequirePackage{longtable}}{}
+\IfFileExists{multirow.sty}{\RequirePackage{multirow}}{}
+\IfFileExists{makecell.sty}{\RequirePackage{makecell}}{}
+\IfFileExists{threeparttable.sty}{\RequirePackage{threeparttable}}{}
+\IfFileExists{colortbl.sty}{\RequirePackage{colortbl}}{}
+\IfFileExists{adjustbox.sty}{\RequirePackage{adjustbox}}{}
+\IfFileExists{rotating.sty}{\RequirePackage{rotating}}{}
+\IfFileExists{wrapfig.sty}{\RequirePackage{wrapfig}}{}
+\IfFileExists{pdfpages.sty}{\RequirePackage{pdfpages}}{}
+
+% Lists, source-code listings, algorithms and typography.
+\IfFileExists{enumitem.sty}{\RequirePackage{enumitem}}{}
+\IfFileExists{listings.sty}{\RequirePackage{listings}}{}
+\IfFileExists{algorithm.sty}{\RequirePackage{algorithm}}{}
+\IfFileExists{algpseudocode.sty}{\RequirePackage{algpseudocode}}{}
+\IfFileExists{microtype.sty}{\RequirePackage{microtype}}{}
+\IfFileExists{csquotes.sty}{\RequirePackage{csquotes}}{}
+\IfFileExists{xurl.sty}{\RequirePackage{xurl}}{}
+% Keep hyperlink setup after the packages above.
 \IfFileExists{hyperref.sty}{\RequirePackage{hyperref}}{}
 
-% Guard theorem declarations so a project can combine this snapshot with
-% another package that already owns one of these environments.
+% Guard declarations so projects can add other theorem packages safely.
 \makeatletter
+\theoremstyle{plain}
 \@ifundefined{theorem}{\newtheorem{theorem}{Theorem}}{}
+\@ifundefined{axiom}{\newtheorem{axiom}[theorem]{Axiom}}{}
 \@ifundefined{lemma}{\newtheorem{lemma}[theorem]{Lemma}}{}
 \@ifundefined{proposition}{\newtheorem{proposition}[theorem]{Proposition}}{}
 \@ifundefined{corollary}{\newtheorem{corollary}[theorem]{Corollary}}{}
+\@ifundefined{claim}{\newtheorem{claim}[theorem]{Claim}}{}
+\@ifundefined{conjecture}{\newtheorem{conjecture}[theorem]{Conjecture}}{}
+\@ifundefined{fact}{\newtheorem{fact}[theorem]{Fact}}{}
+\@ifundefined{question}{\newtheorem{question}[theorem]{Question}}{}
+\@ifundefined{problem}{\newtheorem{problem}[theorem]{Problem}}{}
+\theoremstyle{definition}
 \@ifundefined{definition}{\theoremstyle{definition}\newtheorem{definition}[theorem]{Definition}}{}
 \@ifundefined{assumption}{\theoremstyle{definition}\newtheorem{assumption}[theorem]{Assumption}}{}
 \@ifundefined{example}{\theoremstyle{definition}\newtheorem{example}[theorem]{Example}}{}
+\@ifundefined{exercise}{\newtheorem{exercise}[theorem]{Exercise}}{}
+\@ifundefined{notation}{\newtheorem{notation}[theorem]{Notation}}{}
+\@ifundefined{observation}{\newtheorem{observation}[theorem]{Observation}}{}
+\theoremstyle{remark}
 \@ifundefined{remark}{\theoremstyle{remark}\newtheorem{remark}[theorem]{Remark}}{}
+\@ifundefined{solution}{\newenvironment{solution}{\begin{proof}[Solution]}{\end{proof}}}{}
 \makeatother
 
 \providecommand{\R}{\mathbb{R}}
 \providecommand{\N}{\mathbb{N}}
+\providecommand{\Z}{\mathbb{Z}}
+\providecommand{\Q}{\mathbb{Q}}
+\providecommand{\C}{\mathbb{C}}
 \providecommand{\E}{\mathbb{E}}
 \providecommand{\Var}{\operatorname{Var}}
+\providecommand{\Cov}{\operatorname{Cov}}
+\makeatletter
+\@ifundefined{argmin}{\DeclareMathOperator*{\argmin}{arg\,min}}{}
+\@ifundefined{argmax}{\DeclareMathOperator*{\argmax}{arg\,max}}{}
+\@ifundefined{rank}{\DeclareMathOperator{\rank}{rank}}{}
+\makeatother

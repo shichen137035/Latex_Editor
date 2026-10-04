@@ -88,18 +88,21 @@ async function run() {
   page.reload();
   await until('!!document.querySelector(".directory-project-row")', "project");
   await evaluate('document.querySelector(".directory-project-row").click()');
-  await until('!!document.querySelector(".preview-limit-notice")', "preview");
+  await until('!!document.querySelector(".preview-virtual-row")', "preview");
   page.focus();
   await delay(700); // let initial reconciliation finish before interaction measurement
   await probe("textrm transformation", "Before middle", "after");
   await probe("removed comment", "Alpha", "Beta");
   await probe("argument occurs in command name", "Prefix", "bf");
   await probe("unmapped verbatim", "Code ordinary", "ordinary", ".preview-code");
-  await probe("900 nodes warm click", "Paragraph 2 with", "ordinary");
-  await evaluate('document.querySelector(".preview-limit-notice button").click()');
-  await until('document.querySelectorAll(".preview-block,.preview-content-region").length>1000', "expanded preview");
+  await probe("virtualized warm click", "Paragraph 2 with", "ordinary");
+  await evaluate('document.querySelector(".structured-preview").scrollTop = document.querySelector(".structured-preview").scrollHeight / 2');
   await delay(300);
-  await probe("1800 nodes warm click", "Paragraph 2 with", "ordinary");
+  const middle = await evaluate('document.querySelectorAll(".preview-block,.preview-content-region").length');
+  assert.ok(middle < 120, `virtualized middle viewport stays bounded (${middle})`);
+  await evaluate('document.querySelector(".structured-preview").scrollTop = 0');
+  await delay(300);
+  await probe("after distant scroll", "Paragraph 2 with", "ordinary");
   console.log("Artifacts:", root);
 }
 require("../../dist/main/index.js");

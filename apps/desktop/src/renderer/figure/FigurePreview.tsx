@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { getDocument, GlobalWorkerOptions } from "pdfjs-dist/legacy/build/pdf.mjs";
 import workerUrl from "pdfjs-dist/legacy/build/pdf.worker.min.mjs?url";
 import type { ResolvedGraphic } from "@latex-editor/contracts";
-import { parseFigure, parseGraphicPaths, optionValue } from "./parser.js";
+import { parseFigure, optionValue } from "./parser.js";
 
 GlobalWorkerOptions.workerSrc = workerUrl;
 type EditorApi = NonNullable<Window["latexEditor"]>;
@@ -51,12 +51,11 @@ function FigureAsset({ api, projectId, texPath, sourcePath, graphicPaths, width,
   if (!asset.exists || !asset.dataUrl) return <div className="figure-preview-placeholder"><strong>{sourcePath}</strong><span>{asset.error?.replaceAll("_", " ") ?? "Image not found"}</span></div>;
   const style = width && width.endsWith("\\textwidth") ? { width: `${Math.min(100, Number.parseFloat(width) * 100)}%` } : undefined;
   const cacheKey = `${projectId}:${asset.resolvedPath ?? sourcePath}:${asset.modifiedAt ?? ""}:${asset.size ?? 0}`;
-  return asset.format === "pdf" ? <PdfImage dataUrl={asset.dataUrl} alt={sourcePath} cacheKey={cacheKey}/> : <img src={asset.dataUrl} alt={sourcePath} style={style}/>;
+  return asset.format === "pdf" ? <PdfImage dataUrl={asset.dataUrl} alt={sourcePath} cacheKey={cacheKey}/> : <img src={asset.dataUrl} alt={sourcePath} style={style} loading="lazy" decoding="async"/>;
 }
 
-export function FigurePreview({ source, documentSource, api, projectId, texPath, onChooseSlot }: { source: string; documentSource: string; api: EditorApi | undefined; projectId: string; texPath: string; onChooseSlot?(index: number): void }) {
+export function FigurePreview({ source, graphicPaths, api, projectId, texPath, onChooseSlot }: { source: string; graphicPaths: string[]; api: EditorApi | undefined; projectId: string; texPath: string; onChooseSlot?(index: number): void }) {
   const figure = useMemo(() => parseFigure(source), [source]);
-  const graphicPaths = useMemo(() => parseGraphicPaths(documentSource), [documentSource]);
   if (!figure) return <div className="figure-preview-placeholder">No image source</div>;
   if (!api) return <div className="figure-preview-placeholder">Image preview unavailable</div>;
   const imageGrid = <div className={figure.images.length > 1 ? "figure-preview-grid" : "figure-preview-single"}>{figure.images.map((image, index) => <FigureAsset key={image.id} api={api} projectId={projectId} texPath={texPath} sourcePath={image.sourcePath} graphicPaths={graphicPaths} width={optionValue(image, "width")} onChoose={() => onChooseSlot?.(index)}/>)}</div>;
