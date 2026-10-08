@@ -40,10 +40,15 @@ self.onmessage = (event: MessageEvent<LayoutRequest>) => {
     const level = levels.get(node.id) ?? 0;
     columns.set(level, [...(columns.get(level) ?? []), node.id]);
   }
+  const rowPitch = 94;
+  const nodeHeight = 64;
+  const tallestColumn = Math.max(0, ...[...columns.values()].map((column) => (column.length - 1) * rowPitch + nodeHeight));
   const positions: Record<string, { x: number; y: number }> = {};
   for (const [level, column] of columns) {
     column.sort((a, b) => (previous[a]?.y ?? Number.MAX_SAFE_INTEGER) - (previous[b]?.y ?? Number.MAX_SAFE_INTEGER));
-    column.forEach((id, index) => { positions[id] = { x: 42 + level * 230, y: 42 + index * 94 }; });
+    const columnHeight = (column.length - 1) * rowPitch + nodeHeight;
+    const top = 42 + (tallestColumn - columnHeight) / 2;
+    column.forEach((id, index) => { positions[id] = { x: 42 + level * 230, y: top + index * rowPitch }; });
   }
   self.postMessage({ positions });
 };

@@ -32,7 +32,7 @@ describe("v0.2.3 foundations", () => {
     expect(sanitizePreferences({ warnIncompatibleEnvironmentConversion: false })).toEqual({ warnIncompatibleEnvironmentConversion: false });
     expect(sanitizePreferences({ referenceLinkModifier: "mouse" })).toEqual({});
     expect(sanitizePreferences({ spellCheckMode: "manual", spellCheckLanguage: "not a language" }, true)).toEqual({});
-    expect(sanitizePreferences({ theme: "dark", keybindings: {}, toolchain: { latexmk: "C:/tool.exe" }, fontSize: 20 }, true)).toEqual({ fontSize: 20 });
+    expect(sanitizePreferences({ theme: "dark", keybindings: {}, toolchain: { latexmk: "C:/tool.exe" }, fontSize: 20 }, true)).toEqual({ keybindings: {}, fontSize: 20 });
   });
   it("persists concurrent updates atomically, isolates projects and resets overrides", async () => {
     const root = await mkdtemp(join(tmpdir(), "texweave-settings-"));

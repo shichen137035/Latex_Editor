@@ -86,6 +86,34 @@ export function Tree({ nodes, activePath, mainFile, filter, hideBuildArtifacts, 
   const [draggingPath, setDraggingPath] = useState<string | undefined>(undefined);
   const [dropTargetPath, setDropTargetPath] = useState<string | undefined>(undefined);
   const draggingPathRef = useRef<string | undefined>(undefined);
+  const treeRef = useRef<HTMLDivElement | null>(null);
+  const dragPointerRef = useRef<{ x: number; y: number } | undefined>(undefined);
+  const autoScrollFrameRef = useRef<number | undefined>(undefined);
+  const stopAutoScroll = () => {
+    dragPointerRef.current = undefined;
+    if (autoScrollFrameRef.current !== undefined) cancelAnimationFrame(autoScrollFrameRef.current);
+    autoScrollFrameRef.current = undefined;
+  };
+  const autoScroll = () => {
+    const tree = treeRef.current;
+    const pointer = dragPointerRef.current;
+    if (!tree || !pointer) { autoScrollFrameRef.current = undefined; return; }
+    const bounds = tree.getBoundingClientRect();
+    if (pointer.x < bounds.left || pointer.x > bounds.right || pointer.y < bounds.top || pointer.y > bounds.bottom) {
+      autoScrollFrameRef.current = undefined;
+      return;
+    }
+    const edgeSize = Math.min(56, bounds.height / 3);
+    let amount = 0;
+    if (pointer.y < bounds.top + edgeSize && tree.scrollTop > 0) {
+      amount = -2 - 16 * Math.min(1, (bounds.top + edgeSize - pointer.y) / edgeSize);
+    } else if (pointer.y > bounds.bottom - edgeSize && tree.scrollTop + tree.clientHeight < tree.scrollHeight) {
+      amount = 2 + 16 * Math.min(1, (pointer.y - (bounds.bottom - edgeSize)) / edgeSize);
+    }
+    if (amount === 0) { autoScrollFrameRef.current = undefined; return; }
+    tree.scrollTop += amount;
+    autoScrollFrameRef.current = requestAnimationFrame(autoScroll);
+  };
   const matchesFilter = (node: ProjectTreeNode): boolean => !filter
     || `${node.name} ${node.relativePath}`.toLocaleLowerCase().includes(filter.toLocaleLowerCase())
     || node.children?.some(matchesFilter) === true;
@@ -126,7 +154,7 @@ export function Tree({ nodes, activePath, mainFile, filter, hideBuildArtifacts, 
             event.dataTransfer.setData(PROJECT_FILE_DRAG_TYPE, node.relativePath);
             event.dataTransfer.setData("text/plain", node.relativePath);
           }}
-          onDragEnd={() => { draggingPathRef.current = undefined; setDraggingPath(undefined); setDropTargetPath(undefined); }}
+          onDragEnd={() => { stopAutoScroll(); draggingPathRef.current = undefined; setDraggingPath(undefined); setDropTargetPath(undefined); }}
         >
           <span className="tree-arrow">{isDirectory ? (isCollapsed ? "›" : "⌄") : ""}</span>
           <span className="tree-kind">{isDirectory ? "▱" : node.name.toLocaleLowerCase().endsWith(".tex") ? "TₑX" : "◇"}</span>
@@ -138,13 +166,17 @@ export function Tree({ nodes, activePath, mainFile, filter, hideBuildArtifacts, 
     });
   };
   return <div
+    ref={treeRef}
     className={`file-tree ${dropTargetPath === "" ? "root-drop-target" : ""}`}
     onDragOver={(event: ReactDragEvent<HTMLDivElement>) => {
       const internal = Array.from(event.dataTransfer.types).includes(PROJECT_FILE_DRAG_TYPE);
       if (!internal) {
+        stopAutoScroll();
         if (event.dataTransfer.types.includes("Files")) event.preventDefault();
         return;
       }
+      dragPointerRef.current = { x: event.clientX, y: event.clientY };
+      if (autoScrollFrameRef.current === undefined) autoScrollFrameRef.current = requestAnimationFrame(autoScroll);
       const source = draggingPathRef.current;
       const row = (event.target as HTMLElement).closest<HTMLElement>(".tree-row");
       const destination = row?.dataset.kind === "directory" ? row.dataset.path ?? "" : row ? parentProjectPath(row.dataset.path ?? "") : "";
@@ -155,13 +187,14 @@ export function Tree({ nodes, activePath, mainFile, filter, hideBuildArtifacts, 
       } else setDropTargetPath(undefined);
     }}
     onDragLeave={(event) => {
-      if (!event.currentTarget.contains(event.relatedTarget as Node | null)) setDropTargetPath(undefined);
+      if (!event.currentTarget.contains(event.relatedTarget as Node | null)) { stopAutoScroll(); setDropTargetPath(undefined); }
     }}
     onDrop={(event) => {
       const internal = Array.from(event.dataTransfer.types).includes(PROJECT_FILE_DRAG_TYPE);
       const row = (event.target as HTMLElement).closest<HTMLElement>(".tree-row");
       const destination = row?.dataset.kind === "directory" ? row.dataset.path ?? "" : row ? parentProjectPath(row.dataset.path ?? "") : "";
       if (internal) {
+        stopAutoScroll();
         event.preventDefault();
         event.stopPropagation();
         const source = draggingPathRef.current ?? event.dataTransfer.getData(PROJECT_FILE_DRAG_TYPE);
@@ -236,5 +269,5 @@ export function DiagnosticRow({ diagnostic, onOpen }: { diagnostic: Diagnostic; 
       window.setTimeout(() => setCopied(false), 1200);
     }
   };
-  return <div className={`diagnostic-row ${diagnostic.severity}`} role="button" tabIndex={0} onClick={onOpen} onKeyDown={(event) => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); onOpen(); } }}><span>{diagnostic.severity === "error" ? "×" : diagnostic.severity === "warning" ? "△" : "i"}</span><strong>{diagnostic.file ?? diagnostic.source}</strong>{diagnostic.line && <small>:{diagnostic.line}</small>}<p>{diagnostic.message}</p><button className="diagnostic-copy" type="button" onClick={(event) => { event.stopPropagation(); void copy(); }}>{copied ? t("panel.copied") : t("panel.copyDiagnostic")}</button></div>;
+  return <div className={`diagnostic-row ${diagnostic.severity}`} role="button" tabIndex={0} onClick={onOpen} onKeyDown={(event) => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); onOpen(); } }}><span>{diagnostic.severity === "error" ? "×" : diagnostic.severity === "warning" ? "△" : "i"}</span><strong>{diagnostic.file ?? diagnostic.source}</strong>{diagnostic.line && <small>:{diagnostic.line}</small>}<p>{diagnostic.message}{diagnostic.occurrences && diagnostic.occurrences > 1 && <small> ×{diagnostic.occurrences}</small>}</p>{diagnostic.file && <small className="diagnostic-source">{diagnostic.source}</small>}<button className="diagnostic-copy" type="button" onClick={(event) => { event.stopPropagation(); void copy(); }}>{copied ? t("panel.copied") : t("panel.copyDiagnostic")}</button></div>;
 }

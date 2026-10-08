@@ -50,6 +50,12 @@ describe("VS Code-style AI review", () => {
     const created: AIFileChange = { ...file, type: "create", originalContent: undefined, proposedContent: "new" };
     expect(() => transitionAIFile(created, "already exists", new Set(["a"]), true)).toThrow("AI_CHANGE_CONFLICT");
   });
+  it("allows acknowledgement retries but refuses to keep changes that were undone after auto-apply", () => {
+    const file: AIFileChange = { path: "main.tex", type: "modify", originalContent: "old", proposedContent: "new", status: "pending", hunks: [hunk("a", 0, "old", "new")] };
+    expect(transitionAIFile(file, "new", new Set(["a"]), true)).toBe("new");
+    file.hunks[0]!.applied = true;
+    expect(() => transitionAIFile(file, "old", new Set(["a"]), true)).toThrow("AI_CHANGE_CONFLICT");
+  });
   it("treats create/delete as reversible until accepted and excludes diff context from counts", () => {
     const create: AIFileChange = { path: "new.tex", type: "create", proposedContent: "text", status: "pending", hunks: [hunk("a", 0, "", "text")] };
     expect(transitionAIFile(create, undefined, new Set(["a"]), true)).toBe("text");

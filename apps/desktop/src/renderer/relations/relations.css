@@ -98,6 +98,9 @@
 .relation-graph-view > header > button { border: 0; color: var(--color-text-secondary); background: transparent; cursor: pointer; }
 .relation-graph-controls .relation-direction button { border: 0; color: var(--color-text-secondary); background: transparent; cursor: pointer; font-size: 10px; }
 .relation-graph-controls .relation-direction button.active { color: var(--color-primary-strong); background: var(--color-bg-panel); }
+.relation-graph-stage { display: flex; }
+.relation-graph-surface { position: relative; flex: 0 0 auto; min-width: 100%; min-height: 100%; margin: auto; }
+.relation-graph-surface > .relation-graph-canvas { position: absolute; }
 .structured-preview .preview-block::before { opacity: .48; }
 .structured-preview .preview-block:hover::before, .structured-preview .preview-block.selected::before { opacity: .85; }
 @media (max-height: 720px) { .relation-browser .relation-browser-head { gap: 7px; } .relation-selection-card { padding: 8px; } .relation-open-graph { min-height: 43px; } .relation-open-graph small { display: none; } }

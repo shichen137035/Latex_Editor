@@ -1,6 +1,6 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
-import { AppError, type BlockApiResult, type BlockDetail, type DocumentStructure, type ProjectTreeNode } from "@latex-editor/contracts";
+import { AppError, defaultPreviewDirectives, type BlockApiResult, type BlockDetail, type DocumentStructure, type PreviewDirectiveDefinition, type ProjectTreeNode } from "@latex-editor/contracts";
 import { ProjectBlockGraphService } from "../../packages/application/src/block-graph-service.js";
 import { ProjectRelationService } from "../../packages/application/src/relation-service.js";
 import { ProjectDocumentStructureService, type DocumentStructureFilePort } from "../../packages/application/src/document-structure-service.js";
@@ -13,7 +13,7 @@ function data<T>(result: BlockApiResult<T>): T {
   return result.data;
 }
 const definitions = environmentsFromCatalog(JSON.parse(readFileSync("resources/environments/preview-environments.json", "utf8")) as EnvironmentCatalog);
-function setup(source: string, extra: Record<string, string> = {}) {
+function setup(source: string, extra: Record<string, string> = {}, directives?: () => Promise<PreviewDirectiveDefinition[]>) {
   const files = new Map(Object.entries({ "main.tex": source, ...extra }));
   let next = 0, writes = 0;
   const port: DocumentStructureFilePort = {
@@ -27,7 +27,7 @@ function setup(source: string, extra: Record<string, string> = {}) {
   };
   const ids = { next: () => `block-${++next}` };
   const graph = new ProjectBlockGraphService(port, ids);
-  const service = new ProjectDocumentStructureService(port, graph, ids, async () => definitions);
+  const service = new ProjectDocumentStructureService(port, graph, ids, async () => definitions, directives);
   return { files, port, graph, service, api: service.api("project"), ids, writes: () => writes };
 }
 const paper = String.raw`\documentclass{article}
@@ -46,6 +46,34 @@ Therefore the conclusion holds.
 \end{document}`;
 
 describe("v0.5.3 source-aware document block API", () => {
+  it("keeps appendix and trailing spacing out of a section source edit/delete", async () => {
+    const input = "\\section{Main}\nText.\n\\medskip\n\\appendix\nAppendix text.";
+    const { api, files } = setup(input);
+    const section = data(await api.find_blocks({ type: "section" }))[0]!;
+    const detail = data(await api.get_block({ blockId: section.id }));
+    expect(data(await api.get_block_source({ blockId: section.id })).content).toBe("\\section{Main}\nText.\n");
+    data(await api.delete_block({ blockId: section.id, expectedRevision: detail.revision }));
+    expect(files.get("main.tex")).toBe("\\medskip\n\\appendix\nAppendix text.");
+  });
+
+  it("refreshes source ownership when a command scope changes without a source edit", async () => {
+    const input = "\\section{Main}\nText.\n\\mypart\nOther text.";
+    let rule: PreviewDirectiveDefinition = { id: "my-part", builtIn: false, enabled: true, match: { kind: "command", name: "mypart" }, label: "Part", display: "divider", color: "#123456", placement: "nested" };
+    const { service, api } = setup(input, {}, async () => [...defaultPreviewDirectives, rule]);
+    const before = data(await service.snapshot("project"));
+    const section = Object.values(before.blocks).find((block) => block.type === "section")!;
+    expect(data(await api.get_block_source({ blockId: section.id })).content).toBe(input);
+    rule = { ...rule, placement: "independent" };
+    const after = data(await service.snapshot("project"));
+    expect(after.configurationFingerprint).not.toBe(before.configurationFingerprint);
+    const nextSection = Object.values(after.blocks).find((block) => block.type === "section")!;
+    expect(data(await api.get_block_source({ blockId: nextSection.id })).content).toBe(input.slice(0, input.indexOf("\\mypart")));
+    rule = { ...rule, color: "#654321", label: "New display label" };
+    const recolored = data(await service.snapshot("project"));
+    expect(recolored.configurationFingerprint).toBe(after.configurationFingerprint);
+    expect(recolored.structureRevision).toBe(after.structureRevision);
+  });
+
   it("inserts a PDF-neutral semantic placeholder through the shared block API", async () => {
     const { api, files, graph, ids } = setup(paper);
     const inserted = data(await api.insert_block({ parentId: null, fileId: "main.tex", position: "end", block: { type: "placeholder" } }));

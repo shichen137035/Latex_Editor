@@ -95,6 +95,10 @@ async function run() {
   const reloaded = new OfflineSpellCheckService();
   await reloaded.initialize();
   assert.deepEqual(reloaded.checkWords(["texweavescientificword"], "en-US"), []);
+  for (const englishId of ["en-US", "en-GB", "en-AU"]) {
+    await assert.rejects(reloaded.removeDictionary(englishId), /English dictionaries cannot be removed/);
+  }
+  assert.ok(reloaded.status().availableLanguages.includes("en-US"), "English should remain installed after rejected removal");
   console.log("PASS Add to dictionary persists across service reload");
 
   const visualIndex = await evaluate("Array.from(document.querySelectorAll('.view-switch button')).findIndex(button => button.textContent === 'Visual')");

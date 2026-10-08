@@ -99,6 +99,55 @@ export const defaultTablePreferences: TablePreferences = {
   editor: { defaultMode: "gui" },
   editing: { allowAutomaticColumnConversion: false, autoAddRowOnTab: false }
 };
+export interface PreviewDirectiveDefinition {
+  id: string;
+  builtIn: boolean;
+  enabled: boolean;
+  match: { kind: "command"; name: string } | { kind: "blank-line" };
+  label: string;
+  display: "divider" | "placeholder" | "spacer";
+  color: string;
+  /** Ownership within implicit chapter/section scopes; paired environments retain their source wrappers. */
+  placement?: "nested" | "trailing" | "independent";
+}
+
+const directive = (id: string, name: string, label: string, display: PreviewDirectiveDefinition["display"], color: string, placement: PreviewDirectiveDefinition["placement"] = "trailing"): PreviewDirectiveDefinition =>
+  ({ id, builtIn: true, enabled: true, match: { kind: "command", name }, label, display, color, placement });
+
+export const defaultPreviewDirectives: PreviewDirectiveDefinition[] = [
+  directive("appendix", "appendix", "Appendix begins", "divider", "#7c5cb8", "independent"),
+  directive("newpage", "newpage", "Page break", "divider", "#5b84a6"),
+  directive("clearpage", "clearpage", "Clear page", "divider", "#5b84a6"),
+  directive("cleardoublepage", "cleardoublepage", "Clear double page", "divider", "#5b84a6"),
+  directive("pagebreak", "pagebreak", "Page break", "divider", "#5b84a6"),
+  directive("frontmatter", "frontmatter", "Front matter begins", "divider", "#7c5cb8", "independent"),
+  directive("mainmatter", "mainmatter", "Main matter begins", "divider", "#7c5cb8", "independent"),
+  directive("backmatter", "backmatter", "Back matter begins", "divider", "#7c5cb8", "independent"),
+  directive("bibliography", "bibliography", "Bibliography", "placeholder", "#2d8b76", "independent"),
+  directive("printbibliography", "printbibliography", "Bibliography", "placeholder", "#2d8b76", "independent"),
+  directive("bibliographystyle", "bibliographystyle", "Bibliography style", "divider", "#2d8b76"),
+  directive("addbibresource", "addbibresource", "Bibliography resource", "divider", "#2d8b76"),
+  directive("nocite", "nocite", "Include citations", "divider", "#2d8b76"),
+  directive("tableofcontents", "tableofcontents", "Table of contents", "placeholder", "#3d79b5", "independent"),
+  directive("listoffigures", "listoffigures", "List of figures", "placeholder", "#3d79b5", "independent"),
+  directive("listoftables", "listoftables", "List of tables", "placeholder", "#3d79b5", "independent"),
+  directive("printindex", "printindex", "Index", "placeholder", "#3d79b5", "independent"),
+  directive("input", "input", "Included file", "placeholder", "#647f9e", "nested"),
+  directive("include", "include", "Included file", "placeholder", "#647f9e", "nested"),
+  directive("par", "par", "Paragraph break", "spacer", "#a0afbc"),
+  directive("newline", "newline", "Line break", "spacer", "#a0afbc"),
+  directive("linebreak", "linebreak", "Line break", "spacer", "#a0afbc"),
+  directive("vspace", "vspace", "Vertical space", "spacer", "#a0afbc"),
+  directive("smallskip", "smallskip", "Small vertical space", "spacer", "#a0afbc"),
+  directive("medskip", "medskip", "Medium vertical space", "spacer", "#a0afbc"),
+  directive("bigskip", "bigskip", "Large vertical space", "spacer", "#a0afbc"),
+  directive("vfill", "vfill", "Flexible vertical space", "spacer", "#a0afbc")
+];
+
+export function includeNewBuiltInDirectives(saved: PreviewDirectiveDefinition[]): PreviewDirectiveDefinition[] {
+  return [...defaultPreviewDirectives.map((builtIn) => ({ ...builtIn, ...saved.find((item) => item.id === builtIn.id) })),
+    ...saved.filter((item) => !item.builtIn && item.match.kind === "command" && !defaultPreviewDirectives.some((builtIn) => builtIn.id === item.id))];
+}
 export interface PreferenceValues {
   locale: "en" | "ja" | "zh-CN" | "zh-TW" | "ko" | "fr";
   /** Built-in ids are light/dark; custom ids are provided by the theme catalog. */
@@ -125,6 +174,7 @@ export interface PreferenceValues {
   documentWordCompletion: boolean;
   autoPairSymbols: boolean;
   mathPreviewOnHover: boolean;
+  showPreviewMetrics: boolean;
   autoEnvironmentLabels: boolean;
   confirmPreviewEdits: boolean;
   warnIncompatibleEnvironmentConversion: boolean;
@@ -141,6 +191,7 @@ export interface PreferenceValues {
   engine: "pdflatex" | "xelatex" | "lualatex";
   keybindings: Record<string, string>;
   environments: unknown[];
+  previewDirectives: PreviewDirectiveDefinition[];
   layout: Record<string, unknown>;
   images: ImagePreferences;
   tables: TablePreferences;
@@ -149,12 +200,11 @@ export interface PreferenceValues {
 export type PreferenceKey = keyof PreferenceValues;
 export const preferenceDefaults: PreferenceValues = {
   locale: "en", theme: "light", themeDirectory: "", aiCodexExecutable: "", aiModel: "", aiCopilotModel: "", aiReasoningEffort: "", aiCopilotReasoningEffort: "", aiDefaultMode: "chat", aiPermissionMode: "auto", aiIncludeCurrentFile: false, fontSize: 15, tabSize: 2, wordWrap: true,
-  autoSave: "off", hideBuildArtifacts: true, documentWordCompletion: true, autoPairSymbols: true, mathPreviewOnHover: false, autoEnvironmentLabels: true, confirmPreviewEdits: true, warnIncompatibleEnvironmentConversion: true, visibleFilterGroups: ["blockType", "location", "file", "properties"], referenceLinkModifier: "ctrl", spellCheckMode: "auto", spellCheckLanguage: "en-US", spellCheckActiveLanguages: ["en-US"], maximize: true, restoreProject: false,
-  lastProject: "", engine: "pdflatex", keybindings: {}, environments: [], layout: {}, sidePanelDisplay: "overlay", wheelAcceleration: defaultWheelAccelerationPreferences, images: defaultImagePreferences, tables: defaultTablePreferences, history: defaultHistoryPreferences
+  autoSave: "off", hideBuildArtifacts: true, documentWordCompletion: true, autoPairSymbols: true, mathPreviewOnHover: false, showPreviewMetrics: false, autoEnvironmentLabels: true, confirmPreviewEdits: true, warnIncompatibleEnvironmentConversion: true, visibleFilterGroups: ["blockType", "location", "file", "properties"], referenceLinkModifier: "ctrl", spellCheckMode: "auto", spellCheckLanguage: "en-US", spellCheckActiveLanguages: ["en-US"], maximize: true, restoreProject: false,
+  lastProject: "", engine: "pdflatex", keybindings: {}, environments: [], previewDirectives: defaultPreviewDirectives, layout: {}, sidePanelDisplay: "overlay", wheelAcceleration: defaultWheelAccelerationPreferences, images: defaultImagePreferences, tables: defaultTablePreferences, history: defaultHistoryPreferences
 };
-// Project-scoped preferences are kept separate from machine-wide tree and editor settings.
-// The project settings UI is reserved for a later release; build-artifact visibility is global.
-export const projectPreferenceKeys: PreferenceKey[] = ["fontSize", "tabSize", "wordWrap", "autoSave", "autoPairSymbols", "mathPreviewOnHover", "confirmPreviewEdits", "engine", "environments", "layout", "images", "tables", "history"];
+// Project overrides inherit from global preferences; machine-wide paths and workspace UI stay global.
+export const projectPreferenceKeys: PreferenceKey[] = ["fontSize", "tabSize", "wordWrap", "autoSave", "autoPairSymbols", "mathPreviewOnHover", "confirmPreviewEdits", "engine", "environments", "previewDirectives", "layout", "images", "tables", "history", "keybindings"];
 export interface SettingsSnapshot { global: Partial<PreferenceValues>; project: Partial<PreferenceValues>; toolchain?: LatexToolchain }
 export function validPreference(key: string, value: unknown): boolean {
   switch (key) {
@@ -175,7 +225,7 @@ export function validPreference(key: string, value: unknown): boolean {
     case "fontSize": return typeof value === "number" && Number.isInteger(value) && value >= 10 && value <= 32;
     case "tabSize": return typeof value === "number" && [2, 4, 8].includes(value);
     case "autoSave": return value === "off" || value === "afterDelay";
-    case "wordWrap": case "hideBuildArtifacts": case "documentWordCompletion": case "autoPairSymbols": case "mathPreviewOnHover": case "autoEnvironmentLabels": case "confirmPreviewEdits": case "warnIncompatibleEnvironmentConversion": case "maximize": case "restoreProject": case "aiIncludeCurrentFile": return typeof value === "boolean";
+    case "wordWrap": case "hideBuildArtifacts": case "documentWordCompletion": case "autoPairSymbols": case "mathPreviewOnHover": case "showPreviewMetrics": case "autoEnvironmentLabels": case "confirmPreviewEdits": case "warnIncompatibleEnvironmentConversion": case "maximize": case "restoreProject": case "aiIncludeCurrentFile": return typeof value === "boolean";
     case "aiDefaultMode": return value === "chat" || value === "codex";
     case "aiPermissionMode": return value === "ask" || value === "auto" || value === "full";
     case "referenceLinkModifier": return value === "ctrl" || value === "alt" || value === "shift" || value === "meta";
@@ -190,6 +240,17 @@ export function validPreference(key: string, value: unknown): boolean {
       const e = entry as Record<string, unknown>;
       return typeof e.id === "string" && typeof e.enabled === "boolean" && typeof e.labelKey === "string" && typeof e.family === "string" && !!e.match && !!e.style && !!e.behavior;
     });
+    case "previewDirectives": return Array.isArray(value) && value.length <= 256 && value.every((entry) => {
+      if (!entry || typeof entry !== "object") return false;
+      const item = entry as Partial<PreviewDirectiveDefinition>;
+      return typeof item.id === "string" && /^[a-z][a-z0-9-]{0,63}$/.test(item.id)
+        && typeof item.builtIn === "boolean" && typeof item.enabled === "boolean"
+        && typeof item.label === "string" && item.label.length <= 100
+        && ["divider", "placeholder", "spacer"].includes(String(item.display))
+        && (item.placement === undefined || ["nested", "trailing", "independent"].includes(item.placement))
+        && typeof item.color === "string" && /^#[0-9a-fA-F]{6}$/.test(item.color)
+        && !!item.match && (item.match.kind === "blank-line" || item.match.kind === "command" && /^[A-Za-z@]+$/.test(item.match.name));
+    }) && new Set((value as PreviewDirectiveDefinition[]).map((entry) => entry.id)).size === value.length;
     case "layout": return !!value && typeof value === "object" && !Array.isArray(value);
     case "history": {
       if (!value || typeof value !== "object" || Array.isArray(value)) return false;

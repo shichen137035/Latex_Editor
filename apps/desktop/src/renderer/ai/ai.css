@@ -53,7 +53,11 @@
 .ai-history-panel button:focus-visible, .ai-history-panel input:focus-visible { outline: 2px solid var(--color-primary); outline-offset: 1px; }
 
 /* Transcript and proposed diffs scroll together; the composer never scrolls away. */
+.ai-transcript-shell { position: relative; display: flex; flex: 1 1 auto; min-height: 0; overflow: hidden; }
 .ai-conversation-body { min-height: 0; flex: 1 1 auto; overflow: auto; overscroll-behavior: contain; padding: 9px 14px 14px; scrollbar-gutter: stable; }
+.ai-scroll-bottom { position: absolute; right: 22px; bottom: 14px; z-index: 3; display: grid; place-items: center; width: 34px; height: 34px; padding: 0; border: 1px solid color-mix(in srgb, var(--color-primary) 30%, var(--color-border)); border-radius: 50%; color: var(--color-primary-strong); background: var(--color-bg-panel); box-shadow: 0 3px 12px color-mix(in srgb, var(--color-text-primary) 18%, transparent); cursor: pointer; }
+.ai-scroll-bottom:hover { background: var(--color-bg-subtle); transform: translateY(1px); }
+.ai-scroll-bottom svg { width: 17px; height: 17px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
 .ai-message-list { display: flex; min-height: 0; flex-direction: column; gap: 9px; padding: 0; }
 .ai-message { padding: 10px; border: 1px solid var(--color-border); border-radius: 9px; background: var(--color-bg-panel); animation: ai-card-enter 180ms ease both; }
 .ai-message.user { margin-left: 12px; border-color: color-mix(in srgb, var(--color-primary) 18%, var(--color-border)); background: color-mix(in srgb, var(--color-primary) 7%, var(--color-bg-panel)); }
@@ -69,8 +73,22 @@
 .ai-rich-message h4 { font-size: 12px; }
 .ai-rich-message ul, .ai-rich-message ol { margin: 4px 0 10px; padding-left: 21px; }
 .ai-rich-message li { margin: 3px 0; padding-left: 2px; }
+.ai-rich-message .ai-task-list { padding-left: 5px; list-style: none; }
+.ai-rich-message .ai-task-list li { display: flex; align-items: baseline; gap: 5px; }
+.ai-rich-message .ai-task-list input { width: 11px; height: 11px; margin: 0; accent-color: var(--color-primary); }
 .ai-rich-message blockquote { margin: 7px 0 10px; padding: 5px 9px; border-left: 2px solid var(--color-primary); color: var(--color-text-secondary); background: color-mix(in srgb, var(--color-primary) 5%, var(--color-bg-panel)); }
+.ai-rich-message hr { height: 1px; margin: 10px 0; border: 0; background: var(--color-border); }
+.ai-rich-message del { color: var(--color-text-muted); }
+.ai-markdown-table-wrap { max-width: 100%; margin: 8px 0 10px; overflow-x: auto; border: 1px solid var(--color-border); border-radius: 6px; }
+.ai-markdown-table { width: 100%; border-collapse: collapse; font-size: 11px; }
+.ai-markdown-table th, .ai-markdown-table td { min-width: 56px; padding: 5px 8px; border-right: 1px solid var(--color-border); border-bottom: 1px solid var(--color-border); }
+.ai-markdown-table th { color: var(--color-text-primary); background: var(--color-bg-subtle); font-weight: 700; }
+.ai-markdown-table tr:last-child td { border-bottom: 0; }
+.ai-markdown-table th:last-child, .ai-markdown-table td:last-child { border-right: 0; }
 .ai-rich-message a { color: var(--color-primary-strong); text-decoration: underline; text-underline-offset: 2px; }
+.ai-rich-message .preview-inline-math { display: inline-block; max-width: 100%; overflow-x: auto; vertical-align: middle; }
+.ai-rich-message .preview-display-math { max-width: 100%; overflow-x: auto; margin: 8px 0; padding: 5px 8px; text-align: center; font-size: 15px; }
+.ai-rich-message .preview-math-fallback { color: var(--color-error); white-space: pre-wrap; font-family: Consolas, monospace; }
 .ai-inline-code { padding: 1px 4px; border-radius: 4px; color: var(--color-primary-strong); background: var(--color-bg-subtle); font: 0.92em Consolas, monospace; overflow-wrap: anywhere; }
 .ai-code-block { position: relative; max-width: 100%; overflow: auto; margin: 8px 0 10px; padding: 10px; border: 1px solid var(--color-border); border-radius: 7px; background: var(--color-bg-subtle); color: var(--color-text-primary); font: 10px/1.5 Consolas, monospace; white-space: pre; }
 .ai-code-language { position: absolute; top: 4px; right: 7px; color: var(--color-text-muted); font: 9px var(--font-ui, sans-serif); }

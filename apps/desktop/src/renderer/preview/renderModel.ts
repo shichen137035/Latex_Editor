@@ -20,7 +20,7 @@ function sameSpan(a: PreviewNode["source"], b: PreviewNode["source"]): boolean {
 }
 
 function signature(node: PreviewNode, source: string): string {
-  if (node.kind === "content") return `content:${node.contentType}:${node.raw}`;
+  if (node.kind === "content") return `content:${node.contentType}:${node.directiveId ?? ""}:${node.raw}`;
   const text = source.slice(node.source.startOffset, node.source.endOffset);
   // A short prefix/suffix distinguishes equal-sized blocks without retaining a
   // second copy of every (possibly deeply nested) section in the render index.
@@ -31,7 +31,7 @@ function signature(node: PreviewNode, source: string): string {
 
 function sameNode(a: PreviewNode, b: PreviewNode, children: PreviewNode[]): boolean {
   if (a.kind !== b.kind || a.id !== b.id || a.parentId !== b.parentId || !sameSpan(a.source, b.source)) return false;
-  if (a.kind === "content" && b.kind === "content") return a.raw === b.raw && a.contentType === b.contentType && a.origin === b.origin;
+  if (a.kind === "content" && b.kind === "content") return a.raw === b.raw && a.contentType === b.contentType && a.directiveId === b.directiveId && a.origin === b.origin;
   if (a.kind !== "block" || b.kind !== "block") return false;
   return a.environmentId === b.environmentId && a.semanticKind === b.semanticKind && a.origin === b.origin
     && a.title === b.title && a.latexLabel === b.latexLabel && a.autoLabel === b.autoLabel
@@ -68,7 +68,8 @@ export function reusePreviewDocument(
   const reconcile = (oldNodes: PreviewNode[], newNodes: PreviewNode[], parentId?: string): PreviewNode[] => {
     const matched = new Map<number, PreviewNode>();
     const compatible = (old: PreviewNode, next: PreviewNode) => old.kind === next.kind
-      && (old.kind === "content" || (next.kind === "block" && old.environmentId === next.environmentId));
+      && (old.kind === "content" ? next.kind === "content" && old.contentType === next.contentType && old.directiveId === next.directiveId
+        : next.kind === "block" && old.environmentId === next.environmentId);
     const take = (index: number, old: PreviewNode | undefined) => {
       if (old && !used.has(old.id) && compatible(old, newNodes[index]!)) { matched.set(index, old); used.add(old.id); }
     };
@@ -139,6 +140,24 @@ export function previewPath(index: PreviewRenderIndex, id: string): Set<string> 
     entry = entry.parentId ? index.byId.get(entry.parentId) : undefined;
   }
   return path;
+}
+
+/** Navigate visible semantic blocks in document order, including nested blocks. */
+export function adjacentVisibleBlockId(index: PreviewRenderIndex, selectedIds: string[], collapsedIds: ReadonlySet<string>, direction: "up" | "down", isVisible: (entry: PreviewRenderEntry) => boolean = () => true): string | undefined {
+  const visible = index.entries.filter((entry) => {
+    if (entry.node.kind !== "block") return false;
+    if (!selectedIds.includes(entry.id) && !isVisible(entry)) return false;
+    let parent = entry.parentId;
+    while (parent) {
+      if (collapsedIds.has(parent)) return false;
+      parent = index.byId.get(parent)?.parentId;
+    }
+    return true;
+  });
+  const selectedPositions = selectedIds.map((id) => visible.findIndex((entry) => entry.id === id)).filter((position) => position >= 0);
+  if (!selectedPositions.length) return undefined;
+  const position = direction === "up" ? Math.min(...selectedPositions) - 1 : Math.max(...selectedPositions) + 1;
+  return visible[position]?.id;
 }
 
 /** A first-scroll estimate; ResizeObserver replaces it once the row is mounted. */

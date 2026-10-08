@@ -43,6 +43,7 @@ export function createAIChangeController(options: AIChangeControllerOptions) {
       const changes = (await api.ai.conversations(project.id))?.changeSets.find(item => item.id === requested.id);
       if (!changes) throw new Error(t("ai.changeUnavailable"));
       const ids = new Set(hunkIds.filter(id => changes.files.some(file => file.hunks.some(hunk => hunk.id === id && hunk.decision === "pending"))));
+      if (!ids.size && hunkIds.length) throw new Error(t("ai.changeUnavailable"));
       const diskPaths = new Set(projectFilePaths(await api.files.tree(project.id)));
       const updates: Array<{ path: string; before: string | undefined; after: string | undefined; buffer: string | undefined }> = [];
       const staleStructureIds: string[] = [];
@@ -112,16 +113,28 @@ export function createAIChangeController(options: AIChangeControllerOptions) {
             tabsRef.current = [...tabsRef.current, { path: update.path, content: update.before!, dirty: false }];
           }
           changeDocument(update.path, update.after, false, undefined, true, !snapshotBeforeAiFileRemoval);
+          if (tabsRef.current.find(tab => tab.path === update.path)?.content !== update.after) throw new Error(t("ai.bufferConflict", { path: update.path }));
         }
       }
       setTabs(tabsRef.current);
       setSaveState(tabsRef.current.some(tab => tab.dirty) ? "unsaved" : "saved");
-      if (apply) await api.ai.markChangeSetApplied(changes.id, [...ids].filter(id => !staleStructureIds.includes(id)));
+      if (apply) {
+        const marked = await api.ai.markChangeSetApplied(changes.id, [...ids].filter(id => !staleStructureIds.includes(id)));
+        if (!marked) throw new Error(t("ai.changeUnavailable"));
+      }
       else await api.ai.resolveChangeSet(changes.id, Object.fromEntries([...ids].map(id => [id, "rejected" as const])), false);
       if (changedOnDisk.length) await refreshTree();
       return { appliedIds: apply ? [...ids].filter(id => !staleStructureIds.includes(id)) : [], staleStructureIds };
     };
-    const next = aiOperationQueue.current.then(run);
+    const next = aiOperationQueue.current.then(run).catch(async (reason: unknown) => {
+      const message = reason instanceof Error ? reason.message : String(reason);
+      setBlockNotice(message);
+      // Persist manual failures alongside automatic failures so the message
+      // stays on the relevant changes card, including after reopening AI chat.
+      try { await api?.ai.markChangeSetApplied(requested.id, [], message); }
+      catch { /* The visible local error remains available when IPC/storage fails. */ }
+      throw reason;
+    });
     aiOperationQueue.current = next.then(() => undefined, () => undefined);
     return next;
   };

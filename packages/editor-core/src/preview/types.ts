@@ -34,7 +34,8 @@ export interface StructuralBlock extends PreviewBaseNode {
 
 export interface ContentRegion extends PreviewBaseNode {
   kind: "content";
-  contentType: "paragraph" | "plain" | "other";
+  contentType: "paragraph" | "plain" | "other" | "directive" | "spacer";
+  directiveId?: string;
   origin?: "source" | "virtual";
   raw: string;
 }

@@ -1,7 +1,8 @@
 import { app } from "electron";
-import { readFile, mkdir, writeFile, rename, readdir, access } from "node:fs/promises";
+import { readFile, mkdir, writeFile, rename, readdir } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
 import nspell from "nspell";
+import { flattenHunspellDictionary } from "./spellcheck-dictionaries.js";
 import { checkChineseText, chineseRulesUrl, chineseRulesVersion, parseChineseRules } from "./chinese-rules.js";
 import { checkJapaneseText, japaneseRulesLicenseUrl, japaneseRulesUrl, japaneseRulesVersion, parseJapaneseRules } from "./japanese-rules.js";
 import type { DictionaryPackage, SpellCheckMode, SpellCheckStatus } from "@latex-editor/contracts" with { "resolution-mode": "import" };
@@ -18,6 +19,20 @@ const fallbackDictionaryCatalog: DictionaryPackage[] = [
     license: { name: "MIT AND BSD", source: "https://github.com/wooorm/dictionaries" }
   } as DictionaryPackage))
 ];
+
+// This legacy Hunspell package lists its inflected forms explicitly. Its flag
+// chains expand too aggressively in nspell, so installation stores it as a
+// plain word list while retaining the same install/remove and spell-check APIs.
+const kazakhDictionaryId = "kk-KZ";
+const kazakhDictionaryPackage: DictionaryPackage = {
+  id: kazakhDictionaryId,
+  languageCode: "kk-KZ",
+  displayName: "Kazakh",
+  region: "Kazakhstan",
+  installed: false,
+  dicUrl: "https://raw.githubusercontent.com/kergalym/myspell-kk/master/kk_KZ.dic",
+  license: { name: "MPL-1.1 / GPL-2.0+ / LGPL-2.1+", source: "https://github.com/kergalym/myspell-kk" }
+};
 
 const dictionaryCatalogApi = "https://api.github.com/repos/wooorm/dictionaries/contents/dictionaries?ref=main";
 const dictionaryReadmeUrl = "https://raw.githubusercontent.com/wooorm/dictionaries/main/readme.md";
@@ -49,7 +64,7 @@ export class OfflineSpellCheckService {
   private readonly dictionaryPath = resolve(app.getPath("userData"), "spellcheck", "personal.json");
   private readonly dictionariesPath = resolve(app.getPath("userData"), "spellcheck", "dictionaries");
   private readonly dictionaryCatalogPath = resolve(app.getPath("userData"), "spellcheck", "catalog.json");
-  private catalog = fallbackDictionaryCatalog;
+  private catalog = [...fallbackDictionaryCatalog, kazakhDictionaryPackage];
   private catalogReady = false;
   private catalogLoading: Promise<void> | undefined;
 
@@ -148,6 +163,7 @@ export class OfflineSpellCheckService {
         await writeFile(`${this.dictionaryCatalogPath}.tmp`, JSON.stringify(this.catalog, null, 2), "utf8");
         await rename(`${this.dictionaryCatalogPath}.tmp`, this.dictionaryCatalogPath);
       } catch { /* Keep the last cached or bundled catalog when the registry cannot be reached. */ }
+      if (!this.catalog.some((item) => item.id === kazakhDictionaryId)) this.catalog.push(kazakhDictionaryPackage);
       this.catalogReady = true;
       this.catalogLoading = undefined;
     })();
@@ -222,42 +238,64 @@ export class OfflineSpellCheckService {
     }
     await this.loadDictionaryCatalog();
     const item = this.catalog.find((candidate) => candidate.id === id);
-    if (!item || !item.affUrl || !item.dicUrl) throw new Error("Dictionary is not available for download");
-    const [affResponse, dicResponse] = await Promise.all([fetch(item.affUrl), fetch(item.dicUrl)]);
-    if (!affResponse.ok || !dicResponse.ok) throw new Error(`Dictionary download failed: ${id}`);
-    const [aff, dic] = await Promise.all([affResponse.arrayBuffer(), dicResponse.arrayBuffer()]);
-    if (aff.byteLength < 10 || dic.byteLength < 10) throw new Error(`Dictionary files are invalid: ${id}`);
+    if (!item || !item.dicUrl || (id !== kazakhDictionaryId && !item.affUrl)) throw new Error("Dictionary is not available for download");
+    let aff: Buffer;
+    let dic: Buffer;
+    if (id === kazakhDictionaryId) {
+      const dicResponse = await fetch(item.dicUrl, { signal: AbortSignal.timeout(30000) });
+      if (!dicResponse.ok) throw new Error(`Dictionary download failed: ${id}`);
+      const sourceDic = await dicResponse.text();
+      if (Buffer.byteLength(sourceDic, "utf8") > 10_000_000) throw new Error("Kazakh dictionary package is too large");
+      dic = Buffer.from(flattenHunspellDictionary(sourceDic), "utf8");
+      aff = Buffer.from("SET UTF-8\n", "utf8");
+    } else {
+      const [affResponse, dicResponse] = await Promise.all([fetch(item.affUrl!, { signal: AbortSignal.timeout(30000) }), fetch(item.dicUrl, { signal: AbortSignal.timeout(30000) })]);
+      if (!affResponse.ok || !dicResponse.ok) throw new Error(`Dictionary download failed: ${id}`);
+      const [affData, dicData] = await Promise.all([affResponse.arrayBuffer(), dicResponse.arrayBuffer()]);
+      if (affData.byteLength < 10 || dicData.byteLength < 10 || affData.byteLength > 5_000_000 || dicData.byteLength > 50_000_000) throw new Error(`Dictionary files are invalid: ${id}`);
+      aff = Buffer.from(affData);
+      dic = Buffer.from(dicData);
+    }
+    const engine = nspell({ aff, dic });
+    if (id === kazakhDictionaryId && (!engine.correct("қазақ") || !engine.correct("кітап"))) throw new Error("Kazakh dictionary self-test failed");
+    for (const word of this.personal) engine.add(word);
     const directory = resolve(this.dictionariesPath, id);
     await mkdir(directory, { recursive: true });
-    await writeFile(resolve(directory, "index.aff.tmp"), Buffer.from(aff));
-    await writeFile(resolve(directory, "index.dic.tmp"), Buffer.from(dic));
+    await writeFile(resolve(directory, "index.aff.tmp"), aff);
+    await writeFile(resolve(directory, "index.dic.tmp"), dic);
     await rename(resolve(directory, "index.aff.tmp"), resolve(directory, "index.aff"));
     await rename(resolve(directory, "index.dic.tmp"), resolve(directory, "index.dic"));
-    await this.loadInstalledDictionaries();
-    if (!this.engines.has(id)) throw new Error(`Dictionary failed self-test: ${id}`);
+    this.engines.set(id, engine);
+    this.cache.clear();
     return { ...item, installed: true };
   }
 
   async removeDictionary(id: string): Promise<void> {
+    const { isEnglishSpellDictionary } = await import("@latex-editor/contracts");
+    if (isEnglishSpellDictionary(id)) throw new Error("English dictionaries cannot be removed");
+    await this.loadDictionaryCatalog();
+    const packageInfo = this.catalog.find((candidate) => candidate.id === id);
+    if (packageInfo && isEnglishSpellDictionary(packageInfo.id, packageInfo.languageCode)) throw new Error("English dictionaries cannot be removed");
     if (id === "zh-CN") {
       const { unlink } = await import("node:fs/promises");
       await unlink(this.chinesePath).catch((error: NodeJS.ErrnoException) => { if (error.code !== "ENOENT") throw error; });
+      await unlink(resolve(dirname(this.chinesePath), "chinese-rules-LICENSE.txt")).catch((error: NodeJS.ErrnoException) => { if (error.code !== "ENOENT") throw error; });
       this.chineseRules = undefined;
       return;
     }
     if (id === "ja-JP") {
       const { unlink } = await import("node:fs/promises");
       await unlink(this.japanesePath).catch((error: NodeJS.ErrnoException) => { if (error.code !== "ENOENT") throw error; });
+      await unlink(resolve(dirname(this.japanesePath), "japanese-rules-LICENSE.txt")).catch((error: NodeJS.ErrnoException) => { if (error.code !== "ENOENT") throw error; });
       this.japaneseRules = undefined;
       return;
     }
     if (!/^[A-Za-z0-9_-]+$/.test(id)) throw new Error("Invalid dictionary identifier");
-    if (id === "en-US" || id === "en-GB") throw new Error("Bundled English dictionaries cannot be removed");
-    this.engines.delete(id);
     const directory = resolve(this.dictionariesPath, id);
-    try { await access(directory); } catch { return; }
     const { rm } = await import("node:fs/promises");
     await rm(directory, { recursive: true, force: true });
+    this.engines.delete(id);
+    this.cache.clear();
   }
 
   checkWords(words: string[], language: string): string[] {

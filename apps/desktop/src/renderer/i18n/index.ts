@@ -38,6 +38,18 @@ const aiComposerKeys = ["ai.addAttachment", "ai.removeAttachment", "ai.attachmen
 for (const [language, labels] of Object.entries(aiComposerMessages)) {
   for (const [index, key] of aiComposerKeys.entries()) catalogs[language as Locale][key] = labels[index]!;
 }
+const aiTranscriptMessages: Record<Locale, [string, string]> = {
+  en: ["Stopping…", "Scroll to latest message"],
+  ja: ["停止中…", "最新のメッセージへ移動"],
+  "zh-CN": ["正在停止…", "滚动到最新消息"],
+  "zh-TW": ["正在停止…", "捲動至最新訊息"],
+  ko: ["중지 중…", "최신 메시지로 이동"],
+  fr: ["Arrêt en cours…", "Aller au dernier message"]
+};
+for (const [language, [stopping, scrollToLatest]] of Object.entries(aiTranscriptMessages)) {
+  catalogs[language as Locale]["ai.stopping"] = stopping;
+  catalogs[language as Locale]["ai.scrollToLatest"] = scrollToLatest;
+}
 const aiLongInputMessages: Record<Locale, [string, string]> = {
   en: ["Long message will be saved as a project .txt file when sent.", "Read the full request in {{path}} before replying."],
   ja: ["長いメッセージは送信時にプロジェクト内の .txt ファイルとして保存されます。", "返信する前に {{path}} を読み、全文を依頼内容として扱ってください。"],
@@ -102,6 +114,78 @@ const skillMessages: Record<Locale, string[]> = {
 const skillKeys = ["settings.aiSkills", "settings.aiSkillsTitle", "settings.aiSkillsDescription", "settings.aiSkillsNew", "settings.aiSkillsEmpty", "settings.aiSkillsName", "settings.aiSkillsFormatHint", "settings.aiSkillsContent", "settings.aiSkillsCancel", "settings.aiSkillsSaving", "settings.aiSkillsSave", "settings.aiSkillsEdit", "settings.aiSkillsSelect", "settings.aiSkillSource.built-in", "settings.aiSkillSource.custom", "settings.aiSkillSource.customized"];
 for (const [language, labels] of Object.entries(skillMessages)) {
   for (const [index, key] of skillKeys.entries()) catalogs[language as Locale][key] = labels[index]!;
+}
+const skillStateMessages: Record<Locale, [string, string]> = {
+  en: ["Enabled", "Disabled"], ja: ["有効", "無効"], "zh-CN": ["已启用", "已停用"], "zh-TW": ["已啟用", "已停用"], ko: ["사용 중", "사용 안 함"], fr: ["Activé", "Désactivé"]
+};
+for (const [language, [enabled, disabled]] of Object.entries(skillStateMessages)) {
+  catalogs[language as Locale]["settings.aiSkillsEnabled"] = enabled;
+  catalogs[language as Locale]["settings.aiSkillsDisabled"] = disabled;
+}
+const settingsFooterMessages: Record<Locale, [string, string]> = {
+  en: ["Saved automatically", "Project overrides can be reset to global values."],
+  ja: ["自動保存済み", "プロジェクト設定はグローバル値に戻せます。"],
+  "zh-CN": ["已自动保存", "项目设置可恢复为全局值。"],
+  "zh-TW": ["已自動儲存", "專案設定可還原為全域值。"],
+  ko: ["자동 저장됨", "프로젝트 설정은 전역 값으로 되돌릴 수 있습니다."],
+  fr: ["Enregistré automatiquement", "Les réglages du projet peuvent reprendre les valeurs globales."]
+};
+for (const [language, [saved, projectReset]] of Object.entries(settingsFooterMessages)) {
+  catalogs[language as Locale]["settings.saved"] = saved;
+  catalogs[language as Locale]["settings.projectResetHint"] = projectReset;
+}
+const blockOperationMessages: Record<Locale, Record<string, string>> = {
+  en: {
+    toolbar: "Block actions", drag: "Drag to move block", disabled: "Disabled block", enable: "Enable", expand: "Expand", collapse: "Collapse",
+    duplicate: "Duplicate", paste: "Paste", disable: "Disable", collapseChildren: "Collapse children", expandChildren: "Expand children",
+    collapseSiblings: "Collapse siblings", expandAll: "Expand all", previewTitle: "Review block operation", confirm: "Apply",
+    "preview.move": "Move {{count}} block(s) and their contents?", "preview.disable": "Disable {{count}} block(s) and their contents?",
+    "preview.delete": "Delete {{count}} block(s) and their contents?", moveUp: "Move blocks up", moveDown: "Move blocks down",
+    outdent: "Move blocks out one level", indent: "Move blocks into previous sibling", invalidDisabled: "Disabled source needs repair"
+  },
+  "zh-CN": {
+    toolbar: "块操作", drag: "拖动块", disabled: "已关闭的块", enable: "重新启用", expand: "展开", collapse: "收起",
+    duplicate: "复制一份", paste: "粘贴", disable: "暂时关闭", collapseChildren: "收起子块", expandChildren: "展开子块",
+    collapseSiblings: "收起同级块", expandAll: "全部展开", previewTitle: "确认块操作", confirm: "执行",
+    "preview.move": "移动 {{count}} 个块及其全部内容？", "preview.disable": "关闭 {{count}} 个块及其全部内容？",
+    "preview.delete": "删除 {{count}} 个块及其全部内容？", moveUp: "上移块", moveDown: "下移块",
+    outdent: "提升块层级", indent: "移入前一个同级块", invalidDisabled: "关闭块的源码需要修复"
+  },
+  "zh-TW": {
+    toolbar: "區塊操作", drag: "拖動區塊", disabled: "已停用的區塊", enable: "重新啟用", expand: "展開", collapse: "收合",
+    duplicate: "複製一份", paste: "貼上", disable: "暫時停用", collapseChildren: "收合子區塊", expandChildren: "展開子區塊",
+    collapseSiblings: "收合同層區塊", expandAll: "全部展開", previewTitle: "確認區塊操作", confirm: "執行",
+    "preview.move": "移動 {{count}} 個區塊及其全部內容？", "preview.disable": "停用 {{count}} 個區塊及其全部內容？",
+    "preview.delete": "刪除 {{count}} 個區塊及其全部內容？", moveUp: "上移區塊", moveDown: "下移區塊",
+    outdent: "提升區塊層級", indent: "移入前一個同層區塊", invalidDisabled: "停用區塊的原始碼需要修復"
+  },
+  ja: {
+    toolbar: "ブロック操作", drag: "ドラッグして移動", disabled: "無効なブロック", enable: "有効にする", expand: "展開", collapse: "折りたたむ",
+    duplicate: "複製", paste: "貼り付け", disable: "無効にする", collapseChildren: "子を折りたたむ", expandChildren: "子を展開",
+    collapseSiblings: "同階層を折りたたむ", expandAll: "すべて展開", previewTitle: "ブロック操作の確認", confirm: "実行",
+    "preview.move": "{{count}} 個のブロックと内容を移動しますか？", "preview.disable": "{{count}} 個のブロックと内容を無効にしますか？",
+    "preview.delete": "{{count}} 個のブロックと内容を削除しますか？", moveUp: "上へ移動", moveDown: "下へ移動",
+    outdent: "階層を上げる", indent: "前のブロックの中へ移動", invalidDisabled: "無効化されたソースの修復が必要です"
+  },
+  ko: {
+    toolbar: "블록 작업", drag: "드래그하여 이동", disabled: "비활성 블록", enable: "활성화", expand: "펼치기", collapse: "접기",
+    duplicate: "복제", paste: "붙여넣기", disable: "비활성화", collapseChildren: "하위 블록 접기", expandChildren: "하위 블록 펼치기",
+    collapseSiblings: "같은 단계 접기", expandAll: "모두 펼치기", previewTitle: "블록 작업 확인", confirm: "적용",
+    "preview.move": "블록 {{count}}개와 내용을 이동할까요?", "preview.disable": "블록 {{count}}개와 내용을 비활성화할까요?",
+    "preview.delete": "블록 {{count}}개와 내용을 삭제할까요?", moveUp: "위로 이동", moveDown: "아래로 이동",
+    outdent: "단계 올리기", indent: "이전 블록 안으로 이동", invalidDisabled: "비활성 소스를 복구해야 합니다"
+  },
+  fr: {
+    toolbar: "Actions sur les blocs", drag: "Glisser pour déplacer", disabled: "Bloc désactivé", enable: "Activer", expand: "Déplier", collapse: "Replier",
+    duplicate: "Dupliquer", paste: "Coller", disable: "Désactiver", collapseChildren: "Replier les enfants", expandChildren: "Déplier les enfants",
+    collapseSiblings: "Replier les voisins", expandAll: "Tout déplier", previewTitle: "Vérifier l’opération", confirm: "Appliquer",
+    "preview.move": "Déplacer {{count}} bloc(s) avec leur contenu ?", "preview.disable": "Désactiver {{count}} bloc(s) avec leur contenu ?",
+    "preview.delete": "Supprimer {{count}} bloc(s) avec leur contenu ?", moveUp: "Monter les blocs", moveDown: "Descendre les blocs",
+    outdent: "Remonter d’un niveau", indent: "Déplacer dans le bloc précédent", invalidDisabled: "La source désactivée doit être réparée"
+  }
+};
+for (const [language, messages] of Object.entries(blockOperationMessages)) {
+  for (const [key, value] of Object.entries(messages)) catalogs[language as Locale][`blockOperation.${key}`] = value;
 }
 Object.assign(catalogs.ja, {
   "ai.copilot": "Copilot", "ai.copilotAccount": "GitHub Copilot アカウント",
@@ -226,6 +310,142 @@ Object.assign(catalogs.fr, {
   "ai.chatReady": "Interrogez GitHub Copilot sur ce projet ou demandez une modification. Copilot travaille sur un instantané et TeXWeave affiche le diff avant toute application.",
   "settings.aiPrivacyHint": "Copilot Chat et Codex travaillent sur des instantanés du projet ; examinez leurs diffs avant d’appliquer les changements au projet original."
 });
+const shortcutManagerMessages: Partial<Record<Locale, Record<string, string>>> = {
+  en: {
+    "shortcut.search": "Search commands, shortcuts, groups, or contexts…", "shortcut.filter": "Filter commands",
+    "shortcut.filter.all": "All commands", "shortcut.filter.modified": "Modified", "shortcut.filter.conflicts": "Conflicts", "shortcut.filter.unassigned": "Unassigned", "shortcut.filter.userDefined": "User-defined", "shortcut.filter.default": "Default",
+    "shortcut.view.commands": "Commands", "shortcut.view.map": "Keyboard map", "shortcut.view.conflicts": "Conflicts", "shortcut.projectHint": "Project shortcuts override global shortcuts; clearing a project shortcut restores the global binding.",
+    "shortcut.command": "Command", "shortcut.group": "Group", "shortcut.context": "Context", "shortcut.binding": "Shortcut", "shortcut.unassigned": "Unassigned", "shortcut.changeBinding": "Change shortcut", "shortcut.resetBinding": "Reset shortcut", "shortcut.noCommands": "No commands match this filter.", "shortcut.noKeys": "No keys match this view.",
+    "shortcut.description.edit.undo": "Undo the most recent change.", "shortcut.description.edit.redo": "Restore the most recently undone change.", "shortcut.description.file.save": "Save the active document.", "shortcut.description.file.saveAll": "Save every open document.", "shortcut.description.edit.find": "Search within the source editor.", "shortcut.description.edit.replace": "Find and replace source text.", "shortcut.description.navigation.back": "Return to the previous document location.", "shortcut.description.navigation.forward": "Move forward through document locations.", "shortcut.description.latex.compile": "Compile the current project.", "shortcut.description.settings.open": "Open application settings.", "shortcut.description.ai.open": "Open the AI assistant.", "shortcut.description.block.insertBefore": "Insert a block before the selected Preview block.", "shortcut.description.block.insertAfter": "Insert a block after the selected Preview block.", "shortcut.description.block.createFromSelection": "Create a semantic block from selected source text.", "shortcut.description.preview.applyDraft": "Apply the current Preview source edit.", "shortcut.description.preview.cancelDraft": "Discard the current Preview source edit.",
+    "shortcut.group.general": "General", "shortcut.group.navigation": "Navigation", "shortcut.group.editing": "Editing", "shortcut.group.blocks": "Blocks", "shortcut.group.search": "Search", "shortcut.group.build": "Build", "shortcut.group.files": "Files", "shortcut.group.ai": "AI",
+    "shortcut.modifier": "Modifier", "shortcut.modifier.none": "No modifier", "shortcut.modifier.Mod": "Ctrl / Command", "shortcut.modifier.Ctrl": "Control", "shortcut.modifier.Shift": "Shift", "shortcut.modifier.Alt": "Alt / Option", "shortcut.modifier.Mod.Shift": "Ctrl / Command + Shift", "shortcut.modifier.Mod.Alt": "Ctrl / Command + Alt / Option", "shortcut.modifier.Alt.Shift": "Alt / Option + Shift", "shortcut.modifier.Ctrl.Shift": "Control + Shift", "shortcut.modifier.Ctrl.Alt": "Control + Alt",
+    "shortcut.context.all": "All contexts", "shortcut.testKeys": "Test keys", "shortcut.stopTest": "Stop testing", "shortcut.pressToTest": "Press a key to test it", "shortcut.availableKeys": "Available keys", "shortcut.selectContext": "Select a context before testing keys.", "shortcut.showKeys": "Show keys", "shortcut.mapFilter.all": "All", "shortcut.mapFilter.assigned": "Assigned", "shortcut.mapFilter.available": "Available", "shortcut.mapFilter.conflicts": "Conflicts",
+    "shortcut.mapFilter.group": "Function group", "shortcut.mapFilter.allGroups": "All groups", "shortcut.mapFilter.name": "Function", "shortcut.mapFilter.namePlaceholder": "Search by name or description", "shortcut.mapFilter.key": "Key", "shortcut.mapFilter.keyPlaceholder": "Search a shortcut, e.g. Ctrl+S", "shortcut.mapFilter.state.all": "All functions", "shortcut.mapFilter.state.conflicts": "Conflicts", "shortcut.mapFilter.state.reserved": "System-reserved", "shortcut.mapFilter.state.clear": "No binding issues", "shortcut.mapFilter.state.assigned": "Assigned", "shortcut.mapFilter.state.unassigned": "Unassigned", "shortcut.mapFilter.bindingStatus": "Binding status", "shortcut.mapFilter.functions": "Functions", "shortcut.mapFilter.functionCount": "{{count}} functions", "shortcut.mapFilter.pickFunction": "Select a function in the list, then press the replacement keys while watching the keyboard map below.", "shortcut.mapFilter.pressReplacement": "Press the new shortcut",
+    "shortcut.testCommand": "Command", "shortcut.source": "Source", "shortcut.source.default": "Default", "shortcut.source.user": "User", "shortcut.source.project": "Project", "shortcut.shadowed": "Shadowed", "shortcut.chordPending": "Chord prefix", "shortcut.testUnassigned": "Unassigned in this context",
+    "shortcut.context.workspace": "Workspace", "shortcut.context.editor": "Editor", "shortcut.context.preview": "Preview", "shortcut.context.relation": "Relations", "shortcut.context.fileTree": "File tree", "shortcut.context.search": "Search", "shortcut.context.dialog": "Dialog", "shortcut.context.shortcutManager": "Shortcut manager",
+    "shortcut.keyStatus.unused": "Unused", "shortcut.keyStatus.assigned": "Assigned", "shortcut.keyStatus.multiple": "Multiple contexts", "shortcut.keyStatus.conflict": "Conflict", "shortcut.keyStatus.prefix": "Chord prefix", "shortcut.keyStatus.reserved": "OS reserved",
+    "shortcut.conflictType.direct": "Direct conflict", "shortcut.conflictType.overlap": "Context overlap", "shortcut.conflictType.prefix": "Chord prefix", "shortcut.noConflicts": "No shortcut conflicts found.", "shortcut.osReservedHint": "This shortcut may be intercepted by the operating system.",
+    "shortcut.recordTitle": "Record shortcut", "shortcut.recordSecond": "Press the second key…", "shortcut.directConflict": "This shortcut is already assigned in the same context.", "shortcut.prefixConflict": "A shortcut cannot also be the start of a chord.", "shortcut.overlapConflict": "This shortcut is also used in a parent or child context.", "shortcut.assignAnyway": "Assign anyway", "shortcut.replaceExisting": "Replace existing shortcut", "shortcut.useBinding": "Use this shortcut", "shortcut.addSecondKey": "Add a second key", "shortcut.clearBinding": "Clear shortcut", "shortcut.invalid": "Use a supported key or modifier combination. Chords may contain up to two strokes."
+  },
+  "zh-CN": {
+    "shortcut.search": "搜索命令、快捷键、分组或上下文…", "shortcut.filter": "筛选命令",
+    "shortcut.filter.all": "全部命令", "shortcut.filter.modified": "已修改", "shortcut.filter.conflicts": "有冲突", "shortcut.filter.unassigned": "未分配", "shortcut.filter.userDefined": "自定义", "shortcut.filter.default": "默认",
+    "shortcut.view.commands": "命令", "shortcut.view.map": "键位图", "shortcut.view.conflicts": "冲突", "shortcut.projectHint": "项目快捷键优先于全局快捷键；清除项目快捷键会恢复全局绑定。",
+    "shortcut.command": "命令", "shortcut.group": "分组", "shortcut.context": "上下文", "shortcut.binding": "快捷键", "shortcut.unassigned": "未分配", "shortcut.changeBinding": "更改快捷键", "shortcut.resetBinding": "重置快捷键", "shortcut.noCommands": "没有符合条件的命令。", "shortcut.noKeys": "没有符合条件的按键。",
+    "shortcut.description.edit.undo": "撤销最近一次更改。", "shortcut.description.edit.redo": "恢复最近一次撤销的更改。", "shortcut.description.file.save": "保存当前文档。", "shortcut.description.file.saveAll": "保存所有已打开的文档。", "shortcut.description.edit.find": "在源代码编辑器中搜索。", "shortcut.description.edit.replace": "查找并替换源代码文本。", "shortcut.description.navigation.back": "返回上一个文档位置。", "shortcut.description.navigation.forward": "前进到下一个文档位置。", "shortcut.description.latex.compile": "编译当前项目。", "shortcut.description.settings.open": "打开应用设置。", "shortcut.description.ai.open": "打开 AI 助手。", "shortcut.description.block.insertBefore": "在选中的预览块之前插入块。", "shortcut.description.block.insertAfter": "在选中的预览块之后插入块。", "shortcut.description.block.createFromSelection": "根据选中的源代码创建语义块。", "shortcut.description.preview.applyDraft": "应用当前预览源码修改。", "shortcut.description.preview.cancelDraft": "丢弃当前预览源码修改。",
+    "shortcut.group.general": "常规", "shortcut.group.navigation": "导航", "shortcut.group.editing": "编辑", "shortcut.group.blocks": "块", "shortcut.group.search": "搜索", "shortcut.group.build": "构建", "shortcut.group.files": "文件", "shortcut.group.ai": "AI",
+    "shortcut.modifier": "修饰键", "shortcut.modifier.none": "无修饰键", "shortcut.modifier.Mod": "Ctrl / Command", "shortcut.modifier.Ctrl": "Control", "shortcut.modifier.Shift": "Shift", "shortcut.modifier.Alt": "Alt / Option", "shortcut.modifier.Mod.Shift": "Ctrl / Command + Shift", "shortcut.modifier.Mod.Alt": "Ctrl / Command + Alt / Option", "shortcut.modifier.Alt.Shift": "Alt / Option + Shift", "shortcut.modifier.Ctrl.Shift": "Control + Shift", "shortcut.modifier.Ctrl.Alt": "Control + Alt",
+    "shortcut.context.all": "全部上下文", "shortcut.testKeys": "测试按键", "shortcut.stopTest": "停止测试", "shortcut.pressToTest": "按下按键进行测试", "shortcut.availableKeys": "可用按键", "shortcut.selectContext": "请先选择上下文，再测试按键。", "shortcut.showKeys": "显示按键", "shortcut.mapFilter.all": "全部", "shortcut.mapFilter.assigned": "已分配", "shortcut.mapFilter.available": "可用", "shortcut.mapFilter.conflicts": "冲突",
+    "shortcut.mapFilter.group": "功能组", "shortcut.mapFilter.allGroups": "全部功能组", "shortcut.mapFilter.name": "功能名称", "shortcut.mapFilter.namePlaceholder": "按名称或说明搜索", "shortcut.mapFilter.key": "按键", "shortcut.mapFilter.keyPlaceholder": "搜索快捷键，例如 Ctrl+S", "shortcut.mapFilter.state.all": "全部功能", "shortcut.mapFilter.state.conflicts": "快捷键冲突", "shortcut.mapFilter.state.reserved": "系统占用", "shortcut.mapFilter.state.clear": "无绑定问题", "shortcut.mapFilter.state.assigned": "已分配", "shortcut.mapFilter.state.unassigned": "未分配", "shortcut.mapFilter.bindingStatus": "绑定状态", "shortcut.mapFilter.functions": "功能列表", "shortcut.mapFilter.functionCount": "{{count}} 个功能", "shortcut.mapFilter.pickFunction": "点击列表中的功能后按下新快捷键，观察下方键盘上的实时变化。", "shortcut.mapFilter.pressReplacement": "请按下新的快捷键",
+    "shortcut.testCommand": "命令", "shortcut.source": "来源", "shortcut.source.default": "默认", "shortcut.source.user": "用户", "shortcut.source.project": "项目", "shortcut.shadowed": "被覆盖", "shortcut.chordPending": "连击前缀", "shortcut.testUnassigned": "此上下文中未分配",
+    "shortcut.context.workspace": "工作区", "shortcut.context.editor": "编辑器", "shortcut.context.preview": "预览", "shortcut.context.relation": "关系", "shortcut.context.fileTree": "文件树", "shortcut.context.search": "搜索", "shortcut.context.dialog": "对话框", "shortcut.context.shortcutManager": "快捷键管理器",
+    "shortcut.keyStatus.unused": "未使用", "shortcut.keyStatus.assigned": "已分配", "shortcut.keyStatus.multiple": "多个上下文", "shortcut.keyStatus.conflict": "冲突", "shortcut.keyStatus.prefix": "连击前缀", "shortcut.keyStatus.reserved": "系统占用",
+    "shortcut.conflictType.direct": "直接冲突", "shortcut.conflictType.overlap": "上下文重叠", "shortcut.conflictType.prefix": "连击前缀", "shortcut.noConflicts": "没有发现快捷键冲突。", "shortcut.osReservedHint": "此快捷键可能会被操作系统拦截。",
+    "shortcut.recordTitle": "录制快捷键", "shortcut.recordSecond": "请按下第二个按键…", "shortcut.directConflict": "此快捷键已在相同上下文中分配。", "shortcut.prefixConflict": "一个快捷键不能同时作为连击的起始按键。", "shortcut.overlapConflict": "此快捷键也用于父级或子级上下文。", "shortcut.assignAnyway": "仍然分配", "shortcut.replaceExisting": "替换现有快捷键", "shortcut.useBinding": "使用此快捷键", "shortcut.addSecondKey": "添加第二个按键", "shortcut.clearBinding": "清除快捷键", "shortcut.invalid": "请选择支持的按键或修饰键组合。连击最多包含两段。"
+  }
+};
+for (const [language, labels] of Object.entries(shortcutManagerMessages)) Object.assign(catalogs[language as Locale], labels);
+Object.assign(catalogs.en, {
+  "blockOperation.selectPrevious": "Select previous block",
+  "blockOperation.selectNext": "Select next block",
+  "shortcut.description.block.selectPrevious": "Select the previous visible Preview block.",
+  "shortcut.description.block.selectNext": "Select the next visible Preview block.",
+  "shortcut.description.block.copy": "Copy selected blocks with all nested content.",
+  "shortcut.description.block.cut": "Cut selected blocks with all nested content.",
+  "shortcut.description.block.paste": "Paste blocks after the selected block.",
+  "shortcut.description.block.duplicate": "Duplicate selected blocks and their children.",
+  "shortcut.description.block.collapse": "Collapse selected blocks in Preview without changing source.",
+  "shortcut.description.block.expand": "Expand selected blocks in Preview.",
+  "shortcut.description.block.disable": "Temporarily disable selected blocks in LaTeX source.",
+  "shortcut.description.block.enable": "Restore selected disabled blocks in LaTeX source.",
+  "shortcut.description.block.delete": "Delete selected blocks and all nested content.",
+  "shortcut.description.block.removeEnvironment": "Remove only the selected LaTeX environment wrapper, keeping its contents."
+});
+Object.assign(catalogs["zh-CN"], {
+  "blockOperation.selectPrevious": "选择上一个块",
+  "blockOperation.selectNext": "选择下一个块",
+  "shortcut.description.block.selectPrevious": "选择预览中上一个可见块。",
+  "shortcut.description.block.selectNext": "选择预览中下一个可见块。",
+  "shortcut.description.block.copy": "复制选中块及其全部子块。",
+  "shortcut.description.block.cut": "剪切选中块及其全部子块。",
+  "shortcut.description.block.paste": "在选中块之后粘贴块。",
+  "shortcut.description.block.duplicate": "复制一份选中块及其全部子块。",
+  "shortcut.description.block.collapse": "仅在预览中收起选中块，不修改源码。",
+  "shortcut.description.block.expand": "在预览中展开选中块。",
+  "shortcut.description.block.disable": "在 LaTeX 源码中暂时关闭选中块。",
+  "shortcut.description.block.enable": "在 LaTeX 源码中恢复选中的已关闭块。",
+  "shortcut.description.block.delete": "删除选中块及其全部子块。",
+  "shortcut.description.block.removeEnvironment": "只移除选中块的 LaTeX 环境外壳，保留内部内容。"
+});
+Object.assign(catalogs.en, {
+  "shortcut.holdModifiers": "Focus here and hold modifier keys to preview",
+  "shortcut.modifierHeld": "Held now",
+  "shortcut.clickModifierKey": "You can also click Ctrl, Shift, Alt, or Command on the keyboard.",
+  "shortcut.nativeCategory": "Built-in",
+  "shortcut.appCategory": "TeXWeave",
+  "shortcut.native.selectAll": "Select all",
+  "shortcut.native.copy": "Copy",
+  "shortcut.native.cut": "Cut",
+  "shortcut.native.paste": "Paste",
+  "shortcut.native.quit": "Quit application",
+  "shortcut.native.switchApps": "Switch applications",
+  "shortcut.native.systemSearch": "Open system search",
+  "shortcut.native.lockScreen": "Lock screen",
+  "shortcut.native.closeWindow": "Close window",
+  "shortcut.native.openStart": "Open Start menu",
+  "shortcut.native.taskManager": "Open Task Manager",
+  "shortcut.native.taskView": "Open Task View",
+  "shortcut.native.inputLanguage": "Switch input language",
+  "shortcut.native.securityOptions": "Open security options",
+  "shortcut.native.copyAlternate": "Copy (alternate)",
+  "shortcut.native.pasteAlternate": "Paste (alternate)",
+  "shortcut.native.cutAlternate": "Cut text / delete file",
+  "shortcut.keyStatus.native": "System / editor built-in",
+  "shortcut.nativeOverrideWarning": "Assigning an app shortcut here may take precedence over the built-in action.",
+  "shortcut.mapEdit.title": "Edit key binding",
+  "shortcut.mapEdit.close": "Close key editor",
+  "shortcut.mapEdit.currentOwners": "Commands using this key",
+  "shortcut.mapEdit.rebind": "Record a different shortcut",
+  "shortcut.mapEdit.chooseCommand": "Assign an app command to this key",
+  "shortcut.mapEdit.none": "Choose a command…",
+  "shortcut.mapEdit.assign": "Assign this key",
+  "shortcut.mapEdit.hint": "Choose a command to use this key, or record a different shortcut for a command already listed.",
+});
+Object.assign(catalogs["zh-CN"], {
+  "shortcut.holdModifiers": "聚焦此处并按住修饰键，即可预览组合",
+  "shortcut.modifierHeld": "正在按住",
+  "shortcut.clickModifierKey": "也可以点击键盘上的 Ctrl、Shift、Alt 或 Command 键进行切换。",
+  "shortcut.nativeCategory": "系统/编辑器内置",
+  "shortcut.appCategory": "应用快捷键",
+  "shortcut.native.selectAll": "全选",
+  "shortcut.native.copy": "复制",
+  "shortcut.native.cut": "剪切",
+  "shortcut.native.paste": "粘贴",
+  "shortcut.native.quit": "退出应用",
+  "shortcut.native.switchApps": "切换应用",
+  "shortcut.native.systemSearch": "打开系统搜索",
+  "shortcut.native.lockScreen": "锁定屏幕",
+  "shortcut.native.closeWindow": "关闭窗口",
+  "shortcut.native.openStart": "打开开始菜单",
+  "shortcut.native.taskManager": "打开任务管理器",
+  "shortcut.native.taskView": "打开任务视图",
+  "shortcut.native.inputLanguage": "切换输入语言",
+  "shortcut.native.securityOptions": "打开安全选项",
+  "shortcut.native.copyAlternate": "复制（备用组合）",
+  "shortcut.native.pasteAlternate": "粘贴（备用组合）",
+  "shortcut.native.cutAlternate": "剪切文本/删除文件",
+  "shortcut.keyStatus.native": "系统/编辑器内置",
+  "shortcut.nativeOverrideWarning": "在此组合键分配应用命令后，可能会优先触发应用操作，而不执行内置功能。",
+  "shortcut.mapEdit.title": "编辑键位绑定",
+  "shortcut.mapEdit.close": "关闭键位编辑",
+  "shortcut.mapEdit.currentOwners": "当前使用此组合键的命令",
+  "shortcut.mapEdit.rebind": "录制新的快捷键",
+  "shortcut.mapEdit.chooseCommand": "将应用命令绑定到此组合键",
+  "shortcut.mapEdit.none": "选择命令…",
+  "shortcut.mapEdit.assign": "绑定此组合键",
+  "shortcut.mapEdit.hint": "选择命令即可使用此组合键；也可以为当前命令录制其他快捷键。",
+});
+
 let locale: Locale = "en";
 export function setLocale(value: Locale): void { locale = value in catalogs ? value : "en"; }
 

@@ -1,0 +1,66 @@
+.settings-manager-dialog-main.settings-manager-style-resources { display: flex; flex-direction: column; overflow: hidden; padding: 0; }
+.settings-manager-style-resources > .settings-manager-page { display: flex; flex: 1; min-height: 0; }
+.settings-manager-dialog-main.settings-manager-style-resources > .settings-manager-page { min-height: 0; }
+.settings-manager-style-resources .style-resources-page { display: flex; width: 100%; height: 100%; min-height: 0; flex: 1; flex-direction: column; }
+.preferences-dialog > .settings-manager-dialog-header.settings-manager-style-resources-header { display: grid; grid-template-columns: 38px minmax(0, 1fr) 38px; align-items: center; gap: 14px; min-height: 68px; padding: 10px 22px; border-bottom: 1px solid var(--color-border); background: linear-gradient(180deg, var(--color-bg-panel), color-mix(in srgb, var(--color-bg-subtle) 72%, var(--color-bg-panel))); }
+.preferences-dialog .settings-manager-style-resources-header .settings-manager-return { width: 38px; height: 38px; border-radius: 12px; color: var(--color-primary-strong); background: var(--color-bg-panel); box-shadow: 0 2px 7px color-mix(in srgb, var(--color-text-primary) 8%, transparent); }
+.preferences-dialog .settings-manager-style-resources-header .settings-close { grid-column: 3; width: 38px; height: 38px; border-radius: 12px; color: var(--color-text-secondary); background: var(--color-bg-panel); font-size: 20px; }
+.style-resource-toolbar-portal { display: grid; min-width: 0; place-items: center; }
+.style-resource-toolbar { display: flex; min-width: 0; justify-content: center; }
+.style-resource-toolbar-heading { min-width: 0; text-align: center; }
+.style-resource-toolbar-heading h1 { margin: 0; color: var(--color-text-primary); font: 700 25px/1.15 "Space Grotesk", "Segoe UI", sans-serif; letter-spacing: -.035em; }
+.style-resource-actions { display: flex; flex: 0 0 auto; flex-wrap: wrap; justify-content: flex-end; gap: 7px; }
+.preferences-dialog .style-resource-actions button,.preferences-dialog .style-resource-detail-actions button { min-height: 34px; padding: 0 11px; border: 1px solid var(--color-border); border-radius: 8px; color: var(--color-text-primary); background: var(--color-bg-subtle); font: 600 12px/1 "Space Grotesk", "Segoe UI", sans-serif; white-space: nowrap; }
+.style-resource-actions button:hover,.style-resource-detail-actions button:hover { background: var(--color-bg-hover); }
+.style-resource-actions button:disabled,.style-resource-detail-actions button:disabled { opacity: .55; cursor: default; }
+.settings-manager-style-resources .style-resource-layout { display: grid; min-height: 0; flex: 1; grid-template-columns: 320px minmax(0, 1fr); margin: 0; border: 0; border-top: 1px solid var(--color-border); border-radius: 0; }
+.settings-manager-style-resources .style-resource-list { min-height: 0; overflow: auto; padding: 18px 14px; border-right: 1px solid var(--color-border); }
+.settings-manager-style-resources .style-resource-list h3 { margin: 10px 9px 7px; font-size: 11px; }
+.settings-manager-style-resources .style-resource-list button { min-height: 58px; padding: 10px 12px; border-radius: 9px; text-align: left; }
+.settings-manager-style-resources .style-resource-list button.active { border-color: transparent; background: color-mix(in srgb, var(--color-primary) 10%, var(--color-bg-panel)); }
+.settings-manager-style-resources .style-resource-list button strong { font: 650 15px/1.3 "Space Grotesk", "Segoe UI", sans-serif; }
+.settings-manager-style-resources .style-resource-list button small { font-size: 12px; }
+.settings-manager-style-resources .style-resource-detail { min-height: 0; overflow: auto; padding: 26px 30px; }
+.settings-manager-style-resources .style-resource-library-actions { display: flex; flex: 0 0 auto; justify-content: flex-end; gap: 8px; margin: 0 0 20px; padding-bottom: 14px; border-bottom: 1px solid var(--color-border); }
+.settings-manager-style-resources .style-resource-library-actions button:first-child { color: var(--color-primary-strong); background: color-mix(in srgb, var(--color-primary) 10%, var(--color-bg-panel)); }
+.settings-manager-style-resources .style-resource-detail-head { align-items: flex-start; }
+.settings-manager-style-resources .style-resource-detail-head h2 { margin: 5px 0 7px; font-size: 25px; }
+.settings-manager-style-resources .style-resource-detail-head p { max-width: 800px; line-height: 1.55; }
+.settings-manager-style-resources .style-resource-detail-actions { flex: 0 0 auto; }
+.settings-manager-style-resources .style-resource-detail-actions .danger { color: var(--color-error); }
+.settings-manager-style-resources .style-resource-note { margin-top: 14px !important; }
+.settings-manager-style-resources .style-resource-files-title { margin: 22px 0 9px; color: var(--color-text-secondary); font-size: 12px; letter-spacing: .08em; text-transform: uppercase; }
+.settings-manager-style-resources .style-resource-files { display: grid; max-height: none; gap: 8px; overflow: visible; border: 0; }
+.settings-manager-style-resources .style-resource-file-item { min-width: 0; overflow: hidden; border: 1px solid var(--color-border); border-radius: 10px; background: var(--color-bg-panel); }
+.settings-manager-style-resources .style-resource-file-trigger { width: 100%; min-height: 48px; display: grid; grid-template-columns: 18px minmax(0, 1fr) auto; align-items: center; gap: 11px; padding: 8px 13px; border: 0; color: var(--color-text-primary); background: transparent; text-align: left; }
+.settings-manager-style-resources .style-resource-file-trigger:hover,.settings-manager-style-resources .style-resource-file-item.expanded .style-resource-file-trigger { background: color-mix(in srgb, var(--color-primary) 8%, var(--color-bg-panel)); }
+.settings-manager-style-resources .style-resource-file-trigger code { min-width: 0; overflow: hidden; color: var(--color-text-primary); text-overflow: ellipsis; white-space: nowrap; }
+.settings-manager-style-resources .style-resource-file-trigger small { flex: 0 0 auto; color: var(--color-text-secondary); }
+.style-resource-file-chevron { width: 16px; height: 16px; fill: none; stroke: var(--color-text-secondary); stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; transition: transform .15s ease; }
+.style-resource-file-item.expanded .style-resource-file-chevron { transform: rotate(180deg); }
+.style-resource-file-content { border-top: 1px solid var(--color-border); background: color-mix(in srgb, var(--color-primary) 5%, var(--color-bg-subtle)); }
+.style-resource-file-content pre { max-height: min(48vh, 520px); overflow: auto; margin: 0; padding: 16px 18px; color: var(--color-text-primary); background: transparent; font: 12px/1.6 Consolas, "Cascadia Mono", monospace; tab-size: 2; white-space: pre; }
+.style-resource-viewer-loading { display: grid; min-height: 72px; place-items: center; }
+.style-resource-viewer-loading span { width: 22px; height: 22px; border: 2px solid var(--color-border); border-top-color: var(--color-primary); border-radius: 50%; animation: style-resource-spin .7s linear infinite; }
+@keyframes style-resource-spin { to { transform: rotate(360deg); } }
+.style-resource-empty-files { padding: 14px; border: 1px dashed var(--color-border); border-radius: 9px; color: var(--color-text-secondary); }
+.settings-manager-style-resources .online-resource-placeholder { margin-top: 18px; }
+
+@media (max-width: 950px) {
+  .style-resource-actions { gap: 5px; }
+  .preferences-dialog .style-resource-actions button { padding-inline: 8px; font-size: 11px; }
+  .settings-manager-style-resources .style-resource-layout { grid-template-columns: 250px minmax(0, 1fr); }
+  .settings-manager-style-resources .style-resource-detail { padding: 20px; }
+}
+@media (max-width: 600px) {
+  .preferences-dialog > .settings-manager-dialog-header.settings-manager-style-resources-header { grid-template-columns: 34px minmax(0, 1fr) 34px; gap: 8px; padding-inline: 12px; }
+  .preferences-dialog .settings-manager-style-resources-header .settings-manager-return,.preferences-dialog .settings-manager-style-resources-header .settings-close { width: 34px; height: 34px; }
+  .style-resource-toolbar-heading h1 { font-size: 20px; }
+  .settings-manager-style-resources .style-resource-library-actions { flex-wrap: wrap; }
+  .preferences-dialog .style-resource-actions button { min-height: 30px; padding-inline: 6px; font-size: 10px; }
+  .settings-manager-style-resources .style-resource-layout { grid-template-columns: minmax(145px, 34%) minmax(0, 1fr); }
+  .settings-manager-style-resources .style-resource-list { padding: 10px 7px; }
+  .settings-manager-style-resources .style-resource-detail { padding: 13px 10px; }
+  .settings-manager-style-resources .style-resource-detail-head { flex-direction: column; }
+  .settings-manager-style-resources .style-resource-detail-actions { justify-content: flex-start; }
+}

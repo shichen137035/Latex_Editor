@@ -1,10 +1,12 @@
 import { desktopInvoke } from "@latex-editor/contracts/desktop-ipc";
 import { handleIpc } from "../ipc.js";
 import { dialog } from "electron";
+import { readFile, stat } from "node:fs/promises";
 import type { AIContextSnapshotFile, ProjectTreeNode } from "@latex-editor/contracts" with { "resolution-mode": "import" };
 import type { DesktopContext } from "../desktopContext.js";
 import type { SettingsRepository } from "../settings.js";
-import { isSnapshotTextPath } from "./workspaceFiles.js";
+import { collectGraphicDependencies } from "./tex-dependencies.js";
+import { isSnapshotTextPath, MAX_WORKSPACE_ASSET_BYTES, MAX_WORKSPACE_ASSET_COUNT, MAX_WORKSPACE_ASSET_TOTAL_BYTES } from "./workspaceFiles.js";
 
 /** Register AI and Copilot renderer requests separately from core project IPC. */
 export function registerAiIpcHandlers(context: DesktopContext | undefined, settings: SettingsRepository): void {
@@ -21,6 +23,10 @@ export function registerAiIpcHandlers(context: DesktopContext | undefined, setti
   handleIpc(desktopInvoke.ai.saveSkill, (_event, input) => {
     if (!context) throw new Error("Application context is not ready");
     return context.aiWorkspaces.saveSkill(input);
+  });
+  handleIpc(desktopInvoke.ai.setSkillEnabled, (_event, input) => {
+    if (!context) throw new Error("Application context is not ready");
+    return context.aiWorkspaces.setSkillEnabled(input);
   });
   handleIpc(desktopInvoke.ai.login, () => context?.ai.login());
   handleIpc(desktopInvoke.ai.logout, () => context?.ai.logout());
@@ -46,15 +52,28 @@ export function registerAiIpcHandlers(context: DesktopContext | undefined, setti
     const selected = await dialog.showOpenDialog({ properties: ["openFile", "multiSelections"] });
     return selected.canceled ? [] : context.aiWorkspaces.selectAttachments(projectId, selected.filePaths);
   });
+  handleIpc(desktopInvoke.ai.addPastedImage, (_event, projectId, mimeType, data) => {
+    if (!context) throw new Error("Application context is not ready");
+    return context.aiWorkspaces.addPastedImage(projectId, mimeType, data);
+  });
+  handleIpc(desktopInvoke.ai.addPastedFile, (_event, projectId, name, data) => {
+    if (!context) throw new Error("Application context is not ready");
+    return context.aiWorkspaces.addPastedFile(projectId, name, data);
+  });
   handleIpc(desktopInvoke.ai.send, async (_event, input) => {
     if (!context) throw new Error("Application context is not ready");
     const conversation = context.aiWorkspaces.snapshot(input.projectId).conversations.find((item) => item.id === input.conversationId);
     if (!conversation) throw new Error("AI conversation was not found for this project.");
     if (conversation.projectId !== input.projectId) throw new Error("AI conversations can only access their associated project.");
     let snapshot: AIContextSnapshotFile[] = [];
+    const assets: Array<{ path: string; content: Uint8Array }> = [];
+    let omittedAssets = 0;
+    let unresolvedGraphics: string[] = [];
+    let projectPaths: string[] = [];
     if (input.projectId) {
       const collect = (nodes: ProjectTreeNode[]): string[] => nodes.flatMap((node) => node.kind === "file" ? [node.relativePath] : node.children ? collect(node.children) : []);
-      const paths = collect(await context.files.listTree(input.projectId) as ProjectTreeNode[]).filter(isSnapshotTextPath);
+      projectPaths = collect(await context.files.listTree(input.projectId) as ProjectTreeNode[]);
+      const paths = projectPaths.filter(isSnapshotTextPath);
       snapshot = (await Promise.all(paths.map(async (path) => {
         const value = await context!.files.readText(input.projectId!, path) as { content?: unknown };
         return typeof value?.content === "string" ? { path, content: value.content } : undefined;
@@ -62,10 +81,22 @@ export function registerAiIpcHandlers(context: DesktopContext | undefined, setti
       const overrideMap = new Map((input.overrides ?? []).map((file) => [file.path.replaceAll("\\", "/"), file.content]));
       snapshot = snapshot.map((file) => overrideMap.has(file.path) ? { ...file, content: overrideMap.get(file.path)! } : file);
       for (const [path, content] of overrideMap) if (!snapshot.some((file) => file.path === path)) snapshot.push({ path, content });
+      const graphicDependencies = collectGraphicDependencies(snapshot, projectPaths);
+      unresolvedGraphics = graphicDependencies.unresolved;
+      let assetBytes = 0;
+      for (const path of graphicDependencies.resolved) {
+        if (assets.length >= MAX_WORKSPACE_ASSET_COUNT) { omittedAssets++; continue; }
+        const absolutePath = await context.files.resolveFilePath(input.projectId, path, true);
+        const metadata = await stat(absolutePath);
+        if (!metadata.isFile() || metadata.size > MAX_WORKSPACE_ASSET_BYTES || assetBytes + metadata.size > MAX_WORKSPACE_ASSET_TOTAL_BYTES) { omittedAssets++; continue; }
+        const content = await readFile(absolutePath);
+        assets.push({ path, content });
+        assetBytes += content.byteLength;
+      }
     }
     const model = conversation.mode === "chat" ? settings.global.aiCopilotModel : settings.global.aiModel;
     const reasoningEffort = conversation.mode === "chat" ? settings.global.aiCopilotReasoningEffort : settings.global.aiReasoningEffort;
-    return context.aiWorkspaces.send({ conversationId: input.conversationId, content: input.content, permissionMode: settings.global.aiPermissionMode ?? "auto", attachmentIds: input.attachmentIds ?? [], ...(model ? { model } : {}), ...(reasoningEffort ? { reasoningEffort } : {}), ...(snapshot.length ? { snapshot } : {}), ...(input.contextText ? { contextText: input.contextText } : {}) });
+    return context.aiWorkspaces.send({ conversationId: input.conversationId, ...(input.taskId ? { taskId: input.taskId } : {}), content: input.content, permissionMode: settings.global.aiPermissionMode ?? "auto", attachmentIds: input.attachmentIds ?? [], projectPaths, ...(model ? { model } : {}), ...(reasoningEffort ? { reasoningEffort } : {}), ...(snapshot.length ? { snapshot } : {}), ...(assets.length ? { assets } : {}), ...(omittedAssets ? { omittedAssets } : {}), ...(unresolvedGraphics.length ? { unresolvedGraphics } : {}), ...(input.contextText ? { contextText: input.contextText } : {}) });
   });
   handleIpc(desktopInvoke.ai.cancel, (_event, taskId) => context?.aiWorkspaces.cancel(taskId));
   handleIpc(desktopInvoke.ai.setExecutable, async (_event, path) => {

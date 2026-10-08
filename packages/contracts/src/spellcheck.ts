@@ -17,6 +17,11 @@ export interface DictionaryPackage {
   license: DictionaryLicense;
 }
 
+/** English spell-check dictionaries are bundled and cannot be removed. */
+export function isEnglishSpellDictionary(id: string, languageCode = id): boolean {
+  return [id, languageCode].some((value) => /^en(?:$|[-_])/i.test(value.trim()));
+}
+
 export interface SpellCheckStatus {
   provider: "electron" | "hunspell";
   platform: string;

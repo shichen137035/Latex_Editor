@@ -55,7 +55,7 @@ export function createProjectSessionController(options: ProjectSessionOptions) {
   const confirmProjectNavigation = async (navigate: () => void) => {
     const lifecycle = window.latexEditor?.lifecycle;
     const canLeave = await resolveExit(unsavedChanges, {
-      confirm: () => lifecycle?.confirmClose({
+      confirm: () => lifecycle?.confirmNavigation({
         title: t("navigation.unsavedTitle"),
         message: t("navigation.unsavedMessage"),
         detail: t("navigation.unsavedDetail"),
@@ -73,8 +73,8 @@ export function createProjectSessionController(options: ProjectSessionOptions) {
     navigate();
   };
 
-  const leaveProject = () => { void confirmProjectNavigation(options.onHome); };
-  const switchProject = (project: Project) => { void confirmProjectNavigation(() => options.onSwitch(project)); };
+  const leaveProject = () => confirmProjectNavigation(options.onHome);
+  const switchProject = (project: Project) => confirmProjectNavigation(() => options.onSwitch(project));
 
   return { saveTabs, saveActive, saveAll, leaveProject, switchProject };
 }

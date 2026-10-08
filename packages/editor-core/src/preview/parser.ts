@@ -1,11 +1,11 @@
-import type { ContentRegion, EnvironmentDefinition, PreviewDocument, PreviewNode, SourceSpan, StructuralBlock } from "./types.js";
+import type { EnvironmentDefinition, PreviewDocument, PreviewNode, SourceSpan, StructuralBlock } from "./types.js";
 
-import { inferBlockKind, type BlockKind } from "@latex-editor/contracts";
+import { includeNewBuiltInDirectives, inferBlockKind, type BlockKind, type PreviewDirectiveDefinition } from "@latex-editor/contracts";
 import { automaticLabelOccurrences, findBlockLabel, isAutomaticLabel } from "./labels.js";
 import type { BlockLabelRange } from "./labels.js";
 
 /** Bump when source ownership changes so persisted indexes refresh on upgrade. */
-export const STRUCTURE_PARSER_REVISION = 4;
+export const STRUCTURE_PARSER_REVISION = 5;
 
 interface RawBlock {
   start: number;
@@ -19,7 +19,7 @@ interface RawBlock {
 }
 
 interface OpenBlock {
-  marker: "environment" | "virtual";
+  marker: "environment" | "virtual" | "disabled";
   name: string;
   start: number;
   bodyStart: number;
@@ -106,17 +106,87 @@ export function hasVisiblePreviewContent(value: string): boolean {
   return stripForVisibility(value).length > 0;
 }
 
-function paragraphRanges(source: string, start: number, end: number): Array<[number, number]> {
-  const ranges: Array<[number, number]> = [];
+type ContentSlice = { start: number; end: number };
+const standaloneCommandPattern = /^[ \t]*\\([A-Za-z@]+)\*?(?:[ \t]*\[[^\]\r\n]*\])?(?:[ \t]*\{[^{}\r\n]*\})*[ \t]*(?:%[^\r\n]*)?\r?$/gm;
+const inlineCommandPattern = /\\([A-Za-z@]+)\*?(?:[ \t]*\[[^\]\r\n]*\])?(?:[ \t]*\{[^{}\r\n]*\})*/y;
+
+interface DirectiveOccurrence { start: number; end: number; name: string; placement: PreviewDirectiveDefinition["placement"] }
+
+function directiveOccurrences(source: string, start: number, end: number, rules: Map<string, PreviewDirectiveDefinition>, explicitBlocks: RawBlock[]): DirectiveOccurrence[] {
+  const occurrences: DirectiveOccurrence[] = [];
+  const markedCommands = new Map<number, DirectiveOccurrence>();
+  const ignoredOccurrences = new Set<DirectiveOccurrence>();
+  for (const match of source.slice(start, end).matchAll(standaloneCommandPattern)) {
+    const name = match[1] ?? "", rule = rules.get(name);
+    if (!rule) continue;
+    const offset = start + (match.index ?? 0);
+    const occurrence = { start: offset, end: offset + match[0].length, name, placement: rule.placement ?? "nested" };
+    occurrences.push(occurrence);
+    markedCommands.set(offset + match[0].indexOf("\\"), occurrence);
+  }
+  // Part switches also work on the same line as prose or a following heading.
+  // Escapes, comments, macro arguments and explicit wrappers are not implicit
+  // document scopes; never mistake a command example there for a part switch.
+  let cursor = start, depth = 0, blockCursor = 0, explicitEnd = -1;
+  while (cursor < end) {
+    while (blockCursor < explicitBlocks.length && explicitBlocks[blockCursor]!.start <= cursor) {
+      explicitEnd = Math.max(explicitEnd, explicitBlocks[blockCursor++]!.end);
+    }
+    if (cursor < explicitEnd) { cursor = explicitEnd; continue; }
+    const character = source[cursor];
+    if (character === "%") {
+      const newline = source.indexOf("\n", cursor);
+      cursor = newline < 0 ? end : newline + 1;
+      continue;
+    }
+    if (character === "\\") {
+      let commandEnd = cursor + 1;
+      while (commandEnd < end && /[A-Za-z@]/.test(source[commandEnd]!)) commandEnd += 1;
+      if (commandEnd === cursor + 1) { cursor += 2; continue; }
+      const name = source.slice(cursor + 1, commandEnd), rule = rules.get(name);
+      const marked = markedCommands.get(cursor);
+      if (depth !== 0 && marked) ignoredOccurrences.add(marked);
+      if (depth === 0 && rule?.placement === "independent" && !markedCommands.has(cursor)) {
+        inlineCommandPattern.lastIndex = cursor;
+        const match = inlineCommandPattern.exec(source);
+        const occurrenceEnd = cursor + (match?.[0].length ?? name.length + 1);
+        if (occurrenceEnd <= end) occurrences.push({ start: cursor, end: occurrenceEnd, name, placement: "independent" });
+      }
+      cursor = commandEnd;
+      continue;
+    }
+    if (character === "{") depth += 1;
+    else if (character === "}") depth = Math.max(0, depth - 1);
+    cursor += 1;
+  }
+  return occurrences.filter((occurrence) => !ignoredOccurrences.has(occurrence)).sort((left, right) => left.start - right.start);
+}
+
+function firstAtOrAfter(entries: ReadonlyArray<{ start: number }>, offset: number): number {
+  let low = 0, high = entries.length;
+  while (low < high) {
+    const middle = (low + high) >>> 1;
+    if (entries[middle]!.start < offset) low = middle + 1;
+    else high = middle;
+  }
+  return low;
+}
+
+function onlyWhitespaceAndComments(value: string): boolean {
+  return /^(?:\s|%[^\r\n]*(?:\r?\n|$))*$/.test(value);
+}
+
+function paragraphRanges(source: string, start: number, end: number): ContentSlice[] {
+  const ranges: ContentSlice[] = [];
   const value = source.slice(start, end);
-  const separator = /\n[ \t]*\n+/g;
+  const separator = /\r?\n[ \t]*\r?\n(?:[ \t]*\r?\n)*/g;
   let cursor = 0;
   const add = (from: number, to: number) => {
     let left = start + from;
     let right = start + to;
     while (left < right && /\s/.test(source[left] ?? "")) left += 1;
     while (right > left && /\s/.test(source[right - 1] ?? "")) right -= 1;
-    if (left < right && stripForVisibility(source.slice(left, right))) ranges.push([left, right]);
+    if (left < right && stripForVisibility(source.slice(left, right))) ranges.push({ start: left, end: right });
   };
   for (const match of value.matchAll(separator)) {
     add(cursor, match.index ?? cursor);
@@ -143,24 +213,37 @@ function lastOpenIndex(entries: OpenBlock[], predicate: (entry: OpenBlock) => bo
 }
 
 /** Builds a non-overlapping PreviewNode tree while retaining exact source offsets. */
-export function parsePreview(source: string, filePath: string, definitions: EnvironmentDefinition[]): PreviewDocument {
+export function parsePreview(source: string, filePath: string, definitions: EnvironmentDefinition[], directives: PreviewDirectiveDefinition[] = []): PreviewDocument {
   const diagnostics: string[] = [];
   const rawBlocks: RawBlock[] = [];
   const open: OpenBlock[] = [];
   const environmentByName = environmentLookup(definitions);
   const definitionById = new Map(definitions.map((definition) => [definition.id, definition]));
+  const directiveByName = new Map(directives.filter((item) => item.enabled && item.match.kind === "command").map((item) => [item.match.kind === "command" ? item.match.name : "", item]));
   const commandDefinitions = new Map(definitions.filter((definition) => definition.match.kind === "command").map((definition) => [definition.match.kind === "command" ? definition.match.command : "", definition]));
   const positionAt = positionResolver(source);
   const labelOccurrences = automaticLabelOccurrences(source);
   let documentStart = 0;
   let documentEnd = source.length;
 
-  const tokenPattern = /\\begin\{([^}]+)\}(?:\[([^\]]*)\])?|\\end\{([^}]+)\}|\\\[|\\\]|^[ \t]*%[ \t]*tw:block-(begin|end)\b([^\r\n]*)/gm;
+  const tokenPattern = /\\begin\{([^}]+)\}(?:\[([^\]]*)\])?|\\end\{([^}]+)\}|\\\[|\\\]|^[ \t]*%[ \t]*tw:block-(begin|end)\b([^\r\n]*)|^[ \t]*%<(texweave:disable|\/texweave:disable)>[ \t]*(?:\r?\n)?/gm;
   for (const match of source.matchAll(tokenPattern)) {
     const offset = match.index ?? 0;
     // Only explicit TeXWeave comment directives are structural; ordinary
     // comments must never open or close an environment or display-math block.
-    if (match[4] === undefined && commentedAt(source, offset)) continue;
+    if (match[4] === undefined && match[6] === undefined && commentedAt(source, offset)) continue;
+    if (match[6] === "texweave:disable") {
+      open.push({ marker: "disabled", name: "texweave-disabled", start: offset, bodyStart: offset + match[0].length });
+      continue;
+    }
+    if (match[6] === "/texweave:disable") {
+      const index = lastOpenIndex(open, (entry) => entry.marker === "disabled");
+      const entry = index >= 0 ? open[index] : undefined;
+      if (!entry) { diagnostics.push(`Unmatched disabled block end at offset ${offset}.`); continue; }
+      open.splice(index, 1);
+      rawBlocks.push({ start: entry.start, end: offset + match[0].length, bodyStart: entry.bodyStart, bodyEnd: offset, environmentId: "texweave-disabled", origin: "virtual" });
+      continue;
+    }
     if (match[1] !== undefined) {
       open.push({ marker: "environment", name: match[1], start: offset, bodyStart: offset + match[0].length, ...(match[2] ? { title: match[2] } : {}) });
       continue;
@@ -223,6 +306,27 @@ export function parsePreview(source: string, filePath: string, definitions: Envi
     date: dateText ?? "\\today"
   } : undefined;
 
+  // Heading commands have implicit ends. Commands that switch document parts
+  // close those scopes; spacing/page commands leave a heading only at its tail.
+  // Explicit begin/end and virtual wrappers must remain intact, including code
+  // examples containing command names that would otherwise look like boundaries.
+  const scopeRules = new Map(includeNewBuiltInDirectives(directives)
+    .filter((item) => item.enabled && item.match.kind === "command")
+    .map((item) => [item.match.kind === "command" ? item.match.name : "", item]));
+  const explicitBlocks = rawBlocks.slice().sort((left, right) => left.start - right.start);
+  const commands = directiveOccurrences(source, documentStart, documentEnd, scopeRules, explicitBlocks);
+  const scopeCommands: Array<{ start: number; end: number; placement: PreviewDirectiveDefinition["placement"] }> = [];
+  let explicitCursor = 0, explicitEnd = -1;
+  for (const command of commands) {
+    const { start, end } = command;
+    while (explicitCursor < explicitBlocks.length && explicitBlocks[explicitCursor]!.start <= start) {
+      explicitEnd = Math.max(explicitEnd, explicitBlocks[explicitCursor++]!.end);
+    }
+    if (end <= explicitEnd) continue;
+    scopeCommands.push(command);
+  }
+  const boundaries = scopeCommands.filter((command) => command.placement === "independent");
+
   const headings: Array<{ start: number; bodyStart: number; command: string; title: string; level: number }> = [];
   const headingPattern = /\\(chapter|section|subsection|subsubsection|paragraph)\*?\{([^{}]*)\}/g;
   for (const match of source.matchAll(headingPattern)) {
@@ -241,6 +345,14 @@ export function parsePreview(source: string, filePath: string, definitions: Envi
     for (let level = 1; level <= heading.level; level += 1) {
       const candidate = nearestHeadingAtLevel[level];
       if (candidate !== undefined) end = Math.min(end, candidate);
+    }
+    const boundary = boundaries[firstAtOrAfter(boundaries, heading.bodyStart)];
+    if (boundary) end = Math.min(end, boundary.start);
+    for (let index = firstAtOrAfter(scopeCommands, end) - 1; index >= 0; index -= 1) {
+      const command = scopeCommands[index]!;
+      if (command.start < heading.bodyStart || command.placement !== "trailing"
+        || command.end > end || !onlyWhitespaceAndComments(source.slice(command.end, end))) break;
+      end = command.start;
     }
     rawBlocks.push({ start: heading.start, end, bodyStart: heading.bodyStart, bodyEnd: end, environmentId: heading.command, origin: "latex", title: heading.title });
     nearestHeadingAtLevel[heading.level] = heading.start;
@@ -301,6 +413,7 @@ export function parsePreview(source: string, filePath: string, definitions: Envi
   const contentBlockIds = new Set(definitions.filter((definition) => ["equation", "figure", "table"].includes(definition.family)
     || (definition.family === "code" && (inferBlockKind(definition.id) === "content" || definition.behavior.allowChildren === false))).map((definition) => definition.id));
   contentBlockIds.add("display-math");
+  contentBlockIds.add("texweave-disabled");
   const headingBlockIds = new Set(headings.map((heading) => heading.command));
   for (const block of valid) {
     // Sectioning commands can have content even when their semantic graph kind
@@ -308,6 +421,7 @@ export function parsePreview(source: string, filePath: string, definitions: Envi
     if (inferBlockKind(block.environmentId) === "content" && !headingBlockIds.has(block.environmentId)) contentBlockIds.add(block.environmentId);
   }
   const semanticKindFor = (block: RawBlock): BlockKind => {
+    if (block.environmentId === "texweave-disabled") return "content";
     const definition = definitionById.get(block.environmentId);
     return definition && ["equation", "figure", "table"].includes(definition.family)
       ? "content" : inferBlockKind(block.environmentId);
@@ -325,9 +439,28 @@ export function parsePreview(source: string, filePath: string, definitions: Envi
       // it in a paragraph would let prose-only edits silently erase references.
       const gaps = label && label.startOffset >= from && label.endOffset <= to
         ? [[from, label.startOffset], [label.endOffset, to]] : [[from, to]];
-      for (const [start, end] of gaps.flatMap(([left, right]) => paragraphRanges(source, left!, right!))) {
-        const node: ContentRegion = { id: `content:${filePath}:${start}:${end}`, kind: "content", contentType: "paragraph", origin: "source", source: span(source, filePath, start, end, positionAt), raw: source.slice(start, end), ...(parentId ? { parentId } : {}) };
-        nodes.push(node);
+      for (const [left, right] of gaps) {
+        const addSlices = (from: number, to: number) => {
+          for (const part of paragraphRanges(source, from, to)) {
+            nodes.push({ id: `content:${filePath}:${part.start}:${part.end}`, kind: "content", contentType: "paragraph",
+              origin: "source", source: span(source, filePath, part.start, part.end, positionAt), raw: source.slice(part.start, part.end),
+              ...(parentId ? { parentId } : {}) });
+          }
+        };
+        if (!directiveByName.size) { addSlices(left!, right!); continue; }
+        let cursor = left!;
+        for (let index = firstAtOrAfter(commands, left!); index < commands.length; index += 1) {
+          const command = commands[index]!;
+          if (command.start >= right!) break;
+          const definition = directiveByName.get(command.name);
+          if (!definition || command.end > right!) continue;
+          const { start, end } = command;
+          addSlices(cursor, start);
+          nodes.push({ id: `content:${filePath}:${start}:${end}`, kind: "content", contentType: "directive", directiveId: definition.id,
+            origin: "source", source: span(source, filePath, start, end, positionAt), raw: source.slice(start, end), ...(parentId ? { parentId } : {}) });
+          cursor = end;
+        }
+        addSlices(cursor, right!);
       }
     };
     for (const block of direct) {

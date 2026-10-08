@@ -15,6 +15,7 @@ export function detectLanguage(sample: string): DetectedLanguage {
   const text = sample.trim();
   if ((text.match(/[\u3040-\u30ff]/g)?.length ?? 0) >= 2) return { language: "ja-JP", confidence: 0.98 };
   if ((text.match(/[\uac00-\ud7af]/g)?.length ?? 0) >= 2) return { language: "ko-KR", confidence: 0.98 };
+  if (/[ӘәҒғҚқҢңӨөҰұҮүҺһІі]/u.test(text)) return { language: "kk-KZ", confidence: 0.97 };
   if ((text.match(/[\u0400-\u04ff]/g)?.length ?? 0) >= 2) return { language: "ru-RU", confidence: 0.96 };
   if ((text.match(/[\u4e00-\u9fff]/g)?.length ?? 0) >= 3) return { language: "zh-CN", confidence: 0.9 };
   if (text.length < 40) return { language: "en-US", confidence: 0.25 };

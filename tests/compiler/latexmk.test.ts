@@ -31,6 +31,7 @@ describe("real latexmk compilation", () => {
     expect(result).toMatchObject({ status: "succeeded", exitCode: 0, mainFile: "main.tex" });
     expect(result.pdfPath).toMatch(/main\.pdf$/);
     expect(result.logPath).toBeDefined();
+    expect(result.recorderInputs).toContain("main.tex");
   }, 150_000);
 
   it("CO-002 returns a structured error for an undefined control sequence", async (context) => {

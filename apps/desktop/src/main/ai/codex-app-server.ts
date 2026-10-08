@@ -390,8 +390,12 @@ export class CodexAppServer {
   }
 
   #setStatus(status: MutableAIStatus): void {
+    const wasConnected = this.#status.process === "running" || this.#status.process === "starting";
     this.#status = Object.fromEntries(Object.entries(status).filter(([, value]) => value !== undefined)) as unknown as AIStatus;
     this.#onStatus(this.getStatus());
+    if (wasConnected && (status.process === "crashed" || status.process === "stopped")) {
+      for (const listener of this.#eventListeners) listener({ method: "transport/closed", params: { message: status.error ?? "Codex connection closed." } });
+    }
   }
 }
 

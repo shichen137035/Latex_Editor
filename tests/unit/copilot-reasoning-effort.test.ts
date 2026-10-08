@@ -10,7 +10,7 @@ const sdk = vi.hoisted(() => {
   return {
     session,
     start: vi.fn(async () => undefined), stop: vi.fn(async () => undefined),
-    createSession: vi.fn(async (config: { sessionId: string } & Pick<SessionConfig, "onPermissionRequest">) => ({ ...session, sessionId: config.sessionId })),
+    createSession: vi.fn(async (config: { sessionId: string } & Pick<SessionConfig, "onPermissionRequest" | "tools">) => ({ ...session, sessionId: config.sessionId })),
     listModels: vi.fn(async () => [{ id: "reasoning-model", name: "Reasoning model", capabilities: { supports: { reasoningEffort: true } }, supportedReasoningEfforts: ["low", "medium", "high"], defaultReasoningEffort: "medium" as string | undefined }])
   };
 });
@@ -32,6 +32,19 @@ it("restores provider defaults when the catalog does not advertise a default eff
 vi.mock("@github/copilot-sdk", () => ({ CopilotClient: class {
   start = sdk.start; stop = sdk.stop; createSession = sdk.createSession; listModels = sdk.listModels;
 } }));
+
+it("dispatches cached session tools through the current turn's snapshot tracker", async () => {
+  const root = mkdtempSync(join(tmpdir(), "texweave-tools-"));
+  const service = new CopilotChatService(root);
+  try {
+    const first = vi.fn(() => "first"), second = vi.fn(() => "second");
+    const session = await service.session(undefined, "reasoning-model", "tool-test", root, "high", [{ name: "edit", handler: first }]);
+    const tool = sdk.createSession.mock.calls.at(-1)![0].tools![0]!;
+    await service.session(session.sessionId, "reasoning-model", "tool-test", root, "high", [{ name: "edit", handler: second }]);
+    expect(await tool.handler!({}, { sessionId: session.sessionId, toolCallId: "call", toolName: "edit", arguments: {} })).toBe("second");
+    expect(first).not.toHaveBeenCalled(); expect(second).toHaveBeenCalledOnce();
+  } finally { await service.dispose(); rmSync(root, { recursive: true, force: true }); }
+});
 
 it("passes thinking depth to new and existing Copilot sessions, including restoring the default", async () => {
   const root = mkdtempSync(join(tmpdir(), "texweave-reasoning-"));

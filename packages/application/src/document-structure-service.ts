@@ -1,9 +1,9 @@
 import { createHash } from "node:crypto";
 import {
-  AppError, inferBlockKind, type BlockApiResult, type BlockApiWarning, type BlockCard,
+  AppError, defaultPreviewDirectives, includeNewBuiltInDirectives, inferBlockKind, type BlockApiResult, type BlockApiWarning, type BlockCard,
   type BlockDetail, type DocumentBlock, type DocumentBlockApi, type DocumentStructure,
   type FindBlocksInput, type InsertBlockInput, type ListBlocksInput, type ProjectTreeNode,
-  type SourceRange
+  type SourceRange, type PreviewDirectiveDefinition
 } from "@latex-editor/contracts";
 import { BlockQueryIndex, SourceIndex, getBlockCapabilities, type BlockGraphManager } from "@latex-editor/editor-core";
 import { parsePreview, STRUCTURE_PARSER_REVISION } from "@latex-editor/editor-core/preview/parser";
@@ -16,7 +16,7 @@ export interface DocumentStructureFilePort extends BlockGraphFilePort {
   getFileVersion?(projectId: string, path: string): Promise<string>;
 }
 type FileCache = { content: string; configuration: string; document: PreviewDocument; index: SourceIndex };
-type Context = { graph: BlockGraphManager; structure: DocumentStructure; sources: Map<string, string>; definitions: EnvironmentDefinition[]; queryIndex: BlockQueryIndex };
+type Context = { graph: BlockGraphManager; structure: DocumentStructure; sources: Map<string, string>; definitions: EnvironmentDefinition[]; directives: PreviewDirectiveDefinition[]; queryIndex: BlockQueryIndex };
 class ApiError extends Error {
   constructor(readonly code: string, message: string, readonly revisions?: { expectedRevision: number; currentRevision: number }) { super(message); }
 }
@@ -38,7 +38,8 @@ export class ProjectDocumentStructureService {
   readonly #textCache = new Map<string, Map<string, { content: string; token: string }>>();
   readonly #queryCache = new Map<string, { revision: number; index: BlockQueryIndex }>();
   constructor(readonly files: DocumentStructureFilePort, readonly graphs: ProjectBlockGraphService,
-    readonly ids: { next(): string }, readonly definitions: (projectId: string) => Promise<EnvironmentDefinition[]> = async () => []) {}
+    readonly ids: { next(): string }, readonly definitions: (projectId: string) => Promise<EnvironmentDefinition[]> = async () => [],
+    readonly directives: (projectId: string) => Promise<PreviewDirectiveDefinition[]> = async () => defaultPreviewDirectives) {}
 
   api(projectId: string): DocumentBlockApi {
     const run = <T>(action: (context: Context) => T | Promise<T>) => this.#run(projectId, action);
@@ -62,7 +63,7 @@ export class ProjectDocumentStructureService {
         if (block.placeholder && !input.content.trim()) return this.#detail(context, block);
         const { start, end } = block.source.range;
         const source = context.sources.get(block.source.fileId)!;
-        const planned = parsePreview(source.slice(0, start) + input.content + source.slice(end), block.source.fileId, context.definitions);
+        const planned = parsePreview(source.slice(0, start) + input.content + source.slice(end), block.source.fileId, context.definitions, context.directives);
         const findContent = (nodes: PreviewNode[]): boolean => nodes.some((node) => {
           const type = node.kind === "block" ? node.environmentId : node.contentType;
           const contentKind = node.kind === "content" || node.semanticKind === "content";
@@ -72,7 +73,7 @@ export class ProjectDocumentStructureService {
         // Explicit children of a content block are intentionally absent from the
         // normal parser tree, so validate their source as an independent fragment.
         const valid = block.metadata?.apiExplicitChild
-          ? parsePreview(input.content, block.source.fileId, context.definitions).nodes.some((node) => (node.kind === "block" ? node.environmentId : node.contentType) === block.type)
+          ? parsePreview(input.content, block.source.fileId, context.definitions, context.directives).nodes.some((node) => (node.kind === "block" ? node.environmentId : node.contentType) === block.type)
           : findContent(planned.nodes);
         if (!valid) throw new ApiError("BLOCK_RANGE_INVALID", "Keep the content block's wrapper/type; use delete_block to remove it, or the environment conversion workflow to change type.");
         await this.#edit(projectId, context, block.source.fileId, start, end, input.content);
@@ -135,7 +136,8 @@ export class ProjectDocumentStructureService {
 
   async #refresh(projectId: string, graph: BlockGraphManager): Promise<Context> {
     const definitions = (await this.definitions(projectId)).map((definition) => ({ ...definition, enabled: true }));
-    const configuration = JSON.stringify(definitions);
+    const directives = includeNewBuiltInDirectives(await this.directives(projectId));
+    const configuration = JSON.stringify({ definitions, directives: directives.map(({ id, enabled, match, placement }) => ({ id, enabled, match, placement })) });
     const old = graph.getDocumentStructure();
     const configurationFingerprint = hash(`${STRUCTURE_PARSER_REVISION}\0${configuration}`);
     const relationSnapshot = graph.toSnapshot();
@@ -167,7 +169,7 @@ export class ProjectDocumentStructureService {
       const previous = old?.files[path];
       structure.files[path] = { path, version: previous ? previous.version + (previous.fingerprint !== fingerprint ? 1 : 0) : 1, fingerprint };
       const cached = cache.get(path);
-      const document = cached?.content === content && cached.configuration === configuration ? cached.document : parsePreview(content, path, definitions);
+      const document = cached?.content === content && cached.configuration === configuration ? cached.document : parsePreview(content, path, definitions, directives);
       const configurationChanged = cached !== undefined && cached.configuration !== configuration;
       cache.set(path, { content, configuration, document, index: cached?.content === content ? cached.index : new SourceIndex(content) });
       if (!previous || previous.fingerprint !== fingerprint || configurationChanged || old?.indexDirty || old?.configurationFingerprint !== configurationFingerprint) {
@@ -194,7 +196,7 @@ export class ProjectDocumentStructureService {
     }
     structure.numberingFingerprint = hash(numberingInputs.join("\n"));
     if (old && !old.indexDirty && old.configurationFingerprint === configurationFingerprint && old.numberingFingerprint === structure.numberingFingerprint && JSON.stringify(old.files) === JSON.stringify(structure.files)) {
-      return { graph, structure: old, sources, definitions, queryIndex: this.#index(projectId, old) };
+      return { graph, structure: old, sources, definitions, directives, queryIndex: this.#index(projectId, old) };
     }
     for (const path of paths) {
       const nodes = new Map<string, PreviewNode>();
@@ -228,7 +230,7 @@ export class ProjectDocumentStructureService {
       const previous = old?.blocks[node.id];
       const raw = sources.get(node.fileId);
       const parsed = nodeMaps.get(node.fileId)?.get(keyOf(node.type, node.range.start, node.range.end));
-      const local = !parsed && node.metadata?.apiExplicitChild && raw !== undefined ? parsePreview(raw.slice(node.range.start, node.range.end), node.fileId, definitions).nodes[0] : undefined;
+      const local = !parsed && node.metadata?.apiExplicitChild && raw !== undefined ? parsePreview(raw.slice(node.range.start, node.range.end), node.fileId, definitions, directives).nodes[0] : undefined;
       const contentFingerprint = raw === undefined ? previous?.identity?.contentFingerprint : hash(raw.slice(node.range.start, node.range.end));
       const range: SourceRange = parsed ? rangeOf(parsed.source) : cache.get(node.fileId)?.index.range(node.range.start, node.range.end) ?? { ...node.range, startLine: node.source?.startLine ?? 1, startColumn: node.source?.startColumn ?? 1, endLine: node.source?.endLine ?? 1, endColumn: node.source?.endColumn ?? 1 };
       const ordinal = (ordinals.get(node.type) ?? 0) + 1;
@@ -264,7 +266,7 @@ export class ProjectDocumentStructureService {
     }
     if (JSON.stringify({ ...structure, structureRevision: 0 }) !== JSON.stringify({ ...old, structureRevision: 0 })) structure.structureRevision++;
     graph.setDocumentStructure(structure);
-    return { graph, structure, sources, definitions, queryIndex: this.#index(projectId, structure) };
+    return { graph, structure, sources, definitions, directives, queryIndex: this.#index(projectId, structure) };
   }
 
   #index(projectId: string, structure: DocumentStructure): BlockQueryIndex {
@@ -412,7 +414,7 @@ export class ProjectDocumentStructureService {
       snippet = `\\begin{${name}}\n${content}\n\\end{${name}}`;
     }
     const replacement = `\n\n${snippet}\n\n`;
-    const planned = parsePreview(source.slice(0, start) + replacement + source.slice(start), fileId, context.definitions);
+    const planned = parsePreview(source.slice(0, start) + replacement + source.slice(start), fileId, context.definitions, context.directives);
     const sameType = (candidate: string) => candidate.replace(/^custom:/, "") === type.replace(/^custom:/, "");
     const plannedById = new Map<string, PreviewNode>();
     const collectPlanned = (nodes: PreviewNode[]) => { for (const node of nodes) { plannedById.set(node.id, node); if (node.kind === "block") collectPlanned(node.children); } };
@@ -436,7 +438,7 @@ export class ProjectDocumentStructureService {
     // Explicit children in a content block are permitted, even though parser-created
     // math/image/table internals are intentionally not document blocks.
     if (!inserted && parent?.kind === "content") {
-      const parsed = parsePreview(snippet, fileId, context.definitions);
+      const parsed = parsePreview(snippet, fileId, context.definitions, context.directives);
       const offset = start + 2;
       const index = new SourceIndex(source.slice(0, start) + replacement + source.slice(start));
       const add = (nodes: PreviewNode[], parentId: string) => {

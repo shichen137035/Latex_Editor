@@ -23,7 +23,8 @@ describe("AI composer attachments and reasoning", () => {
         turn.onThreadReady?.("thread");
         listener({ method: "item/reasoning/summaryTextDelta", params: { threadId: "thread", itemId: "reason", summaryIndex: 0, delta: "Inspect " } });
         return { threadId: "thread", turnId: "turn" };
-      }
+      },
+      interruptTurn: async (threadId: string) => listener({ method: "turn/completed", params: { threadId, turn: { status: "interrupted" } } })
     } as unknown as CodexAppServer;
     const service = new AIWorkspaceService({
       userDataPath: root, codex,
@@ -39,7 +40,7 @@ describe("AI composer attachments and reasoning", () => {
     });
     await service.initialize();
     const conversation = await service.create({ projectId: "project", mode: "codex" });
-    return { root, service, conversation, input: () => input!, finished: () => completed, emit: (method: string, params: Record<string, unknown>) => listener({ method, params: { threadId: "thread", ...params } }) };
+    return { root, service, conversation, input: () => input!, startedTurn: () => input !== undefined, finished: () => completed, emit: (method: string, params: Record<string, unknown>) => listener({ method, params: { threadId: "thread", ...params } }) };
   }
 
   it("keeps early summary events, section boundaries and authoritative summaries separate from the answer", async () => {
@@ -57,6 +58,27 @@ describe("AI composer attachments and reasoning", () => {
     expect(message.activity).toBe("responding");
     f.emit("turn/completed", { turn: { status: "completed" } });
     await vi.waitFor(() => expect(f.finished()).toBe(true));
+    await f.service.dispose();
+  });
+
+  it("stops an active Codex turn and immediately clears its running state", async () => {
+    const f = await fixture();
+    const started = await f.service.send({ conversationId: f.conversation.id, content: "Keep working" });
+    await f.service.cancel(started.taskId);
+    const conversation = f.service.snapshot("project").conversations[0]!;
+    expect(conversation.messages.at(-1)?.status).toBe("complete");
+    expect(f.service.snapshot("project").changeSets).toEqual([]);
+    await f.service.dispose();
+  });
+
+  it("honors a stop request received before the AI provider starts", async () => {
+    const f = await fixture();
+    const taskId = "f56f19d3-11e2-4ec2-97fb-ae16a44716c4";
+    await f.service.cancel(taskId);
+    const started = await f.service.send({ conversationId: f.conversation.id, taskId, content: "Cancel before startup" });
+    expect(started.conversation.messages.at(-1)?.status).toBe("complete");
+    expect(started.conversation.messages.at(-1)?.content).toBe("Generation stopped.");
+    expect(f.startedTurn()).toBe(false);
     await f.service.dispose();
   });
 
@@ -92,15 +114,26 @@ describe("AI composer attachments and reasoning", () => {
     const second = join(f.root, "other", "notes.txt");
     const image = join(f.root, "image.png");
     await writeFile(text, "first"); await writeFile(second, "second"); await writeFile(image, Buffer.from([137, 80, 78, 71]));
-    const attachments = await f.service.selectAttachments("project", [text, second, image]);
+    const selected = await f.service.selectAttachments("project", [text, second, image]);
+    const pastedImageBytes = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/pccAAAAASUVORK5CYII=", "base64");
+    const pastedImage = await f.service.addPastedImage("project", "image/png", new Uint8Array(pastedImageBytes));
+    const pastedFileBytes = Buffer.from("\\section{Pasted notes}\n", "utf8");
+    const pastedFile = await f.service.addPastedFile("project", "notes\\pasted.tex", new Uint8Array(pastedFileBytes));
+    expect(pastedFile.name).toBe("pasted.tex");
+    await expect(f.service.addPastedFile("project", "too-large.txt", new Uint8Array(20 * 1024 * 1024 + 1))).rejects.toThrow("smaller than 20 MB");
+    await expect(f.service.addPastedFile("project", "..", new Uint8Array([1]))).rejects.toThrow("file name is invalid");
+    await expect(f.service.addPastedImage("project", "image/png", new Uint8Array([1, 2, 3]))).rejects.toThrow("supported image");
+    const attachments = [...selected, pastedImage, pastedFile];
     await f.service.send({ conversationId: f.conversation.id, content: "Read attachments", attachmentIds: attachments.map((item) => item.id) });
     const turn = f.input();
+    const expectedContents = [await readFile(text), await readFile(second), await readFile(image), pastedImageBytes, pastedFileBytes];
     for (const [index, attachment] of attachments.entries()) {
       const copied = join(turn.cwd, ".texweave", "ai-attachments", attachment.id, attachment.name);
-      expect(await readFile(copied)).toEqual(await readFile([text, second, image][index]!));
+      expect(await readFile(copied)).toEqual(expectedContents[index]);
       expect(turn.prompt).toContain(copied);
     }
-    expect(turn.imagePaths).toHaveLength(1);
+    expect(turn.imagePaths).toHaveLength(2);
+    expect(await readFile(join(turn.cwd, ".texweave", "ai-attachments", pastedImage.id, pastedImage.name))).toEqual(pastedImageBytes);
     expect(f.service.snapshot("project").conversations[0]!.messages[0]!.attachments).toEqual(attachments);
     await writeFile(join(turn.cwd, ".texweave", "ai-attachments", attachments[0]!.id, "notes.txt"), "ignored diff");
     f.emit("turn/completed", { turn: { status: "completed" } });
@@ -151,10 +184,25 @@ describe("AI composer attachments and reasoning", () => {
     await direct.service.send({ conversationId: direct.conversation.id, content: "Direct metadata edit", snapshot: [{ path: "main.tex", content: source }] });
     const metadataPath = join(direct.input().cwd, ".texweave", "structure.json");
     await writeFile(metadataPath, `${await readFile(metadataPath, "utf8")}\n`);
+    await direct.input().toolHandlers!.find_blocks!({ query: "paragraph" });
     direct.emit("turn/completed", { turn: { status: "completed" } });
     await vi.waitFor(() => expect(direct.finished()).toBe(true));
     expect(direct.service.snapshot("project").changeSets[0]!.files.map((file) => file.path)).toEqual([".texweave/structure.json"]);
     await direct.service.dispose();
+  });
+
+  it("does not propose an automatically refreshed structure index after source edits", async () => {
+    const f = await fixture();
+    const source = "\\begin{document}\nOriginal paragraph.\n\\end{document}";
+    await f.service.send({ conversationId: f.conversation.id, content: "Revise the paragraph", snapshot: [{ path: "main.tex", content: source }] });
+    await writeFile(join(f.input().cwd, "main.tex"), source.replace("Original", "Updated"));
+    // A read-only block query refreshes source ranges and fingerprints in structure.json.
+    const result = await f.input().toolHandlers!.find_blocks!({ query: "Updated" });
+    expect(JSON.parse(result).ok).toBe(true);
+    f.emit("turn/completed", { turn: { status: "completed" } });
+    await vi.waitFor(() => expect(f.finished()).toBe(true));
+    expect(f.service.snapshot("project").changeSets[0]!.files.map((file) => file.path)).toEqual(["main.tex"]);
+    await f.service.dispose();
   });
 
   it("preserves large structure metadata so AI can inspect user-defined blocks", async () => {

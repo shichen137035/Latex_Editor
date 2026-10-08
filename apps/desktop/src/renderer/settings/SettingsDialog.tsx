@@ -1,12 +1,15 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
-import { preferenceDefaults, projectPreferenceKeys, type AIProjectSkill, type DictionaryPackage, type HistoryPreferences, type ImagePreferences, type LatexToolchain, type PreferenceKey, type StyleResource, type TablePreferences, type TableStylePreset, type ThemeDefinition, type WheelAccelerationPreferences } from "@latex-editor/contracts";
+import { createPortal } from "react-dom";
+import { includeNewBuiltInDirectives, isEnglishSpellDictionary, preferenceDefaults, projectPreferenceKeys, type AIProjectSkill, type DictionaryPackage, type HistoryPreferences, type ImagePreferences, type LatexToolchain, type PreferenceKey, type PreviewDirectiveDefinition, type TablePreferences, type TableStylePreset, type ThemeDefinition, type WheelAccelerationPreferences } from "@latex-editor/contracts";
 import type { SpellCheckStatus } from "@latex-editor/contracts";
 import { t } from "../i18n/index.js";
 import { EnvironmentManager } from "../preview/EnvironmentManager.js";
+import { DirectiveManager } from "../preview/DirectiveManager.js";
+import { StyleResourcesManager } from "./StyleResourcesManager.js";
 import { DEFAULT_ENVIRONMENTS, includeNewBuiltInEnvironments } from "../preview/environments.js";
 import type { EnvironmentDefinition } from "../preview/types.js";
 import { useSettings } from "./service.js";
-import { bindings, commandContexts, commandLabels, defaultBindings, displayBinding, eventBinding, validBinding, type CommandId } from "./commands.js";
+import { ShortcutManager } from "./ShortcutManager.js";
 import "./settings.css";
 
 const sectionGroups = [
@@ -16,9 +19,9 @@ const sectionGroups = [
   { label: "settings.group.ai", sections: ["ai"] }
 ] as const;
 export type SettingsCategory = typeof sectionGroups[number]["sections"][number];
-export type SettingsSection = SettingsCategory | "language" | "searchFilter" | "preview" | "project" | "build" | "shortcuts" | "history" | "environment" | "compiler" | "spellcheck" | "aiSkills" | "environments" | "styleResources" | "images" | "tables";
+export type SettingsSection = SettingsCategory | "language" | "searchFilter" | "preview" | "project" | "build" | "shortcuts" | "history" | "environment" | "compiler" | "spellcheck" | "aiSkills" | "environments" | "previewCommands" | "styleResources" | "images" | "tables";
 type SettingsLevel = "basic" | "advanced";
-type ManagerId = "themes" | "dictionaries" | "shortcuts" | "blockEnvironments" | "styleResources" | "toolchain" | "aiSkills";
+type ManagerId = "themes" | "dictionaries" | "shortcuts" | "blockEnvironments" | "previewCommands" | "styleResources" | "toolchain" | "aiSkills";
 type Section = SettingsSection;
 
 const managerDefinitions: Record<ManagerId, { category: SettingsCategory; title: string; description: string; keywords: string[] }> = {
@@ -26,6 +29,7 @@ const managerDefinitions: Record<ManagerId, { category: SettingsCategory; title:
   dictionaries: { category: "editor", title: "settings.manager.dictionaries", description: "settings.manager.dictionariesHint", keywords: ["spellcheck", "dictionary", "language", "words"] },
   shortcuts: { category: "editor", title: "settings.manager.shortcuts", description: "settings.manager.shortcutsHint", keywords: ["keyboard", "keybinding", "hotkey", "shortcut"] },
   blockEnvironments: { category: "projectBuild", title: "settings.manager.blockEnvironments", description: "settings.manager.blockEnvironmentsHint", keywords: ["block", "environment", "preview", "semantic"] },
+  previewCommands: { category: "projectBuild", title: "settings.manager.previewCommands", description: "settings.manager.previewCommandsHint", keywords: ["command", "directive", "page break", "appendix", "bibliography", "vertical space"] },
   styleResources: { category: "projectBuild", title: "settings.manager.styleResources", description: "settings.manager.styleResourcesHint", keywords: ["style", "resource", "sty", "cls", "latex"] },
   toolchain: { category: "projectBuild", title: "settings.manager.toolchain", description: "settings.manager.toolchainHint", keywords: ["latex", "engine", "compiler", "pdflatex", "xelatex", "lualatex", "bibtex", "biber", "makeindex"] },
   aiSkills: { category: "ai", title: "settings.manager.aiSkills", description: "settings.manager.aiSkillsHint", keywords: ["ai", "skill", "instruction", "workflow"] }
@@ -34,10 +38,10 @@ const managerDefinitions: Record<ManagerId, { category: SettingsCategory; title:
 const categoryPreferences: Record<SettingsCategory, PreferenceKey[]> = {
   general: ["autoSave", "hideBuildArtifacts", "restoreProject", "maximize", "sidePanelDisplay", "locale", "wheelAcceleration"],
   appearance: ["theme", "themeDirectory", "fontSize", "tabSize"],
-  editor: ["wordWrap", "autoPairSymbols", "mathPreviewOnHover", "documentWordCompletion", "autoEnvironmentLabels", "confirmPreviewEdits", "warnIncompatibleEnvironmentConversion", "spellCheckMode", "spellCheckLanguage", "spellCheckActiveLanguages", "keybindings", "referenceLinkModifier"],
+  editor: ["wordWrap", "autoPairSymbols", "mathPreviewOnHover", "showPreviewMetrics", "documentWordCompletion", "autoEnvironmentLabels", "confirmPreviewEdits", "warnIncompatibleEnvironmentConversion", "spellCheckMode", "spellCheckLanguage", "spellCheckActiveLanguages", "keybindings", "referenceLinkModifier"],
   filter: ["visibleFilterGroups"],
   tools: ["images", "tables"],
-  projectBuild: ["history", "environments", "engine"],
+  projectBuild: ["history", "environments", "previewDirectives", "engine"],
   ai: ["aiDefaultMode", "aiPermissionMode", "aiReasoningEffort", "aiCopilotReasoningEffort"]
 };
 
@@ -49,12 +53,14 @@ const searchEntries: Array<{ id: string; category: SettingsCategory; level: Sett
   { id: "themes", category: "appearance", level: "manager", manager: "themes", titleKey: managerDefinitions.themes.title, keywords: managerDefinitions.themes.keywords },
   ...(["wordWrap", "autoPairSymbols", "mathPreviewOnHover", "documentWordCompletion", "confirmPreviewEdits"] as const).map((key) => ({ id: key, category: "editor" as const, level: "basic" as const, titleKey: `settings.${key}`, keywords: ["typing", "completion", "math", "preview"] })),
   ...(["autoEnvironmentLabels", "warnIncompatibleEnvironmentConversion"] as const).map((key) => ({ id: key, category: "editor" as const, level: "advanced" as const, titleKey: `settings.${key}`, keywords: ["label", "environment", "conversion"] })),
+  { id: "showPreviewMetrics", category: "editor", level: "advanced", titleKey: "settings.showPreviewMetrics", keywords: ["preview", "debug", "metrics", "cache", "performance"] },
   { id: "spellCheckMode", category: "editor", level: "basic", titleKey: "settings.spellcheckMode", keywords: ["spelling", "language"] },
   { id: "spellCheckLanguage", category: "editor", level: "basic", titleKey: "settings.spellcheckLanguage", keywords: ["spelling", "dictionary"] },
   { id: "dictionaries", category: "editor", level: "manager", manager: "dictionaries", titleKey: managerDefinitions.dictionaries.title, keywords: managerDefinitions.dictionaries.keywords },
   { id: "shortcuts", category: "editor", level: "manager", manager: "shortcuts", titleKey: managerDefinitions.shortcuts.title, keywords: managerDefinitions.shortcuts.keywords },
   ...(["blockType", "location", "file", "properties"] as const).map((key) => ({ id: `filter-${key}`, category: "filter" as const, level: "basic" as const, titleKey: `filter.${key}`, keywords: ["search", "filter", "structure"] })),
   { id: "blockEnvironments", category: "projectBuild", level: "manager", manager: "blockEnvironments", titleKey: managerDefinitions.blockEnvironments.title, keywords: managerDefinitions.blockEnvironments.keywords },
+  { id: "previewCommands", category: "projectBuild", level: "manager", manager: "previewCommands", titleKey: managerDefinitions.previewCommands.title, keywords: managerDefinitions.previewCommands.keywords },
   ...(["imageInsertion", "imageWidth"] as const).map((key) => ({ id: key, category: "tools" as const, level: "basic" as const, title: key.replace("image", "Image "), keywords: ["figure", "graphic", "picture"] })),
   ...(["imageDirectory", "imageAlignment", "imageCaption", "imageLabel", "imagePlacement", "imageLabelPrefix", "imageEditor", "multipleImages"] as const).map((key) => ({ id: key, category: "tools" as const, level: "advanced" as const, title: key.replace(/([A-Z])/g, " $1"), keywords: ["figure", "graphic", "latex"] })),
   { id: "tableStyle", category: "tools", level: "basic", title: "Table style", keywords: ["tabular", "grid"] },
@@ -72,9 +78,9 @@ const searchEntries: Array<{ id: string; category: SettingsCategory; level: Sett
 const projectSettingsByCategory: Partial<Record<SettingsCategory, PreferenceKey[]>> = {
   general: ["autoSave"],
   appearance: ["fontSize", "tabSize"],
-  editor: ["wordWrap", "autoPairSymbols", "mathPreviewOnHover", "confirmPreviewEdits"],
+  editor: ["wordWrap", "autoPairSymbols", "mathPreviewOnHover", "confirmPreviewEdits", "keybindings"],
   tools: ["images", "tables"],
-  projectBuild: ["history", "environments", "engine"]
+  projectBuild: ["history", "environments", "previewDirectives", "engine"]
 };
 
 function HistorySettingsPanel({ store, scope, level }: { store: ReturnType<typeof useSettings>; scope: "global" | "project"; level: SettingsLevel }) {
@@ -89,8 +95,22 @@ function SettingGroup({ title, children }: { title: string; children: ReactNode 
   return <section className="settings-content-group"><h3>{title}</h3>{children}</section>;
 }
 
-function ManagerEntry({ title, description, onOpen }: { title: string; description: string; onOpen(): void }) {
-  return <div className="settings-manager-entry"><div><strong>{title}</strong><small>{description}</small></div><button type="button" onClick={onOpen}>{t("settings.manage")}</button></div>;
+function ManagerGlyph({ manager }: { manager: ManagerId }) {
+  const drawings: Record<ManagerId, ReactNode> = {
+    themes: <><path d="M12 3.5a8.5 8.5 0 1 0 0 17h1.2a2.1 2.1 0 0 0 1.5-3.6 1.7 1.7 0 0 1 1.2-2.9h1.2A3.4 3.4 0 0 0 20.5 11C20.5 6.9 16.7 3.5 12 3.5Z"/><circle cx="7.7" cy="10" r=".8"/><circle cx="11" cy="7.2" r=".8"/><circle cx="15.1" cy="8.2" r=".8"/></>,
+    dictionaries: <><path d="M4.5 5.2A2.2 2.2 0 0 1 6.7 3h12.8v16.5H6.7a2.2 2.2 0 0 1-2.2-2.2z"/><path d="M4.5 6h12M8 8.5h7M8 11.5h7M8 14.5h5"/></>,
+    shortcuts: <><rect x="3" y="5" width="18" height="14" rx="2"/><path d="M6.5 9h1m3 0h1m3 0h1m3 0h.5M6.5 12h1m3 0h1m3 0h1m3 0h.5M8 15h8"/></>,
+    blockEnvironments: <><path d="M8.5 5H7a2 2 0 0 0-2 2v2a3 3 0 0 1-2 3 3 3 0 0 1 2 3v2a2 2 0 0 0 2 2h1.5M15.5 5H17a2 2 0 0 1 2 2v2a3 3 0 0 0 2 3 3 3 0 0 0-2 3v2a2 2 0 0 1-2 2h-1.5"/><path d="M10 9h4v6h-4z"/></>,
+    previewCommands: <><path d="M4 8h16M4 16h16M9 12h6"/><path d="m7 4-3 4 3 4m10 0 3 4-3 4"/></>,
+    styleResources: <><path d="M6 3.5h8l4 4v13H6a2 2 0 0 1-2-2v-13a2 2 0 0 1 2-2Z"/><path d="M14 3.5v5h4M8 12l-2 2 2 2m8-4 2 2-2 2m-3-5-2 6"/></>,
+    toolchain: <><path d="M14.3 6.1a4.2 4.2 0 0 0-5.6 5.6l-5 5a2 2 0 0 0 2.8 2.8l5-5a4.2 4.2 0 0 0 5.6-5.6l-2.5 2.5-2.8-2.8z"/><path d="m16 4 4 4"/></>,
+    aiSkills: <><path d="m12 3 1.8 5.2L19 10l-5.2 1.8L12 17l-1.8-5.2L5 10l5.2-1.8zM19 15l.9 2.1L22 18l-2.1.9L19 21l-.9-2.1L16 18l2.1-.9z"/></>
+  };
+  return <svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round">{drawings[manager]}</svg>;
+}
+
+function ManagerEntry({ manager, title, description, onOpen }: { manager: ManagerId; title: string; description: string; onOpen(): void }) {
+  return <div className="settings-manager-entry"><div className="settings-manager-entry-copy"><strong>{title}</strong><small>{description}</small></div><button className="settings-manager-entry-open" type="button" aria-label={title} title={title} onClick={onOpen}><ManagerGlyph manager={manager}/></button></div>;
 }
 
 function WheelAccelerationSettingsPanel({ store, scope, level }: { store: ReturnType<typeof useSettings>; scope: "global" | "project"; level: SettingsLevel }) {
@@ -116,7 +136,7 @@ function ImageSettingsPanel({ store, scope, level }: { store: ReturnType<typeof 
   const save = (next: ImagePreferences) => void store.set("images", next, scope);
   const insert = (patch: Partial<ImagePreferences["defaultInsert"]>) => save({ ...value, defaultInsert: { ...value.defaultInsert, ...patch } });
   const multi = (patch: Partial<ImagePreferences["multiFigure"]>) => save({ ...value, multiFigure: { ...value.multiFigure, ...patch } });
-  return <div className="image-settings"><h2>{t("settings.images")}</h2><p>Defaults for imported images and generated LaTeX. Project values can override these settings.</p>
+  return <div className="image-settings"><h2>{t("settings.images")}</h2>
     {level === "basic" ? <SettingGroup title={t("settings.group.imageBasics")}>
       <label className="preference-row"><span><strong>Default insertion</strong></span><select value={value.defaultInsert.type} onChange={(event) => insert({ type: event.target.value as "figure" | "inline" })}><option value="figure">Figure environment</option><option value="inline">Inline image</option></select></label>
       <label className="preference-row"><span><strong>Default width</strong></span><input value={value.defaultInsert.width} onChange={(event) => insert({ width: event.target.value })}/></label>
@@ -141,7 +161,7 @@ function TableSettingsPanel({ store, scope, level }: { store: ReturnType<typeof 
   const save = (next: TablePreferences) => void store.set("tables", next, scope);
   const insert = (patch: Partial<TablePreferences["defaultInsert"]>) => save({ ...value, defaultInsert: { ...value.defaultInsert, ...patch } });
   const editing = (patch: Partial<TablePreferences["editing"]>) => save({ ...value, editing: { ...value.editing, ...patch } });
-  return <div className="image-settings"><h2>{t("settings.tables")}</h2><p>Defaults for structured LaTeX table insertion and Preview editing.</p>
+  return <div className="image-settings"><h2>{t("settings.tables")}</h2>
     {level === "basic" ? <SettingGroup title={t("settings.group.tableBasics")}>
       <label className="preference-row"><span><strong>Default style</strong></span><select value={value.defaultStyle} onChange={(event) => save({ ...value, defaultStyle: event.target.value as TableStylePreset })}><option value="booktabs-three-line">Academic three-line</option><option value="grid">Simple grid</option><option value="horizontal">Horizontal lines</option><option value="plain">No borders</option><option value="header-bottom">Header + bottom</option></select></label>
     </SettingGroup> : <SettingGroup title={t("settings.group.tableAdvanced")}>
@@ -158,33 +178,20 @@ function TableSettingsPanel({ store, scope, level }: { store: ReturnType<typeof 
   </div>;
 }
 
-function LatexToolchainSettingsPanel({ store }: { store: ReturnType<typeof useSettings> }) {
+function LatexToolchainSettingsPanel({ store, toolbarTarget }: { store: ReturnType<typeof useSettings>; toolbarTarget?: HTMLElement | null }) {
   const [detecting, setDetecting] = useState(false);
   const toolchain = store.snapshot().toolchain as LatexToolchain | undefined;
   const status = toolchain?.overallStatus ?? (toolchain?.available ? "ready" : toolchain ? "unavailable" : "unknown");
   const tools = [["pdflatex", "pdfLaTeX"], ["xelatex", "XeLaTeX"], ["lualatex", "LuaLaTeX"], ["latexmk", "latexmk"], ["bibtex", "BibTeX"], ["biber", "Biber"], ["makeindex", "MakeIndex"]] as const;
   const detect = async (manual?: "directory" | "executable") => { setDetecting(true); await store.detect(manual); setDetecting(false); };
+  const toolbar = <div className="toolchain-manager-toolbar"><button disabled={detecting} onClick={() => void detect()}>{t("settings.recheck")}</button><button disabled={detecting} onClick={() => void detect("directory")}>{t("settings.locate")}</button><button disabled={detecting} onClick={() => void detect("executable")}>{t("settings.executable")}</button></div>;
   return <div className="environment-settings">
-    <div className="environment-settings-header"><div><h2>{t("settings.localToolchain")}</h2><p>{t("settings.environmentDescription")}</p></div><button disabled={detecting} onClick={() => void detect()}>{t("settings.recheck")}</button></div>
+    {toolbarTarget !== undefined ? toolbarTarget && createPortal(toolbar, toolbarTarget) : <div className="environment-settings-header">{toolbar}</div>}
     <section className={`environment-status-card ${status}`}><div><strong>{t("settings.environmentStatus")}</strong><b>{t(`settings.environmentStatus.${status}`)}</b></div><div><strong>{t("settings.distribution")}</strong><span>{toolchain?.distribution ?? t("settings.notChecked")}{toolchain?.version ? ` · ${toolchain.version}` : ""}</span></div><div><strong>{t("settings.installation")}</strong><code>{toolchain?.binDirectory ?? t("settings.notConfigured")}</code></div></section>
-    <div className="environment-actions"><button disabled={detecting} onClick={() => void detect("directory")}>{t("settings.locate")}</button><button disabled={detecting} onClick={() => void detect("executable")}>{t("settings.executable")}</button></div>
     <section className="environment-tool-grid"><h3>{t("settings.latexTools")}</h3>{tools.map(([id, label]) => <div className="environment-tool-row" key={id}><strong>{label}</strong><span className={toolchain?.[id] ? "status-ok" : "status-warning"}>{toolchain?.[id] ? t("settings.found") : t("settings.notFound")}</span><code>{toolchain?.[id] ?? "—"}</code></div>)}</section>
     {status === "limited" && <p className="spellcheck-settings-note">{t("settings.limitedToolchain")}</p>}
     {status === "unavailable" && <p className="spellcheck-settings-note">{t("settings.missingToolchain")}</p>}
   </div>;
-}
-
-function StyleResourcesPanel() {
-  const [resources, setResources] = useState<StyleResource[]>([]);
-  const [selectedId, setSelectedId] = useState("default");
-  const [error, setError] = useState("");
-  const [busy, setBusy] = useState(false);
-  const reload = async () => { setResources(await window.latexEditor!.styleResources.list()); };
-  useEffect(() => { void reload(); }, []);
-  const run = async (action: () => Promise<unknown>) => { setBusy(true); setError(""); try { const result = await action(); if (result && typeof result === "object" && "id" in result) setSelectedId(String(result.id)); await reload(); } catch (reason) { setError(reason instanceof Error ? reason.message : String(reason)); } finally { setBusy(false); } };
-  const selected = resources.find((resource) => resource.id === selectedId);
-  return <div className="style-resources-page"><div className="style-resources-intro"><div><h2>{t("resource.title")}</h2><p>{t("resource.description")}</p></div><div className="style-resource-actions"><button disabled={busy} onClick={() => void run(() => window.latexEditor!.styleResources.create(t("resource.newDefaultName")))}>＋ {t("resource.new")}</button><button disabled={busy} onClick={() => void run(async () => { const paths = await window.latexEditor!.dialogs.pickFiles(); return paths.length ? window.latexEditor!.styleResources.importFiles(paths) : undefined; })}>{t("resource.importFiles")}</button><button disabled={busy} onClick={() => void run(async () => { const path = await window.latexEditor!.dialogs.pickFolder(); return path ? window.latexEditor!.styleResources.importFolder(path) : undefined; })}>{t("resource.importFolder")}</button></div></div>
-    <div className="style-resource-layout"><aside className="style-resource-list"><h3>{t("resource.builtIn")}</h3>{resources.filter((resource) => resource.source === "built-in").map((resource) => <button className={selectedId === resource.id ? "active" : ""} key={resource.id} onClick={() => setSelectedId(resource.id)}><strong>{resource.name}</strong><small>{resource.files.length} {t("resource.files")}</small></button>)}<h3>{t("resource.myResources")}</h3>{resources.filter((resource) => resource.source === "user").map((resource) => <button className={selectedId === resource.id ? "active" : ""} key={resource.id} onClick={() => setSelectedId(resource.id)}><strong>{resource.name}</strong><small>{resource.files.length} {t("resource.files")}</small></button>)}{!resources.some((resource) => resource.source === "user") && <p className="style-resource-empty">{t("resource.none")}</p>}</aside><main className="style-resource-detail">{selected ? <><div className="style-resource-detail-head"><div><span className="resource-source">{selected.source === "built-in" ? t("resource.builtIn") : t("resource.custom")}</span><h2>{selected.name}</h2><p>{selected.description ?? t("resource.noDescription")}</p></div><div className="style-resource-detail-actions">{selected.source === "user" && <><button onClick={() => void run(async () => { const paths = await window.latexEditor!.dialogs.pickFiles(); return paths.length ? window.latexEditor!.styleResources.addFiles(selected.id, paths) : undefined; })}>{t("resource.addFiles")}</button><button onClick={() => { const name = window.prompt(t("resource.renamePrompt"), selected.name); if (name) void run(() => window.latexEditor!.styleResources.rename(selected.id, name)); }}>{t("resource.rename")}</button><button onClick={() => void run(() => window.latexEditor!.styleResources.duplicate(selected.id))}>{t("resource.duplicate")}</button><button className="danger" onClick={() => { if (window.confirm(t("resource.deleteConfirm", { name: selected.name }))) void run(() => window.latexEditor!.styleResources.remove(selected.id)); }}>{t("resource.delete")}</button></>}</div></div><h3>{t("resource.filesTitle")}</h3><div className="style-resource-files">{selected.files.length ? selected.files.map((file) => <div key={file.targetPath}><code>{file.targetPath}</code><small>{file.kind}</small></div>) : <p>{t("resource.emptyFiles")}</p>}</div>{selected.mainStyle && <p className="style-resource-note">{t("resource.importHint", { name: selected.mainStyle.name })}</p>}</> : <p>{t("resource.selectHint")}</p>}</main></div><section className="online-resource-placeholder"><h3>{t("resource.onlineTitle")}</h3><p>{t("resource.onlineHint")}</p><span>{t("resource.comingLater")}</span></section>{error && <p role="alert" className="inline-error">{error}</p>}</div>;
 }
 
 function SpellCheckPreferencesPanel({ store, scope }: { store: ReturnType<typeof useSettings>; scope: "global" | "project" }) {
@@ -200,7 +207,7 @@ function SpellCheckPreferencesPanel({ store, scope }: { store: ReturnType<typeof
   </SettingGroup>;
 }
 
-function SpellCheckSettingsPanel({ store }: { store: ReturnType<typeof useSettings> }) {
+function SpellCheckSettingsPanel({ store, toolbarTarget }: { store: ReturnType<typeof useSettings>; toolbarTarget?: HTMLElement | null }) {
   const [status, setStatus] = useState<SpellCheckStatus>();
   const [catalog, setCatalog] = useState<DictionaryPackage[]>([]);
   const [query, setQuery] = useState("");
@@ -213,11 +220,11 @@ function SpellCheckSettingsPanel({ store }: { store: ReturnType<typeof useSettin
     setLoadError("");
     try {
       const api = window.latexEditor!.spellcheck;
-      const [nextStatus, nextCatalog] = await Promise.all([api.status(), refresh ? api.refreshDictionaries() : api.listDictionaries(query)]);
+      const [nextStatus, nextCatalog] = await Promise.all([api.status(), refresh ? api.refreshDictionaries() : api.listDictionaries()]);
       setStatus(nextStatus); setCatalog(nextCatalog);
     } catch (error) { setLoadError(String(error)); } finally { setLoading(false); }
   };
-  useEffect(() => { void reload(); }, [query]);
+  useEffect(() => { void reload(); }, []);
   const install = async (item: DictionaryPackage) => {
     setInstalling(item.id);
     try { await window.latexEditor!.spellcheck.installDictionary(item.id); await store.set("spellCheckLanguage", item.languageCode); await reload(); }
@@ -226,34 +233,28 @@ function SpellCheckSettingsPanel({ store }: { store: ReturnType<typeof useSettin
   };
   const remove = async (item: DictionaryPackage) => {
     if (!window.confirm(t("settings.spellcheckRemoveConfirm", { name: item.displayName }))) return;
+    setInstalling(item.id);
     try { await window.latexEditor!.spellcheck.removeDictionary(item.id); if (language === item.languageCode) await store.reset("spellCheckLanguage"); await reload(); }
     catch (error) { window.alert(error instanceof Error ? error.message : String(error)); }
+    finally { setInstalling(undefined); }
   };
-  const installed = catalog.filter((item) => item.installed);
-  const available = catalog.filter((item) => !item.installed && item.id !== "zh-CN" && item.id !== "ja-JP");
+  const normalizedQuery = query.trim().toLocaleLowerCase();
+  const otherLanguageNames: Record<string, string> = { "zh-CN": t("settings.spellcheckChinese"), "ja-JP": t("settings.spellcheckJapanese") };
+  const matchesQuery = (item: DictionaryPackage, extraLabel = "") => !normalizedQuery || [extraLabel, item.id, item.languageCode, item.displayName, item.region ?? ""].some((value) => value.toLocaleLowerCase().includes(normalizedQuery));
+  const installed = catalog.filter((item) => item.installed && item.id !== "zh-CN" && item.id !== "ja-JP" && matchesQuery(item));
+  const available = catalog.filter((item) => !item.installed && item.id !== "zh-CN" && item.id !== "ja-JP" && matchesQuery(item));
+  const otherLanguageRules = catalog.filter((item) => (item.id === "zh-CN" || item.id === "ja-JP") && matchesQuery(item, otherLanguageNames[item.id]));
+  const toolbar = <div className="manager-toolbar-actions"><button disabled={loading || Boolean(installing)} onClick={() => void reload(true)}>{t("settings.spellcheckRefresh")}</button></div>;
   return <div className="spellcheck-settings">
-    <div className="spellcheck-settings-header"><div><h2>{t("settings.spellcheck")}</h2><p>{t("settings.spellcheckDescription")}</p></div><button disabled={loading || Boolean(installing)} onClick={() => void reload(true)}>{t("settings.spellcheckRefresh")}</button></div>
+    {toolbarTarget !== undefined ? toolbarTarget && createPortal(toolbar, toolbarTarget) : <div className="spellcheck-settings-header">{toolbar}</div>}
     <div className="spellcheck-status-card"><div><strong>{t("settings.spellcheckProvider")}</strong><span>{status?.provider === "hunspell" ? "Hunspell (nspell)" : status?.provider ?? "—"}</span></div><div><strong>{t("settings.spellcheckPlatform")}</strong><span>{status?.platform ?? "—"}</span></div><div><strong>{t("settings.spellcheckAvailability")}</strong><span className={status?.available ? "status-ok" : "status-warning"}>{status ? (status.available ? t("settings.spellcheckAvailable") : t("settings.spellcheckUnavailable")) : t("settings.spellcheckChecking")}</span></div></div>
     <p className="spellcheck-settings-note">{t("settings.spellcheckElectronHint")}</p>
-    <section className="spellcheck-settings-note">
-      <strong>{t("settings.chineseRulesTitle")}</strong>
-      <p>{t("settings.chineseRulesHint")}</p>
-      <p>{status?.availableLanguages.includes("zh-CN") ? t("settings.spellcheckInstalledBadge") : t("settings.spellcheckUnavailable")} · Apache-2.0 · pycorrector</p>
-      <button disabled={Boolean(installing)} onClick={() => void install({ id: "zh-CN", languageCode: "zh-CN", displayName: "Chinese", installed: false, license: { name: "Apache-2.0" } })}>
-        {installing === "zh-CN" ? t("settings.spellcheckInstalling") : t("settings.chineseRulesDownload")}
-      </button>
-    </section>
-    <section className="spellcheck-settings-note">
-      <strong>{t("settings.japaneseRulesTitle")}</strong>
-      <p>{t("settings.japaneseRulesHint")}</p>
-      <p>{status?.availableLanguages.includes("ja-JP") ? t("settings.spellcheckInstalledBadge") : t("settings.spellcheckUnavailable")} · MIT · textlint-rule-ja-no-abusage</p>
-      <button disabled={Boolean(installing)} onClick={() => void install({ id: "ja-JP", languageCode: "ja-JP", displayName: "Japanese", installed: false, license: { name: "MIT" } })}>
-        {installing === "ja-JP" ? t("settings.spellcheckInstalling") : t("settings.japaneseRulesDownload")}
-      </button>
-    </section>
     {loadError && <p role="alert" className="inline-error">{loadError}</p>}
-    <section className="dictionary-section"><div className="dictionary-section-head"><h3>{t("settings.spellcheckInstalled")}</h3><span>{installed.length}</span></div>{installed.map((item) => <div className="dictionary-row" key={item.id}><span><strong>{item.displayName}</strong><small>{item.region ? `${item.languageCode} · ${item.region}` : item.languageCode}</small></span><em>{t("settings.spellcheckInstalledBadge")}</em>{item.id !== "en-US" && item.id !== "en-GB" && <button className="danger" onClick={() => void remove(item)}>{t("settings.spellcheckRemove")}</button>}</div>)}</section>
-    <section className="dictionary-section"><div className="dictionary-section-head"><h3>{t("settings.spellcheckAdd")}</h3><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder={t("settings.spellcheckSearch")}/></div>{available.map((item) => <div className="dictionary-row" key={item.id}><span><strong>{item.displayName}</strong><small>{item.region ? `${item.languageCode} · ${item.region}` : item.languageCode}</small></span><button disabled={Boolean(installing)} onClick={() => void install(item)}>{installing === item.id ? t("settings.spellcheckInstalling") : t("settings.spellcheckInstall")}</button></div>)}{!available.length && <p>{t("settings.spellcheckNoLanguages")}</p>}</section>
+    <label className="spellcheck-language-search"><span className="visually-hidden">{t("settings.spellcheckSearch")}</span><input type="search" value={query} onChange={(event) => setQuery(event.target.value)} placeholder={t("settings.spellcheckSearch")}/></label>
+    {normalizedQuery && installed.length + available.length + otherLanguageRules.length === 0 && <p className="dictionary-no-results">{t("settings.spellcheckNoLanguages")}</p>}
+    <details className="dictionary-section dictionary-section-other" open><summary className="dictionary-section-head"><h3>{t("settings.spellcheckOther")}</h3><span>{otherLanguageRules.length}</span></summary>{otherLanguageRules.map((item) => <div className="dictionary-row" key={item.id}><span><strong>{otherLanguageNames[item.id] ?? item.languageCode}</strong><small>{item.languageCode}</small></span>{item.installed && <em>{t("settings.spellcheckInstalledBadge")}</em>}<button disabled={loading || Boolean(installing)} onClick={() => void install(item)}>{installing === item.id ? t("settings.spellcheckInstalling") : item.installed ? t("settings.spellcheckRepair") : t("settings.spellcheckInstall")}</button>{item.installed && !isEnglishSpellDictionary(item.id, item.languageCode) && <button className="danger" disabled={loading || Boolean(installing)} onClick={() => void remove(item)}>{t("settings.spellcheckRemove")}</button>}</div>)}</details>
+    <details className="dictionary-section" open><summary className="dictionary-section-head"><h3>{t("settings.spellcheckInstalled")}</h3><span>{installed.length}</span></summary>{installed.map((item) => <div className="dictionary-row" key={item.id}><span><strong>{item.displayName}</strong><small>{item.region ? `${item.languageCode} · ${item.region}` : item.languageCode}</small></span><em>{t("settings.spellcheckInstalledBadge")}</em>{!isEnglishSpellDictionary(item.id, item.languageCode) && <button className="danger" disabled={loading || Boolean(installing)} onClick={() => void remove(item)}>{t("settings.spellcheckRemove")}</button>}</div>)}</details>
+    <details className="dictionary-section" open><summary className="dictionary-section-head"><h3>{t("settings.spellcheckAdd")}</h3><span>{available.length}</span></summary>{available.map((item) => <div className="dictionary-row" key={item.id}><span><strong>{item.displayName}</strong><small>{item.region ? `${item.languageCode} · ${item.region}` : item.languageCode}</small></span><button disabled={Boolean(installing)} onClick={() => void install(item)}>{installing === item.id ? t("settings.spellcheckInstalling") : t("settings.spellcheckInstall")}</button></div>)}{!available.length && !normalizedQuery && <p>{t("settings.spellcheckNoLanguages")}</p>}</details>
     {status?.dictionaryPath && <p>{t("settings.spellcheckPersonalDictionary")}: <code>{status.dictionaryPath}</code></p>}
     {status?.error && <p role="alert" className="inline-error">{status.error}</p>}
   </div>;
@@ -268,7 +269,7 @@ function ThemeBasicSettingsPanel({ store, scope, children }: { store: ReturnType
   </SettingGroup>;
 }
 
-function ThemeSettingsPanel({ store, showActiveTheme = true }: { store: ReturnType<typeof useSettings>; showActiveTheme?: boolean }) {
+function ThemeSettingsPanel({ store, showActiveTheme = true, toolbarTarget }: { store: ReturnType<typeof useSettings>; showActiveTheme?: boolean; toolbarTarget?: HTMLElement | null }) {
   const [themes, setThemes] = useState<ThemeDefinition[]>([]);
   const [directory, setDirectory] = useState("");
   const [busy, setBusy] = useState(false);
@@ -312,17 +313,21 @@ function ThemeSettingsPanel({ store, showActiveTheme = true }: { store: ReturnTy
   });
   const builtIns = themes.filter((theme) => theme.source === "built-in");
   const userThemes = themes.filter((theme) => theme.source === "user");
+  const themeRow = (theme: ThemeDefinition) => {
+    const current = store.global("theme") === theme.id;
+    return <div className="theme-catalog-row" key={theme.id}><span><strong>{theme.name}</strong><small>{theme.filePath ?? theme.id}</small></span><button type="button" className={`theme-use-button${current ? " current" : ""}`} aria-pressed={current} disabled={current} onClick={() => void store.set("theme", theme.id)}>{current ? t("settings.themeCurrent") : t("settings.themeUse")}</button>{theme.source === "built-in" ? <em>{t("settings.themeBuiltInBadge")}</em> : <button className="danger" disabled={busy} onClick={() => remove(theme)}>{t("settings.themeDelete")}</button>}</div>;
+  };
+  const toolbar = <div className="manager-toolbar-actions"><button disabled={busy} onClick={() => void reload()}>{t("settings.themeRefresh")}</button><button disabled={busy} onClick={importFiles}>＋ {t("settings.themeImport")}</button><button disabled={busy} onClick={importFolder}>{t("settings.themeImportFolder")}</button></div>;
   return <div className="theme-settings-panel">
-    <div className="theme-settings-header"><div><h2>{t("settings.theme")}</h2><p>{t("settings.themeHint")}</p></div><button disabled={busy} onClick={() => void reload()}>{t("settings.themeRefresh")}</button></div>
+    {toolbarTarget !== undefined ? toolbarTarget && createPortal(toolbar, toolbarTarget) : <div className="theme-settings-header">{toolbar}</div>}
     {showActiveTheme && <label className="preference-row"><span><strong>{t("settings.activeTheme")}</strong><small>{t("settings.activeThemeHint")}</small></span><select data-setting="theme" value={store.global("theme")} onChange={(event) => void store.set("theme", event.currentTarget.value, "global")}>{[...builtIns, ...userThemes].map((theme) => <option key={theme.id} value={theme.id}>{theme.name}</option>)}</select></label>}
-    <div className="theme-import-actions"><button disabled={busy} onClick={importFiles}>＋ {t("settings.themeImport")}</button><button disabled={busy} onClick={importFolder}>{t("settings.themeImportFolder")}</button></div>
     <div className="theme-directory"><strong>{t("settings.themeDirectory")}</strong><code>{directory || "—"}</code><div><button disabled={busy} onClick={chooseDirectory}>{t("settings.themeChooseDirectory")}</button><button disabled={busy || !store.global("themeDirectory")} onClick={resetDirectory}>{t("settings.themeResetDirectory")}</button></div></div>
-    <section className="theme-catalog"><h3>{t("settings.themeBuiltIn")}</h3>{builtIns.map((theme) => <div className="theme-catalog-row" key={theme.id}><span><strong>{theme.name}</strong><small>{theme.id}</small></span><em>{t("settings.themeBuiltInBadge")}</em></div>)}<h3>{t("settings.themeCustom")}</h3>{userThemes.length ? userThemes.map((theme) => <div className="theme-catalog-row" key={theme.id}><span><strong>{theme.name}</strong><small>{theme.filePath ?? theme.id}</small></span><button className="danger" disabled={busy} onClick={() => remove(theme)}>{t("settings.themeDelete")}</button></div>) : <p>{t("settings.themeNone")}</p>}</section>
+    <section className="theme-catalog"><h3>{t("settings.themeBuiltIn")}</h3>{builtIns.map(themeRow)}<h3>{t("settings.themeCustom")}</h3>{userThemes.length ? userThemes.map(themeRow) : <p>{t("settings.themeNone")}</p>}</section>
     {error && <p role="alert" className="inline-error">{error}</p>}
   </div>;
 }
 
-function AISkillsSettingsPanel({ onEditingChange }: { onEditingChange(editing: boolean): void }) {
+function AISkillsSettingsPanel({ onEditingChange, toolbarTarget }: { onEditingChange(editing: boolean): void; toolbarTarget?: HTMLElement | null }) {
   const [skills, setSkills] = useState<AIProjectSkill[]>([]);
   const [selectedName, setSelectedName] = useState("");
   const [name, setName] = useState("");
@@ -357,11 +362,23 @@ function AISkillsSettingsPanel({ onEditingChange }: { onEditingChange(editing: b
     } catch (reason) { setError(reason instanceof Error ? reason.message : String(reason)); }
     finally { setBusy(false); }
   };
+  const setSkillEnabled = async (skill: AIProjectSkill, enabled: boolean) => {
+    setBusy(true); setError("");
+    try {
+      const next = await window.latexEditor!.ai.setSkillEnabled({ name: skill.name, enabled }) ?? [];
+      setSkills(next);
+    } catch (reason) { setError(reason instanceof Error ? reason.message : String(reason)); }
+    finally { setBusy(false); }
+  };
+  const toolbar = <div className="manager-toolbar-actions"><button type="button" disabled={busy} onClick={startCreate}>＋ {t("settings.aiSkillsNew")}</button></div>;
   return <div className="ai-skills-settings">
-    <div className="ai-skills-header"><div><h2>{t("settings.aiSkillsTitle")}</h2><p>{t("settings.aiSkillsDescription")}</p></div><button type="button" disabled={busy} onClick={startCreate}>＋ {t("settings.aiSkillsNew")}</button></div>
+    {toolbarTarget !== undefined ? toolbarTarget && createPortal(toolbar, toolbarTarget) : <div className="ai-skills-header">{toolbar}</div>}
     <div className="ai-skills-layout">
       <nav className="ai-skills-list" aria-label={t("settings.aiSkillsTitle")}>
-        {skills.map((skill) => <button type="button" key={skill.name} className={selectedName === skill.name ? "active" : ""} onClick={() => { setSelectedName(skill.name); setEditing(false); setError(""); }}><strong>{skill.name}</strong><small>{t(`settings.aiSkillSource.${skill.source}`)}</small></button>)}
+        {skills.map((skill) => <div className={`ai-skill-row${selectedName === skill.name ? " active" : ""}`} key={skill.name}>
+          <button type="button" className="ai-skill-select" aria-current={selectedName === skill.name ? "true" : undefined} onClick={() => { setSelectedName(skill.name); setEditing(false); setError(""); }}><strong>{skill.name}</strong><small>{t(`settings.aiSkillSource.${skill.source}`)} · <span className={skill.enabled ? "enabled" : "disabled"}>{t(skill.enabled ? "settings.aiSkillsEnabled" : "settings.aiSkillsDisabled")}</span></small></button>
+          <label className="ai-skill-toggle" title={`${skill.name}: ${t(skill.enabled ? "settings.aiSkillsEnabled" : "settings.aiSkillsDisabled")}`}><input type="checkbox" aria-label={skill.name} checked={skill.enabled} disabled={busy} onChange={(event) => void setSkillEnabled(skill, event.target.checked)}/><span aria-hidden="true"/></label>
+        </div>)}
         {!skills.length && <p>{t("settings.aiSkillsEmpty")}</p>}
       </nav>
       <section className="ai-skills-editor">
@@ -387,7 +404,7 @@ function categoryForInitial(section: Section): SettingsCategory {
   if (["editor", "spellcheck", "shortcuts"].includes(section)) return "editor";
   if (["searchFilter", "preview"].includes(section)) return "filter";
   if (["images", "tables"].includes(section)) return "tools";
-  if (["history", "styleResources", "environments", "project", "build", "compiler", "environment"].includes(section)) return "projectBuild";
+  if (["history", "styleResources", "environments", "previewCommands", "project", "build", "compiler", "environment"].includes(section)) return "projectBuild";
   if (section === "aiSkills") return "ai";
   return "general";
 }
@@ -396,6 +413,7 @@ function managerForInitial(section: Section): ManagerId | undefined {
   if (section === "spellcheck") return "dictionaries";
   if (section === "shortcuts") return "shortcuts";
   if (section === "environments") return "blockEnvironments";
+  if (section === "previewCommands") return "previewCommands";
   if (section === "styleResources") return "styleResources";
   if (section === "compiler" || section === "environment") return "toolchain";
   if (section === "aiSkills") return "aiSkills";
@@ -420,10 +438,12 @@ export function SettingsDialog({ onClose, initial = "general" }: { onClose(): vo
   const [overflowOpen, setOverflowOpen] = useState(false);
   const [managerDirty, setManagerDirty] = useState(false);
   const [environmentToolbarTarget, setEnvironmentToolbarTarget] = useState<HTMLDivElement | null>(null);
-  const [capture, setCapture] = useState<CommandId>();
-  const [pending, setPending] = useState("");
-  const [conflict, setConflict] = useState<string>();
-  const [invalid, setInvalid] = useState(false);
+  const [directiveToolbarTarget, setDirectiveToolbarTarget] = useState<HTMLDivElement | null>(null);
+  const [styleResourceToolbarTarget, setStyleResourceToolbarTarget] = useState<HTMLDivElement | null>(null);
+  const [toolchainToolbarTarget, setToolchainToolbarTarget] = useState<HTMLDivElement | null>(null);
+  const [themeToolbarTarget, setThemeToolbarTarget] = useState<HTMLDivElement | null>(null);
+  const [dictionaryToolbarTarget, setDictionaryToolbarTarget] = useState<HTMLDivElement | null>(null);
+  const [aiSkillsToolbarTarget, setAiSkillsToolbarTarget] = useState<HTMLDivElement | null>(null);
   const mainRef = useRef<HTMLElement>(null);
   const overflowRef = useRef<HTMLDivElement>(null);
   const returnContextRef = useRef<SettingsReturnContext>({ category: initialCategory, level: "basic", scope: "global", scrollPosition: 0 });
@@ -451,12 +471,13 @@ export function SettingsDialog({ onClose, initial = "general" }: { onClose(): vo
   const row = (key: PreferenceKey, label: string, options?: Array<[string, string]>, numeric = false) => {
     const allowed = scope === "global" || projectPreferenceKeys.includes(key);
     const value = read(key);
-    const hint = key === "hideBuildArtifacts" ? t("settings.hideBuildArtifactsHint") : key === "documentWordCompletion" ? t("settings.documentWordCompletionHint") : key === "autoPairSymbols" ? t("settings.autoPairSymbolsHint") : key === "mathPreviewOnHover" ? t("settings.mathPreviewOnHoverHint") : key === "autoEnvironmentLabels" ? t("settings.autoEnvironmentLabelsHint") : key === "confirmPreviewEdits" ? t("settings.confirmPreviewEditsHint") : key === "warnIncompatibleEnvironmentConversion" ? t("settings.warnIncompatibleEnvironmentConversionHint") : undefined;
-    return <label className="preference-row" data-setting={key} key={key}><span><strong>{t(label)}</strong>{hint && <small>{hint}</small>}{scope === "project" && !(key in snapshot.project) && <small>{t(allowed ? "settings.inherited" : "settings.globalOnly")}</small>}</span>
+    const hint = key === "hideBuildArtifacts" ? t("settings.hideBuildArtifactsHint") : key === "documentWordCompletion" ? t("settings.documentWordCompletionHint") : key === "autoPairSymbols" ? t("settings.autoPairSymbolsHint") : key === "mathPreviewOnHover" ? t("settings.mathPreviewOnHoverHint") : key === "showPreviewMetrics" ? t("settings.showPreviewMetricsHint") : key === "autoEnvironmentLabels" ? t("settings.autoEnvironmentLabelsHint") : key === "confirmPreviewEdits" ? t("settings.confirmPreviewEditsHint") : key === "warnIncompatibleEnvironmentConversion" ? t("settings.warnIncompatibleEnvironmentConversionHint") : undefined;
+    return <label className="preference-row" data-setting={key} key={key}><span><strong>{t(label)}</strong>{hint && <small>{hint}</small>}{scope === "project" && allowed && !(key in snapshot.project) && <small>{t("settings.inherited")}</small>}</span>
       {options ? <select disabled={!allowed} value={String(value)} onChange={(event) => void store.set(key, numeric ? Number(event.target.value) : event.target.value as never, scope)}>{options.map(([id, labelKey]) => <option key={id} value={id}>{t(labelKey)}</option>)}</select> : numeric ? <input disabled={!allowed} type="number" min={10} max={32} value={Number(value)} onChange={(event) => { const next = Number(event.target.value); if (next >= 10 && next <= 32) void store.set(key, next, scope); }}/> : <input disabled={!allowed} type="checkbox" checked={Boolean(value)} onChange={(event) => void store.set(key, event.target.checked, scope)}/>}
       {resetButton(key, allowed)}</label>;
   };
   const configured = read("environments") as EnvironmentDefinition[];
+  const configuredDirectives = read("previewDirectives") as PreviewDirectiveDefinition[];
   const resetKeys = async (keys: PreferenceKey[]) => {
     for (const key of keys) if (scope === "global" || projectPreferenceKeys.includes(key)) await store.reset(key, scope);
   };
@@ -477,12 +498,7 @@ export function SettingsDialog({ onClose, initial = "general" }: { onClose(): vo
   };
   const navigateCategory = (next: SettingsCategory) => {
     if (manager && managerDirty && !window.confirm(t("settings.managerUnsavedConfirm"))) return;
-    setManager(undefined); setManagerDirty(false); setSearch(""); setCategory(next); setCapture(undefined);
-  };
-  const applyBinding = (value: string, replace?: string) => {
-    if (!capture) return;
-    const next = { ...store.global("keybindings"), [capture]: value, ...(replace ? { [replace]: "" } : {}) };
-    void store.set("keybindings", next); setCapture(undefined); setConflict(undefined);
+    setManager(undefined); setManagerDirty(false); setSearch(""); setCategory(next);
   };
   const filteredSearchEntries = search.trim() ? searchEntries.filter((entry) => {
     const title = entry.titleKey ? t(entry.titleKey) : entry.title ?? entry.id;
@@ -494,15 +510,6 @@ export function SettingsDialog({ onClose, initial = "general" }: { onClose(): vo
     else { setManager(undefined); setCategory(entry.category); setLevel(entry.level === "advanced" ? "advanced" : "basic"); setSearch(""); }
   };
 
-  const renderShortcutManager = () => <div className="settings-shortcut-manager"><h2>{t("settings.manager.shortcuts")}</h2><p>{t("settings.globalOnly")}</p><SettingGroup title={t("settings.group.keyboard")}>
-    {row("referenceLinkModifier", "settings.referenceLinkModifier", [["ctrl", "settings.modifierCtrl"], ["alt", "settings.modifierAlt"], ["shift", "settings.modifierShift"], ["meta", "settings.modifierMeta"]])}
-    {(Object.keys(defaultBindings) as CommandId[]).map((id) => {
-      const current = bindings()[id] ?? "";
-      const customized = current !== (defaultBindings[id] ?? "");
-      return <div className="preference-row" key={id}><span><strong>{t(commandLabels[id])}</strong><small>{t(commandContexts[id])}</small></span><button data-command={id} onClick={() => { setCapture(id); setConflict(undefined); setInvalid(false); }}>{displayBinding(current) || t("settings.off")}</button>{customized && <button className="preference-reset" onClick={() => { const next = { ...store.global("keybindings") }; delete next[id]; const duplicate = (Object.entries(bindings()) as Array<[CommandId, string]>).find(([other, value]) => other !== id && commandContexts[other] === commandContexts[id] && value === defaultBindings[id]); if (duplicate) next[duplicate[0]] = ""; void store.set("keybindings", next); }}>{t("settings.reset")}</button>}</div>;
-    })}
-  </SettingGroup>{capture && <div className="shortcut-capture"><p>{t(commandLabels[capture])} - {t(commandContexts[capture])}</p><input data-shortcut-capture autoFocus readOnly placeholder={t("shortcut.capture")} value={displayBinding(pending)} onKeyDown={(event) => { event.preventDefault(); event.stopPropagation(); if (event.key === "Escape") { setCapture(undefined); return; } if (["Control", "Meta", "Shift", "Alt"].includes(event.key)) return; const value = eventBinding(event.nativeEvent); setPending(value); if (!validBinding(value)) { setInvalid(true); return; } setInvalid(false); const duplicate = (Object.entries(bindings()) as Array<[CommandId, string]>).find(([id, binding]) => id !== capture && commandContexts[id] === commandContexts[capture] && binding === value); if (duplicate) setConflict(duplicate[0]); else applyBinding(value); }}/>{invalid && <p role="alert">{t("shortcut.invalid")}</p>}{conflict && <><p role="alert">{t("shortcut.conflict")} {t(commandLabels[conflict as CommandId])}</p><button onClick={() => applyBinding(pending, conflict)}>{t("shortcut.replace")}</button></>}<button onClick={() => setCapture(undefined)}>{t("project.cancel")}</button></div>}</div>;
-
   const renderCategory = () => {
     if (category === "general") return <div className="settings-page"><h2>{t("settings.category.general")}</h2>
       {level === "basic" && <SettingGroup title={t("settings.group.generalBasics")}>
@@ -511,56 +518,69 @@ export function SettingsDialog({ onClose, initial = "general" }: { onClose(): vo
       </SettingGroup>}
       <WheelAccelerationSettingsPanel store={store} scope={scope} level={level}/>
     </div>;
-    if (category === "appearance") return <div className="settings-page"><h2>{t("settings.category.appearance")}</h2>{level === "basic" ? <ThemeBasicSettingsPanel store={store} scope={scope}>{row("fontSize", "settings.fontSize", undefined, true)}{row("tabSize", "settings.tabSize", [["2", "2"], ["4", "4"], ["8", "8"]], true)}</ThemeBasicSettingsPanel> : <ManagerEntry title={t(managerDefinitions.themes.title)} description={t(managerDefinitions.themes.description)} onOpen={() => openManager("themes")}/>}</div>;
-    if (category === "editor") return <div className="settings-page"><h2>{t("settings.category.editor")}</h2>{level === "basic" ? <><SettingGroup title={t("settings.group.editorBasics")}>{row("wordWrap", "settings.wordWrap")}{row("autoPairSymbols", "settings.autoPairSymbols")}{row("documentWordCompletion", "settings.documentWordCompletion")}{row("mathPreviewOnHover", "settings.mathPreviewOnHover")}{row("confirmPreviewEdits", "settings.confirmPreviewEdits")}</SettingGroup><SpellCheckPreferencesPanel store={store} scope={scope}/><ManagerEntry title={t(managerDefinitions.shortcuts.title)} description={t(managerDefinitions.shortcuts.description)} onOpen={() => openManager("shortcuts")}/><ManagerEntry title={t(managerDefinitions.dictionaries.title)} description={t(managerDefinitions.dictionaries.description)} onOpen={() => openManager("dictionaries")}/></> : <SettingGroup title={t("settings.group.editorAdvanced")}>{row("autoEnvironmentLabels", "settings.autoEnvironmentLabels")}{row("warnIncompatibleEnvironmentConversion", "settings.warnIncompatibleEnvironmentConversion")}</SettingGroup>}</div>;
+    if (category === "appearance") return <div className="settings-page"><h2>{t("settings.category.appearance")}</h2>{level === "basic" ? <ThemeBasicSettingsPanel store={store} scope={scope}>{row("fontSize", "settings.fontSize", undefined, true)}{row("tabSize", "settings.tabSize", [["2", "2"], ["4", "4"], ["8", "8"]], true)}</ThemeBasicSettingsPanel> : <ManagerEntry manager="themes" title={t(managerDefinitions.themes.title)} description={t(managerDefinitions.themes.description)} onOpen={() => openManager("themes")}/>}</div>;
+    if (category === "editor") return <div className="settings-page"><h2>{t("settings.category.editor")}</h2>{level === "basic" ? <><SettingGroup title={t("settings.group.editorBasics")}>{row("wordWrap", "settings.wordWrap")}{row("autoPairSymbols", "settings.autoPairSymbols")}{row("documentWordCompletion", "settings.documentWordCompletion")}{row("mathPreviewOnHover", "settings.mathPreviewOnHover")}{row("confirmPreviewEdits", "settings.confirmPreviewEdits")}</SettingGroup><SpellCheckPreferencesPanel store={store} scope={scope}/><ManagerEntry manager="shortcuts" title={t(managerDefinitions.shortcuts.title)} description={t(managerDefinitions.shortcuts.description)} onOpen={() => openManager("shortcuts")}/><ManagerEntry manager="dictionaries" title={t(managerDefinitions.dictionaries.title)} description={t(managerDefinitions.dictionaries.description)} onOpen={() => openManager("dictionaries")}/></> : <SettingGroup title={t("settings.group.editorAdvanced")}>{row("autoEnvironmentLabels", "settings.autoEnvironmentLabels")}{row("warnIncompatibleEnvironmentConversion", "settings.warnIncompatibleEnvironmentConversion")}{row("showPreviewMetrics", "settings.showPreviewMetrics")}</SettingGroup>}</div>;
     if (category === "tools") return <div className="settings-page"><h2>{t("settings.category.tools")}</h2><ImageSettingsPanel store={store} scope={scope} level={level}/><TableSettingsPanel store={store} scope={scope} level={level}/></div>;
     if (category === "filter") return <div className="settings-page"><h2>{t("settings.category.filter")}</h2>{level === "basic" && <SettingGroup title={t("settings.group.filterBasics")}><p>{t("settings.filterGroupsHint")}</p>{scope === "project" && <p>{t("settings.globalOnly")}</p>}{(["blockType", "location", "file", "properties"] as const).map((group) => { const visible = store.global("visibleFilterGroups"); return <label className="preference-row" key={group}><span><strong>{t(`filter.${group}`)}</strong></span><input type="checkbox" disabled={scope === "project"} checked={visible.includes(group)} onChange={(event) => void store.set("visibleFilterGroups", event.target.checked ? [...visible, group] : visible.filter((item) => item !== group))}/></label>; })}</SettingGroup>}</div>;
-    if (category === "projectBuild") return <div className="settings-page"><h2>{t("settings.category.projectBuild")}</h2>{level === "basic" ? <><HistorySettingsPanel store={store} scope={scope} level={level}/><SettingGroup title={t("settings.group.buildBasics")}>{row("engine", "settings.engine", [["pdflatex", "pdfLaTeX"], ["xelatex", "XeLaTeX"], ["lualatex", "LuaLaTeX"]])}<p>{t("settings.mainFileHint")}</p><p>{t("settings.buildUnavailable")}</p></SettingGroup></> : <><HistorySettingsPanel store={store} scope={scope} level={level}/><ManagerEntry title={t(managerDefinitions.blockEnvironments.title)} description={t(managerDefinitions.blockEnvironments.description)} onOpen={() => openManager("blockEnvironments")}/><ManagerEntry title={t(managerDefinitions.styleResources.title)} description={t(managerDefinitions.styleResources.description)} onOpen={() => openManager("styleResources")}/><ManagerEntry title={t(managerDefinitions.toolchain.title)} description={t(managerDefinitions.toolchain.description)} onOpen={() => openManager("toolchain")}/></>}</div>;
-    return <div className="settings-page"><h2>{t("settings.category.ai")}</h2>{level === "basic" ? <SettingGroup title={t("settings.group.aiBasics")}><p>{t("settings.aiPrivacyHint")}</p>{row("aiDefaultMode", "settings.aiDefaultMode", [["chat", "ai.copilot"], ["codex", "ai.codex"]])}{row("aiPermissionMode", "settings.aiPermissionMode", [["ask", "ai.permission.ask"], ["auto", "ai.permission.auto"], ["full", "ai.permission.full"]])}<div className="ai-phase-card"><strong>{t("settings.aiChangeReview")}</strong><p>{t("settings.aiChangeReviewDetails")}</p></div></SettingGroup> : <ManagerEntry title={t(managerDefinitions.aiSkills.title)} description={t(managerDefinitions.aiSkills.description)} onOpen={() => openManager("aiSkills")}/>}</div>;
+    if (category === "projectBuild") return <div className="settings-page"><h2>{t("settings.category.projectBuild")}</h2>{level === "basic" ? <><HistorySettingsPanel store={store} scope={scope} level={level}/><SettingGroup title={t("settings.group.buildBasics")}>{row("engine", "settings.engine", [["pdflatex", "pdfLaTeX"], ["xelatex", "XeLaTeX"], ["lualatex", "LuaLaTeX"]])}<p>{t("settings.mainFileHint")}</p></SettingGroup></> : <><HistorySettingsPanel store={store} scope={scope} level={level}/><ManagerEntry manager="blockEnvironments" title={t(managerDefinitions.blockEnvironments.title)} description={t(managerDefinitions.blockEnvironments.description)} onOpen={() => openManager("blockEnvironments")}/><ManagerEntry manager="previewCommands" title={t(managerDefinitions.previewCommands.title)} description={t(managerDefinitions.previewCommands.description)} onOpen={() => openManager("previewCommands")}/><ManagerEntry manager="styleResources" title={t(managerDefinitions.styleResources.title)} description={t(managerDefinitions.styleResources.description)} onOpen={() => openManager("styleResources")}/><ManagerEntry manager="toolchain" title={t(managerDefinitions.toolchain.title)} description={t(managerDefinitions.toolchain.description)} onOpen={() => openManager("toolchain")}/></>}</div>;
+    return <div className="settings-page"><h2>{t("settings.category.ai")}</h2>{level === "basic" ? <SettingGroup title={t("settings.group.aiBasics")}><p>{t("settings.aiPrivacyHint")}</p>{row("aiDefaultMode", "settings.aiDefaultMode", [["chat", "ai.copilot"], ["codex", "ai.codex"]])}{row("aiPermissionMode", "settings.aiPermissionMode", [["ask", "ai.permission.ask"], ["auto", "ai.permission.auto"], ["full", "ai.permission.full"]])}<div className="ai-phase-card"><strong>{t("settings.aiChangeReview")}</strong><p>{t("settings.aiChangeReviewDetails")}</p></div></SettingGroup> : <ManagerEntry manager="aiSkills" title={t(managerDefinitions.aiSkills.title)} description={t(managerDefinitions.aiSkills.description)} onOpen={() => openManager("aiSkills")}/>}</div>;
   };
 
   const renderManager = () => {
     if (!manager) return null;
-    if (manager === "themes") return <ThemeSettingsPanel store={store} showActiveTheme={false}/>;
-    if (manager === "dictionaries") return <SpellCheckSettingsPanel store={store}/>;
-    if (manager === "shortcuts") return renderShortcutManager();
+    if (manager === "themes") return <ThemeSettingsPanel store={store} showActiveTheme={false} toolbarTarget={themeToolbarTarget}/>;
+    if (manager === "dictionaries") return <SpellCheckSettingsPanel store={store} toolbarTarget={dictionaryToolbarTarget}/>;
+    if (manager === "shortcuts") return <ShortcutManager store={store} scope={scope}/>;
     if (manager === "blockEnvironments") return <div className="settings-environments"><EnvironmentManager definitions={configured.length ? includeNewBuiltInEnvironments(configured) : DEFAULT_ENVIRONMENTS} onChange={(next) => void store.set("environments", next, scope)} toolbarTarget={environmentToolbarTarget}/></div>;
-    if (manager === "styleResources") return <StyleResourcesPanel/>;
-    if (manager === "toolchain") return <LatexToolchainSettingsPanel store={store}/>;
-    return <AISkillsSettingsPanel onEditingChange={setManagerDirty}/>;
+    if (manager === "previewCommands") return <DirectiveManager definitions={includeNewBuiltInDirectives(configuredDirectives)} onChange={(next) => void store.set("previewDirectives", next, scope)} toolbarTarget={directiveToolbarTarget}/>;
+    if (manager === "styleResources") return <StyleResourcesManager toolbarTarget={styleResourceToolbarTarget}/>;
+    if (manager === "toolchain") return <LatexToolchainSettingsPanel store={store} toolbarTarget={toolchainToolbarTarget}/>;
+    return <AISkillsSettingsPanel onEditingChange={setManagerDirty} toolbarTarget={aiSkillsToolbarTarget}/>;
   };
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.key !== "Escape") return;
-      if (capture) setCapture(undefined);
-      else if (overflowOpen) setOverflowOpen(false);
+      if (overflowOpen) setOverflowOpen(false);
       else if (manager) backToSettings();
       else requestClose();
     };
     const onPointerDown = (event: PointerEvent) => { if (overflowOpen && !overflowRef.current?.contains(event.target as Node)) setOverflowOpen(false); };
     window.addEventListener("keydown", onKeyDown); window.addEventListener("pointerdown", onPointerDown);
     return () => { window.removeEventListener("keydown", onKeyDown); window.removeEventListener("pointerdown", onPointerDown); };
-  }, [capture, overflowOpen, manager, managerDirty, onClose]);
+  }, [overflowOpen, manager, managerDirty, onClose]);
 
 
   return <div className="settings-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget) requestClose(); }}><section className={`preferences-dialog${manager ? " preferences-dialog-manager" : ""}`} role="dialog" aria-modal="true" aria-label={t("activity.settings")}>
     {manager ? <>
-      <header className="settings-manager-dialog-header">
+      <header className={`settings-manager-dialog-header${manager === "styleResources" ? " settings-manager-style-resources-header" : manager === "blockEnvironments" || manager === "previewCommands" ? " settings-manager-block-environments-header" : manager === "toolchain" ? " settings-manager-toolchain-header" : ["themes", "dictionaries", "shortcuts", "aiSkills"].includes(manager) ? " settings-manager-simple-header" : ""}`}>
         <button type="button" className="settings-manager-return" aria-label={t("settings.backToSettings")} title={t("settings.backToSettings")} onClick={backToSettings}><svg aria-hidden="true" viewBox="0 0 24 24"><path d="M19 12H5m7 7-7-7 7-7"/></svg></button>
-        {manager === "blockEnvironments" && <div className="environment-manager-toolbar-portal" ref={setEnvironmentToolbarTarget}/>}
-        {manager === "blockEnvironments" && projectScopeAvailable && <select aria-label={t("settings.scope")} value={scope} onChange={(event) => setScope(event.target.value as "global" | "project")}><option value="global">{t("settings.global")}</option><option value="project">{t("settings.project")}</option></select>}
-        <button type="button" className="settings-close" aria-label={t("common.close")} onClick={requestClose}>X</button>
+        {manager === "themes" && <h1 className="settings-manager-dialog-title">{t("settings.theme")}</h1>}
+        {manager === "dictionaries" && <h1 className="settings-manager-dialog-title">{t("settings.spellcheck")}</h1>}
+        {manager === "shortcuts" && <h1 className="settings-manager-dialog-title">{t("settings.manager.shortcuts")}</h1>}
+        {manager === "aiSkills" && <h1 className="settings-manager-dialog-title">{t("settings.aiSkillsTitle")}</h1>}
+        {manager === "blockEnvironments" && <h1 className="settings-manager-dialog-title">{t("environment.manager")}</h1>}
+        {manager === "previewCommands" && <h1 className="settings-manager-dialog-title">{t("settings.manager.previewCommands")}</h1>}
+        {manager === "toolchain" && <h1 className="settings-manager-dialog-title">{t("settings.localToolchain")}</h1>}
+        {manager === "blockEnvironments" && <div className="settings-manager-header-tools"><div className="environment-manager-toolbar-portal" ref={setEnvironmentToolbarTarget}/>{projectScopeAvailable && <select aria-label={t("settings.scope")} value={scope} onChange={(event) => setScope(event.target.value as "global" | "project")}><option value="global">{t("settings.global")}</option><option value="project">{t("settings.project")}</option></select>}</div>}
+        {manager === "previewCommands" && <div className="settings-manager-header-tools"><div className="manager-toolbar-portal" ref={setDirectiveToolbarTarget}/>{projectScopeAvailable && <select aria-label={t("settings.scope")} value={scope} onChange={(event) => setScope(event.target.value as "global" | "project")}><option value="global">{t("settings.global")}</option><option value="project">{t("settings.project")}</option></select>}</div>}
+        {manager === "toolchain" && <div className="settings-manager-header-tools"><div className="toolchain-manager-toolbar-portal" ref={setToolchainToolbarTarget}/></div>}
+        {manager === "themes" && <div className="settings-manager-header-tools"><div className="manager-toolbar-portal" ref={setThemeToolbarTarget}/></div>}
+        {manager === "dictionaries" && <div className="settings-manager-header-tools"><div className="manager-toolbar-portal" ref={setDictionaryToolbarTarget}/></div>}
+        {manager === "shortcuts" && <div className="settings-manager-header-tools">{projectScopeAvailable && <select aria-label={t("settings.scope")} value={scope} onChange={(event) => setScope(event.target.value as "global" | "project")}><option value="global">{t("settings.global")}</option><option value="project">{t("settings.project")}</option></select>}</div>}
+        {manager === "aiSkills" && <div className="settings-manager-header-tools"><div className="manager-toolbar-portal" ref={setAiSkillsToolbarTarget}/></div>}
+        {manager === "styleResources" && <div className="style-resource-toolbar-portal" ref={setStyleResourceToolbarTarget}/>}
+        <button type="button" className="settings-close" aria-label={t("common.close")} onClick={requestClose}>{["styleResources", "blockEnvironments", "toolchain", "themes", "dictionaries", "shortcuts", "aiSkills"].includes(manager) ? "×" : "X"}</button>
       </header>
-      <main className={`settings-manager-dialog-main${manager === "blockEnvironments" ? " settings-manager-environments" : ""}`} ref={mainRef}>
+      <main className={`settings-manager-dialog-main${manager === "blockEnvironments" ? " settings-manager-environments" : manager === "previewCommands" ? " settings-manager-directives" : manager === "styleResources" ? " settings-manager-style-resources" : manager === "shortcuts" ? " settings-manager-shortcuts" : ""}`} ref={mainRef}>
         <div className="settings-manager-page">
-          {manager !== "blockEnvironments" && projectScopeAvailable && <p className="settings-manager-scope-note">{t("settings.globalOnly")}</p>}
+          {manager !== "blockEnvironments" && manager !== "previewCommands" && manager !== "shortcuts" && projectScopeAvailable && <p className="settings-manager-scope-note">{t("settings.globalOnly")}</p>}
           {renderManager()}
         </div>
       </main>
     </> : <>
       <header className="settings-dialog-header"><h1>{t("activity.settings")}</h1>
-        <label className="settings-search"><span className="visually-hidden">{t("settings.searchPlaceholder")}</span><input value={search} onChange={(event) => setSearch(event.target.value)} placeholder={t("settings.searchPlaceholder")}/>{search && <button type="button" aria-label={t("settings.clearSearch")} onClick={() => setSearch("")}>X</button>}</label>
+        <label className="settings-search"><span className="visually-hidden">{t("settings.searchPlaceholder")}</span><span className="settings-search-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><circle cx="10.8" cy="10.8" r="6.3"/><path d="m15.5 15.5 4.2 4.2"/></svg></span><input value={search} onChange={(event) => setSearch(event.target.value)} placeholder={t("settings.searchPlaceholder")}/>{search && <button type="button" aria-label={t("settings.clearSearch")} onClick={() => setSearch("")}>X</button>}</label>
         {projectScopeAvailable && <select aria-label={t("settings.scope")} value={scope} onChange={(event) => setScope(event.target.value as "global" | "project")}><option value="global">{t("settings.global")}</option><option value="project">{t("settings.project")}</option></select>}
         <div className="settings-level-switch" role="group" aria-label={t("settings.settingLevel")}><button type="button" className={level === "basic" ? "active" : ""} onClick={() => setLevel("basic")}>{t("settings.basic")}</button><button type="button" className={level === "advanced" ? "active" : ""} onClick={() => setLevel("advanced")}>{t("settings.advanced")}</button></div>
         <div className="settings-header-actions">
@@ -597,7 +617,7 @@ export function SettingsDialog({ onClose, initial = "general" }: { onClose(): vo
         {store.error() && <p role="alert">{t("settings.saveFailed")} {store.error()}</p>}
         </main>
       </div>
-      <footer>{t("settings.saved")}{scope === "project" && <span>{t("settings.projectResetHint")}</span>}</footer>
+      <footer><span className="settings-save-status"><svg viewBox="0 0 20 20" aria-hidden="true"><path d="m4 10.5 4 4 8-9"/></svg>{t("settings.saved")}</span>{scope === "project" && <span>{t("settings.projectResetHint")}</span>}</footer>
     </>}
   </section></div>;
 }

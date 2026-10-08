@@ -20,6 +20,7 @@ export interface AIProjectSkill {
   name: string;
   content: string;
   source: "built-in" | "custom" | "customized";
+  enabled: boolean;
 }
 export interface AIModelOption {
   id: string; name: string; description?: string; isDefault: boolean;
@@ -61,6 +62,8 @@ export interface AIConversation {
   codexToolsVersion?: number;
   copilotSessionId?: string;
   copilotToolsVersion?: number;
+  /** Current request, so reopening the chat can reconnect its Stop action. */
+  activeTaskId?: string;
   messages: AIMessage[];
 }
 export interface AIContextSnapshotFile { path: string; content: string }
@@ -222,10 +225,12 @@ export interface LatexReference {
 
 /** 编译器和编辑器共用的诊断格式，file 始终使用项目相对路径。 */
 export interface Diagnostic {
-  severity: "error" | "warning" | "info";
-  source: "latex" | "latexmk" | "bibtex" | "biber" | "system";
+  severity: "fatal" | "error" | "warning" | "notice" | "info";
+  source: "latex" | "latexmk" | "bibtex" | "biber" | "system" | "engine" | "package" | "class" | "filesystem" | "external";
+  category?: "syntax" | "command" | "environment" | "package" | "file" | "reference" | "citation" | "bibliography" | "font" | "layout" | "encoding" | "engine" | "build" | "external";
   code?: string;
   message: string;
+  occurrences?: number;
   file?: string;
   line?: number;
   column?: number;
@@ -247,6 +252,8 @@ export interface CompileResult {
   pdfPath?: string;
   logPath?: string;
   diagnostics: Diagnostic[];
+  /** Project-relative files read by the TeX engine, recorded from its .fls file when available. */
+  recorderInputs?: string[];
   stdoutTail: string;
   stderrTail: string;
 }

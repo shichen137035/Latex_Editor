@@ -1,7 +1,7 @@
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { createWriteStream, existsSync, readdirSync } from "node:fs";
-import { access, mkdir, realpath } from "node:fs/promises";
+import { access, mkdir, readFile, realpath, stat } from "node:fs/promises";
 import { basename, dirname, extname, isAbsolute, relative, resolve, sep } from "node:path";
 import {
   AppError, type CompileInput, type CompileResult, type CompilerProfile, type Project, type ToolchainStatus, type LatexToolchain, type ToolStatus
@@ -11,6 +11,7 @@ import type { Clock, IdGenerator } from "@latex-editor/domain";
 
 const maximumTailLength = 64 * 1024;
 const maximumTimeoutMs = 300_000;
+const maximumReadableLogBytes = 32 * 1024 * 1024;
 
 const delimiter = process.platform === "win32" ? ";" : ":";
 
@@ -155,6 +156,40 @@ function appendTail(current: string, chunk: Buffer): string {
   return next.length <= maximumTailLength ? next : next.slice(-maximumTailLength);
 }
 
+async function readRecorderInputs(root: string, mainFile: string, args: string[]): Promise<string[]> {
+  const sourcePath = resolve(root, mainFile);
+  const jobName = basename(sourcePath, extname(sourcePath));
+  const readDirectory = (flags: string[]): string | undefined => {
+    for (let index = 0; index < args.length; index++) {
+      const argument = args[index]!;
+      const inline = flags.find((flag) => argument.toLowerCase().startsWith(`${flag}=`));
+      if (inline) return argument.slice(inline.length + 1);
+      if (flags.some((flag) => argument.toLowerCase() === flag) && args[index + 1]) return args[index + 1];
+    }
+    return undefined;
+  };
+  const outputDirectory = readDirectory(["-outdir", "--outdir", "-output-directory", "--output-directory"]);
+  const auxiliaryDirectory = readDirectory(["-auxdir", "--auxdir", "-aux-directory", "--aux-directory"]);
+  const candidateDirectories = [dirname(sourcePath), ...(outputDirectory ? [resolve(root, outputDirectory)] : []), ...(auxiliaryDirectory ? [resolve(root, auxiliaryDirectory)] : []), root];
+  let contents: string | undefined;
+  for (const directory of candidateDirectories) {
+    try { contents = await readFile(resolve(directory, `${jobName}.fls`), "utf8"); break; }
+    catch (error) { if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error; }
+  }
+  if (!contents) return [];
+  const inputs = new Set<string>();
+  for (const line of contents.split(/\r?\n/)) {
+    if (!line.startsWith("INPUT ")) continue;
+    const path = line.slice(6).trim();
+    if (!path) continue;
+    const absolutePath = isAbsolute(path) ? resolve(path) : resolve(root, path);
+    const relativePath = relative(root, absolutePath);
+    if (!relativePath || relativePath === ".." || relativePath.startsWith(`..${sep}`) || isAbsolute(relativePath)) continue;
+    inputs.add(relativePath.split(sep).join("/"));
+  }
+  return [...inputs].sort();
+}
+
 async function terminateProcessTree(child: ChildProcessWithoutNullStreams): Promise<void> {
   if (child.pid === undefined || child.killed) return;
   if (process.platform === "win32") {
@@ -255,6 +290,15 @@ export class LatexmkCompilerService {
     return this.#compileAtRoot(root, mainFile, input);
   }
 
+  async readLog(projectId: string, compilationId: string): Promise<string> {
+    if (!/^[0-9a-f-]{36}$/i.test(compilationId)) throw new AppError("INVALID_RELATIVE_PATH", "Invalid compilation id");
+    const logPath = await this.#files.resolveFilePath(projectId, `.latex-editor/build/${compilationId}.log`, true);
+    const metadata = await stat(logPath);
+    if (!metadata.isFile()) throw new AppError("FILE_NOT_FOUND", "Compilation log is unavailable");
+    if (metadata.size > maximumReadableLogBytes) throw new AppError("RESOURCE_SCHEMA_INVALID", "Compilation log is larger than the 32 MB viewing limit");
+    return readFile(logPath, "utf8");
+  }
+
   async #compileAtRoot(root: string, mainFile: string, input: { engine?: CompileInput["engine"]; timeoutMs?: number }): Promise<CompileResult> {
     // Reject shell escape even if a profile was edited outside the resource manager.
 
@@ -275,13 +319,20 @@ export class LatexmkCompilerService {
     await mkdir(buildLogDirectory, { recursive: true });
     const logPath = resolve(buildLogDirectory, `${compilationId}.log`);
     const logStream = createWriteStream(logPath, { encoding: "utf8", flags: "w" });
+    const logFinished = new Promise<void>((done) => logStream.once("finish", () => done()));
     const engineFlag = input.engine === "xelatex" ? "-xelatex" : input.engine === "lualatex" ? "-lualatex" : "-pdf";
-    const args = [...profile.arguments.filter((arg) => !["-pdf", "-xelatex", "-lualatex"].includes(arg)), engineFlag, mainFile];
+    const args = profile.arguments.filter((arg) => !["-pdf", "-xelatex", "-lualatex"].includes(arg));
+    if (!args.some((arg) => arg.toLowerCase() === "-file-line-error")) args.push("-file-line-error");
+    if (!args.some((arg) => arg.toLowerCase().startsWith("-interaction="))) args.push("-interaction=nonstopmode");
+    if (!args.some((arg) => arg.toLowerCase().startsWith("-synctex="))) args.push("-synctex=1");
+    if (!args.some((arg) => arg.toLowerCase() === "-recorder")) args.push("-recorder");
+    args.push(engineFlag, mainFile);
+    const environment = profileEnvironment(profile.executable);
     const child = spawn(profile.executable, args, {
       cwd: root,
       shell: false,
       windowsHide: true,
-      env: profileEnvironment(profile.executable)
+      env: environment
     });
     const active: ActiveCompilation = { child };
     this.#active.set(compilationId, active);
@@ -313,21 +364,35 @@ export class LatexmkCompilerService {
       this.#active.delete(compilationId);
       logStream.end();
     });
+    await logFinished;
 
     const finished = this.#clock.now();
     const pdfPath = resolve(root, `${basename(mainFile, extname(mainFile))}.pdf`);
     let pdfExists = true;
     try { await access(pdfPath); } catch { pdfExists = false; }
     const status = active.requestedState ?? (exitCode === 0 && pdfExists ? "succeeded" : "failed");
-    const diagnostics = parseLatexDiagnostics(`${stdoutTail}\n${stderrTail}`, root, mainFile);
-    if (status === "failed" && diagnostics.every((item) => item.severity !== "error")) {
+    const rawLog = await readFile(logPath, "utf8");
+    const processDiagnostics = parseLatexDiagnostics(rawLog, root, mainFile);
+    const sourcePath = resolve(root, mainFile);
+    const jobName = basename(sourcePath, extname(sourcePath));
+    const jobDirectory = dirname(sourcePath);
+    const componentLogs = await Promise.all([".log", ".blg"].map(async (extension) => {
+      try { return await readFile(resolve(jobDirectory, `${jobName}${extension}`), "utf8"); }
+      catch (error) { if ((error as NodeJS.ErrnoException).code === "ENOENT") return ""; throw error; }
+    }));
+    const hasFinalToolLogs = componentLogs.some(Boolean);
+    const recorderInputs = await readRecorderInputs(root, mainFile, args);
+    const finalDiagnostics = hasFinalToolLogs ? parseLatexDiagnostics(componentLogs.join("\n"), root, mainFile) : processDiagnostics;
+    const toolDiagnostics = hasFinalToolLogs ? processDiagnostics.filter((item) => ["latexmk", "bibtex", "biber", "system", "filesystem", "external"].includes(item.source)) : [];
+    const diagnostics = [...new Map([...finalDiagnostics, ...toolDiagnostics].map((item) => [`${item.severity}|${item.source}|${item.code ?? ""}|${item.message}|${item.file ?? ""}|${item.line ?? ""}`, item])).values()];
+    if (status === "failed" && diagnostics.every((item) => item.severity !== "error" && item.severity !== "fatal")) {
       diagnostics.push({
-        severity: "error", source: "latexmk", code: "COMPILATION_FAILED",
+        severity: "error", source: "latexmk", category: "build", code: "COMPILATION_FAILED",
         message: pdfExists ? `latexmk exited with code ${exitCode ?? "unknown"}` : "Compilation did not produce the expected PDF"
       });
     }
-    if (status === "timedOut") diagnostics.push({ severity: "error", source: "system", code: "COMPILATION_TIMEOUT", message: `Compilation exceeded ${timeoutMs} ms` });
-    if (status === "cancelled") diagnostics.push({ severity: "info", source: "system", code: "COMPILATION_CANCELLED", message: "Compilation was cancelled" });
+    if (status === "timedOut") diagnostics.push({ severity: "fatal", source: "system", category: "build", code: "COMPILATION_TIMEOUT", message: `Compilation exceeded ${timeoutMs} ms` });
+    if (status === "cancelled") diagnostics.push({ severity: "info", source: "system", category: "build", code: "COMPILATION_CANCELLED", message: "Compilation was cancelled" });
 
     return {
       compilationId,
@@ -340,6 +405,7 @@ export class LatexmkCompilerService {
       ...(pdfExists ? { pdfPath } : {}),
       logPath,
       diagnostics,
+      ...(recorderInputs.length ? { recorderInputs } : {}),
       stdoutTail,
       stderrTail
     };

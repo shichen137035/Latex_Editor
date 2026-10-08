@@ -1,5 +1,6 @@
 import type { EnvironmentDefinition } from "@latex-editor/editor-core/preview/types";
 import type { IdGenerator } from "@latex-editor/domain";
+import type { PreviewDirectiveDefinition } from "@latex-editor/contracts";
 import { ProjectBlockGraphService } from "./block-graph-service.js";
 import { ProjectDocumentStructureService, type DocumentStructureFilePort } from "./document-structure-service.js";
 import { ProjectRelationService } from "./relation-service.js";
@@ -22,10 +23,11 @@ export function createProjectBlockServices(options: {
   files: DocumentStructureFilePort;
   ids: IdGenerator;
   definitions?: (projectId: string) => Promise<EnvironmentDefinition[]>;
+  directives?: (projectId: string) => Promise<PreviewDirectiveDefinition[]>;
   now?: () => number;
 }): ProjectBlockServices {
   const blockGraph = new ProjectBlockGraphService(options.files, options.ids);
-  const structure = new ProjectDocumentStructureService(options.files, blockGraph, options.ids, options.definitions);
+  const structure = new ProjectDocumentStructureService(options.files, blockGraph, options.ids, options.definitions, options.directives);
   const relations = new ProjectRelationService(blockGraph, options.ids, options.now);
   return { blockGraph, structure, relations };
 }

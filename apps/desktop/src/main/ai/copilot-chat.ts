@@ -21,6 +21,16 @@ export async function createTeXWeaveCompileTool(handler: (arguments_: { mainFile
   });
 }
 
+export async function createTeXWeaveSetMainFileTool(handler: (path: string) => Promise<string>): Promise<Tool<Record<string, unknown>>> {
+  const { defineTool } = await import("@github/copilot-sdk");
+  return defineTool<Record<string, unknown>>("texweave_set_main_file", {
+    description: "Change the project's configured main TeX file to an existing project file. TeXWeave will ask the user to approve the change.",
+    parameters: { type: "object", properties: { path: { type: "string", description: "Project-relative path to an existing .tex file." } }, required: ["path"], additionalProperties: false },
+    skipPermission: true,
+    handler: (input) => handler(typeof input.path === "string" ? input.path : "")
+  });
+}
+
 /** GitHub Copilot Chat runtime, used against TeXWeave's reviewable project snapshot. */
 export class CopilotChatService {
   readonly #home: string;
@@ -29,6 +39,7 @@ export class CopilotChatService {
   readonly #sessions = new Map<string, CopilotSession>();
   readonly #sessionModels = new Map<string, string>();
   readonly #workspacePermissions = new Map<string, { mode: AIPermissionMode; request?: (action: AIToolApproval) => Promise<boolean> }>();
+  readonly #workspaceTools = new Map<string, Map<string, Tool<Record<string, unknown>>>>();
   #auth?: GetAuthStatusResponse;
   #installing: Promise<void> | undefined;
   #statusPending: Promise<AIStatus> | undefined;
@@ -160,6 +171,8 @@ export class CopilotChatService {
     // Cached sessions consult this mutable policy on each tool call. A new turn
     // must not retain the previous permission level or approval callback.
     this.#workspacePermissions.set(workingDirectory, { mode: permissionMode, ...(requestApproval ? { request: requestApproval } : {}) });
+    // Cached SDK sessions must dispatch into this turn's block API and snapshot tracker.
+    this.#workspaceTools.set(workingDirectory, new Map(tools.map(tool => [tool.name, tool])));
     const client = await this.#getClient();
     const nextModel = model ?? "auto";
     const models = this.#models ?? await this.listModels();
@@ -213,7 +226,11 @@ export class CopilotChatService {
       },
       ...(model ? { model } : {}),
       ...reasoningOptions,
-      ...(tools.length ? { tools } : {})
+      ...(tools.length ? { tools: tools.map(tool => ({ ...tool, handler: ((args, invocation) => {
+        const current = this.#workspaceTools.get(workingDirectory)?.get(tool.name);
+        if (!current?.handler) throw new Error(`Tool ${tool.name} is unavailable in this turn.`);
+        return current.handler(args, invocation);
+      }) as NonNullable<Tool<Record<string, unknown>>["handler"]> })) } : {})
     };
     if (sessionId && !resetSession) {
       try {
@@ -246,6 +263,7 @@ export class CopilotChatService {
     this.#sessions.clear();
     this.#sessionModels.clear();
     this.#workspacePermissions.clear();
+    this.#workspaceTools.clear();
     if (!this.#client) return;
     await this.#client.stop().catch(() => undefined);
     this.#client = undefined;

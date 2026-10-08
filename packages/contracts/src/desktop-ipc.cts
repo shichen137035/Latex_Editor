@@ -1,4 +1,4 @@
-import type { AIStatus, AIModelOption, AIConversation, AIChangeSet, AIContextSnapshotFile, AIProjectSkill, AIMode, AIAttachment, AddSemanticBlockInput, BlockCreationValidation, BlockGraphSnapshot, BlockId, BlockRangeMappingResult, BlockReconciliationResult, CommandMetadata, CompileResult, PdfExportResult, CreateSemanticBlockInput, CreateUserBlockInput, DependencyCycle, DictionaryPackage, FileWriteResult, GraphDiagnostic, GraphTraversalOptions, GraphTraversalResult, ImportedImage, LogicalRelation, MapUserBlockRangesInput, Project, ProjectHistoryDetails, ProjectHistoryEntry, ProjectHistoryStorage, ProjectTreeNode, ReconcileParsedBlocksInput, RelationDirection, RelationMutationResult, RelationNeighborhood, RelationValidation, ResolvedGraphic, SemanticBlock, SettingsSnapshot, PreferenceKey, LatexToolchain, StyleResource, ThemeDefinition, SnapshotReason, SpellCheckMode, SpellCheckStatus, StructuralDependencyOverlap, StructuralHistoryState, StructureWarning, SyncTexPdfPosition, SyncTexSourcePosition, TextFileContent, UpdateSemanticBlockInput, ProjectReferenceLink, ReferenceLibraryEntry, ReferenceLibrarySnapshot, ReferenceImportResult, ReferenceTag } from "./index.js" with { "resolution-mode": "import" };
+import type { AIStatus, AIModelOption, AIConversation, AIChangeSet, AIContextSnapshotFile, AIProjectSkill, AIMode, AIAttachment, AddSemanticBlockInput, BlockCreationValidation, BlockGraphSnapshot, BlockId, BlockRangeMappingResult, BlockReconciliationResult, CommandMetadata, CompileResult, PdfExportResult, CreateSemanticBlockInput, CreateUserBlockInput, DependencyCycle, DictionaryPackage, FileWriteResult, GraphDiagnostic, GraphTraversalOptions, GraphTraversalResult, ImportedImage, LogicalRelation, MapUserBlockRangesInput, Project, ProjectHistoryDetails, ProjectHistoryEntry, ProjectHistoryStorage, ProjectTreeNode, ReconcileParsedBlocksInput, RelationDirection, RelationMutationResult, RelationNeighborhood, RelationValidation, ResolvedGraphic, SemanticBlock, SettingsSnapshot, PreferenceKey, LatexToolchain, StyleResource, StyleResourceFile, ThemeDefinition, SnapshotReason, SpellCheckMode, SpellCheckStatus, StructuralDependencyOverlap, StructuralHistoryState, StructureWarning, SyncTexPdfPosition, SyncTexSourcePosition, TextFileContent, UpdateSemanticBlockInput, ProjectReferenceLink, ReferenceLibraryEntry, ReferenceLibrarySnapshot, ReferenceImportResult, ReferenceTag } from "./index.js" with { "resolution-mode": "import" };
 
 import type { BlockApiResult, DocumentBlockApi, DocumentStructure, AIApprovalRequest } from "./index.js" with { "resolution-mode": "import" };
 
@@ -13,6 +13,8 @@ export interface InvokeEndpoint<F> {
 }
 const invoke = <F extends (...args: never[]) => Promise<unknown>>(channel: string): InvokeEndpoint<F> => ({ channel });
 type ProjectScoped<F extends (...args: never[]) => Promise<unknown>> = (projectId: string, ...args: Parameters<F>) => ReturnType<F>;
+export type UnsavedDialogLabels = { title: string; message: string; detail: string; buttons: [string, string, string] };
+export type UnsavedDialogChoice = "save" | "discard" | "cancel";
 
 /** Desktop transport contract. Existing public method and wire names remain stable. */
 export const desktopInvoke = {
@@ -57,7 +59,8 @@ export const desktopInvoke = {
     snapshot: InvokeEndpoint<(projectId: string) => Promise<BlockApiResult<DocumentStructure>>>;
   },
   lifecycle: {
-    confirmClose: invoke<(labels: { title: string; message: string; detail: string; buttons: [string, string, string] }) => Promise<"save" | "discard" | "cancel">>("window:confirm-close"),
+    confirmClose: invoke<(labels: UnsavedDialogLabels) => Promise<UnsavedDialogChoice>>("window:confirm-close"),
+    confirmNavigation: invoke<(labels: UnsavedDialogLabels) => Promise<UnsavedDialogChoice>>("window:confirm-navigation"),
     showSaveError: invoke<(title: string, message: string) => Promise<void>>("window:save-error"),
   },
   settings: {
@@ -144,6 +147,7 @@ export const desktopInvoke = {
   },
   styleResources: {
     list: invoke<() => Promise<StyleResource[]>>("style-resources:list"),
+    readFile: invoke<(id: string, targetPath: string) => Promise<StyleResourceFile | undefined>>("style-resources:read-file"),
     create: invoke<(name: string) => Promise<StyleResource>>("style-resources:create"),
     importFiles: invoke<(paths: string[], name?: string) => Promise<StyleResource>>("style-resources:import-files"),
     importFolder: invoke<(folderPath: string) => Promise<StyleResource>>("style-resources:import-folder"),
@@ -205,6 +209,7 @@ export const desktopInvoke = {
   },
   compile: {
     run: invoke<(projectId: string, mainFile?: string) => Promise<CompileResult & { pdfDataUrl?: string }>>("compile:run"),
+    readLog: invoke<(projectId: string, compilationId: string) => Promise<string>>("compile:read-log"),
   },
   exports: {
     sourceArchive: invoke<(projectId: string, mainFile?: string) => Promise<string | undefined>>("exports:source-archive"),
@@ -226,6 +231,7 @@ export const desktopInvoke = {
     copilotModels: invoke<() => Promise<AIModelOption[] | undefined>>("ai:copilot:models"),
     skills: invoke<() => Promise<AIProjectSkill[] | undefined>>("ai:skills"),
     saveSkill: invoke<(input: { name: string; content: string; create?: boolean }) => Promise<AIProjectSkill[] | undefined>>("ai:skill:save"),
+    setSkillEnabled: invoke<(input: { name: string; enabled: boolean }) => Promise<AIProjectSkill[] | undefined>>("ai:skill:enabled"),
     conversations: invoke<(projectId?: string) => Promise<{ conversations: AIConversation[]; changeSets: AIChangeSet[] } | undefined>>("ai:conversations"),
     createConversation: invoke<(mode: AIMode, projectId?: string) => Promise<AIConversation | undefined>>("ai:conversation:create"),
     setConversationMode: invoke<(id: string, mode: AIMode) => Promise<AIConversation | undefined>>("ai:conversation:mode"),
@@ -235,8 +241,10 @@ export const desktopInvoke = {
     markChangeSetApplied: invoke<(id: string, hunkIds: string[], error?: string) => Promise<AIChangeSet | undefined>>("ai:change-set:applied"),
     approvals: invoke<(projectId?: string) => Promise<AIApprovalRequest[]>>("ai:approvals"),
     resolveApproval: invoke<(id: string, allow: boolean) => Promise<void>>("ai:approval:resolve"),
-    send: invoke<(input: { conversationId: string; projectId?: string; content: string; contextText?: string; overrides?: AIContextSnapshotFile[]; attachmentIds?: string[] }) => Promise<{ conversation: AIConversation; taskId: string } | undefined>>("ai:send"),
+    send: invoke<(input: { conversationId: string; taskId?: string; projectId?: string; content: string; contextText?: string; overrides?: AIContextSnapshotFile[]; attachmentIds?: string[] }) => Promise<{ conversation: AIConversation; taskId: string } | undefined>>("ai:send"),
     pickAttachments: invoke<(projectId: string) => Promise<AIAttachment[]>>("ai:attachments:pick"),
+    addPastedImage: invoke<(projectId: string, mimeType: string, data: Uint8Array) => Promise<AIAttachment>>("ai:attachments:add-pasted-image"),
+    addPastedFile: invoke<(projectId: string, name: string, data: Uint8Array) => Promise<AIAttachment>>("ai:attachments:add-pasted-file"),
     cancel: invoke<(taskId: string) => Promise<void>>("ai:cancel"),
   },
   synctex: {

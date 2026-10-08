@@ -33,7 +33,9 @@ export function transitionAIFile(file: AIFileChange, current: string | undefined
   if (!apply && file.hunks.some(hunk => ids.has(hunk.id) && hunk.decision === "accepted")) throw new Error("Accepted AI changes use the editor undo history.");
   const before = fileWithAppliedHunks(file);
   const after = fileWithAppliedHunks(file, hunk => hunk.decision !== "rejected" && (ids.has(hunk.id) ? apply : isHunkApplied(hunk)));
-  if (before === after) return current;
+  // Retry after a successful edit whose acknowledgement failed is safe. A
+  // stale applied flag must never accept an edit the user has since undone.
+  if (current === after || (!apply && before === after)) return current;
   if (current !== before) throw new Error(`AI_CHANGE_CONFLICT:${file.path}`);
   return after;
 }

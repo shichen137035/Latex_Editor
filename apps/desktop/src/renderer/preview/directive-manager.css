@@ -1,0 +1,33 @@
+.directive-manager { min-height: 0; height: 100%; display: grid; grid-template-columns: minmax(320px, 420px) minmax(0, 1fr); border-top: 1px solid var(--color-border); }
+.directive-toolbar { display: flex; justify-content: flex-end; padding: 12px 18px; grid-column: 1 / -1; }
+.directive-add { padding: 9px 16px; border-radius: 8px; background: var(--color-primary); color: white; font-weight: 700; }
+.directive-list-pane { min-height: 0; display: flex; flex-direction: column; border-right: 1px solid var(--color-border); background: var(--color-bg-subtle); }
+.directive-list-filters { display: grid; grid-template-columns: minmax(0, 1fr) 115px; gap: 8px; padding: 14px; border-bottom: 1px solid var(--color-border); }
+.directive-list-filters input, .directive-list-filters select, .directive-editor-fields input:not([type="color"]), .directive-editor-fields select { width: 100%; min-width: 0; height: 38px; padding: 0 10px; border: 1px solid var(--color-border); border-radius: 7px; background: var(--color-bg-panel); color: var(--color-text-primary); font: inherit; }
+.directive-list { min-height: 0; overflow: auto; padding: 8px; }
+.directive-list > button { width: 100%; display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 10px 11px; border-radius: 7px; text-align: left; }
+.directive-list > button:hover, .directive-list > button.active { background: var(--color-bg-hover); }
+.directive-list > button.active { box-shadow: inset 3px 0 var(--color-primary); }
+.directive-list > button span { min-width: 0; display: grid; gap: 3px; }
+.directive-list strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13px; }
+.directive-list small { color: var(--color-text-muted); font: 11px Consolas, monospace; }
+.directive-list em { color: var(--color-text-muted); font-size: 10px; font-style: normal; text-transform: uppercase; }
+.directive-list em.enabled { color: #168b72; }
+.directive-list p { padding: 10px; color: var(--color-text-muted); }
+.directive-editor-pane { min-height: 0; overflow: auto; padding: 26px 34px; }
+.directive-editor-heading { display: flex; align-items: center; justify-content: space-between; gap: 20px; border-bottom: 1px solid var(--color-border); padding-bottom: 16px; }
+.directive-editor-heading small, .directive-sample > small { color: var(--color-primary); font-size: 10px; font-weight: 800; letter-spacing: .12em; text-transform: uppercase; }
+.directive-editor-heading h2 { margin: 4px 0 0; font-size: 25px; }
+.directive-switch { display: flex; align-items: center; gap: 8px; font-weight: 600; }
+.directive-editor-hint { margin: 15px 0 24px; color: var(--color-text-secondary); font-size: 12px; }
+.directive-editor-fields { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 20px; }
+.directive-editor-fields label { display: grid; gap: 7px; min-width: 0; font-size: 12px; font-weight: 700; }
+.directive-editor-fields input[type="color"] { width: 65px; height: 38px; padding: 2px; border: 1px solid var(--color-border); border-radius: 7px; background: var(--color-bg-panel); }
+.directive-error { color: #c94b4b; font-size: 11px; }
+.directive-sample { margin-top: 30px; padding: 17px; border: 1px solid var(--color-border); border-radius: 9px; }
+.directive-sample .preview-content-region { margin: 14px 0 0; }
+.directive-editor-actions { display: flex; justify-content: flex-end; margin-top: 24px; }
+.directive-editor-actions button { padding: 8px 12px; border-radius: 7px; background: var(--color-bg-hover); }
+.directive-editor-actions button.danger { color: #be4141; }
+@media (max-width: 850px) { .directive-manager { grid-template-columns: minmax(215px, 38%) minmax(0, 1fr); } .directive-list-filters { grid-template-columns: 1fr; } .directive-editor-pane { padding: 18px; } }
+@media (max-width: 580px) { .directive-editor-fields { grid-template-columns: 1fr; } }

@@ -1,0 +1,42 @@
+.outline-list {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+}
+
+.outline-list .outline-row {
+  height: 25px;
+  display: flex;
+  align-items: center;
+  min-width: 0;
+}
+
+.outline-list .outline-row:hover {
+  background: var(--color-bg-hover);
+}
+
+.outline-list .outline-toggle,
+.outline-list .outline-toggle-spacer {
+  width: 14px;
+  height: 25px;
+  flex: 0 0 14px;
+  display: grid;
+  place-items: center;
+  color: var(--color-text-secondary);
+}
+
+.outline-list .outline-toggle:hover {
+  color: var(--color-primary);
+}
+
+.outline-list .outline-title {
+  width: auto;
+  min-width: 0;
+  height: 25px;
+  flex: 1;
+  display: block;
+  overflow: hidden;
+  text-align: left;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}

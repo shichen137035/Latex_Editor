@@ -77,6 +77,27 @@ export class StyleResourceRepository {
     return undefined;
   }
 
+  async getFile(id: string, targetPath: string): Promise<StyleResourceFile | undefined> {
+    const resourceId = safeRelative(id);
+    if (resourceId.includes("/")) throw new Error("Invalid resource id");
+    const normalizedTarget = safeRelative(targetPath);
+    for (const [root, source] of [[this.#builtInRoot, "built-in"], [this.#userRoot, "user"]] as const) {
+      const resourceRoot = join(root, resourceId);
+      try {
+        const stored = await this.#readManifest(resourceRoot);
+        if (stored.id !== resourceId || stored.source !== source) continue;
+        const metadata = stored.files.find((file) => safeRelative(file.targetPath) === normalizedTarget);
+        if (metadata === undefined) continue;
+        const sourcePath = safeRelative(metadata.sourcePath);
+        return { ...metadata, sourcePath, targetPath: normalizedTarget, content: await readFile(join(resourceRoot, sourcePath), "utf8") };
+      } catch (error: unknown) {
+        if ((error as NodeJS.ErrnoException).code === "ENOENT") continue;
+        throw error;
+      }
+    }
+    return undefined;
+  }
+
   async createResource(name: string): Promise<StyleResource> {
     const id = `${safeName(name).toLocaleLowerCase()}-${randomUUID().slice(0, 8)}`;
     const resourceRoot = join(this.#userRoot, id);

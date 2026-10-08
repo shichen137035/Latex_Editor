@@ -1,13 +1,14 @@
 import { registerBlockGraphIpc } from "./block-graph-ipc.js";
 import { registerStructureIpc } from "./structure-ipc.js";
 import { registerRelationIpc } from "./relation-ipc.js";
-import { desktopInvoke, desktopEvents } from "@latex-editor/contracts/desktop-ipc";
+import { desktopInvoke, desktopEvents, type UnsavedDialogLabels, type UnsavedDialogChoice } from "@latex-editor/contracts/desktop-ipc";
 import { handleIpc, onIpc, sendIpc } from "./ipc.js";
 import { app, BrowserWindow, clipboard, dialog, Menu, shell } from "electron";
+import type { IpcMainInvokeEvent } from "electron";
 import { randomUUID } from "node:crypto";
 import { copyFile, readFile } from "node:fs/promises";
 import { extname, join, resolve } from "node:path";
-import type { AIStatus, CompileResult, PdfExportResult, Project } from "@latex-editor/contracts" with { "resolution-mode": "import" };
+import type { AIStatus, CompileResult, PdfExportResult, PreviewDirectiveDefinition, Project } from "@latex-editor/contracts" with { "resolution-mode": "import" };
 import type { EnvironmentCatalog } from "@latex-editor/editor-core/preview/catalog" with { "resolution-mode": "import" };
 import type { EnvironmentDefinition } from "@latex-editor/editor-core/preview/types" with { "resolution-mode": "import" };
 import type { DesktopContext } from "./desktopContext.js";
@@ -80,7 +81,7 @@ async function createContext(): Promise<DesktopContext> {
   const files = new NodeProjectFileService(projects);
   settings = new SettingsRepository(app.getPath("userData"), async (id) => files.resolveFilePath(id, ".texweave/settings.json", false));
   await settings.initialize();
-  const { defaultHistoryPreferences } = await import("@latex-editor/contracts");
+  const { defaultHistoryPreferences, includeNewBuiltInDirectives } = await import("@latex-editor/contracts");
   const history = new ProjectHistoryService((id) => projects.getProject(id), async (id) => {
     const snapshot = await settings.snapshot(id);
     return { ...defaultHistoryPreferences, ...(snapshot.global.history ?? {}), ...(snapshot.project.history ?? {}) };
@@ -93,7 +94,11 @@ async function createContext(): Promise<DesktopContext> {
     const defaults = environmentsFromCatalog(environmentCatalog);
     return configured?.length ? [...configured, ...defaults.filter((entry) => !configured.some((custom) => custom.id === entry.id))] : defaults;
   };
-  const { blockGraph, structure, relations } = createProjectBlockServices({ files, ids: { next: randomUUID }, definitions: environmentDefinitions });
+  const directiveDefinitions = async (projectId: string): Promise<PreviewDirectiveDefinition[]> => {
+    const preferences = await settings.snapshot(projectId);
+    return includeNewBuiltInDirectives(preferences.project.previewDirectives ?? preferences.global.previewDirectives ?? []);
+  };
+  const { blockGraph, structure, relations } = createProjectBlockServices({ files, ids: { next: randomUUID }, definitions: environmentDefinitions, directives: directiveDefinitions });
   relations.onEvent((projectId, event) => BrowserWindow.getAllWindows().forEach(window => sendIpc(window.webContents, desktopEvents.toRenderer.relationUpdate, { projectId, event })));
   await themes.setDirectory(settings.global.themeDirectory ?? "");
   const { discoverToolchain } = await import("@latex-editor/compiler-latexmk");
@@ -128,7 +133,7 @@ async function createContext(): Promise<DesktopContext> {
       const project = registry.get(projectId);
       if (!project || project.missing) throw new Error("The source project is no longer available.");
       // Block tools and shell edits share the same diff-reviewed working copy.
-      return createWorkspaceBlockApi(project, workspaceRoot, () => environmentDefinitions(projectId));
+      return createWorkspaceBlockApi(project, workspaceRoot, () => environmentDefinitions(projectId), () => directiveDefinitions(projectId));
     },
     relationAccess: { api: id => relations.aiAPI(id), commit: (id, proposalId) => relations.commitRelationProposal(id, proposalId), reject: (id, proposalId) => relations.rejectProposal(id, proposalId) },
     compileWorkspace: async ({ projectId, workspaceRoot, mainFile }) => {
@@ -139,6 +144,7 @@ async function createContext(): Promise<DesktopContext> {
       if (!configuredMain) throw new Error("Set a main TeX file in the project before asking TeXWeave AI to compile it.");
       return compiler.compileWorkspace({ workspaceRoot, mainFile: configuredMain, engine: preferences.project.engine ?? preferences.global.engine ?? "pdflatex" });
     },
+    setMainFile: async (projectId, relativePath) => { await projects.setMainFile(projectId, relativePath); },
     onUpdate: (kind, payload) => BrowserWindow.getAllWindows().forEach((window) => sendIpc(window.webContents, desktopEvents.toRenderer.aiUpdate, { kind, payload }))
   });
   await aiWorkspaces.initialize();
@@ -148,6 +154,13 @@ async function createContext(): Promise<DesktopContext> {
 function requireContext(): DesktopContext {
   if (!context) throw new Error("Application context is not ready");
   return context;
+}
+
+async function showUnsavedDialog(event: IpcMainInvokeEvent, labels: UnsavedDialogLabels): Promise<UnsavedDialogChoice> {
+  const window = BrowserWindow.fromWebContents(event.sender);
+  if (!window) return "cancel";
+  const result = await dialog.showMessageBox(window, { type: "warning", ...labels, defaultId: 0, cancelId: 2, noLink: true });
+  return (["save", "discard", "cancel"] as const)[result.response] ?? "cancel";
 }
 
 function registerIpcHandlers(): void {
@@ -168,9 +181,9 @@ function registerIpcHandlers(): void {
   handleIpc(desktopInvoke.lifecycle.confirmClose, async (event, labels) => {
     const window = BrowserWindow.fromWebContents(event.sender);
     if (!window || !closeStates.get(window.id)?.pending) return "cancel";
-    const result = await dialog.showMessageBox(window, { type: "warning", ...labels, defaultId: 0, cancelId: 2, noLink: true });
-    return (["save", "discard", "cancel"] as const)[result.response] ?? "cancel";
+    return showUnsavedDialog(event, labels);
   });
+  handleIpc(desktopInvoke.lifecycle.confirmNavigation, showUnsavedDialog);
   handleIpc(desktopInvoke.lifecycle.showSaveError, async (event, title, message) => {
     const window = BrowserWindow.fromWebContents(event.sender);
     if (window) await dialog.showMessageBox(window, { type: "error", title, message });
@@ -269,6 +282,10 @@ function registerIpcHandlers(): void {
     return context.spellcheck.status();
   });
   handleIpc(desktopInvoke.styleResources.list, () => context?.styleResources.list() ?? []);
+  handleIpc(desktopInvoke.styleResources.readFile, (_event, id, targetPath) => {
+    if (context === undefined) throw new Error("Application context is not ready");
+    return context.styleResources.getFile(id, targetPath);
+  });
   handleIpc(desktopInvoke.styleResources.create, (_event, name) => {
     if (context === undefined) throw new Error("Application context is not ready");
     return context.styleResources.createResource(name);
@@ -510,6 +527,10 @@ function registerIpcHandlers(): void {
     if (result.pdfPath === undefined) return result;
     const pdfDataUrl = `data:application/pdf;base64,${(await readFile(result.pdfPath)).toString("base64")}`;
     return { ...result, pdfDataUrl };
+  });
+  handleIpc(desktopInvoke.compile.readLog, (_event, projectId, compilationId) => {
+    if (context === undefined) throw new Error("Application context is not ready");
+    return context.compiler.readLog(projectId, compilationId);
   });
   handleIpc(desktopInvoke.exports.sourceArchive, async (event, projectId, mainFile) => {
     if (context === undefined) throw new Error("Application context is not ready");
