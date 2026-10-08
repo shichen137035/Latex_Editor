@@ -7,11 +7,11 @@ import type { CompileResult, Project } from "@latex-editor/contracts";
 
 interface CliResult { code: number | null; stdout: string; stderr: string }
 
-function runCli(root: string, args: string[], stdin?: string): Promise<CliResult> {
+function runCli(root: string, args: string[], stdin?: string, compiled = false): Promise<CliResult> {
   const executable = resolve(process.cwd(), "node_modules", "tsx", "dist", "cli.mjs");
   const cli = resolve(process.cwd(), "apps", "cli", "src", "index.ts");
   return new Promise((done, reject) => {
-    const child = spawn(process.execPath, [executable, cli, ...args], {
+    const child = spawn(process.execPath, compiled ? [resolve(process.cwd(), "apps", "cli", "dist", "index.js"), ...args] : [executable, cli, ...args], {
       cwd: process.cwd(),
       shell: false,
       windowsHide: true,
@@ -35,6 +35,14 @@ describe("CLI backend workflow", () => {
     await mkdir(resolve(root, "projects"));
   });
   afterEach(async () => { await rm(root, { recursive: true, force: true }); });
+
+  it("returns JSON and the documented exit code for application-service errors", async () => {
+    for (const compiled of [false, true]) {
+      const result = await runCli(root, ["project", "show", "missing-project", "--json"], undefined, compiled);
+      expect(result.code, JSON.stringify(result)).toBe(2);
+      expect(JSON.parse(result.stdout)).toMatchObject({ error: { code: "PROJECT_NOT_FOUND" } });
+    }
+  });
 
   it("uses the shared relation service across CLI processes and returns machine-readable validation errors", async () => {
     const created = await runCli(root, ["project", "create", "--name", "relations", "--parent", resolve(root, "projects"), "--json"]);

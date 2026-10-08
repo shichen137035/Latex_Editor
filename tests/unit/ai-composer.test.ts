@@ -1,4 +1,5 @@
 import { mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { randomUUID } from "node:crypto";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -40,7 +41,7 @@ describe("AI composer attachments and reasoning", () => {
     });
     await service.initialize();
     const conversation = await service.create({ projectId: "project", mode: "codex" });
-    return { root, service, conversation, input: () => input!, startedTurn: () => input !== undefined, finished: () => completed, emit: (method: string, params: Record<string, unknown>) => listener({ method, params: { threadId: "thread", ...params } }) };
+    return { root, service, conversation, codex, input: () => input!, startedTurn: () => input !== undefined, finished: () => completed, emit: (method: string, params: Record<string, unknown>) => listener({ method, params: { threadId: "thread", ...params } }) };
   }
 
   it("keeps early summary events, section boundaries and authoritative summaries separate from the answer", async () => {
@@ -110,21 +111,24 @@ describe("AI composer attachments and reasoning", () => {
   it("copies same-name attachments independently, attaches images, and excludes attachment edits from project diffs", async () => {
     const f = await fixture();
     await mkdir(join(f.root, "other"));
+    const draftId = randomUUID();
+    f.service.openAttachmentDraft("project", draftId);
     const text = join(f.root, "notes.txt");
     const second = join(f.root, "other", "notes.txt");
     const image = join(f.root, "image.png");
     await writeFile(text, "first"); await writeFile(second, "second"); await writeFile(image, Buffer.from([137, 80, 78, 71]));
-    const selected = await f.service.selectAttachments("project", [text, second, image]);
+    const selected = await f.service.selectAttachments("project", [text, second, image], draftId);
     const pastedImageBytes = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/pccAAAAASUVORK5CYII=", "base64");
-    const pastedImage = await f.service.addPastedImage("project", "image/png", new Uint8Array(pastedImageBytes));
+    const pastedImage = await f.service.addPastedImage("project", "image/png", new Uint8Array(pastedImageBytes), draftId);
     const pastedFileBytes = Buffer.from("\\section{Pasted notes}\n", "utf8");
-    const pastedFile = await f.service.addPastedFile("project", "notes\\pasted.tex", new Uint8Array(pastedFileBytes));
+    const pastedFile = await f.service.addPastedFile("project", "notes\\pasted.tex", new Uint8Array(pastedFileBytes), draftId);
     expect(pastedFile.name).toBe("pasted.tex");
-    await expect(f.service.addPastedFile("project", "too-large.txt", new Uint8Array(20 * 1024 * 1024 + 1))).rejects.toThrow("smaller than 20 MB");
-    await expect(f.service.addPastedFile("project", "..", new Uint8Array([1]))).rejects.toThrow("file name is invalid");
-    await expect(f.service.addPastedImage("project", "image/png", new Uint8Array([1, 2, 3]))).rejects.toThrow("supported image");
+    await expect(f.service.addPastedFile("project", "too-large.txt", new Uint8Array(20 * 1024 * 1024 + 1), draftId)).rejects.toThrow("smaller than 20 MB");
+    await expect(f.service.addPastedFile("project", "..", new Uint8Array([1]), draftId)).rejects.toThrow("file name is invalid");
+    await expect(f.service.addPastedImage("project", "image/png", new Uint8Array([1, 2, 3]), draftId)).rejects.toThrow("supported image");
     const attachments = [...selected, pastedImage, pastedFile];
-    await f.service.send({ conversationId: f.conversation.id, content: "Read attachments", attachmentIds: attachments.map((item) => item.id) });
+    await f.service.send({ conversationId: f.conversation.id, content: "Read attachments", attachmentDraftId: draftId, attachmentIds: attachments.map((item) => item.id) });
+    expect(f.service.attachments.usage()).toMatchObject({ bytes: 0, count: 0 });
     const turn = f.input();
     const expectedContents = [await readFile(text), await readFile(second), await readFile(image), pastedImageBytes, pastedFileBytes];
     for (const [index, attachment] of attachments.entries()) {
@@ -142,6 +146,20 @@ describe("AI composer attachments and reasoning", () => {
     expect(await readFile(text, "utf8")).toBe("first");
     const foreign = await f.service.create({ projectId: "different", mode: "codex" });
     await expect(f.service.send({ conversationId: foreign.id, content: "Read", attachmentIds: [attachments[0]!.id] })).rejects.toThrow("this project");
+    await f.service.dispose();
+  });
+
+  it("keeps attachments retryable when provider startup fails, then releases them after retry", async () => {
+    const f = await fixture();
+    const draftId = randomUUID(); f.service.openAttachmentDraft("project", draftId);
+    const attachment = await f.service.addPastedFile("project", "retry.txt", Buffer.from("Retry content"), draftId);
+    const send = { conversationId: f.conversation.id, content: "Read this", attachmentDraftId: draftId, attachmentIds: [attachment.id] };
+    vi.spyOn(f.codex, "startTurn").mockRejectedValueOnce(new Error("provider startup failed"));
+    await expect(f.service.send(send)).rejects.toThrow("provider startup failed");
+    expect(f.service.attachments.usage().count).toBe(1);
+    await f.service.send(send);
+    expect(await readFile(join(f.input().cwd, ".texweave", "ai-attachments", attachment.id, attachment.name), "utf8")).toBe("Retry content");
+    expect(f.service.attachments.usage().count).toBe(0);
     await f.service.dispose();
   });
 

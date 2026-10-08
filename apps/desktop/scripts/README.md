@@ -6,6 +6,7 @@ startup, exit status, and any per-check environment setup.
 
 ```powershell
 npm run desktop:test-ai
+npm run desktop:test-ai-attachments
 npm run desktop:test-preview-caret
 npm run desktop:test-preview-startup
 npm run desktop:diagnose-preview
@@ -14,6 +15,10 @@ npm run desktop:diagnose-preview
 The AI connection check uses an isolated profile and removes IDE-only Codex paths
 and API-key variables to reproduce a normal Windows launch. It checks executable
 discovery and the signed-out connection screen. It does not start a model turn.
+
+The attachment check pastes a file in the actual composer, removes it, then leaves
+the project with another pending attachment. Both the chips and draft cache files
+must be released. It uses an isolated profile and does not start a model turn.
 
 `diagnostics/preview-performance.cjs`, run by `desktop:diagnose-preview`, is a
 performance measurement tool. It prints click to

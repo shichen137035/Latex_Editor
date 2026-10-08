@@ -123,15 +123,30 @@ async function run() {
     await until('!!document.querySelector(".preview-local-editor .monaco-editor")', label);
     // Do not accept the initial (0) value: wait for the requested caret and focus.
     await until(`Number(document.querySelector(".preview-local-editor")?.dataset.cursorOffset) === ${point.local} && !!document.querySelector(".preview-local-editor .monaco-editor.focused")`, `${label} caret ${point.local}`);
+    const baseline = await evaluate(`(async () => { await window.latexEditor.structure.snapshot(${JSON.stringify(project.id)}); return (await window.latexEditor.files.read(${JSON.stringify(project.id)}, ".texweave/structure.json")).content; })()`);
     const marker = `CARET${caseIndex}`;
     await page.webContents.insertText(marker);
     await press("ENTER", ["control"]);
     await until('!document.querySelector(".preview-local-editor")', `${label} apply`);
+    await until(`(async () => { const view = await window.latexEditor.structure.snapshot(${JSON.stringify(project.id)}); return view.ok && view.data.files["main.tex"]?.textVersion?.kind === "working"; })()`, `${label} working source version`);
+    const beforeSave = await evaluate(`(async () => {
+      const api = window.latexEditor;
+      const hits = await api.structure.find_blocks(${JSON.stringify(project.id)}, {query:${JSON.stringify(marker)}});
+      if (!hits.ok || !hits.data.length) throw new Error("Working source was not indexed");
+      const block = await api.structure.get_block_source(${JSON.stringify(project.id)}, {blockId:hits.data[0].id});
+      return {block, disk:(await api.files.read(${JSON.stringify(project.id)}, "main.tex")).content, metadata:(await api.files.read(${JSON.stringify(project.id)}, ".texweave/structure.json")).content};
+    })()`);
+    assert.equal(beforeSave.disk, expectedSource, `${label}: typing must not save source`);
+    assert.equal(beforeSave.metadata, baseline, `${label}: typing must not save working structure`);
+    assert.ok(beforeSave.block.ok && beforeSave.block.data.content.includes(marker), `${label}: block source uses the working text`);
+    assert.equal(beforeSave.block.data.textVersion.kind, "working");
     await press("S", ["control"]);
     expectedSource = expectedSource.slice(0, point.absolute) + marker + expectedSource.slice(point.absolute);
     await until('!!document.querySelector(".save-status.saved")', `${label} saved`);
     const saved = await evaluate(`window.latexEditor.files.read(${JSON.stringify(project.id)}, "main.tex")`);
     assert.equal(saved.content, expectedSource, `${label}: actual typed text is at the clicked source position`);
+    const committed = await evaluate(`window.latexEditor.structure.snapshot(${JSON.stringify(project.id)})`);
+    assert.ok(committed.ok && committed.data.files["main.tex"].textVersion.kind === "saved", `${label}: saved structure uses the disk text version`);
     console.log(`PASS ${label}: caret ${point.local}, actual typing saved at source offset ${point.absolute}`);
   }
   // Memoized, unchanged siblings must still receive current selection/actions.

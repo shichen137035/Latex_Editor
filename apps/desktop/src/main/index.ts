@@ -1,5 +1,6 @@
 import { registerBlockGraphIpc } from "./block-graph-ipc.js";
 import { registerStructureIpc } from "./structure-ipc.js";
+import { registerWorkingDocumentIpc } from "./working-document-ipc.js";
 import { registerRelationIpc } from "./relation-ipc.js";
 import { desktopInvoke, desktopEvents, type UnsavedDialogLabels, type UnsavedDialogChoice } from "@latex-editor/contracts/desktop-ipc";
 import { handleIpc, onIpc, sendIpc } from "./ipc.js";
@@ -8,7 +9,7 @@ import type { IpcMainInvokeEvent } from "electron";
 import { randomUUID } from "node:crypto";
 import { copyFile, readFile } from "node:fs/promises";
 import { extname, join, resolve } from "node:path";
-import type { AIStatus, CompileResult, PdfExportResult, PreviewDirectiveDefinition, Project } from "@latex-editor/contracts" with { "resolution-mode": "import" };
+import type { AIStatus, CompileResult, FileWriteResult, PdfExportResult, PreviewDirectiveDefinition, Project } from "@latex-editor/contracts" with { "resolution-mode": "import" };
 import type { EnvironmentCatalog } from "@latex-editor/editor-core/preview/catalog" with { "resolution-mode": "import" };
 import type { EnvironmentDefinition } from "@latex-editor/editor-core/preview/types" with { "resolution-mode": "import" };
 import type { DesktopContext } from "./desktopContext.js";
@@ -46,7 +47,7 @@ async function createContext(): Promise<DesktopContext> {
   const packageInfo = JSON.parse(await readFile(resolve(__dirname, "../../../../package.json"), "utf8")) as { version?: unknown };
   const appVersion = typeof packageInfo.version === "string" ? packageInfo.version : app.getVersion();
   // Backend packages are ESM; dynamic import keeps this Electron entry CommonJS-compatible.
-  const [{ ProjectService, createProjectBlockServices }, { systemClock }, { NodeProjectEnvironment, NodeProjectFileService }, { SQLiteProjectRegistry }, { FileResourceCatalog }, { LatexmkCompilerService }] = await Promise.all([
+  const [{ ProjectService, createProjectBlockServices, WorkingDocumentFiles, ProjectWorkingDocumentService }, { systemClock }, { NodeProjectEnvironment, NodeProjectFileService }, { SQLiteProjectRegistry }, { FileResourceCatalog }, { LatexmkCompilerService }] = await Promise.all([
     import("@latex-editor/application"),
     import("@latex-editor/domain"),
     import("@latex-editor/filesystem-node"),
@@ -98,7 +99,9 @@ async function createContext(): Promise<DesktopContext> {
     const preferences = await settings.snapshot(projectId);
     return includeNewBuiltInDirectives(preferences.project.previewDirectives ?? preferences.global.previewDirectives ?? []);
   };
-  const { blockGraph, structure, relations } = createProjectBlockServices({ files, ids: { next: randomUUID }, definitions: environmentDefinitions, directives: directiveDefinitions });
+  const workingFiles = new WorkingDocumentFiles(files);
+  const { blockGraph, structure, relations } = createProjectBlockServices({ files: workingFiles, ids: { next: randomUUID }, definitions: environmentDefinitions, directives: directiveDefinitions });
+  const documents = new ProjectWorkingDocumentService(workingFiles, blockGraph, { next: randomUUID }, environmentDefinitions, directiveDefinitions, projectId => structure.releaseProjectCache(projectId));
   relations.onEvent((projectId, event) => BrowserWindow.getAllWindows().forEach(window => sendIpc(window.webContents, desktopEvents.toRenderer.relationUpdate, { projectId, event })));
   await themes.setDirectory(settings.global.themeDirectory ?? "");
   const { discoverToolchain } = await import("@latex-editor/compiler-latexmk");
@@ -148,7 +151,7 @@ async function createContext(): Promise<DesktopContext> {
     onUpdate: (kind, payload) => BrowserWindow.getAllWindows().forEach((window) => sendIpc(window.webContents, desktopEvents.toRenderer.aiUpdate, { kind, payload }))
   });
   await aiWorkspaces.initialize();
-  return { registry, projects, environment, files, compiler, resources, blockGraph, structure, relations, styleResources, themes, spellcheck, installation, images, references, ai, copilot, aiWorkspaces, history };
+  return { registry, projects, environment, files, compiler, resources, blockGraph, structure, relations, documents, styleResources, themes, spellcheck, installation, images, references, ai, copilot, aiWorkspaces, history };
 }
 
 function requireContext(): DesktopContext {
@@ -254,6 +257,7 @@ function registerIpcHandlers(): void {
     return context.references.removeProjectLink(projectId, entryId);
   });
   registerStructureIpc(() => requireContext().structure);
+  registerWorkingDocumentIpc(() => requireContext().documents);
   registerBlockGraphIpc(() => requireContext().blockGraph);
   registerRelationIpc(() => requireContext().relations);
   registerHistoryIpc(() => requireContext().history);
@@ -459,7 +463,7 @@ function registerIpcHandlers(): void {
   });
   handleIpc(desktopInvoke.files.write, async (_event, projectId, relativePath, content) => {
     if (context === undefined) throw new Error("Application context is not ready");
-    return context.files.writeText(projectId, relativePath, content);
+    return await context.documents.save(projectId, relativePath, content) as FileWriteResult;
   });
   handleIpc(desktopInvoke.files.readPdf, async (_event, projectId, relativePath) => {
     if (context === undefined) throw new Error("Application context is not ready");
@@ -482,7 +486,7 @@ function registerIpcHandlers(): void {
   });
   handleIpc(desktopInvoke.files.rename, async (_event, projectId, fromRelativePath, toRelativePath) => {
     if (context === undefined) throw new Error("Application context is not ready");
-    return context.files.renameEntry(projectId, fromRelativePath, toRelativePath);
+    return context.documents.mutateEntries(projectId, [fromRelativePath, toRelativePath], () => requireContext().files.renameEntry(projectId, fromRelativePath, toRelativePath));
   });
   handleIpc(desktopInvoke.files.copy, async (_event, projectId, fromRelativePath, toRelativePath) => {
     if (context === undefined) throw new Error("Application context is not ready");
@@ -494,7 +498,7 @@ function registerIpcHandlers(): void {
   });
   handleIpc(desktopInvoke.files.remove, async (_event, projectId, relativePath) => {
     if (context === undefined) throw new Error("Application context is not ready");
-    return context.files.removeEntry(projectId, relativePath);
+    return context.documents.mutateEntries(projectId, [relativePath], () => requireContext().files.removeEntry(projectId, relativePath));
   });
   handleIpc(desktopInvoke.images.pick, async (_event, multiple = false) => {
     const result = await dialog.showOpenDialog({ properties: ["openFile", ...(multiple ? ["multiSelections" as const] : [])], filters: [{ name: "Images", extensions: ["png", "jpg", "jpeg", "webp", "svg", "pdf"] }] });
@@ -713,9 +717,15 @@ app.whenReady().then(() => {
 
 app.on("before-quit", () => { quitRequested = true; });
 app.on("window-all-closed", () => {
-  void context?.ai.stop();
-  void context?.copilot.dispose();
-  context?.registry.close();
-  context?.references.close();
-  if (process.platform !== "darwin") app.quit();
+  void (async () => {
+    const current = context;
+    let shutdownTimer: ReturnType<typeof setTimeout> | undefined;
+    const deadline = new Promise<void>(resolve => { shutdownTimer = setTimeout(resolve, 5000); });
+    // An unresponsive provider must not prevent exit; orphan staging files are cleaned on next startup.
+    await Promise.race([Promise.allSettled([current?.ai.stop(), current?.aiWorkspaces.dispose()]), deadline]);
+    clearTimeout(shutdownTimer);
+    current?.registry.close();
+    current?.references.close();
+    if (process.platform !== "darwin") app.quit();
+  })();
 });

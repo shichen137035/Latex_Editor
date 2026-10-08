@@ -53,6 +53,7 @@ import { emptyBlockSnapshot, useRelationController } from "./relationController.
 import { createDocumentInsertions, type ImageDialogState } from "./documentInsertions.js";
 import { createDocumentActions } from "./documentActions.js";
 import { useSearchController } from "./searchController.js";
+import { useWorkingDocuments } from "./workingDocuments.js";
 import { OutlineList } from "./OutlineList.js";
 import { createUserBlockController, type BoundaryRepairPrompt } from "./userBlockController.js";
 
@@ -150,10 +151,8 @@ export function Workbench({ project, projects, environments, onHome, onSwitch, o
   const resizeCleanup = useRef<(() => void) | undefined>(undefined);
   const lastTextPane = useRef<"source" | "preview">("source");
   const activeContentRef = useRef("");
-  const pendingRangeTransactions = useRef(new Map<string, BlockTextEdit[][]>());
   const aiOperationQueue = useRef<Promise<void>>(Promise.resolve());
   const aiAutoAttempts = useRef(new Set<string>());
-  const rangeMappingTimers = useRef(new Map<string, number>());
   const treeRefreshSequence = useRef(0);
   const previewViewportAnchor = useRef<{ fileId: string; offset: number } | undefined>(undefined);
   const previewPositions = useRef(new Map<string, { offset: number; scrollTop: number }>());
@@ -384,9 +383,6 @@ export function Workbench({ project, projects, environments, onHome, onSwitch, o
     spellCheckController.current?.dispose();
     referenceMouseListener.current?.dispose();
     symbolPairingListener.current?.dispose();
-    for (const timer of rangeMappingTimers.current.values()) window.clearTimeout(timer);
-    rangeMappingTimers.current.clear();
-    pendingRangeTransactions.current.clear();
   }, [project.id]);
   useEffect(() => {
     setPdfDataUrl(undefined);
@@ -425,9 +421,12 @@ export function Workbench({ project, projects, environments, onHome, onSwitch, o
     setNavigationRequest, setPdfTarget, openFile
   });
 
+  const workingDocuments = useWorkingDocuments({ api, projectId: project.id, tabs, tabsRef, savedContents, activePath,
+    configuration: previewEnvironments, directives: store.get("previewDirectives"), onSnapshot: setBlockSnapshot,
+    onSemanticIds: setPreviewSemanticIds, onError: setBlockNotice });
   const { saveTabs, saveActive, saveAll, leaveProject, switchProject } = createProjectSessionController({
     api, project, tabs, activePath, tabsRef, savedContents, editHistory, completionController,
-    setTabs, setSaveState, onHome, onSwitch
+    setTabs, setSaveState, onHome, onSwitch, flushDocuments: workingDocuments.sync, releaseDocuments: workingDocuments.close, onSaveError: setBlockNotice
   });
   const { compile, exportSourceArchive, exportMainTex, exportPdf } = createDocumentActions({
     api, project, activePath, tree, compileState, saveActive, saveAll,
@@ -505,22 +504,6 @@ export function Workbench({ project, projects, environments, onHome, onSwitch, o
   });
 
   const closeTab = (path: string) => { navigationHistory.current.clear(); setTabs((current) => current.filter((tab) => tab.path !== path)); if (activePath === path) { const remaining = tabs.filter((tab) => tab.path !== path); setActivePath(remaining.at(-1)?.path); } };
-  const queueRangeMapping = (fileId: string, edits: BlockTextEdit[]) => {
-    if (!api || !fileId.toLocaleLowerCase().endsWith(".tex") || edits.length === 0) return;
-    const pending = pendingRangeTransactions.current.get(fileId) ?? [];
-    pending.push(edits);
-    pendingRangeTransactions.current.set(fileId, pending);
-    const previousTimer = rangeMappingTimers.current.get(fileId);
-    if (previousTimer !== undefined) window.clearTimeout(previousTimer);
-    rangeMappingTimers.current.set(fileId, window.setTimeout(() => {
-      rangeMappingTimers.current.delete(fileId);
-      const transactions = pendingRangeTransactions.current.get(fileId) ?? [];
-      pendingRangeTransactions.current.delete(fileId);
-      if (transactions.length > 0) void api.blockGraph.mapUserBlockRanges(project.id, { fileId, transactions }).then((result) => setBlockSnapshot(result.snapshot)).catch((error: unknown) => {
-        console.warn("Unable to map custom block ranges", error);
-      });
-    }, 180));
-  };
   const setEditorContent = (content: string, edits?: BlockTextEdit[], previewChanges?: PreviewTextChange[]) => {
     if (!activePath) return;
     changeDocument(activePath, content, edits !== undefined, edits, true, true, previewChanges);
@@ -538,21 +521,13 @@ export function Workbench({ project, projects, environments, onHome, onSwitch, o
     const editDelta = edits?.reduce((sum, edit) => sum + edit.newLength - (edit.end - edit.start), 0);
     const mappedEdits = edits && editDelta === content.length - before.length ? edits : [{ start: patch.start, end: patch.start + patch.removed.length, newLength: patch.inserted.length }];
     navigationHistory.current.mapEdit(path, mappedEdits);
-    queueRangeMapping(path, mappedEdits);
+    workingDocuments.recordChange(path, before, content, mappedEdits);
     if (path === activePathRef.current) activeContentRef.current = content;
     tabsRef.current = tabsRef.current.map(tab => tab.path === path ? { ...tab, content, dirty: savedContents.current.get(path) !== content } : tab);
     setTabs(tabsRef.current);
     setSaveState(tabsRef.current.some(tab => tab.dirty) ? "unsaved" : "saved");
   };
-  const flushRangeMappings = async () => {
-    if (!api) return;
-    for (const [fileId, transactions] of pendingRangeTransactions.current) {
-      window.clearTimeout(rangeMappingTimers.current.get(fileId));
-      rangeMappingTimers.current.delete(fileId);
-      pendingRangeTransactions.current.delete(fileId);
-      if (transactions.length) setBlockSnapshot((await api.blockGraph.mapUserBlockRanges(project.id, { fileId, transactions })).snapshot);
-    }
-  };
+  const flushRangeMappings = workingDocuments.sync;
   const replayHistory = (direction: HistoryDirection) => editHistory.current.replay(direction, async (operation, replayDirection) => {
     if (operation.kind === "structure") {
       if (!api) return;
@@ -620,8 +595,8 @@ export function Workbench({ project, projects, environments, onHome, onSwitch, o
     searchDocuments, searchResponse, filterOptions,
     selectSearchResult, replaceCurrentSearchResult, replaceAllSearchResults
   } = useSearchController({
-    api, project, tree, tabs, activePath, previewEnvironments, tabsRef, savedContents,
-    changeDocument, navigateTo, setBlockSnapshot, setPreviewSemanticIds, setProjectMathSources
+    api, project, tree, tabs, activePath, previewEnvironments, previewDirectives: store.get("previewDirectives"), tabsRef, savedContents,
+    changeDocument, navigateTo, setProjectMathSources
   });
   const {
     relationFocusId, relationSelectedId, setRelationSelectedId,

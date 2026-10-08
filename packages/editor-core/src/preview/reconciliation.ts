@@ -35,8 +35,9 @@ function flatten(nodes: PreviewNode[], source: string, output: ParsedBlockDescri
     const role = node.kind === "block" ? node.environmentId : node.contentType;
     const origin = node.kind === "block" && node.origin === "latex" ? "environment" : "virtual";
     const bindingId = explicitBinding(raw);
+    const transientId = node.parserId ?? node.id;
     output.push({
-      transientId: node.id,
+      transientId,
       ...(parentTransientId === undefined ? {} : { parentTransientId }),
       origin,
       role,
@@ -55,7 +56,7 @@ function flatten(nodes: PreviewNode[], source: string, output: ParsedBlockDescri
       ...(node.kind !== "block" || node.latexLabel === undefined ? {} : { label: node.latexLabel }),
       ...(node.kind !== "block" || node.title === undefined ? {} : { name: node.title })
     });
-    if (node.kind === "block") flatten(node.children, source, output, node.id);
+    if (node.kind === "block") flatten(node.children, source, output, transientId);
   }
 }
 

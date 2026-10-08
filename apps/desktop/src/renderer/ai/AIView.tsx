@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState, type ClipboardEvent } from "react";
-import type { AIAttachment, AIChangeSet, AIConversation, AIContextSnapshotFile, AIStatus, AIModelOption, AIMode } from "@latex-editor/contracts";
+import type { AIChangeSet, AIConversation, AIContextSnapshotFile, AIStatus, AIModelOption, AIMode } from "@latex-editor/contracts";
 import { t } from "../i18n/index.js";
 import { useSettings } from "../settings/service.js";
 import { ConversationPicker } from "./ConversationPicker.js";
@@ -13,12 +13,10 @@ import type { AIApplyResult } from "./changeOperations.js";
 import { ReasoningEffortPicker } from "./ReasoningEffortPicker.js";
 import type { MathContext } from "../math/types.js";
 import { newestConversation } from "./conversationState.js";
+import { useAttachmentDraft } from "./attachmentDraft.js";
 
 const AI_LONG_INPUT_THRESHOLD = 12_000;
 const AI_COMPOSER_MAX_HEIGHT = 320;
-const MAX_PASTED_FILE_BYTES = 20 * 1024 * 1024;
-const MAX_ATTACHMENT_TOTAL_BYTES = 50 * 1024 * 1024;
-const PASTED_IMAGE_TYPES = new Set(["image/png", "image/jpeg", "image/gif", "image/webp"]);
 
 type Props = {
   projectId: string;
@@ -51,8 +49,7 @@ export function AIView(props: Props) {
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
   const [draft, setDraft] = useState("");
-  const [attachments, setAttachments] = useState<AIAttachment[]>([]);
-  const [attachmentsLoading, setAttachmentsLoading] = useState(false);
+  const { client: attachmentDraft, attachments, loading: attachmentsLoading } = useAttachmentDraft(api, props.projectId, activeId, reason => setError(messageOf(reason)));
   const [sending, setSending] = useState(false);
   const composerRef = useRef<HTMLTextAreaElement | null>(null);
   const longDraftFileRef = useRef<{ content: string; path: string } | undefined>(undefined);
@@ -168,7 +165,6 @@ export function AIView(props: Props) {
   }, [api, activeMode, copilotStatus?.auth]);
 
   useEffect(() => { setIncludeSelection(Boolean(props.selectedText)); }, [props.selectedText]);
-  useEffect(() => { setAttachments([]); }, [props.projectId, activeId]);
   useEffect(() => {
     const textarea = composerRef.current;
     if (!textarea) return;
@@ -242,37 +238,11 @@ export function AIView(props: Props) {
 
   const addAttachments = async () => {
     if (!api || attachmentsLoading || busy || responseRunning) return;
-    const conversationId = activeId;
-    const projectId = props.projectId;
-    setAttachmentsLoading(true); setError("");
-    try {
-      const selected = await api.pickAttachments(projectId);
-      if (activeIdRef.current === conversationId) setAttachments((current) => [...current, ...selected]);
-    } catch (reason) { setError(messageOf(reason)); }
-    finally { setAttachmentsLoading(false); }
+    setError(""); await attachmentDraft?.pick();
   };
-
   const addPastedAttachments = async (files: File[]) => {
-    if (!api || attachmentsLoading || busy || responseRunning || files.length === 0) return;
-    if (files.some((file) => file.size > MAX_PASTED_FILE_BYTES)) { setError(t("ai.pasteFileTooLarge")); return; }
-    if (attachments.length + files.length > 20 || attachments.reduce((total, item) => total + item.size, 0) + files.reduce((total, file) => total + file.size, 0) > MAX_ATTACHMENT_TOTAL_BYTES) {
-      setError(t("ai.pasteFileLimit")); return;
-    }
-    const conversationId = activeIdRef.current;
-    setAttachmentsLoading(true); setError("");
-    const pasted: AIAttachment[] = [];
-    try {
-      for (const file of files) {
-        const data = new Uint8Array(await file.arrayBuffer());
-        pasted.push(PASTED_IMAGE_TYPES.has(file.type.toLowerCase())
-          ? await api.addPastedImage(props.projectId, file.type, data)
-          : await api.addPastedFile(props.projectId, file.name, data));
-      }
-    } catch (reason) { setError(messageOf(reason)); }
-    finally {
-      if (activeIdRef.current === conversationId && pasted.length) setAttachments((current) => [...current, ...pasted]);
-      setAttachmentsLoading(false);
-    }
+    if (!api || attachmentsLoading || busy || responseRunning) return;
+    setError(""); await attachmentDraft?.paste(files);
   };
 
   const handleComposerPaste = (event: ClipboardEvent<HTMLTextAreaElement>) => {
@@ -295,6 +265,7 @@ export function AIView(props: Props) {
     setBusy(true); setSending(true); setError("");
     try {
       const draftContent = draft.trim() || t("ai.attachmentPrompt");
+      const attachmentPayload = await attachmentDraft?.payload();
       let messageContent = draftContent;
       if (draftContent.length > AI_LONG_INPUT_THRESHOLD) {
         const bridge = window.latexEditor;
@@ -314,11 +285,12 @@ export function AIView(props: Props) {
         conversation = await api.createConversation(activeMode, props.projectId);
         if (!conversation) throw new Error("Could not create an AI conversation.");
         setSnapshot((current) => ({ ...current, conversations: [conversation!, ...current.conversations] }));
+        attachmentDraft?.adoptConversation(conversation.id);
         setActiveId(conversation.id);
         activeIdRef.current = conversation.id;
       }
       const contextText = includeSelection && props.selectedText ? `Current selection in ${props.currentFile ?? "the editor"}:\n${props.selectedText}` : undefined;
-      const started = await api.send({ conversationId: conversation.id, taskId: requestedTaskId, projectId: props.projectId, content: messageContent, attachmentIds: attachments.map((item) => item.id), ...(contextText ? { contextText } : {}), overrides: props.overrides });
+      const started = await api.send({ conversationId: conversation.id, taskId: requestedTaskId, projectId: props.projectId, content: messageContent, ...attachmentPayload, ...(contextText ? { contextText } : {}), overrides: props.overrides });
       if (started) {
         const latest = snapshotRef.current.conversations.find((item) => item.id === started.conversation.id);
         const newest = newestConversation(latest, started.conversation);
@@ -334,7 +306,7 @@ export function AIView(props: Props) {
         });
       } else { activeTaskIdRef.current = undefined; setTaskId(undefined); setCanceling(false); }
       setDraft("");
-      setAttachments([]);
+      if (attachmentPayload) attachmentDraft?.sent(attachmentPayload);
       longDraftFileRef.current = undefined;
     } catch (reason) { activeTaskIdRef.current = undefined; setTaskId(undefined); setCanceling(false); setError(messageOf(reason)); }
     finally { setBusy(false); setSending(false); }
@@ -468,7 +440,7 @@ export function AIView(props: Props) {
         {draft.trim().length > AI_LONG_INPUT_THRESHOLD && <div className="ai-long-input-note">{t("ai.longMessageHint")}</div>}
         <div className="ai-composer">
           <textarea ref={composerRef} rows={1} value={draft} onChange={(event) => { setDraft(event.target.value); if (longDraftFileRef.current?.content !== event.target.value.trim()) longDraftFileRef.current = undefined; }} onPaste={handleComposerPaste} onKeyDown={(event) => { if (event.key === "Enter" && !event.shiftKey && !event.nativeEvent.isComposing) { event.preventDefault(); void send(); } }} placeholder={t("ai.messagePlaceholder")} aria-label={t("ai.messagePlaceholder")}/>
-          {attachments.length > 0 && <div className="ai-draft-attachments">{attachments.map((attachment) => <span className="ai-attachment-chip" key={attachment.id} title={`${attachment.name} · ${(attachment.size / 1024).toFixed(1)} KB`}><span>▧ {attachment.name}</span><button aria-label={t("ai.removeAttachment", { name: attachment.name })} disabled={sending} onClick={() => setAttachments((current) => current.filter((item) => item.id !== attachment.id))}>×</button></span>)}</div>}
+          {attachments.length > 0 && <div className="ai-draft-attachments">{attachments.map((attachment) => <span className="ai-attachment-chip" key={attachment.id} title={`${attachment.name} · ${(attachment.size / 1024).toFixed(1)} KB`}><span>▧ {attachment.name}</span><button aria-label={t("ai.removeAttachment", { name: attachment.name })} disabled={sending} onClick={() => void attachmentDraft?.remove(attachment.id)}>×</button></span>)}</div>}
           <div className="ai-composer-actions">
             <button className="ai-add-attachment" title={t("ai.addAttachment")} aria-label={t("ai.addAttachment")} disabled={busy || attachmentsLoading || responseRunning} onClick={() => void addAttachments()}><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg></button>
             <PermissionPicker value={preferences.global("aiPermissionMode")} disabled={busy || responseRunning} onChange={mode => void preferences.set("aiPermissionMode", mode)}/>

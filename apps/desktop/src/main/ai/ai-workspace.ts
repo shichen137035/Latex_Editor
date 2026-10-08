@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { copyFile, lstat, mkdir, readFile, realpath, rename, rm, stat, writeFile } from "node:fs/promises";
+import { copyFile, lstat, mkdir, readFile, realpath, rename, rm, writeFile } from "node:fs/promises";
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import type { AIAttachment, AIApprovalRequest, AIPermissionMode, AIChangeSet, AIConversation, AIContextSnapshotFile, AIFileChange, AIMessage, AIModelOption, AIProjectSkill, CompileResult, ProjectTreeNode } from "@latex-editor/contracts" with { "resolution-mode": "import" };
 import type { CopilotSession } from "@github/copilot-sdk" with { "resolution-mode": "import" };
@@ -18,9 +18,10 @@ import { describeProjectSnapshot, isSnapshotTextPath, isWorkspaceAssetPath, load
 import { isAIEditableProjectPath, isAIStructureMetadataPath } from "@latex-editor/contracts/ai-paths";
 import { collectGraphicDependencies } from "./tex-dependencies.js";
 import { createProjectResources, createCopilotResourceTools } from "./project-resources.js";
+import { AIAttachmentStore, attachmentLimits, type AttachmentLease } from "./attachment-store.js";
 
 type AIWorkspaceAsset = { path: string; content: Uint8Array };
-type SendInput = { conversationId: string; taskId?: string; content: string; snapshot?: AIContextSnapshotFile[]; assets?: AIWorkspaceAsset[]; projectPaths?: string[]; omittedAssets?: number; unresolvedGraphics?: string[]; contextText?: string; model?: string; reasoningEffort?: string; attachmentIds?: string[]; permissionMode?: AIPermissionMode };
+type SendInput = { conversationId: string; taskId?: string; content: string; snapshot?: AIContextSnapshotFile[]; assets?: AIWorkspaceAsset[]; projectPaths?: string[]; omittedAssets?: number; unresolvedGraphics?: string[]; contextText?: string; model?: string; reasoningEffort?: string; attachmentIds?: string[]; attachmentDraftId?: string; attachmentLease?: AttachmentLease; permissionMode?: AIPermissionMode };
 type WorkspaceAttachment = AIAttachment & { path: string };
 type AICompileWorkspace = (input: { projectId: string; workspaceRoot: string; mainFile?: string }) => Promise<CompileResult>;
 
@@ -28,7 +29,7 @@ type Persisted = { version: 1; conversations: AIConversation[]; changeSets: AICh
 type StructureTracker = { managed: string | undefined; direct: boolean; semantic: boolean };
 type ActiveTurn = { conversationId: string; messageId: string; scratchRoot: string; base: Map<string, string>; structure: StructureTracker; turnId: string; canceled: boolean; completed: boolean; permissionMode: AIPermissionMode };
 type ActiveCopilotTurn = { conversationId: string; messageId: string; session: CopilotSession; scratchRoot: string; base: Map<string, string>; structure: StructureTracker; canceled: boolean; complete: boolean; finish?: () => Promise<void>; unsubscribe: Array<() => void>; permissionMode: AIPermissionMode };
-const MAX_ATTACHMENT_BYTES = 20 * 1024 * 1024;
+const MAX_ATTACHMENT_BYTES = attachmentLimits.fileBytes;
 
 function pastedImageExtension(mimeType: string): string | undefined {
   return ({ "image/png": "png", "image/jpeg": "jpg", "image/gif": "gif", "image/webp": "webp" } as Record<string, string>)[mimeType.toLowerCase()];
@@ -69,7 +70,7 @@ export class AIWorkspaceService {
   #cancelingCopilot = new Map<string, ActiveCopilotTurn>();
   #writeChain = Promise.resolve();
   #saveTimer: ReturnType<typeof setTimeout> | undefined;
-  readonly #attachments = new Map<string, AIAttachment & { projectId: string; sourcePath?: string; data?: Uint8Array }>();
+  readonly attachments: AIAttachmentStore;
   #unsubscribe: () => void;
 
   constructor(options: {
@@ -86,6 +87,7 @@ export class AIWorkspaceService {
     onUpdate?: (kind: "conversation" | "changes" | "approval", payload: AIConversation | AIChangeSet | AIApprovalRequest) => void;
   }) {
     this.#root = join(options.userDataPath, "ai", "workspaces");
+    this.attachments = new AIAttachmentStore(options.userDataPath);
     this.#storePath = join(options.userDataPath, "ai", "conversations.json");
     this.#skillSettingsPath = join(options.userDataPath, "ai", "skill-settings.json");
     this.#codex = options.codex;
@@ -106,6 +108,7 @@ export class AIWorkspaceService {
   }
 
   async initialize(): Promise<void> {
+    await this.attachments.initialize();
     this.#disabledSkillNames = await this.#readDisabledSkillNames();
     await this.#reloadSkills();
     await mkdir(dirname(this.#storePath), { recursive: true });
@@ -130,11 +133,12 @@ export class AIWorkspaceService {
   }
 
   async dispose(): Promise<void> {
+    await this.attachments.dispose();
     this.approvals.cancel(); this.#unsubscribe();
     for (const turn of this.#cancelingCopilot.values()) { turn.canceled = true; await turn.finish?.(); }
     clearTimeout(this.#saveTimer); this.#saveTimer = undefined;
-    await this.#persist();
-    await this.#copilot.dispose();
+    try { await this.#persist(); }
+    finally { await this.#copilot.dispose(); }
   }
 
   listModels(): Promise<AIModelOption[]> { return this.#codex.listModels(); }
@@ -299,31 +303,25 @@ export class AIWorkspaceService {
     return structuredClone(changeSet);
   }
 
-  async selectAttachments(projectId: string, paths: string[]): Promise<AIAttachment[]> {
+  openAttachmentDraft(projectId: string, draftId: string): void {
     if (!this.#projectExists(projectId)) throw new Error("The attachment project is unavailable.");
-    const selected = await Promise.all([...new Set(paths)].map(async (sourcePath) => {
-      const metadata = await stat(sourcePath);
-      if (!metadata.isFile() || metadata.size > MAX_ATTACHMENT_BYTES) throw new Error("Attachments must be files smaller than 20 MB.");
-      return { id: randomUUID(), name: basename(sourcePath), size: metadata.size, projectId, sourcePath };
-    }));
-    for (const item of selected) this.#attachments.set(item.id, item);
-    return selected.map(({ id, name, size }) => ({ id, name, size }));
+    this.attachments.open(projectId, draftId);
   }
 
-  async addPastedImage(projectId: string, mimeType: string, input: Uint8Array): Promise<AIAttachment> {
-    if (!this.#projectExists(projectId)) throw new Error("The attachment project is unavailable.");
+  async selectAttachments(projectId: string, paths: string[], draftId: string): Promise<AIAttachment[]> {
+    return this.attachments.addFiles({ projectId, draftId }, paths);
+  }
+
+  async addPastedImage(projectId: string, mimeType: string, input: Uint8Array, draftId: string): Promise<AIAttachment> {
+    mimeType = mimeType.toLowerCase();
     const extension = pastedImageExtension(mimeType);
-    const data = Buffer.from(input);
-    if (!extension || data.byteLength === 0 || data.byteLength > MAX_ATTACHMENT_BYTES || !matchesImageType(data, mimeType)) {
+    if (!(input instanceof Uint8Array) || !extension || input.byteLength === 0 || input.byteLength > MAX_ATTACHMENT_BYTES || !matchesImageType(input, mimeType)) {
       throw new Error("Paste a supported image smaller than 20 MB (PNG, JPEG, GIF, or WebP).");
     }
-    const attachment = { id: randomUUID(), name: `pasted-image.${extension}`, size: data.byteLength, projectId };
-    this.#attachments.set(attachment.id, { ...attachment, data });
-    return { id: attachment.id, name: attachment.name, size: attachment.size };
+    return this.attachments.addData({ projectId, draftId }, `pasted-image.${extension}`, input);
   }
 
-  async addPastedFile(projectId: string, name: string, input: Uint8Array): Promise<AIAttachment> {
-    if (!this.#projectExists(projectId)) throw new Error("The attachment project is unavailable.");
+  async addPastedFile(projectId: string, name: string, input: Uint8Array, draftId: string): Promise<AIAttachment> {
     if (typeof name !== "string" || name.length > 255 || !(input instanceof Uint8Array) || input.byteLength > MAX_ATTACHMENT_BYTES) {
       throw new Error("Paste a file smaller than 20 MB.");
     }
@@ -331,35 +329,39 @@ export class AIWorkspaceService {
       (character) => character.charCodeAt(0) < 32 ? "_" : character).join("").replace(/[. ]+$/g, "");
     if (!fileName || fileName.length > 180) throw new Error("The pasted file name is invalid.");
     const safeName = /^(?:con|prn|aux|nul|com[1-9]|lpt[1-9])(?:\.|$)/i.test(fileName) ? `pasted-${fileName}` : fileName;
-    const data = Buffer.from(input);
-    const attachment = { id: randomUUID(), name: safeName, size: data.byteLength, projectId };
-    this.#attachments.set(attachment.id, { ...attachment, data });
-    return { id: attachment.id, name: attachment.name, size: attachment.size };
+    return this.attachments.addData({ projectId, draftId }, safeName, input);
   }
 
-  async #copyAttachments(conversation: AIConversation, root: string, ids: string[] = []): Promise<WorkspaceAttachment[]> {
-    const selected = [...new Set(ids)].map((id) => {
-      const item = this.#attachments.get(id);
-      if (!item || item.projectId !== conversation.projectId) throw new Error("Choose the attachments again for this project.");
-      return item;
-    });
-    if (selected.length > 20 || selected.reduce((total, item) => total + item.size, 0) > 50 * 1024 * 1024) throw new Error("Use at most 20 attachments totaling 50 MB.");
-    return Promise.all(selected.map(async (item) => {
+  acquireAttachments(conversationId: string, draftId: string | undefined, ids: string[] = []): AttachmentLease | undefined {
+    if (!ids.length) return undefined;
+    const conversation = this.#conversation(conversationId);
+    if (!conversation.projectId || !draftId) throw new Error("Choose the attachments again for this project.");
+    return this.attachments.acquire({ projectId: conversation.projectId, draftId }, ids);
+  }
+
+  async #copyAttachments(root: string, lease?: AttachmentLease): Promise<WorkspaceAttachment[]> {
+    const results = await Promise.allSettled((lease?.entries ?? []).map(async item => {
       const path = join(root, ".texweave", "ai-attachments", item.id, item.name);
       await mkdir(dirname(path), { recursive: true });
-      if (item.data) {
-        if (item.data.byteLength !== item.size || item.data.byteLength > MAX_ATTACHMENT_BYTES) throw new Error(`Attachment changed; paste ${item.name} again.`);
-        await writeFile(path, item.data);
-      } else if (item.sourcePath) {
-        const metadata = await stat(item.sourcePath);
-        if (!metadata.isFile() || metadata.size > MAX_ATTACHMENT_BYTES || metadata.size !== item.size) throw new Error(`Attachment changed; choose ${item.name} again.`);
-        await copyFile(item.sourcePath, path);
-      } else throw new Error(`Attachment data for ${item.name} is unavailable.`);
+      await copyFile(item.path, path);
       return { id: item.id, name: item.name, size: item.size, path };
     }));
+    const failure = results.find(result => result.status === "rejected");
+    if (failure?.status === "rejected") throw failure.reason;
+    return results.map(result => (result as PromiseFulfilledResult<WorkspaceAttachment>).value);
   }
 
   async send(input: SendInput): Promise<{ conversation: AIConversation; taskId: string }> {
+    const attachmentLease = input.attachmentLease ?? this.acquireAttachments(input.conversationId, input.attachmentDraftId, input.attachmentIds);
+    try {
+      if (attachmentLease && attachmentLease.projectId !== this.#conversation(input.conversationId).projectId) throw new Error("Attachments belong to another project.");
+      const result = await this.#send({ ...input, ...(attachmentLease ? { attachmentLease } : {}) });
+      await attachmentLease?.consume();
+      return result;
+    } finally { await attachmentLease?.release(); }
+  }
+
+  async #send(input: SendInput): Promise<{ conversation: AIConversation; taskId: string }> {
     const conversation = this.#conversation(input.conversationId);
     const content = input.content.trim();
     if (!content || content.length > 40_000) throw new Error("Enter a message under 40,000 characters.");
@@ -388,7 +390,7 @@ export class AIWorkspaceService {
     try {
       const scratchRoot = await this.#prepareWorkspace(conversation, input.snapshot ?? [], input.assets ?? []);
       if (await this.#finishPendingCancellation(taskId, conversation, assistantMessage)) return { conversation: structuredClone(conversation), taskId };
-      const attachments = await this.#copyAttachments(conversation, scratchRoot, input.attachmentIds);
+      const attachments = await this.#copyAttachments(scratchRoot, input.attachmentLease);
       if (await this.#finishPendingCancellation(taskId, conversation, assistantMessage)) return { conversation: structuredClone(conversation), taskId };
       userMessage.attachments = attachments.map(({ id, name, size }) => ({ id, name, size }));
       const modeNote = conversation.mode === "codex"
@@ -522,7 +524,7 @@ export class AIWorkspaceService {
     try {
       const scratchRoot = await this.#prepareWorkspace(conversation, input.snapshot ?? [], input.assets ?? []);
       if (await this.#finishPendingCancellation(taskId, conversation, assistantMessage)) return { conversation: structuredClone(conversation), taskId };
-      const attachments = await this.#copyAttachments(conversation, scratchRoot, input.attachmentIds);
+      const attachments = await this.#copyAttachments(scratchRoot, input.attachmentLease);
       if (await this.#finishPendingCancellation(taskId, conversation, assistantMessage)) return { conversation: structuredClone(conversation), taskId };
       const userMessage = conversation.messages.at(-2);
       if (userMessage) userMessage.attachments = attachments.map(({ id, name, size }) => ({ id, name, size }));

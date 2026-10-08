@@ -43,6 +43,7 @@ interface HistoryEntry {
 export interface BlockGraphFilePort {
   readText(projectId: string, relativePath: string): Promise<{ content: string }>;
   writeText(projectId: string, relativePath: string, content: string): Promise<unknown>;
+  assertSavedSource?(projectId: string, relativePath: string): void;
 }
 
 /**
@@ -67,6 +68,20 @@ export class ProjectBlockGraphService {
   }
 
   onChange(listener: (projectId: string) => void): () => void { this.#listeners.add(listener); return () => this.#listeners.delete(listener); }
+  /** Releasing a view must succeed even when saved metadata has become unreadable. */
+  async releaseSourceView(projectId: string, release: () => boolean): Promise<void> {
+    await this.#withMutationLock(projectId, async () => { if (release()) this.#histories.delete(projectId); });
+  }
+  /** Source snapshots and graph writes use the same lock; a discard may replace the working graph. */
+  async withSourceUpdate<T>(projectId: string, action: (graph: BlockGraphManager) => Promise<{ graph: BlockGraphManager; result: T; changed: boolean; resetHistory?: boolean; rollback?(): void }>): Promise<T> {
+    return this.#withMutationLock(projectId, async () => {
+      const update = await action(await this.#load(projectId));
+      try { if (update.changed) await this.#save(projectId, update.graph); }
+      catch (error) { update.rollback?.(); throw error; }
+      if (update.resetHistory) this.#histories.delete(projectId);
+      return update.result;
+    });
+  }
   /** All relation and block writes share this project transaction and undo history. */
   withGraphMutation<T>(projectId: string, action: (graph: BlockGraphManager) => T | Promise<T>): Promise<T> { return this.#mutate(projectId, action); }
 
@@ -125,7 +140,10 @@ export class ProjectBlockGraphService {
   async reconcileParsedBlocks(projectId: string, input: ReconcileParsedBlocksInput): Promise<BlockReconciliationResult> {
     return this.#mutate(
       projectId,
-      (graph) => graph.reconcileParsedBlocks(input.fileId, input.blocks, () => this.#ids.next()),
+      (graph) => {
+        this.#files.assertSavedSource?.(projectId, input.fileId);
+        return graph.reconcileParsedBlocks(input.fileId, input.blocks, () => this.#ids.next());
+      },
       { recordHistory: false }
     );
   }
@@ -133,7 +151,10 @@ export class ProjectBlockGraphService {
   async mapUserBlockRanges(projectId: string, input: MapUserBlockRangesInput): Promise<BlockRangeMappingResult> {
     return this.#mutate(
       projectId,
-      (graph) => graph.mapUserBlockRanges(input.fileId, input.transactions),
+      (graph) => {
+        this.#files.assertSavedSource?.(projectId, input.fileId);
+        return graph.mapUserBlockRanges(input.fileId, input.transactions);
+      },
       { recordHistory: false }
     );
   }

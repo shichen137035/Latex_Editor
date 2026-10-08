@@ -1,4 +1,4 @@
-import type { BlockCapabilities, BlockKind, BlockOrigin, DependencyEdge, SemanticBlock } from "./block-graph.js";
+import type { BlockCapabilities, BlockGraphSnapshot, BlockKind, BlockOrigin, DependencyEdge, SemanticBlock } from "./block-graph.js";
 import type { BlockRelation } from "./relations.js";
 
 /** UTF-16, half-open offsets. Line/column coordinates are one-based. */
@@ -7,6 +7,19 @@ export interface SourceRange {
   startLine: number; startColumn: number; endLine: number; endColumn: number;
 }
 export interface BlockSource { fileId: string; range: SourceRange; bodyRange?: SourceRange }
+/** Identifies the text represented by a source index, independently of block revision. */
+export type DocumentTextVersion = { kind: "saved"; fingerprint: string } | { kind: "working"; fingerprint: string; sessionId: string; revision: number };
+export interface WorkingDocumentInput {
+  sessionId: string;
+  revision: number;
+  files: { fileId: string; content: string; savedContent: string;
+    rangeChanges?: { beforeContent: string; transactions: { from: number; to: number; insertedText: string }[][] } }[];
+}
+export interface WorkingDocumentResult {
+  revision: number;
+  snapshot: BlockGraphSnapshot;
+  semanticIds: Record<string, Record<string, string>>;
+}
 export interface BlockSemanticMetadata {
   summary?: { text: string; source: "ai" | "user"; blockRevision: number };
   tags?: { user: string[]; ai: string[]; blockRevision: number };
@@ -31,7 +44,7 @@ export interface DocumentStructure {
   numberingFingerprint?: string;
   /** Compatibility writes mark derived ranges/numbering for an on-demand refresh. */
   indexDirty?: boolean;
-  files: Record<string, { path: string; version: number; fingerprint?: string }>;
+  files: Record<string, { path: string; version: number; fingerprint?: string; textVersion?: DocumentTextVersion }>;
   roots: string[]; blocks: Record<string, DocumentBlock>;
   /** Existing logical dependencies are preserved, never inferred by this API. */
   dependencies?: DependencyEdge[];
@@ -49,6 +62,7 @@ export interface BlockDetail extends BlockCard {
   origin: BlockOrigin; revision: number;
   parent: BlockCard | null; children: BlockCard[];
   location: { fileId: string; startLine: number; endLine: number };
+  textVersion?: DocumentTextVersion | undefined;
   capabilities: BlockCapabilities;
 }
 export interface ListBlocksInput {
@@ -77,7 +91,7 @@ export interface BlockApiWarning { code: string; message: string; blockId?: stri
 export type BlockApiResult<T> =
   | { ok: true; data: T; warnings: BlockApiWarning[] }
   | { ok: false; error: { code: string; message: string; expectedRevision?: number; currentRevision?: number } };
-export interface BlockSourceResult { blockId: string; revision: number; content: string }
+export interface BlockSourceResult { blockId: string; revision: number; content: string; textVersion?: DocumentTextVersion | undefined }
 /** Shared by IPC and AI providers; no provider-specific document model. */
 export interface DocumentBlockApi {
   list_blocks(input?: ListBlocksInput): Promise<BlockApiResult<BlockCard[]>>;

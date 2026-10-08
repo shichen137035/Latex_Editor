@@ -1,9 +1,10 @@
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, expect, it, vi } from "vitest";
 import type { AIConversation } from "@latex-editor/contracts";
 import { AIWorkspaceService } from "../../apps/desktop/src/main/ai/ai-workspace.js";
+import { randomUUID } from "node:crypto";
 import type { CodexAppServer } from "../../apps/desktop/src/main/ai/codex-app-server.js";
 import type { CopilotChatService } from "../../apps/desktop/src/main/ai/copilot-chat.js";
 import { createWorkspaceBlockApi } from "../../apps/desktop/src/main/ai/workspace-block-api.js";
@@ -41,6 +42,21 @@ async function fixture(mode: "chat" | "codex") {
     else for (const callback of [...(callbacks.get("*") ?? []), ...(callbacks.get(type) ?? [])]) callback({ data, ...(agentId ? { agentId } : {}) });
   };
   return { root, service, session, conversation, send, emit, updates, workspace: () => workspace, message: () => service.snapshot("project").conversations[0]!.messages.at(-1)! };
+}
+
+for (const mode of ["chat", "codex"] as const) {
+  it(`${mode} keeps a send lease alive when its draft closes during context preparation`, async () => {
+    const f = await fixture(mode);
+    const draftId = randomUUID(); f.service.openAttachmentDraft("project", draftId);
+    const item = await f.service.addPastedFile("project", "background.txt", Buffer.from("Background attachment"), draftId);
+    const lease = f.service.acquireAttachments(f.conversation.id, draftId, [item.id]);
+    await f.service.attachments.close({ projectId: "project", draftId });
+    expect(f.service.attachments.usage().count).toBe(1);
+    await f.service.send({ conversationId: f.conversation.id, content: "Read", attachmentLease: lease!, snapshot: [{ path: "main.tex", content: "\\begin{document}Text.\\end{document}" }] });
+    expect(await readFile(join(f.workspace(), ".texweave", "ai-attachments", item.id, item.name), "utf8")).toBe("Background attachment");
+    expect(f.service.attachments.usage().count).toBe(0);
+    await f.service.dispose();
+  });
 }
 
 it("does not resurrect completed messages when a stale send response arrives with the same timestamp", async () => {

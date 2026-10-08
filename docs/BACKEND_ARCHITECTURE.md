@@ -2,6 +2,10 @@
 
 This document describes the architecture in the current repository. The root `package.json` is the version and command source of truth; feature-specific contracts and migration notes are maintained alongside their implementation under `docs/`.
 
+For a detailed repository map and prioritized follow-up work, see [Repository structure](REPOSITORY_STRUCTURE.md) and [0.6.4 health check](HEALTH_CHECK_0.6.4.md).
+
+AI draft attachments use a bounded staging store with per-draft ownership and send leases; see [Attachment lifecycle](AI_ATTACHMENT_LIFECYCLE.md).
+
 ## Runtime boundaries
 
 ```text
@@ -69,6 +73,8 @@ coordination; this contract change adds no new document store or migration.
 | `tests` | Unit, integration, compiler, and CLI end-to-end tests |
 
 ## Document and block ownership
+
+The desktop now has an explicit versioned editor read view. Unsaved TeX buffers and their graph stay in memory; desktop structure/graph/relation services use that same view. Saved source and `.texweave/structure.json` remain the disk view used by CLI and isolated AI workspaces. See [Working document model](WORKING_DOCUMENT_MODEL.md) for synchronization, commit, discard, conflicts and lifecycle.
 
 - LaTeX source files are the sole source of document text. Preview output is derived from source; it is not a second document store.
 - The shared preview parser produces source ranges and document nodes. Renderer code may add interaction state, but should not create a divergent LaTeX parser.

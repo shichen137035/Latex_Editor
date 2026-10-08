@@ -38,7 +38,7 @@ function loadPreload() {
 describe("desktop IPC contract and adapters", () => {
   it("registers every declared invoke exactly once in the main adapters", () => {
     const registered: string[] = [];
-    for (const path of ["index.ts", "ai/ipc.ts", "structure-ipc.ts", "block-graph-ipc.ts", "history-ipc.ts", "relation-ipc.ts"]) {
+    for (const path of ["index.ts", "ai/ipc.ts", "structure-ipc.ts", "working-document-ipc.ts", "block-graph-ipc.ts", "history-ipc.ts", "relation-ipc.ts"]) {
       const source = readFileSync(`apps/desktop/src/main/${path}`, "utf8");
       const file = ts.createSourceFile(path, source, ts.ScriptTarget.Latest, true);
       const aliases = new Map<string, string>();

@@ -5,6 +5,7 @@ import electron from "electron";
 
 const root = resolve(fileURLToPath(new URL("../../..", import.meta.url)));
 const checks = new Map([
+  ["ai-attachments", { script: "electron/check-ai-attachments.cjs" }],
   ["ai-connection", { script: "electron/check-ai-connection.cjs", cleanCodexPath: true }],
   ["preview-caret", { script: "electron/check-preview-caret.cjs" }],
   ["preview-startup", { script: "electron/check-preview-startup.cjs" }],

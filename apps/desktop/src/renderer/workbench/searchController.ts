@@ -1,10 +1,9 @@
 import { useEffect, useMemo, useRef, useState, type Dispatch, type MutableRefObject, type SetStateAction } from "react";
-import type { BlockGraphSnapshot, BlockTextEdit, Project, ProjectTreeNode } from "@latex-editor/contracts";
+import { includeNewBuiltInDirectives, type BlockTextEdit, type PreviewDirectiveDefinition, type Project, type ProjectTreeNode } from "@latex-editor/contracts";
 import { settings } from "../settings/service.js";
 import { FilterEngine } from "../filter/FilterEngine.js";
 import { defaultFilterQuery, type FilterQuery } from "../filter/types.js";
 import { parsePreview } from "../preview/parser.js";
-import { previewBlocksForReconciliation } from "../preview/reconciliation.js";
 import { SearchEngine, replaceRanges } from "../search/SearchEngine.js";
 import { defaultSearchQuery, type SearchDocument, type SearchQuery, type SearchResult } from "../search/types.js";
 import type { EnvironmentDefinition } from "../preview/types.js";
@@ -19,12 +18,11 @@ interface SearchControllerOptions {
   tabs: EditorTab[];
   activePath: string | undefined;
   previewEnvironments: EnvironmentDefinition[];
+  previewDirectives: PreviewDirectiveDefinition[];
   tabsRef: MutableRefObject<EditorTab[]>;
   savedContents: MutableRefObject<Map<string, string>>;
   changeDocument(path: string, content: string, typing?: boolean, edits?: BlockTextEdit[], record?: boolean, captureLargeDelete?: boolean): void;
   navigateTo(path: string, position?: { offset?: number | undefined }): Promise<void>;
-  setBlockSnapshot: Dispatch<SetStateAction<BlockGraphSnapshot | undefined>>;
-  setPreviewSemanticIds: Dispatch<SetStateAction<Record<string, string>>>;
   setProjectMathSources: Dispatch<SetStateAction<ProjectMathSource[]>>;
 }
 
@@ -43,14 +41,11 @@ export function useSearchController(options: SearchControllerOptions) {
     for (const tab of options.tabs) documents.set(tab.path, { fileId: tab.path, content: tab.content });
     return [...documents.values()];
   }, [projectSearchDocuments, options.tabs]);
+  const directives = useMemo(() => includeNewBuiltInDirectives(options.previewDirectives), [options.previewDirectives]);
   const filterDocuments = useMemo(() => searchDocuments
     .filter((item) => item.fileId.toLocaleLowerCase().endsWith(".tex"))
-    .map((item) => ({ ...item, preview: parsePreview(item.content, item.fileId, options.previewEnvironments) })),
-  [searchDocuments, options.previewEnvironments]);
-  const reconciliationInput = useMemo(() => {
-    const document = filterDocuments.find((item) => item.fileId === options.activePath);
-    return document ? previewBlocksForReconciliation(document.preview, document.content) : undefined;
-  }, [filterDocuments, options.activePath]);
+    .map((item) => ({ ...item, preview: parsePreview(item.content, item.fileId, options.previewEnvironments, directives) })),
+  [searchDocuments, options.previewEnvironments, directives]);
   const filterEvaluations = useMemo(() => new Map(filterDocuments.map((item) => [item.fileId,
     filterEngineRef.current.evaluate(item.preview.nodes, item.content, item.fileId, filterQuery)])), [filterDocuments, filterQuery]);
   const searchedDocuments = useMemo(() => searchQuery.scope === "current-file"
@@ -89,16 +84,6 @@ export function useSearchController(options: SearchControllerOptions) {
     return () => { cancelled = true; };
   }, [options.api, options.project.id, options.tree]);
 
-  useEffect(() => {
-    if (!options.api || !reconciliationInput) return;
-    const timer = window.setTimeout(() => {
-      void options.api!.blockGraph.reconcileParsedBlocks(options.project.id, reconciliationInput).then((result) => {
-        options.setBlockSnapshot(result.snapshot);
-        options.setPreviewSemanticIds(result.transientToBlockId);
-      }).catch((error: unknown) => console.warn("Unable to reconcile parsed blocks", error));
-    }, 450);
-    return () => window.clearTimeout(timer);
-  }, [options.api, options.project.id, reconciliationInput, options.setBlockSnapshot, options.setPreviewSemanticIds]);
 
   const selectSearchResult = async (result: SearchResult) => {
     setActiveSearchResult(result);

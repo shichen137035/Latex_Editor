@@ -831,6 +831,14 @@ export function PreviewPane({ filePath, source, sourceTransaction, definitions, 
       window.document.removeEventListener("keydown", escape);
     };
   }, [blockToolbarPosition]);
+  useLayoutEffect(() => {
+    if (!blockToolbarPosition) return;
+    const bounds = blockToolbarRef.current?.getBoundingClientRect();
+    if (!bounds) return;
+    const x = Math.min(Math.max(8, blockToolbarPosition.x), Math.max(8, window.innerWidth - bounds.width - 8));
+    const y = Math.min(Math.max(8, blockToolbarPosition.y), Math.max(8, window.innerHeight - bounds.height - 8));
+    if (x !== blockToolbarPosition.x || y !== blockToolbarPosition.y) setBlockToolbarPosition({ x, y });
+  }, [blockToolbarPosition, selectedId, additionalSelectedIds]);
   const [editingId, setEditingId] = useState<string>();
   // Absolute document position; recursive renderers must never rebase it.
   const [editingCursorOffset, setEditingCursorOffset] = useState<number>();
@@ -876,7 +884,7 @@ export function PreviewPane({ filePath, source, sourceTransaction, definitions, 
     const started = performance.now();
     const prior = previousDocumentRef.current;
     const incremental = prior?.definitions === definitions && prior.directives === previewDirectives
-      ? tryIncrementalPreviewUpdate(prior.document, prior.source, source, filePath, definitions, sourceTransaction)
+      ? tryIncrementalPreviewUpdate(prior.document, prior.source, source, filePath, definitions, sourceTransaction, previewDirectives)
       : undefined;
     let next: PreviewDocument;
     if (incremental && "document" in incremental) {
@@ -1521,14 +1529,6 @@ export function PreviewPane({ filePath, source, sourceTransaction, definitions, 
   const cancelBlockMarquee = () => { marqueeGesture.current = undefined; setMarqueeRect(undefined); };
   const selectedCount = (selectedId ? 1 : 0) + additionalSelectedIds.length;
   const selectedBlocks = selectedBlockIds().map((id) => document ? nodeById(document.nodes, id) : undefined).filter((node): node is StructuralBlock => node?.kind === "block");
-  useLayoutEffect(() => {
-    if (!blockToolbarPosition) return;
-    const bounds = blockToolbarRef.current?.getBoundingClientRect();
-    if (!bounds) return;
-    const x = Math.min(Math.max(8, blockToolbarPosition.x), Math.max(8, window.innerWidth - bounds.width - 8));
-    const y = Math.min(Math.max(8, blockToolbarPosition.y), Math.max(8, window.innerHeight - bounds.height - 8));
-    if (x !== blockToolbarPosition.x || y !== blockToolbarPosition.y) setBlockToolbarPosition({ x, y });
-  }, [blockToolbarPosition, selectedBlocks.length]);
   const selectedEnabledIds = selectedBlocks.filter((node) => node.environmentId !== "texweave-disabled").map((node) => node.id);
   const selectedDisabledIds = selectedBlocks.filter((node) => node.environmentId === "texweave-disabled").map((node) => node.id);
   const onPreviewClick = (event: MouseEvent<HTMLDivElement>) => {

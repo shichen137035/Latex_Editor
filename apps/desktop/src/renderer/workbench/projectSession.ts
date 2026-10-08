@@ -21,26 +21,33 @@ interface ProjectSessionOptions {
   setSaveState: Dispatch<SetStateAction<"saved" | "unsaved" | "saving" | "failed">>;
   onHome(): void;
   onSwitch(project: Project): void;
+  flushDocuments?(): Promise<void>;
+  releaseDocuments?(): Promise<void>;
+  onSaveError?(message: string): void;
 }
 
 export function createProjectSessionController(options: ProjectSessionOptions) {
   const saveTabs = async (all: boolean, flush: (update: () => void) => void = (update) => update()) => {
     if (!options.api) return;
-    const pending = options.tabs.filter((tab) => tab.dirty && (all || tab.path === options.activePath));
+    const pending = options.tabsRef.current.filter((tab) => tab.dirty && (all || tab.path === options.activePath));
     if (!pending.length) return;
     options.editHistory.current.breakGroup();
     options.setSaveState("saving");
     try {
+      await options.flushDocuments?.();
       for (const tab of pending) {
         await options.api.files.write(options.project.id, tab.path, tab.content);
         options.savedContents.current.set(tab.path, tab.content);
-        flush(() => options.setTabs((current) => current.map((value) => value.path === tab.path && value.content === tab.content ? { ...value, dirty: false } : value)));
+        options.tabsRef.current = options.tabsRef.current.map((value) => value.path === tab.path && value.content === tab.content ? { ...value, dirty: false } : value);
+        flush(() => options.setTabs(options.tabsRef.current));
       }
       options.completionController.current?.invalidate();
-      options.setSaveState("saved");
-    } catch {
+      options.setSaveState(options.tabsRef.current.some(tab => tab.dirty) ? "unsaved" : "saved");
+    } catch (error) {
       options.setSaveState("failed");
-      throw new Error(t("save.failed"));
+      const failure = new Error(`${t("save.failed")}${error instanceof Error ? `\n${error.message}` : ""}`, { cause: error });
+      options.onSaveError?.(failure.message);
+      throw failure;
     }
   };
 
@@ -70,6 +77,7 @@ export function createProjectSessionController(options: ProjectSessionOptions) {
     });
     if (!canLeave) return;
     if (!unsavedChanges.hasChanges()) await snapshotOnLeave().catch(() => undefined);
+    await options.releaseDocuments?.();
     navigate();
   };
 

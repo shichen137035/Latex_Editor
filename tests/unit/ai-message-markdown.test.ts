@@ -14,8 +14,16 @@ describe("AI message Markdown rendering", () => {
     expect(html).toContain("<table class=\"ai-markdown-table\">");
     expect(html).toContain("<strong>Build</strong>");
     expect(html).toContain("<del>failed</del>");
-    expect(html).toContain("type=\"checkbox\" checked=\"\" readOnly=\"\"");
-    expect(html).toContain("aria-label=\"Not completed\"");
+    const checkboxes = html.match(/<input\b[^>]*>/g) ?? [];
+    expect(checkboxes).toHaveLength(2);
+    for (const checkbox of checkboxes) {
+      expect(checkbox).toContain("type=\"checkbox\"");
+      expect(checkbox).toContain("readOnly=\"\"");
+    }
+    expect(checkboxes[0]).toContain("checked=\"\"");
+    expect(checkboxes[0]).toContain("aria-label=\"Completed\"");
+    expect(checkboxes[1]).not.toContain("checked=");
+    expect(checkboxes[1]).toContain("aria-label=\"Not completed\"");
   });
 
   it("keeps raw HTML inert", () => {

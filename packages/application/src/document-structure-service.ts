@@ -3,7 +3,7 @@ import {
   AppError, defaultPreviewDirectives, includeNewBuiltInDirectives, inferBlockKind, type BlockApiResult, type BlockApiWarning, type BlockCard,
   type BlockDetail, type DocumentBlock, type DocumentBlockApi, type DocumentStructure,
   type FindBlocksInput, type InsertBlockInput, type ListBlocksInput, type ProjectTreeNode,
-  type SourceRange, type PreviewDirectiveDefinition
+  type SourceRange, type PreviewDirectiveDefinition, type DocumentTextVersion
 } from "@latex-editor/contracts";
 import { BlockQueryIndex, SourceIndex, getBlockCapabilities, type BlockGraphManager } from "@latex-editor/editor-core";
 import { parsePreview, STRUCTURE_PARSER_REVISION } from "@latex-editor/editor-core/preview/parser";
@@ -14,6 +14,7 @@ import type { ProjectBlockGraphService, BlockGraphFilePort } from "./block-graph
 export interface DocumentStructureFilePort extends BlockGraphFilePort {
   listTree(projectId: string): Promise<ProjectTreeNode[]>;
   getFileVersion?(projectId: string, path: string): Promise<string>;
+  getTextVersion?(projectId: string, path: string, content: string): DocumentTextVersion;
 }
 type FileCache = { content: string; configuration: string; document: PreviewDocument; index: SourceIndex };
 type Context = { graph: BlockGraphManager; structure: DocumentStructure; sources: Map<string, string>; definitions: EnvironmentDefinition[]; directives: PreviewDirectiveDefinition[]; queryIndex: BlockQueryIndex };
@@ -36,7 +37,7 @@ const limitOf = (limit = 50) => {
 export class ProjectDocumentStructureService {
   readonly #cache = new Map<string, Map<string, FileCache>>();
   readonly #textCache = new Map<string, Map<string, { content: string; token: string }>>();
-  readonly #queryCache = new Map<string, { revision: number; index: BlockQueryIndex }>();
+  readonly #queryCache = new Map<string, { token: string; index: BlockQueryIndex }>();
   constructor(readonly files: DocumentStructureFilePort, readonly graphs: ProjectBlockGraphService,
     readonly ids: { next(): string }, readonly definitions: (projectId: string) => Promise<EnvironmentDefinition[]> = async () => [],
     readonly directives: (projectId: string) => Promise<PreviewDirectiveDefinition[]> = async () => defaultPreviewDirectives) {}
@@ -53,7 +54,7 @@ export class ProjectDocumentStructureService {
       }),
       get_block_source: ({ blockId }) => run((context) => {
         const block = this.#block(context, blockId);
-        return { blockId, revision: block.revision, content: this.#source(context, block) };
+        return { blockId, revision: block.revision, content: this.#source(context, block), textVersion: context.structure.files[block.source.fileId]?.textVersion };
       }),
       replace_block_content: (input) => run(async (context) => {
         const block = this.#block(context, input.blockId);
@@ -113,6 +114,11 @@ export class ProjectDocumentStructureService {
   }
 
   async snapshot(projectId: string): Promise<BlockApiResult<DocumentStructure>> { return this.#run(projectId, (context) => structuredClone(context.structure)); }
+  releaseProjectCache(projectId: string): void {
+    this.#cache.delete(projectId);
+    this.#textCache.delete(projectId);
+    this.#queryCache.delete(projectId);
+  }
 
   async #run<T>(projectId: string, action: (context: Context) => T | Promise<T>): Promise<BlockApiResult<T>> {
     try {
@@ -167,7 +173,8 @@ export class ProjectDocumentStructureService {
       sources.set(path, content);
       const fingerprint = hash(content);
       const previous = old?.files[path];
-      structure.files[path] = { path, version: previous ? previous.version + (previous.fingerprint !== fingerprint ? 1 : 0) : 1, fingerprint };
+      structure.files[path] = { path, version: previous ? previous.version + (previous.fingerprint !== fingerprint ? 1 : 0) : 1, fingerprint,
+        textVersion: this.files.getTextVersion?.(projectId, path, content) ?? { kind: "saved", fingerprint } };
       const cached = cache.get(path);
       const document = cached?.content === content && cached.configuration === configuration ? cached.document : parsePreview(content, path, definitions, directives);
       const configurationChanged = cached !== undefined && cached.configuration !== configuration;
@@ -271,9 +278,10 @@ export class ProjectDocumentStructureService {
 
   #index(projectId: string, structure: DocumentStructure): BlockQueryIndex {
     const cached = this.#queryCache.get(projectId);
-    if (cached?.revision === structure.structureRevision) return cached.index;
+    const token = JSON.stringify([structure.structureRevision, structure.configurationFingerprint, structure.numberingFingerprint, structure.files]);
+    if (cached?.token === token) return cached.index;
     const index = new BlockQueryIndex(structure);
-    this.#queryCache.set(projectId, { revision: structure.structureRevision, index });
+    this.#queryCache.set(projectId, { token, index });
     return index;
   }
 
@@ -320,6 +328,7 @@ export class ProjectDocumentStructureService {
       parent: block.parentId ? this.#card(this.#block(context, block.parentId)) : null,
       children: block.childIds.map((id) => this.#card(this.#block(context, id))),
       location: { fileId: block.source.fileId, startLine: block.source.range.startLine, endLine: block.source.range.endLine },
+      textVersion: context.structure.files[block.source.fileId]?.textVersion,
       capabilities: getBlockCapabilities(block) };
   }
   #descendants(structure: DocumentStructure, id: string): string[] {

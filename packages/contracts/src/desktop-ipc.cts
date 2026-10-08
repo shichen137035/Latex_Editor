@@ -1,6 +1,6 @@
-import type { AIStatus, AIModelOption, AIConversation, AIChangeSet, AIContextSnapshotFile, AIProjectSkill, AIMode, AIAttachment, AddSemanticBlockInput, BlockCreationValidation, BlockGraphSnapshot, BlockId, BlockRangeMappingResult, BlockReconciliationResult, CommandMetadata, CompileResult, PdfExportResult, CreateSemanticBlockInput, CreateUserBlockInput, DependencyCycle, DictionaryPackage, FileWriteResult, GraphDiagnostic, GraphTraversalOptions, GraphTraversalResult, ImportedImage, LogicalRelation, MapUserBlockRangesInput, Project, ProjectHistoryDetails, ProjectHistoryEntry, ProjectHistoryStorage, ProjectTreeNode, ReconcileParsedBlocksInput, RelationDirection, RelationMutationResult, RelationNeighborhood, RelationValidation, ResolvedGraphic, SemanticBlock, SettingsSnapshot, PreferenceKey, LatexToolchain, StyleResource, StyleResourceFile, ThemeDefinition, SnapshotReason, SpellCheckMode, SpellCheckStatus, StructuralDependencyOverlap, StructuralHistoryState, StructureWarning, SyncTexPdfPosition, SyncTexSourcePosition, TextFileContent, UpdateSemanticBlockInput, ProjectReferenceLink, ReferenceLibraryEntry, ReferenceLibrarySnapshot, ReferenceImportResult, ReferenceTag } from "./index.js" with { "resolution-mode": "import" };
+import type { AIStatus, AIModelOption, AIConversation, AIChangeSet, AIContextSnapshotFile, AIProjectSkill, AIMode, AIAttachment, AddSemanticBlockInput, BlockCreationValidation, BlockGraphSnapshot, BlockId, CommandMetadata, CompileResult, PdfExportResult, CreateSemanticBlockInput, CreateUserBlockInput, DependencyCycle, DictionaryPackage, FileWriteResult, GraphDiagnostic, GraphTraversalOptions, GraphTraversalResult, ImportedImage, LogicalRelation, Project, ProjectHistoryDetails, ProjectHistoryEntry, ProjectHistoryStorage, ProjectTreeNode, RelationDirection, RelationMutationResult, RelationNeighborhood, RelationValidation, ResolvedGraphic, SemanticBlock, SettingsSnapshot, PreferenceKey, LatexToolchain, StyleResource, StyleResourceFile, ThemeDefinition, SnapshotReason, SpellCheckMode, SpellCheckStatus, StructuralDependencyOverlap, StructuralHistoryState, StructureWarning, SyncTexPdfPosition, SyncTexSourcePosition, TextFileContent, UpdateSemanticBlockInput, ProjectReferenceLink, ReferenceLibraryEntry, ReferenceLibrarySnapshot, ReferenceImportResult, ReferenceTag } from "./index.js" with { "resolution-mode": "import" };
 
-import type { BlockApiResult, DocumentBlockApi, DocumentStructure, AIApprovalRequest } from "./index.js" with { "resolution-mode": "import" };
+import type { BlockApiResult, DocumentBlockApi, DocumentStructure, AIApprovalRequest, WorkingDocumentInput, WorkingDocumentResult } from "./index.js" with { "resolution-mode": "import" };
 
 import type { InstallationState, InstalledComponent, RemoveUserDataOptions } from "./installation.js" with { "resolution-mode": "import" };
 import type { RelationAPI, RelationEvent } from "./relations.js" with { "resolution-mode": "import" };
@@ -18,6 +18,10 @@ export type UnsavedDialogChoice = "save" | "discard" | "cancel";
 
 /** Desktop transport contract. Existing public method and wire names remain stable. */
 export const desktopInvoke = {
+  documents: {
+    sync: invoke<(projectId: string, input: WorkingDocumentInput) => Promise<WorkingDocumentResult>>("documents:sync"),
+    close: invoke<(projectId: string, sessionId: string) => Promise<void>>("documents:close"),
+  },
   relations: {
     canCreateRelation: invoke<ProjectScoped<RelationAPI["canCreateRelation"]>>("relations:can-create"),
     createRelation: invoke<ProjectScoped<RelationAPI["createRelation"]>>("relations:create"),
@@ -99,8 +103,6 @@ export const desktopInvoke = {
     validateUserBlock: invoke<(projectId: string, input: CreateUserBlockInput) => Promise<BlockCreationValidation>>("block-graph:validate-user-block"),
     createUserBlock: invoke<(projectId: string, input: CreateUserBlockInput) => Promise<SemanticBlock>>("block-graph:create-user-block"),
     deleteUserBlock: invoke<(projectId: string, blockId: BlockId) => Promise<void>>("block-graph:delete-user-block"),
-    reconcileParsedBlocks: invoke<(projectId: string, input: ReconcileParsedBlocksInput) => Promise<BlockReconciliationResult>>("block-graph:reconcile-parsed"),
-    mapUserBlockRanges: invoke<(projectId: string, input: MapUserBlockRangesInput) => Promise<BlockRangeMappingResult>>("block-graph:map-user-ranges"),
     addBlock: invoke<(projectId: string, block: AddSemanticBlockInput & { id: BlockId }) => Promise<void>>("block-graph:add-block"),
     updateBlock: invoke<(projectId: string, blockId: BlockId, patch: UpdateSemanticBlockInput) => Promise<SemanticBlock>>("block-graph:update-block"),
     removeBlock: invoke<(projectId: string, blockId: BlockId) => Promise<void>>("block-graph:remove-block"),
@@ -241,10 +243,13 @@ export const desktopInvoke = {
     markChangeSetApplied: invoke<(id: string, hunkIds: string[], error?: string) => Promise<AIChangeSet | undefined>>("ai:change-set:applied"),
     approvals: invoke<(projectId?: string) => Promise<AIApprovalRequest[]>>("ai:approvals"),
     resolveApproval: invoke<(id: string, allow: boolean) => Promise<void>>("ai:approval:resolve"),
-    send: invoke<(input: { conversationId: string; taskId?: string; projectId?: string; content: string; contextText?: string; overrides?: AIContextSnapshotFile[]; attachmentIds?: string[] }) => Promise<{ conversation: AIConversation; taskId: string } | undefined>>("ai:send"),
-    pickAttachments: invoke<(projectId: string) => Promise<AIAttachment[]>>("ai:attachments:pick"),
-    addPastedImage: invoke<(projectId: string, mimeType: string, data: Uint8Array) => Promise<AIAttachment>>("ai:attachments:add-pasted-image"),
-    addPastedFile: invoke<(projectId: string, name: string, data: Uint8Array) => Promise<AIAttachment>>("ai:attachments:add-pasted-file"),
+    send: invoke<(input: { conversationId: string; taskId?: string; projectId?: string; content: string; contextText?: string; overrides?: AIContextSnapshotFile[]; attachmentIds?: string[]; attachmentDraftId?: string }) => Promise<{ conversation: AIConversation; taskId: string } | undefined>>("ai:send"),
+    openAttachmentDraft: invoke<(projectId: string, draftId: string) => Promise<void>>("ai:attachments:open-draft"),
+    closeAttachmentDraft: invoke<(projectId: string, draftId: string) => Promise<void>>("ai:attachments:close-draft"),
+    removeAttachments: invoke<(projectId: string, draftId: string, ids: string[]) => Promise<void>>("ai:attachments:remove"),
+    pickAttachments: invoke<(projectId: string, draftId: string) => Promise<AIAttachment[]>>("ai:attachments:pick"),
+    addPastedImage: invoke<(projectId: string, mimeType: string, data: Uint8Array, draftId: string) => Promise<AIAttachment>>("ai:attachments:add-pasted-image"),
+    addPastedFile: invoke<(projectId: string, name: string, data: Uint8Array, draftId: string) => Promise<AIAttachment>>("ai:attachments:add-pasted-file"),
     cancel: invoke<(taskId: string) => Promise<void>>("ai:cancel"),
   },
   synctex: {

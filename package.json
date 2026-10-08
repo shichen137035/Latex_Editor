@@ -27,6 +27,7 @@
     "desktop:dev": "node apps/desktop/scripts/dev.cjs",
     "desktop:dev:build": "npm run desktop:build && node apps/desktop/scripts/launch.cjs",
     "desktop:test-ai": "npm run desktop:build && node apps/desktop/scripts/run-electron-check.mjs ai-connection",
+    "desktop:test-ai-attachments": "npm run desktop:build && node apps/desktop/scripts/run-electron-check.mjs ai-attachments",
     "desktop:test-ai-review": "npm run desktop:build && node apps/desktop/scripts/run-ai-review-check.mjs",
     "desktop:test-structure": "npm run desktop:build && node apps/desktop/scripts/run-structure-check.mjs",
     "desktop:test-ui": "npm run desktop:build && node apps/desktop/scripts/run-file-menu-check.mjs",
