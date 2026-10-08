@@ -8,6 +8,7 @@ import type { EnvironmentDefinition, PreviewDocument } from "@latex-editor/edito
 import type { PreviewDirectiveDefinition } from "@latex-editor/contracts";
 import type { DocumentStructureFilePort } from "./document-structure-service.js";
 import type { ProjectBlockGraphService } from "./block-graph-service.js";
+import type { ProjectCacheReclamationManager } from "./project-cache-reclamation.js";
 
 const metadataPath = ".texweave/structure.json";
 const fingerprint = (content: string) => createHash("sha256").update(content).digest("hex");
@@ -70,7 +71,16 @@ export class ProjectWorkingDocumentService {
   constructor(readonly files: WorkingDocumentFiles, readonly graphs: ProjectBlockGraphService, readonly ids: { next(): string },
     readonly definitions: (projectId: string) => Promise<EnvironmentDefinition[]> = async () => [],
     readonly directives: (projectId: string) => Promise<PreviewDirectiveDefinition[]> = async () => defaultPreviewDirectives,
-    readonly releaseCache: (projectId: string) => void = () => undefined) {}
+    readonly cacheReclamation?: ProjectCacheReclamationManager) {
+    cacheReclamation?.register("working-documents", projectId => {
+      const session = this.files.sessions.get(projectId);
+      if (session) this.#retire(session.id);
+      this.files.sessions.delete(projectId);
+      this.#parses.delete(projectId);
+    }, (projectId, reason) => reason.kind === "shutdown"
+      || reason.kind === "editor-close" && this.files.sessions.get(projectId)?.id === reason.sessionId
+      || reason.kind === "project-removed" && !this.files.sessions.has(projectId));
+  }
 
   async sync(projectId: string, input: WorkingDocumentInput): Promise<WorkingDocumentResult> {
     this.#validate(input);
@@ -153,12 +163,10 @@ export class ProjectWorkingDocumentService {
     if (typeof sessionId !== "string" || !/^[a-zA-Z0-9-]{1,100}$/.test(sessionId)) throw conflict("Invalid document session.");
     await this.graphs.releaseSourceView(projectId, () => {
       const session = this.files.sessions.get(projectId);
-      this.#retired.add(sessionId);
-      if (this.#retired.size > 256) this.#retired.delete(this.#retired.values().next().value!);
+      this.#retire(sessionId);
       if (session?.id !== sessionId) return false;
-      this.files.sessions.delete(projectId);
-      this.#parses.delete(projectId);
-      this.releaseCache(projectId);
+      if (this.cacheReclamation) this.cacheReclamation.reclaimProject(projectId, { kind: "editor-close", sessionId });
+      else { this.files.sessions.delete(projectId); this.#parses.delete(projectId); }
       return true;
     });
   }
@@ -213,6 +221,11 @@ export class ProjectWorkingDocumentService {
       if (!file || typeof file.fileId !== "string" || !/\.tex$/i.test(file.fileId) || file.fileId.includes("\\") || file.fileId.startsWith("/") || file.fileId.includes(":") || file.fileId.split("/").some(part => !part || part === "." || part === "..") || typeof file.content !== "string" || typeof file.savedContent !== "string" || paths.has(file.fileId.toLowerCase())) throw conflict("Invalid or duplicate editor file.");
       paths.add(file.fileId.toLowerCase());
     }
+  }
+
+  #retire(sessionId: string): void {
+    this.#retired.add(sessionId);
+    if (this.#retired.size > 256) this.#retired.delete(this.#retired.values().next().value!);
   }
 }
 

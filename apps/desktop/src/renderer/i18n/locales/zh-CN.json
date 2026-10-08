@@ -2,6 +2,7 @@
   "ai.pasteFileTooLarge": "每个附件不能超过 20 MB。",
   "ai.pasteFileLimit": "最多添加 20 个附件，总大小不能超过 50 MB。",
   "activity.history": "历史",
+  "activity.relations": "关系",
   "settings.history": "版本历史",
   "history.title": "项目历史",
   "history.current": "当前项目",

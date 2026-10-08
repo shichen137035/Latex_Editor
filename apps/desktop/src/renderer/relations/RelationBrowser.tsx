@@ -10,8 +10,8 @@ export interface RelationBrowserProps {
   snapshot: BlockGraphSnapshot; definitions: EnvironmentDefinition[];
   focusId: BlockId | null; selectedId: BlockId | null; scope: RelationScope;
   direction: RelationDirection; depth: number | "all"; documentFiltered: boolean;
-  filters: RelationFilters; viewMode: FilterViewMode; canGoBack: boolean;
-  onBack(): void; onSelect(id: BlockId): void; onFocus(id: BlockId): void; onLocate(id: BlockId): void;
+  filters: RelationFilters; viewMode: FilterViewMode;
+  onSelect(id: BlockId): void; onFocus(id: BlockId): void; onLocate(id: BlockId): void;
   onDirection(direction: RelationDirection): void; onDepth(depth: number | "all"): void; onDocumentFiltered(enabled: boolean): void;
   onFilters(filters: RelationFilters): void;
   onToggleRelation(id: BlockId, event: MouseEvent<HTMLButtonElement>): void;
@@ -81,7 +81,6 @@ export function RelationBrowser(props: RelationBrowserProps) {
 
   return <div className={`relation-browser view-${props.viewMode} ${hasDisplayFilter ? "has-display-filter" : ""}`}>
     <div className="relation-browser-head">
-      <button className="relation-back" disabled={!props.canGoBack} onClick={props.onBack}>← {t("relation.back")}</button>
       <h3>{t("relation.scopeTitle")}</h3>
       <div className="relation-focus-summary"><span>{t("relation.focus")}</span><strong title={focus ? blockName(focus) : undefined}>{focus ? <><EnvironmentDot block={focus} definitions={props.definitions}/><span className="relation-focus-title">{blockName(focus)}</span></> : t("relation.chooseFocus")}</strong></div>
       <RelationScopeControls segmented direction={props.direction} depth={props.depth} documentFiltered={props.documentFiltered} onDirection={props.onDirection} onDepth={props.onDepth} onDocumentFiltered={props.onDocumentFiltered}/>

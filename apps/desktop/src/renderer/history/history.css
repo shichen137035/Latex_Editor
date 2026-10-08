@@ -1,7 +1,7 @@
 .project-history-panel { display:flex; flex-direction:column; height:100%; min-height:0; color:var(--color-text-primary); background:var(--color-bg-panel); }
 .history-heading { display:flex; align-items:center; gap:5px; padding:9px 12px; border-bottom:1px solid var(--color-border); }
 .history-heading strong { flex:1; font-size:12px; letter-spacing:.08em; text-transform:uppercase; }
-.history-heading button, .history-storage button { padding:4px 7px; border-radius:5px; color:var(--color-primary); }
+.history-heading > button:first-of-type { margin-left:auto; }.history-heading button, .history-storage button { padding:4px 7px; border-radius:5px; color:var(--color-primary); }
 .history-heading button:hover, .history-storage button:hover { background:var(--color-bg-hover); }
 .history-create { display:flex; gap:7px; padding:10px; }
 .history-create button { flex:1; padding:8px 5px; border:1px solid var(--color-border); border-radius:7px; background:var(--color-bg-panel); color:var(--color-primary); font-size:11px; }

@@ -10,10 +10,9 @@ function flatten(nodes: ProjectTreeNode[], result: ProjectTreeNode[] = []): Proj
 
 const PAGE_SIZE = 5;
 
-export function ReferenceLibraryPanel({ project, onOpenLibrary, onReturnToEditor, onCite }: {
+export function ReferenceLibraryPanel({ project, onOpenLibrary, onCite }: {
   project: Project;
   onOpenLibrary(): void;
-  onReturnToEditor(): void;
   onCite(key: string): void;
 }) {
   const api = window.latexEditor;
@@ -98,7 +97,7 @@ export function ReferenceLibraryPanel({ project, onOpenLibrary, onReturnToEditor
   return <section className="reference-quick-panel">
     <header className="reference-quick-header">
       <div className="reference-quick-title"><span className="reference-quick-mark">R</span><div><strong>Project references</strong><small>{project.name}</small></div></div>
-      <div className="reference-quick-navigation"><button onClick={onOpenLibrary} title="Open the full reference library">Full library ↗</button><button onClick={onReturnToEditor} title="Return to the editor">Editor</button></div>
+      <div className="reference-quick-navigation"><button onClick={onOpenLibrary} title="Open the full reference library">Full library ↗</button></div>
     </header>
 
     <div className="reference-quick-tabs" role="tablist" aria-label="Project references">

@@ -2,6 +2,7 @@
   "ai.pasteFileTooLarge": "Attachments must be no larger than 20 MB each.",
   "ai.pasteFileLimit": "Use at most 20 attachments totaling 50 MB.",
   "activity.history": "History",
+  "activity.relations": "Relations",
   "settings.history": "Version History",
   "history.title": "Project History",
   "history.current": "Current project",

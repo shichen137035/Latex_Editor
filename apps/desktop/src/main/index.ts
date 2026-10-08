@@ -100,8 +100,8 @@ async function createContext(): Promise<DesktopContext> {
     return includeNewBuiltInDirectives(preferences.project.previewDirectives ?? preferences.global.previewDirectives ?? []);
   };
   const workingFiles = new WorkingDocumentFiles(files);
-  const { blockGraph, structure, relations } = createProjectBlockServices({ files: workingFiles, ids: { next: randomUUID }, definitions: environmentDefinitions, directives: directiveDefinitions });
-  const documents = new ProjectWorkingDocumentService(workingFiles, blockGraph, { next: randomUUID }, environmentDefinitions, directiveDefinitions, projectId => structure.releaseProjectCache(projectId));
+  const { blockGraph, structure, relations, cacheReclamation } = createProjectBlockServices({ files: workingFiles, ids: { next: randomUUID }, definitions: environmentDefinitions, directives: directiveDefinitions });
+  const documents = new ProjectWorkingDocumentService(workingFiles, blockGraph, { next: randomUUID }, environmentDefinitions, directiveDefinitions, cacheReclamation);
   relations.onEvent((projectId, event) => BrowserWindow.getAllWindows().forEach(window => sendIpc(window.webContents, desktopEvents.toRenderer.relationUpdate, { projectId, event })));
   await themes.setDirectory(settings.global.themeDirectory ?? "");
   const { discoverToolchain } = await import("@latex-editor/compiler-latexmk");
@@ -392,7 +392,9 @@ function registerIpcHandlers(): void {
   });
   handleIpc(desktopInvoke.projects.removeFromDirectory, async (_event, projectId) => {
     if (!context) throw new Error("Application context is not ready");
-    return context.projects.remove({ projectId, mode: "registryOnly" });
+    const result = await context.projects.remove({ projectId, mode: "registryOnly" });
+    await context.blockGraph.reclaimProjectCaches(projectId, { kind: "project-removed" });
+    return result;
   });
   handleIpc(desktopInvoke.projects.relocateInDirectory, async (_event, projectId, folderPath) => {
     if (!context) throw new Error("Application context is not ready");
@@ -413,6 +415,7 @@ function registerIpcHandlers(): void {
     };
     if (!mainFile) delete updated.mainFile;
     await context.projects.remove({ projectId: relocated.id, mode: "registryOnly" });
+    await context.blockGraph.reclaimProjectCaches(relocated.id, { kind: "project-removed" });
     try { context.registry.update(updated); }
     catch (error) {
       await context.projects.registerExistingFolder(relocated.canonicalPath).catch(() => undefined);
@@ -427,6 +430,7 @@ function registerIpcHandlers(): void {
     if (project.missing || context.environment.isUnsafeDeleteTarget(project.canonicalPath)) throw new Error("This project folder cannot be safely moved to the Recycle Bin");
     await shell.trashItem(project.canonicalPath);
     await context.projects.remove({ projectId, mode: "registryOnly" });
+    await context.blockGraph.reclaimProjectCaches(projectId, { kind: "project-removed" });
     return true;
   });
   handleIpc(desktopInvoke.projects.revealInFileManager, (_event, projectId) => {
@@ -724,6 +728,8 @@ app.on("window-all-closed", () => {
     // An unresponsive provider must not prevent exit; orphan staging files are cleaned on next startup.
     await Promise.race([Promise.allSettled([current?.ai.stop(), current?.aiWorkspaces.dispose()]), deadline]);
     clearTimeout(shutdownTimer);
+    try { await current?.blockGraph.reclaimAllProjectCaches({ kind: "shutdown" }); }
+    catch (error) { console.warn("Unable to release every project cache during shutdown", error); }
     current?.registry.close();
     current?.references.close();
     if (process.platform !== "darwin") app.quit();

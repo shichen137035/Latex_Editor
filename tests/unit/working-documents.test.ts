@@ -30,7 +30,7 @@ function setup(extra: Record<string, string> = {}, configured = definitions, dir
   const ids = { next: () => `block-${++id}` };
   const files = new WorkingDocumentFiles(port);
   const services = createProjectBlockServices({ files, ids, definitions: async () => configured, directives: async () => directives });
-  const documents = new ProjectWorkingDocumentService(files, services.blockGraph, ids, async () => configured, async () => directives, projectId => services.structure.releaseProjectCache(projectId));
+  const documents = new ProjectWorkingDocumentService(files, services.blockGraph, ids, async () => configured, async () => directives, services.cacheReclamation);
   const input = (revision: number, content = edited, sessionId = "editor-1"): WorkingDocumentInput => ({
     sessionId, revision, files: [{ fileId: "main.tex", content, savedContent: saved }]
   });

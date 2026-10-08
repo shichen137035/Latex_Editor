@@ -5,6 +5,7 @@ export * from "./block-graph-service.js";
 export * from "./relation-service.js";
 export * from "./document-structure-service.js";
 export * from "./project-block-services.js";
+export * from "./project-cache-reclamation.js";
 export * from "./working-documents.js";
 
 export interface ProjectRegistryPort {

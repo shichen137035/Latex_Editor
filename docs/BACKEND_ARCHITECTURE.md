@@ -76,6 +76,8 @@ coordination; this contract change adds no new document store or migration.
 
 The desktop now has an explicit versioned editor read view. Unsaved TeX buffers and their graph stay in memory; desktop structure/graph/relation services use that same view. Saved source and `.texweave/structure.json` remain the disk view used by CLI and isolated AI workspaces. See [Working document model](WORKING_DOCUMENT_MODEL.md) for synchronization, commit, discard, conflicts and lifecycle.
 
+Project-scoped structure caches register their cleanup with `ProjectCacheReclamationManager` in the application layer. The graph service runs reclamation under its per-project mutation lock and coordinates working-document parses, structure text/query indexes, and graph undo history. Closing an editor session and removing a project reclaim that project's caches; project removal leaves caches alone while an editor session is still active, and shutdown drains every tracked project through the same lock. New project-scoped caches should register an idempotent cleanup callback there instead of adding an unrelated close path.
+
 - LaTeX source files are the sole source of document text. Preview output is derived from source; it is not a second document store.
 - The shared preview parser produces source ranges and document nodes. Renderer code may add interaction state, but should not create a divergent LaTeX parser.
 - `ProjectBlockGraphService` owns stable block identities, structural parent/child links, semantic relations, persistence, and graph history. Project metadata is stored under `.texweave/`; source text is not copied into the graph store.

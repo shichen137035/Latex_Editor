@@ -29,6 +29,7 @@ import {
 } from "@latex-editor/contracts";
 import type { IdGenerator } from "@latex-editor/domain";
 import { BlockGraphManager } from "@latex-editor/editor-core";
+import type { ProjectCacheReclamationManager, ProjectCacheReclamationReason } from "./project-cache-reclamation.js";
 
 const graphMetadataPath = ".texweave/structure.json";
 const legacyGraphMetadataPath = ".texweave/block-graph.json";
@@ -58,7 +59,7 @@ export class ProjectBlockGraphService {
   readonly #histories = new Map<string, { undo: HistoryEntry[]; redo: HistoryEntry[] }>();
   readonly #listeners = new Set<(projectId: string) => void>();
 
-  constructor(files: BlockGraphFilePort, ids: IdGenerator) {
+  constructor(files: BlockGraphFilePort, ids: IdGenerator, readonly cacheReclamation?: ProjectCacheReclamationManager) {
     this.#files = files;
     this.#ids = ids;
   }
@@ -301,6 +302,7 @@ export class ProjectBlockGraphService {
   }
 
   async #load(projectId: string): Promise<BlockGraphManager> {
+    this.cacheReclamation?.track(projectId);
     const readSnapshot = async (path: string) => {
       const file = await this.#files.readText(projectId, path);
       let value: unknown;
@@ -327,6 +329,20 @@ export class ProjectBlockGraphService {
   async #save(projectId: string, graph: BlockGraphManager): Promise<void> {
     await this.#files.writeText(projectId, graphMetadataPath, `${JSON.stringify(graph.toPersistenceSnapshot(), null, 2)}\n`);
     for (const listener of this.#listeners) { try { listener(projectId); } catch { /* Subscribers cannot invalidate a completed write. */ } }
+  }
+
+  /** Clears retained undo history; active mutation queues drain themselves. */
+  releaseProjectCache(projectId: string): void { this.#histories.delete(projectId); }
+
+  /** Reclaims the registered project caches under the same lock as graph reads and writes. */
+  reclaimProjectCaches(projectId: string, reason: ProjectCacheReclamationReason): Promise<boolean> {
+    return this.#withMutationLock(projectId, async () => this.cacheReclamation?.reclaimProject(projectId, reason) ?? false);
+  }
+
+  async reclaimAllProjectCaches(reason: ProjectCacheReclamationReason): Promise<number> {
+    const projectIds = this.cacheReclamation?.trackedProjectIds ?? [];
+    const results = await Promise.all(projectIds.map(projectId => this.reclaimProjectCaches(projectId, reason)));
+    return results.filter(Boolean).length;
   }
 
   async #mutate<T>(projectId: string, action: (graph: BlockGraphManager) => T | Promise<T>, options: { recordHistory?: boolean } = {}): Promise<T> {

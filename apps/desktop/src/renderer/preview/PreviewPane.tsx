@@ -130,6 +130,10 @@ function sourceElement(node: Node | null, root: HTMLElement): HTMLElement | unde
   return result && root.contains(result) ? result : undefined;
 }
 
+function referenceModifierPressed(event: Pick<KeyboardEvent, "ctrlKey" | "altKey" | "shiftKey" | "metaKey">, modifier: "ctrl" | "alt" | "shift" | "meta"): boolean {
+  return modifier === "ctrl" ? event.ctrlKey : modifier === "alt" ? event.altKey : modifier === "shift" ? event.shiftKey : event.metaKey;
+}
+
 function previewDocumentSelection(root: HTMLElement, source: string, fileId: string): DocumentSelection | undefined {
   const selection = window.getSelection();
   if (!selection || selection.isCollapsed || selection.rangeCount === 0) return undefined;
@@ -810,6 +814,7 @@ function PreviewPerformancePanel({ virtual, timing, total }: { virtual: VirtualP
 
 export function PreviewPane({ filePath, source, sourceTransaction, definitions, mathContext = EMPTY_MATH_CONTEXT, searchQuery = defaultInlineSearch, filterQuery = defaultFilterQuery, activeSearchResult, highlightRange, locateRequest, restoreOffset, restoreScrollTop, onLocated, relation, onSourceChange, onSelectionChange, onSelectionContextMenu, onViewportAnchorChange, onClickSourcePosition, onJumpFromPosition, onInsertionAnchorChange, onFigureSelect, onFigureSlotSelect, onTableSelect, onTableChange, api, projectId, tree, onSpellContextMenu, onDetectedLanguage, onForwardSync }: { filePath?: string | undefined; source?: string | undefined; sourceTransaction?: PreviewSourceTransaction | undefined; definitions: EnvironmentDefinition[]; mathContext?: MathContext; searchQuery?: SearchQuery; filterQuery?: FilterQuery; activeSearchResult?: SearchResult | undefined; highlightRange?: { fileId: string; start: number; end: number; nonce: number } | undefined; locateRequest?: { fileId: string; offset: number; nonce: number } | undefined; restoreOffset?: number | undefined; restoreScrollTop?: number | undefined; onLocated?(nonce: number): void; relation?: PreviewRelationUi | undefined; onSourceChange(next: string, changes?: PreviewTextChange[]): void; onSelectionChange?(selection?: DocumentSelection): void; onSelectionContextMenu?(selection: DocumentSelection, x: number, y: number): void; onViewportAnchorChange?(anchor: { fileId: string; offset: number; scrollTop: number }): void; onClickSourcePosition?(anchor: { fileId: string; offset: number }): void; onJumpFromPosition?(anchor: { fileId: string; offset: number; targetOffset: number; linkText: string; targetLabel: string }): void; onInsertionAnchorChange?(anchor?: { fileId: string; offset: number }): void; onFigureSelect?(selection?: FigureSelection): void; onFigureSlotSelect?(selection: FigureSelection): void; onTableSelect?(selection?: TableSelection): void; onTableChange?(selection: TableSelection, source: string): void; api: EditorApi | undefined; projectId: string; tree: ProjectTreeNode[]; onSpellContextMenu(request: SpellContextRequest): void; onDetectedLanguage(language: string): void; onForwardSync(path: string, line: number, column?: number): void }) {
   const preferences = useSettings();
+  const referenceLinkModifier = preferences.get("referenceLinkModifier");
   const storedDirectives = preferences.get("previewDirectives");
   const previewDirectives = useMemo(() => includeNewBuiltInDirectives(storedDirectives), [storedDirectives]);
   const showPreviewMetrics = preferences.get("showPreviewMetrics");
@@ -957,9 +962,9 @@ export function PreviewPane({ filePath, source, sourceTransaction, definitions, 
     }
     return ids;
   }, [renderIndex, forcedTargetId, selectedId, editingId, boundary?.targetId, additionalSelectedIds]);
-  const updateJumpCursor = (target: Element | undefined, controlHeld: boolean) => {
+  const updateJumpCursor = (target: Element | undefined, modifierHeld: boolean) => {
     const root = previewRootRef.current;
-    const jump = controlHeld && root?.contains(target ?? null) && document && source !== undefined
+    const jump = modifierHeld && root?.contains(target ?? null) && document && source !== undefined
       ? previewJumpTarget(target, source, document.nodes) : undefined;
     if (activeJumpElementRef.current === jump?.element) return;
     activeJumpElementRef.current?.classList.remove("preview-jump-ready");
@@ -967,7 +972,7 @@ export function PreviewPane({ filePath, source, sourceTransaction, definitions, 
     activeJumpElementRef.current = jump?.element;
   };
   useEffect(() => {
-    const onModifier = (event: KeyboardEvent) => updateJumpCursor(hoveredJumpElementRef.current, event.ctrlKey && !event.altKey && !event.shiftKey);
+    const onModifier = (event: KeyboardEvent) => updateJumpCursor(hoveredJumpElementRef.current, referenceModifierPressed(event, referenceLinkModifier));
     const reset = () => updateJumpCursor(undefined, false);
     window.addEventListener("keydown", onModifier);
     window.addEventListener("keyup", onModifier);
@@ -978,7 +983,7 @@ export function PreviewPane({ filePath, source, sourceTransaction, definitions, 
       window.removeEventListener("blur", reset);
       reset();
     };
-  }, [document, source]);
+  }, [document, source, referenceLinkModifier]);
   const nodeRanges = useMemo<PreviewEditorServices["nodeRanges"]>(() => ({
     get: (id) => {
       const empty = id.startsWith("ui-empty:");
@@ -1501,7 +1506,7 @@ export function PreviewPane({ filePath, source, sourceTransaction, definitions, 
   };
   const moveBlockMarquee = (event: ReactPointerEvent<HTMLDivElement>) => {
     hoveredJumpElementRef.current = event.target instanceof Element ? event.target : undefined;
-    updateJumpCursor(hoveredJumpElementRef.current, event.ctrlKey && !event.altKey && !event.shiftKey);
+    updateJumpCursor(hoveredJumpElementRef.current, referenceModifierPressed(event, referenceLinkModifier));
     const gesture = marqueeGesture.current;
     if (!gesture || gesture.pointerId !== event.pointerId) return;
     gesture.currentX = event.clientX;
@@ -1535,7 +1540,7 @@ export function PreviewPane({ filePath, source, sourceTransaction, definitions, 
     if (marqueeJustCompleted.current) { event.preventDefault(); event.stopPropagation(); marqueeJustCompleted.current = false; return; }
     const clickTarget = event.target instanceof Element ? event.target : undefined;
     const jump = document && source !== undefined ? previewJumpTarget(clickTarget, source, document.nodes) : undefined;
-    if (jump && document && event.ctrlKey && !event.altKey && !event.shiftKey) {
+    if (jump && document && referenceModifierPressed(event, referenceLinkModifier)) {
       event.preventDefault();
       event.stopPropagation();
       const fromOffset = Number(jump.element.dataset.referenceSourceStart);

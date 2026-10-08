@@ -16,7 +16,7 @@ export function Icon({ name }: { name: string }) {
     settings: "M12 8.5a3.5 3.5 0 1 0 0 7 3.5 3.5 0 0 0 0-7Zm0-6v2m0 15v2m9-9h-2m-14 0H3m15.4-6.4L17 7.5M7 17l-1.4 1.4m12.8 0L17 17M7 7.5 5.6 6.1", image: "M4 5h16v14H4zM6 16l4-4 3 3 2-2 3 3M8 9h.01",
     help: "M9.5 9a2.7 2.7 0 1 1 4.3 2.2c-1.1.8-1.8 1.3-1.8 2.8m0 3h.01", home: "M3 11.5 12 4l9 7.5V21h-6v-6H9v6H3z",
     save: "M5 3h12l3 3v15H4V3h1Zm3 0v6h8V3M8 21v-7h8v7", play: "m8 5 11 7-11 7V5Z", panel: "M4 5h16v14H4zM4 14h16",
-    chevron: "m8 10 4 4 4-4", close: "m7 7 10 10M17 7 7 17", plus: "M12 5v14M5 12h14", refresh: "M19 7v5h-5M5 17v-5h5M18 12a6 6 0 0 0-10.5-4M6 12a6 6 0 0 0 10.5 4"
+    chevron: "m8 10 4 4 4-4", back: "M19 12H5m7 7-7-7 7-7", relations: "M6 4a2 2 0 1 0 0 4a2 2 0 0 0 0-4Zm12 0a2 2 0 1 0 0 4a2 2 0 0 0 0-4ZM12 16a2 2 0 1 0 0 4a2 2 0 0 0 0-4ZM8 6h8M7 8l4 8m6-8-4 8", close: "m7 7 10 10M17 7 7 17", plus: "M12 5v14M5 12h14", refresh: "M19 7v5h-5M5 17v-5h5M18 12a6 6 0 0 0-10.5-4M6 12a6 6 0 0 0 10.5 4"
   };
   return <svg viewBox="0 0 24 24" aria-hidden="true"><path d={paths[name]} /></svg>;
 }
