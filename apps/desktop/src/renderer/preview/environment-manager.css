@@ -92,3 +92,10 @@
   .environment-sample-backdrop { padding: 10px; }
   .environment-sample-variants { grid-template-columns: 1fr; padding: 12px; }
 }
+.environment-specialized-settings { display: grid; gap: 12px; margin-top: 20px; }
+.environment-specialized-settings details { border: 1px solid var(--color-border); border-radius: 8px; overflow: hidden; }
+.environment-specialized-settings summary { padding: 14px 16px; color: var(--color-text-secondary); background: var(--color-bg-subtle); font-weight: 600; cursor: pointer; }
+.environment-specialized-settings .environment-form-grid { padding: 18px; }
+.environment-specialized-body { display: grid; gap: 12px; padding: 16px; }
+.environment-specialized-body > label { display: grid; gap: 7px; }
+.environment-specialized-settings input[type=checkbox] { width: 18px; height: 18px; align-self: start; }

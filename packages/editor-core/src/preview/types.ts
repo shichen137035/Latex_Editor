@@ -62,13 +62,31 @@ export interface EnvironmentStyle {
   titleFontWeight?: number;
   titleLineHeight?: number;
   titleLetterSpacing?: number;
+  captionFontSize?: number;
+  imageMaxHeightVh?: number;
+  imageGridMinWidth?: number;
+  imageGridGap?: number;
+  tableCellMaxHeightEm?: number;
+  tableEditorMaxHeight?: number;
+  tableExpandedFontSize?: number;
 }
+
+export type EnvironmentRenderer = "auto" | "content" | "math" | "code" | "list" | "figure" | "table";
 
 export interface EnvironmentBehavior {
   inlineEditable: boolean;
   allowChildren: boolean;
   showHeader: boolean;
   showLabel: boolean;
+  /** Show the source optional argument's brackets in the block heading. */
+  showOptionBrackets?: boolean;
+  renderer?: EnvironmentRenderer;
+  showCaption?: boolean;
+  captionEditable?: boolean;
+  imageClickAction?: "settings" | "replace" | "source" | "inspect";
+  tableToolbar?: "selected" | "always" | "hidden";
+  allowExpandedEditor?: boolean;
+  expandedToolbar?: boolean;
 }
 
 export interface EnvironmentDefinition {

@@ -1,7 +1,9 @@
-import { cloneEnvironmentDefinitions, DEFAULT_ENVIRONMENTS } from "./environments.js";
+import { cloneEnvironmentDefinitions, DEFAULT_ENVIRONMENTS, environmentOptionBrackets } from "./environments.js";
 import type { EnvironmentDefinition, EnvironmentMatchRule } from "./types.js";
 import { settings } from "../settings/service.js";
 import { environmentTitleTypography, titleNumericFields, validTitleNumber, type TitleNumericField } from "./environment-typography.js";
+import { environmentPreview, previewNumericFields, previewRenderers, imageClickActions, tableToolbarModes, validPreviewNumber, type PreviewNumericField } from "./environment-preview.js";
+import type { EnvironmentBehavior } from "./types.js";
 
 export const GLOBAL_ENVIRONMENTS_KEY = "texweave.environments.global.v1";
 
@@ -42,7 +44,7 @@ export function createCustomEnvironment(existing: EnvironmentDefinition[]): Envi
       borderToken: "rgba(70, 95, 120, 0.10)",
       selectedBorderToken: "#2f6bb2"
     },
-    behavior: { inlineEditable: true, allowChildren: true, showHeader: true, showLabel: true }
+    behavior: { inlineEditable: true, allowChildren: true, showHeader: true, showLabel: true, showOptionBrackets: environmentOptionBrackets() }
   };
 }
 
@@ -67,10 +69,13 @@ export function serializeEnvironments(definitions: EnvironmentDefinition[]): str
   const rows = definitions.map((definition) => {
     const typography = environmentTitleTypography(definition.id, definition.family, definition);
     const titleAttributes = Object.entries(typography).filter(([key]) => key.startsWith("title")).map(([key, value]) => `${key}="${escapeXml(String(value))}"`).join(" ");
+    const preview = environmentPreview(definition.id, definition);
+    const previewAttributes = Object.entries(preview.sizing).filter(([key]) => definition.style[key as PreviewNumericField] !== undefined || preview.renderer === "figure" || preview.renderer === "table").map(([key, value]) => `${key}="${value}"`).join(" ");
+    const behaviorAttributes = Object.entries(preview.behavior).map(([key, value]) => `${key}="${escapeXml(String(value))}"`).join(" ");
     return `  <environment id="${escapeXml(definition.id)}" enabled="${definition.enabled}" builtIn="${definition.builtIn}" family="${definition.family}" label="${escapeXml(definition.label ?? "")}" labelKey="${escapeXml(definition.labelKey)}">
     <match type="${definition.match.kind}" value="${escapeXml(matchValue(definition.match))}" />
-    <style accentToken="${escapeXml(definition.style.accentToken)}" fillToken="${escapeXml(definition.style.fillToken)}" borderToken="${escapeXml(definition.style.borderToken)}" selectedBorderToken="${escapeXml(definition.style.selectedBorderToken)}" labelBackgroundToken="${escapeXml(definition.style.labelBackgroundToken)}" labelTextToken="${escapeXml(definition.style.labelTextToken)}" ${titleAttributes} />
-    <behavior inlineEditable="${definition.behavior.inlineEditable}" allowChildren="${definition.behavior.allowChildren}" showHeader="${definition.behavior.showHeader}" showLabel="${definition.behavior.showLabel}" />
+    <style accentToken="${escapeXml(definition.style.accentToken)}" fillToken="${escapeXml(definition.style.fillToken)}" borderToken="${escapeXml(definition.style.borderToken)}" selectedBorderToken="${escapeXml(definition.style.selectedBorderToken)}" labelBackgroundToken="${escapeXml(definition.style.labelBackgroundToken)}" labelTextToken="${escapeXml(definition.style.labelTextToken)}" ${titleAttributes} ${previewAttributes} />
+    <behavior ${behaviorAttributes} />
   </environment>`;
   });
   return `<environments version="1">\n${rows.join("\n")}\n</environments>`;
@@ -111,6 +116,28 @@ export function parseEnvironmentXml(xml: string): EnvironmentDefinition[] {
       typography[field] = value;
     }
     const titleFontFamily = styleElement.getAttribute("titleFontFamily")?.trim();
+    const showOptionBrackets = behaviorElement.getAttribute("showOptionBrackets");
+    if (showOptionBrackets !== null && showOptionBrackets !== "true" && showOptionBrackets !== "false") throw new Error(`Invalid showOptionBrackets for environment '${id}'.`);
+    const previewBehavior: Partial<EnvironmentBehavior> = {};
+    for (const key of ["showCaption", "captionEditable", "allowExpandedEditor", "expandedToolbar"] as const) {
+      const raw = behaviorElement.getAttribute(key);
+      if (raw === null) continue;
+      if (raw !== "true" && raw !== "false") throw new Error(`Invalid ${key} for environment '${id}'.`);
+      previewBehavior[key] = raw === "true";
+    }
+    for (const [key, choices] of [["renderer", previewRenderers], ["imageClickAction", imageClickActions], ["tableToolbar", tableToolbarModes]] as const) {
+      const raw = behaviorElement.getAttribute(key);
+      if (raw === null) continue;
+      if (!(choices as readonly string[]).includes(raw)) throw new Error(`Invalid ${key} for environment '${id}'.`);
+      Object.assign(previewBehavior, { [key]: raw });
+    }
+    const previewSizing: Partial<Record<PreviewNumericField, number>> = {};
+    for (const key of Object.keys(previewNumericFields) as PreviewNumericField[]) {
+      const raw = styleElement.getAttribute(key);
+      if (raw === null) continue;
+      if (!raw.trim() || !validPreviewNumber(key, Number(raw))) throw new Error(`Invalid ${key} for environment '${id}'.`);
+      previewSizing[key] = Number(raw);
+    }
     return {
       id,
       enabled: booleanAttribute(element, "enabled", true),
@@ -121,6 +148,7 @@ export function parseEnvironmentXml(xml: string): EnvironmentDefinition[] {
       family,
       style: {
         ...typography,
+        ...previewSizing,
         ...(titleFontFamily ? { titleFontFamily } : {}),
         accentToken: styleElement.getAttribute("accentToken") || "--env-generic-accent",
         fillToken: styleElement.getAttribute("fillToken") || "transparent",
@@ -130,10 +158,12 @@ export function parseEnvironmentXml(xml: string): EnvironmentDefinition[] {
         labelTextToken: styleElement.getAttribute("labelTextToken") || "--env-generic-label-text"
       },
       behavior: {
+        ...previewBehavior,
         inlineEditable: booleanAttribute(behaviorElement, "inlineEditable", true),
         allowChildren: booleanAttribute(behaviorElement, "allowChildren", true),
         showHeader: booleanAttribute(behaviorElement, "showHeader", true),
-        showLabel: booleanAttribute(behaviorElement, "showLabel", true)
+        showLabel: booleanAttribute(behaviorElement, "showLabel", true),
+        ...(showOptionBrackets !== null ? { showOptionBrackets: showOptionBrackets === "true" } : {})
       }
     };
   });

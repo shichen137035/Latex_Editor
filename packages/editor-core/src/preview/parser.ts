@@ -369,7 +369,7 @@ export function parsePreview(source: string, filePath: string, definitions: Envi
     if (start < documentStart || end > documentEnd || commentedAt(source, start)) continue;
     while (figureCursor < figureIntervals.length && figureIntervals[figureCursor]!.start <= start) figureEnd = Math.max(figureEnd, figureIntervals[figureCursor++]!.end);
     const insideFigure = figureEnd >= end;
-    if (!insideFigure) rawBlocks.push({ start, end, bodyStart: start, bodyEnd: end, environmentId: "inline-image", origin: "latex" });
+    if (!insideFigure && definitions.find(definition => definition.id === "inline-image")?.enabled !== false) rawBlocks.push({ start, end, bodyStart: start, bodyEnd: end, environmentId: "inline-image", origin: "latex" });
   }
 
   // Custom patterns are intentionally local and guarded: an invalid regular

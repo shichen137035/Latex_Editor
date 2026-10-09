@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { readCollapsedOutline, readCollapsedPreview, writeCollapsedOutline, writeCollapsedPreview } from "../../apps/desktop/src/renderer/collapseState.js";
+import { readCollapsedOutline, readCollapsedPreview, readExpandedFileTree, writeCollapsedOutline, writeCollapsedPreview, writeExpandedFileTree } from "../../apps/desktop/src/renderer/collapseState.js";
 import { DEFAULT_ENVIRONMENTS } from "../../apps/desktop/src/renderer/preview/environments.js";
 import { parsePreview } from "../../apps/desktop/src/renderer/preview/parser.js";
 import { buildPreviewRenderIndex } from "../../apps/desktop/src/renderer/preview/renderModel.js";
@@ -20,6 +20,21 @@ function indexFor(source: string) {
 afterEach(() => vi.unstubAllGlobals());
 
 describe("collapsed document state", () => {
+  it("starts folders closed, persists expansion across reloads and isolates projects", async () => {
+    mockStorage();
+    expect(readExpandedFileTree("tree-project-a").size).toBe(0);
+    writeExpandedFileTree("tree-project-a", new Set(["chapters", "chapters/nested"]));
+    // A fresh module has no in-memory cache and must restore from disk storage.
+    vi.resetModules();
+    const restored = await import("../../apps/desktop/src/renderer/collapseState.js");
+    expect(restored.readExpandedFileTree("tree-project-a")).toEqual(new Set(["chapters", "chapters/nested"]));
+    expect(restored.readExpandedFileTree("tree-project-b").size).toBe(0);
+    expect(restored.readExpandedFileTree("tree-project-a").has("new-folder")).toBe(false);
+    restored.writeExpandedFileTree("tree-project-a", new Set());
+    vi.resetModules();
+    expect((await import("../../apps/desktop/src/renderer/collapseState.js")).readExpandedFileTree("tree-project-a").size).toBe(0);
+  });
+
   it("restores a block after unrelated source shifts, but opens it when its content changes", () => {
     mockStorage();
     const original = String.raw`\section{Intro}

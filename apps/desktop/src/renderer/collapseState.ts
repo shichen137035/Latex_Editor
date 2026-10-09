@@ -2,12 +2,14 @@ import type { PreviewRenderIndex } from "./preview/renderModel.js";
 
 type PreviewCollapseRecord = { key: string; fingerprint: string };
 const memoryRecords = new Map<string, unknown[]>();
+type CollapseStorageKind = "preview" | "outline" | "file-tree";
 
-function storageKey(kind: "preview" | "outline", projectId: string, filePath: string): string {
+function storageKey(kind: CollapseStorageKind, projectId: string, filePath: string): string {
+  if (kind === "file-tree") return `texweave.expanded.file-tree.v1:${encodeURIComponent(projectId)}`;
   return `texweave.collapsed.${kind}.v1:${encodeURIComponent(projectId)}:${encodeURIComponent(filePath)}`;
 }
 
-function readRecords(kind: "preview" | "outline", projectId: string, filePath: string): unknown[] {
+function readRecords(kind: CollapseStorageKind, projectId: string, filePath: string): unknown[] {
   const key = storageKey(kind, projectId, filePath);
   const cached = memoryRecords.get(key);
   if (cached) return cached;
@@ -19,7 +21,7 @@ function readRecords(kind: "preview" | "outline", projectId: string, filePath: s
   } catch { return []; }
 }
 
-function writeRecords(kind: "preview" | "outline", projectId: string, filePath: string, records: unknown[]): void {
+function writeRecords(kind: CollapseStorageKind, projectId: string, filePath: string, records: unknown[]): void {
   const key = storageKey(kind, projectId, filePath);
   memoryRecords.set(key, records);
   try {
@@ -34,6 +36,15 @@ export function readCollapsedOutline(projectId: string, filePath: string): Set<s
 
 export function writeCollapsedOutline(projectId: string, filePath: string, keys: ReadonlySet<string>): void {
   writeRecords("outline", projectId, filePath, [...keys]);
+}
+
+/** Store expanded paths so previously unseen directories always start closed. */
+export function readExpandedFileTree(projectId: string): Set<string> {
+  return new Set(readRecords("file-tree", projectId, "").filter((item): item is string => typeof item === "string" && item.length > 0 && item.length <= 2048));
+}
+
+export function writeExpandedFileTree(projectId: string, paths: ReadonlySet<string>): void {
+  writeRecords("file-tree", projectId, "", [...paths]);
 }
 
 export function previewCollapseKeys(index: PreviewRenderIndex): Map<string, string> {

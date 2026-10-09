@@ -2,7 +2,9 @@ import type { CompileResult, Project, ProjectTreeNode } from "@latex-editor/cont
 import type { Dispatch, SetStateAction } from "react";
 import { t } from "../i18n/index.js";
 import { projectFilePaths, type PersistedLayout } from "./layout.js";
+import { compilationTargets } from "./compileTargets.js";
 export interface CompileGuard { busy: boolean; alive: boolean; }
+type DisplayCompileResult = CompileResult & { pdfDataUrl?: string | undefined };
 
 type BottomTab = "problems" | "output" | "compileLog";
 interface DocumentActionsOptions {
@@ -15,6 +17,7 @@ interface DocumentActionsOptions {
   isCurrent?(mainFile: string): boolean;
   onIdle?(): void;
   onPdfReady?(result: CompileResult): void;
+  onCompileBatch?(results: CompileResult[]): void;
   saveActive(): Promise<void>;
   saveAll(): Promise<void>;
   setCompileState: Dispatch<SetStateAction<"idle" | "running">>;
@@ -36,6 +39,7 @@ export function createDocumentActions(options: DocumentActionsOptions) {
     if (!options.api || options.compileState === "running" || options.guard?.busy || options.guard?.alive === false) return;
     const mainFile = resolveMainTexFile();
     if (!mainFile) {
+      options.onCompileBatch?.([]);
       options.setCompileResult({ compilationId: "ui-error", status: "failed", exitCode: null, startedAt: new Date().toISOString(), finishedAt: new Date().toISOString(), durationMs: 0, mainFile: "", diagnostics: [{ severity: "error", source: "system", message: "No LaTeX main file is configured." }], stdoutTail: "", stderrTail: "" });
       options.setBottomTab("problems");
       options.setBottomVisible(true);
@@ -43,19 +47,32 @@ export function createDocumentActions(options: DocumentActionsOptions) {
     }
     if (options.guard) options.guard.busy = true;
     options.setCompileState("running");
+    const targets = compilationTargets(mainFile, options.activePath);
+    const results: DisplayCompileResult[] = [];
+    const failed = (file: string, reason: unknown): CompileResult => ({ compilationId: "ui-error", status: "failed", exitCode: null, startedAt: new Date().toISOString(), finishedAt: new Date().toISOString(), durationMs: 0, mainFile: file, diagnostics: [{ severity: "error", source: "system", message: reason instanceof Error ? reason.message : String(reason) }], stdoutTail: "", stderrTail: "" });
     try {
       await options.saveAll();
       if (!current(mainFile)) return;
-      const result = await options.api.compile.run(options.project.id, mainFile);
-      if (!current(mainFile)) return;
+      for (const target of targets) {
+        let result: DisplayCompileResult;
+        try { result = await options.api.compile.run(options.project.id, target); }
+        catch (reason) { result = failed(target, reason); }
+        if (!current(mainFile)) return;
+        results.push(result);
+        if (result.status === "cancelled") break;
+      }
+      const result = results.at(-1)!;
+      options.onCompileBatch?.(results);
       options.setCompileResult(result);
       if (result.status === "succeeded" && result.pdfDataUrl) { options.setPdfDataUrl(result.pdfDataUrl); options.onPdfReady?.(result); }
-      options.setLayout((value) => ({ ...value, rightPane: "pdf" }));
-      options.setBottomTab(result.diagnostics.length ? "problems" : "compileLog");
-      options.setBottomVisible(result.status !== "succeeded");
+      options.setLayout((value) => value.mode === "single" ? { ...value, singlePane: "pdf" } : { ...value, rightPane: "pdf" });
+      options.setBottomTab(results.some(item => item.diagnostics.length) ? "problems" : "compileLog");
+      options.setBottomVisible(results.some(item => item.status !== "succeeded"));
     } catch (reason) {
       if (!current(mainFile)) return;
-      options.setCompileResult({ compilationId: "ui-error", status: "failed", exitCode: null, startedAt: new Date().toISOString(), finishedAt: new Date().toISOString(), durationMs: 0, mainFile, diagnostics: [{ severity: "error", source: "system", message: reason instanceof Error ? reason.message : String(reason) }], stdoutTail: "", stderrTail: "" });
+      const result = failed(mainFile, reason);
+      options.onCompileBatch?.([result]);
+      options.setCompileResult(result);
       options.setBottomTab("problems");
       options.setBottomVisible(true);
     } finally {
@@ -96,6 +113,7 @@ export function createDocumentActions(options: DocumentActionsOptions) {
       if (!current(mainFile)) return;
       if (result.status === "cancelled") return;
       options.setCompileResult(result.compilation);
+      options.onCompileBatch?.([result.compilation]);
       if (result.status === "failed") {
         options.setBottomTab("problems");
         options.setBottomVisible(true);

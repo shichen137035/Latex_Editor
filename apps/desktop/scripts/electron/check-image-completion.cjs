@@ -26,7 +26,21 @@ async function press(keyCode, modifiers = []) {
   page.webContents.sendInputEvent({ type: "keyDown", keyCode, modifiers });
   page.webContents.sendInputEvent({ type: "keyUp", keyCode, modifiers });
 }
+async function reloadProject() {
+  await evaluate('document.querySelector(".save-status").click()');
+  await until('!!document.querySelector(".save-status.saved")', 'finish saving before project close');
+  await evaluate('document.querySelector(".logo-button").click()');
+  await until('!!document.querySelector(".directory-project-row")', 'release document session');
+  page.reload();
+  await until('!!document.querySelector(".directory-project-row, .structured-preview")', 'reload settings');
+  if (await evaluate('!!document.querySelector(".directory-project-row")')) await evaluate('document.querySelector(".directory-project-row").click()');
+  await until('!!document.querySelector(".preview-figure img")', 'reopen configured figure');
+  page.focus();
+}
 async function suggest(selector, text, expected) {
+  // Visual editors restore their initial caret over two animation frames.
+  // Wait for that restoration before moving the caret and entering a test command.
+  await evaluate('new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))');
   await evaluate(`document.querySelector(${JSON.stringify(selector)}).focus()`);
   await press('END', ['control']); await page.webContents.insertText('\n' + text);
   await press('SPACE', ['control']);
@@ -87,14 +101,20 @@ async function run() {
     await until(`window.latexEditor.files.read(${id}, "main.tex").then(file => file.content === ${JSON.stringify(expectedSource)})`, 'save only float option');
     await evaluate(`document.querySelector(${JSON.stringify(block + ' .preview-caption-text')}).click()`);
     await until(`!!document.querySelector(${JSON.stringify(block + ' .preview-caption-field .monaco-editor textarea')})`, 'caption source editor');
+    await evaluate('new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))');
+    await evaluate(`document.querySelector(${JSON.stringify(block + ' .preview-caption-field .monaco-editor textarea')}).focus()`);
     const editedCaption = `\\caption[Short]{Edited ${environment} \\textbf{caption} $x$}`;
     await press('A', ['control']); await page.webContents.insertText(editedCaption);
+    await until(`document.querySelector(${JSON.stringify(block + ' .preview-caption-field .view-lines')})?.textContent.includes("Edited")`, 'typed caption visible');
     await evaluate(`document.querySelector(${JSON.stringify(block + ' .preview-caption-field .preview-local-editor-actions .primary')}).click()`);
+    await until(`document.querySelector(${JSON.stringify(block + ' .preview-caption-text')})?.textContent.includes(${JSON.stringify('Edited ' + environment)})`, 'caption commit rendered');
     await press('S', ['control']);
     expectedSource = expectedSource.replace(oldCaption, editedCaption);
     await until(`window.latexEditor.files.read(${id}, "main.tex").then(file => file.content === ${JSON.stringify(expectedSource)})`, 'save only caption command');
     await evaluate(`document.querySelector(${JSON.stringify(block + ' .preview-caption-text')}).click()`);
     await until(`!!document.querySelector(${JSON.stringify(block + ' .preview-caption-field .monaco-editor textarea')})`, 'caption cancel editor');
+    await evaluate('new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))');
+    await evaluate(`document.querySelector(${JSON.stringify(block + ' .preview-caption-field .monaco-editor textarea')}).focus()`);
     await press('A', ['control']); await page.webContents.insertText('discarded caption'); await press('ESC');
     await until('!document.querySelector(".preview-local-editor")', 'cancel caption edit');
     assert.equal((await evaluate(`window.latexEditor.files.read(${id}, "main.tex")`)).content, expectedSource);
@@ -119,6 +139,32 @@ async function run() {
   await until('!!document.querySelector(\'.tree-row[data-path="late.bib"]\')', "new bibliography in tree");
   await suggest('.preview-local-editor .monaco-editor textarea', '\\cite{late', ['lateKey']);
   console.log('PASS Visual source completion refreshes resource snapshots while its editor stays open');
+  await evaluate('Array.from(document.querySelectorAll(".preview-local-editor-actions button")).find(button => button.textContent === "Cancel").click()');
+  await until('!document.querySelector(".preview-local-editor")', 'close test paragraph draft');
+  const catalog = require('../../../../resources/environments/preview-environments.json');
+  const definitions = catalog.previewEnvironments.map(entry => ({ ...entry, enabled:true, builtIn:true, labelKey:entry.labelKey ?? `environment.${entry.id}`, style:{...catalog.defaultStyle,...catalog.familyStyles[entry.family],...entry.style}, behavior:{...catalog.defaultBehavior,...entry.behavior} }));
+  const configuredFigure = definitions.find(entry => entry.id === 'figure');
+  Object.assign(configuredFigure.behavior, {showCaption:false, showLabel:false, imageClickAction:'inspect'});
+  configuredFigure.style.imageMaxHeightVh = 45;
+  await evaluate(`window.latexEditor.settings.set("environments", ${JSON.stringify(definitions)}, ${id})`);
+  await reloadProject();
+  await until('!document.querySelector(".preview-figure figcaption, .preview-figure > small")', 'image caption/label settings');
+  await evaluate('document.querySelector(".preview-figure img").click()');
+  assert.equal(await evaluate('!!document.querySelector(".image-insert-dialog, .preview-local-editor")'), false);
+  assert.ok(await evaluate('Math.abs(parseFloat(getComputedStyle(document.querySelector(".preview-figure img")).maxHeight) - innerHeight * .45) < 1'));
+  configuredFigure.behavior.imageClickAction = 'source';
+  await evaluate(`window.latexEditor.settings.set("environments", ${JSON.stringify(definitions)}, ${id})`);
+  await reloadProject();
+  await evaluate('document.querySelector(".preview-figure img").click()');
+  await until('!!document.querySelector(".preview-local-editor") && !document.querySelector(".image-insert-dialog")', 'image click follows source policy');
+  await evaluate('Array.from(document.querySelectorAll(".preview-local-editor-actions button")).find(button => button.textContent === "Cancel").click()');
+  Object.assign(configuredFigure.behavior, {showCaption:true, captionEditable:false, imageClickAction:'replace', inlineEditable:false});
+  await evaluate(`window.latexEditor.settings.set("environments", ${JSON.stringify(definitions)}, ${id})`);
+  await reloadProject();
+  await until('!!document.querySelector(".preview-figure figcaption") && !document.querySelector(".preview-figure .preview-caption-text")', 'caption read-only policy');
+  await evaluate('document.querySelector(".preview-figure img").click()');
+  assert.equal(await evaluate('!!document.querySelector(".image-insert-dialog, .preview-local-editor")'), false);
+  console.log('PASS image policy, caption editing, label visibility and image dimensions follow configuration');
   assert.deepEqual(errors, []);
 }
 app.whenReady().then(() => {

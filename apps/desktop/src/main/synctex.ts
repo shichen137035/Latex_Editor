@@ -36,7 +36,9 @@ function inside(root: string, path: string): boolean {
 
 async function run(input: ToolOptions, args: string[]): Promise<string> {
   const { compilerEnvironment, findSyncTexData, syncTexDirectories } = await import("@latex-editor/compiler-latexmk");
-  const data = await findSyncTexData(input.pdfPath, syncTexDirectories(input.root, input.mainFile, input.compilerArguments));
+  // Managed secondary outputs must never borrow a same-named primary sidecar.
+  const isolated = inside(resolve(input.root, ".latex-editor/build/targets"), input.pdfPath);
+  const data = await findSyncTexData(input.pdfPath, isolated ? [] : syncTexDirectories(input.root, input.mainFile, input.compilerArguments));
   if (data.state !== "ready") throw new Error(`SYNCTEX_DATA_${data.state.toUpperCase()}: Recompile this PDF to regenerate its source location data.`);
   if (!inside(await realpath(input.root), await realpath(data.path!))) throw noMatch();
   const names = process.platform === "win32" ? ["synctex.exe", "synctex"] : ["synctex"];

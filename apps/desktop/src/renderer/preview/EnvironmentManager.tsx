@@ -1,9 +1,13 @@
-import { useEffect, useMemo, useState, type CSSProperties, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import { t, type MessageKey } from "../i18n/index.js";
 import { ColorTokenInput } from "./ColorTokenInput.js";
 import { createCustomEnvironment, parseEnvironmentXml, resetBuiltIn, serializeEnvironments } from "./environmentConfig.js";
 import { environmentBlockStyle } from "./environment-block-style.js";
+import { environmentOptionBrackets } from "./environments.js";
+import { environmentPreview } from "./environment-preview.js";
+import { EnvironmentSpecializedSettings } from "./EnvironmentSpecializedSettings.js";
+import { mergeEnvironmentEdit } from "./environmentEdits.js";
 import { environmentAccent } from "./environment-colors.js";
 import type { EnvironmentDefinition, EnvironmentMatchRule } from "./types.js";
 import "./environment-manager.css";
@@ -74,9 +78,14 @@ function TitleNumberField({ field, value, onChange }: { field: TitleNumericField
 function SamplePreviewBlock({ definition, selected }: { definition: EnvironmentDefinition; selected: boolean }) {
   const family = definition.family;
   const accent = environmentAccent(definition.id, definition);
+  const preview = environmentPreview(definition.id, definition);
+  const caption = preview.behavior.showCaption ? <figcaption>{t("environment.sampleHeading")}</figcaption> : null;
+  const content = preview.renderer === "figure" ? <figure className="preview-figure"><svg viewBox="0 0 240 100" width="100%" style={{ maxHeight: "var(--preview-image-height)" }} role="img" aria-label={t("environment.sampleHeading")}><rect x="5" y="5" width="230" height="90" rx="8" fill={accent} opacity=".14"/><path d="M30 78 87 32l43 32 28-24 52 38" fill="none" stroke={accent} strokeWidth="4"/></svg>{caption}</figure>
+    : preview.renderer === "table" ? <figure className="structured-table"><div className="structured-table-scroll"><table><tbody><tr><td><span className="table-cell-content">{t("environment.sampleHeading")}</span></td><td><span className="table-cell-content">{t("environment.sampleBody")}</span></td></tr></tbody></table></div>{caption}</figure>
+    : <p>{t("environment.sampleBody")}</p>;
   return <section className={`preview-block env-${family}${selected ? " selected" : ""}`} data-environment={definition.id} style={environmentBlockStyle(definition.id, family, definition)}>
-    {definition.behavior.showHeader && <div className="preview-block-header"><div className="preview-block-header-main"><span className="preview-environment-label">{environmentDisplayName(definition)}</span><strong>{t("environment.sampleHeading")}</strong></div>{definition.behavior.showLabel && <span className="preview-block-label" style={{ "--block-accent": accent } as CSSProperties}>{t("environment.sampleLabel")}</span>}</div>}
-    <div className="preview-block-body"><p>{t("environment.sampleBody")}</p></div>
+    {definition.behavior.showHeader && <div className="preview-block-header"><div className="preview-block-header-main"><span className="preview-environment-label">{environmentDisplayName(definition)}</span><strong>{definition.match.kind === "latex-environment" && environmentOptionBrackets(definition) ? `[${t("environment.sampleHeading")}]` : t("environment.sampleHeading")}</strong></div>{definition.behavior.showLabel && <span className="preview-block-label" style={{ "--block-accent": accent } as CSSProperties}>{t("environment.sampleLabel")}</span>}</div>}
+    <div className="preview-block-body">{content}</div>
   </section>;
 }
 
@@ -102,7 +111,14 @@ function EnvironmentSamplePreview({ definition, onClose }: { definition: Environ
 function DefinitionEditor({ definition, definitions, onChange, onSelect }: { definition: EnvironmentDefinition; definitions: EnvironmentDefinition[]; onChange(next: EnvironmentDefinition[]): void; onSelect(id: string): void }) {
   const [sampleOpen, setSampleOpen] = useState(false);
   const typography = environmentTitleTypography(definition.id, definition.family, definition);
-  const replace = (next: EnvironmentDefinition) => onChange(definitions.map((item) => item.id === definition.id ? next : item));
+  const pending = useRef({ received: definition, latest: definition });
+  const replace = (next: EnvironmentDefinition, reset = false) => {
+    const previous = pending.current;
+    const latest = previous.received.id !== definition.id ? definition : mergeEnvironmentEdit(previous.received, definition, previous.latest);
+    const merged = reset ? next : mergeEnvironmentEdit(definition, next, latest);
+    pending.current = { received: definition, latest: merged };
+    onChange(definitions.map(item => item.id === definition.id ? merged : item));
+  };
   const update = <K extends keyof EnvironmentDefinition>(key: K, value: EnvironmentDefinition[K]) => replace({ ...definition, [key]: value });
   const addDuplicate = () => { const copy = duplicateDefinition(definition, definitions); onChange([...definitions, copy]); onSelect(copy.id); };
   const remove = () => {
@@ -111,7 +127,7 @@ function DefinitionEditor({ definition, definitions, onChange, onSelect }: { def
     onChange(next);
     onSelect(next[0]?.id ?? "");
   };
-  const reset = () => replace(resetBuiltIn(definition));
+  const reset = () => replace(resetBuiltIn(definition), true);
 
   return <div className="environment-editor">
     <div className="environment-editor-title"><div><p>{definition.builtIn ? t("environment.builtIn") : t("environment.customGroup")}</p><h2>{environmentDisplayName(definition)}</h2></div><div className="environment-editor-title-actions"><button type="button" className="environment-preview-sample-button" onClick={() => setSampleOpen(true)}>{t("environment.previewSample")}</button><Toggle checked={definition.enabled} onChange={(enabled) => update("enabled", enabled)} label={definition.enabled ? t("environment.on") : t("environment.off")}/></div></div>
@@ -137,7 +153,8 @@ function DefinitionEditor({ definition, definitions, onChange, onSelect }: { def
     <section className="environment-form-section"><h3>{t("environment.appearance")}</h3><div className="environment-form-grid style-grid">
       {(["accentToken", "fillToken", "borderToken", "selectedBorderToken", "labelBackgroundToken", "labelTextToken"] as const).map((key) => <label key={key}><span>{t(`environment.style.${key}` as MessageKey)}</span><ColorTokenInput label={t(`environment.style.${key}` as MessageKey)} value={definition.style[key]} onChange={(value) => replace({ ...definition, style: { ...definition.style, [key]: value } })}/></label>)}
     </div></section>
-    <section className="environment-form-section"><h3>{t("environment.behavior")}</h3><div className="behavior-grid">{(["inlineEditable", "allowChildren", "showHeader", "showLabel"] as const).map((key) => <Toggle key={key} checked={definition.behavior[key]} onChange={(value) => replace({ ...definition, behavior: { ...definition.behavior, [key]: value } })} label={t(`environment.behavior.${key}` as MessageKey)}/>)}</div></section>
+    <section className="environment-form-section"><h3>{t("environment.behavior")}</h3><div className="behavior-grid">{(["inlineEditable", "allowChildren", "showHeader", "showLabel", "showOptionBrackets"] as const).map((key) => <Toggle key={key} checked={key === "showOptionBrackets" ? environmentOptionBrackets(definition) : definition.behavior[key]} onChange={(value) => replace({ ...definition, behavior: { ...definition.behavior, [key]: value } })} label={t(`environment.behavior.${key}` as MessageKey)}/>)}</div></section>
+    <EnvironmentSpecializedSettings key={definition.id} definition={definition} onChange={replace}/>
     <div className="environment-actions"><button onClick={addDuplicate}>{t("environment.duplicate")}</button>{definition.builtIn ? <button onClick={reset}>{t("environment.reset")}</button> : <button className="danger" onClick={remove}>{t("environment.delete")}</button>}</div>
     {sampleOpen && <EnvironmentSamplePreview definition={definition} onClose={() => setSampleOpen(false)}/>}
   </div>;

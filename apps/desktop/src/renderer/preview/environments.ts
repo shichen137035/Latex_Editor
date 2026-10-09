@@ -43,6 +43,12 @@ function loadConfiguredDefaults(): EnvironmentDefinition[] {
 
 export const DEFAULT_ENVIRONMENTS: EnvironmentDefinition[] = loadConfiguredDefaults();
 
+export function environmentOptionBrackets(definition?: EnvironmentDefinition): boolean {
+  return definition?.behavior.showOptionBrackets
+    ?? DEFAULT_ENVIRONMENTS.find(entry => entry.id === definition?.id)?.behavior.showOptionBrackets
+    ?? catalog.defaultBehavior.showOptionBrackets;
+}
+
 /** Preserve saved overrides while appending built-ins introduced by later releases. */
 export function includeNewBuiltInEnvironments(definitions: EnvironmentDefinition[]): EnvironmentDefinition[] {
   const existing = new Set(definitions.map((definition) => definition.id));
@@ -58,10 +64,12 @@ export function cloneEnvironmentDefinitions(definitions: EnvironmentDefinition[]
     match: { ...definition.match },
     style: { ...definition.style },
     behavior: {
+      ...definition.behavior,
       inlineEditable: definition.behavior.inlineEditable ?? true,
       allowChildren: definition.behavior.allowChildren ?? true,
       showHeader: definition.behavior.showHeader ?? true,
-      showLabel: definition.behavior.showLabel ?? true
+      showLabel: definition.behavior.showLabel ?? true,
+      showOptionBrackets: environmentOptionBrackets(definition)
     }
   }));
 }

@@ -14,7 +14,10 @@ const checks = new Map([
   ["search-filter", { script: "electron/check-search-filter.cjs" }],
   ["environment-typography", { script: "electron/check-environment-typography.cjs" }],
   ["image-completion", { script: "electron/check-image-completion.cjs" }],
+  ["table-editor", { script: "electron/check-table-editor.cjs" }],
   ["pdf-preview", { script: "electron/check-pdf-preview.cjs" }],
+  ["multi-compile", { script: "electron/check-multi-compile.cjs" }],
+  ["file-tree-state", { script: "electron/check-file-tree-state.cjs" }],
   ["preview-startup", { script: "electron/check-preview-startup.cjs" }],
   ["preview-diagnostics", { script: "diagnostics/preview-performance.cjs" }]
 ]);

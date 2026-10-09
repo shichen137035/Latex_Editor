@@ -9,6 +9,7 @@ import {
 import { parseLatexDiagnostics } from "@latex-editor/diagnostics";
 import type { Clock, IdGenerator } from "@latex-editor/domain";
 import { findSyncTexData, syncTexDirectories } from "./synctex-data.js";
+import { documentOutputDirectory, targetOutputArguments } from "./output.js";
 export { findSyncTexData, syncTexDirectories, type SyncTexData } from "./synctex-data.js";
 
 const maximumTailLength = 64 * 1024;
@@ -158,7 +159,7 @@ function appendTail(current: string, chunk: Buffer): string {
   return next.length <= maximumTailLength ? next : next.slice(-maximumTailLength);
 }
 
-async function readRecorderInputs(root: string, mainFile: string, args: string[]): Promise<string[]> {
+async function readRecorderInputs(root: string, mainFile: string, args: string[], isolated = false): Promise<string[]> {
   const sourcePath = resolve(root, mainFile);
   const jobName = basename(sourcePath, extname(sourcePath));
   const readDirectory = (flags: string[]): string | undefined => {
@@ -172,7 +173,7 @@ async function readRecorderInputs(root: string, mainFile: string, args: string[]
   };
   const outputDirectory = readDirectory(["-outdir", "--outdir", "-output-directory", "--output-directory"]);
   const auxiliaryDirectory = readDirectory(["-auxdir", "--auxdir", "-aux-directory", "--aux-directory"]);
-  const candidateDirectories = [dirname(sourcePath), ...(outputDirectory ? [resolve(root, outputDirectory)] : []), ...(auxiliaryDirectory ? [resolve(root, auxiliaryDirectory)] : []), root];
+  const candidateDirectories = [...(auxiliaryDirectory ? [resolve(root, auxiliaryDirectory)] : []), ...(outputDirectory ? [resolve(root, outputDirectory)] : []), ...(isolated ? [] : [dirname(sourcePath), root])];
   let contents: string | undefined;
   for (const directory of candidateDirectories) {
     try { contents = await readFile(resolve(directory, `${jobName}.fls`), "utf8"); break; }
@@ -267,7 +268,9 @@ export class LatexmkCompilerService {
     const mainFile = input.mainFile ?? project.mainFile;
     if (mainFile === undefined) throw new AppError("MAIN_FILE_NOT_SET", "No LaTeX main file is configured");
     await this.#files.resolveFilePath(project.id, mainFile, true);
-    return this.#compileAtRoot(project.canonicalPath, mainFile, input);
+    const outputDirectory = documentOutputDirectory(project.canonicalPath, mainFile, project.mainFile);
+    if (outputDirectory !== project.canonicalPath) await this.#files.resolveFilePath(project.id, relative(project.canonicalPath, outputDirectory), false);
+    return this.#compileAtRoot(project.canonicalPath, mainFile, { ...input, outputDirectory });
   }
 
   /** Compile an AI snapshot with the same configured engine and diagnostics, without registering it as a user project. */
@@ -302,7 +305,7 @@ export class LatexmkCompilerService {
     return readFile(logPath, "utf8");
   }
 
-  async #compileAtRoot(root: string, mainFile: string, input: { engine?: CompileInput["engine"]; timeoutMs?: number }): Promise<CompileResult> {
+  async #compileAtRoot(root: string, mainFile: string, input: { engine?: CompileInput["engine"]; timeoutMs?: number; outputDirectory?: string }): Promise<CompileResult> {
     const key = await realpath(root);
     const previous = this.#rootQueues.get(key) ?? Promise.resolve();
     const next = previous.catch(() => undefined).then(() => this.#runAtRoot(root, mainFile, input));
@@ -311,7 +314,7 @@ export class LatexmkCompilerService {
     finally { if (this.#rootQueues.get(key) === next) this.#rootQueues.delete(key); }
   }
 
-  async #runAtRoot(root: string, mainFile: string, input: { engine?: CompileInput["engine"]; timeoutMs?: number }): Promise<CompileResult> {
+  async #runAtRoot(root: string, mainFile: string, input: { engine?: CompileInput["engine"]; timeoutMs?: number; outputDirectory?: string }): Promise<CompileResult> {
     // Reject shell escape even if a profile was edited outside the resource manager.
 
     const profile = this.#profiles.getCompilerProfile();
@@ -333,14 +336,17 @@ export class LatexmkCompilerService {
     const logStream = createWriteStream(logPath, { encoding: "utf8", flags: "w" });
     const logFinished = new Promise<void>((done) => logStream.once("finish", () => done()));
     const engineFlag = input.engine === "xelatex" ? "-xelatex" : input.engine === "lualatex" ? "-lualatex" : "-pdf";
-    const args = profile.arguments.filter((arg) => !["-pdf", "-xelatex", "-lualatex"].includes(arg) && !/^--?synctex=/i.test(arg));
+    const outputDirectory = input.outputDirectory ?? root;
+    await mkdir(outputDirectory, { recursive: true });
+    const profileArguments = outputDirectory !== root ? targetOutputArguments(profile.arguments, outputDirectory) : profile.arguments;
+    const args = profileArguments.filter((arg) => !["-pdf", "-xelatex", "-lualatex"].includes(arg) && !/^--?synctex=/i.test(arg));
     if (!args.some((arg) => arg.toLowerCase() === "-file-line-error")) args.push("-file-line-error");
     if (!args.some((arg) => arg.toLowerCase().startsWith("-interaction="))) args.push("-interaction=nonstopmode");
     args.push("-synctex=1");
-    const expectedPdf = resolve(root, `${basename(mainFile, extname(mainFile))}.pdf`);
+    const expectedPdf = resolve(outputDirectory, `${basename(mainFile, extname(mainFile))}.pdf`);
     // latexmk does not track missing SyncTeX output as a reason to rerun TeX.
     // -g preserves bibliography/aux files while regenerating this build result.
-    if (existsSync(expectedPdf) && (await findSyncTexData(expectedPdf, syncTexDirectories(root, mainFile, args))).state !== "ready" && !args.includes("-g") && !args.includes("-gg")) args.push("-g");
+    if (existsSync(expectedPdf) && (await findSyncTexData(expectedPdf, outputDirectory !== root ? [] : syncTexDirectories(root, mainFile, args))).state !== "ready" && !args.includes("-g") && !args.includes("-gg")) args.push("-g");
     if (!args.some((arg) => arg.toLowerCase() === "-recorder")) args.push("-recorder");
     args.push(engineFlag, mainFile);
     const environment = profileEnvironment(profile.executable);
@@ -383,7 +389,7 @@ export class LatexmkCompilerService {
     await logFinished;
 
     const finished = this.#clock.now();
-    const pdfPath = resolve(root, `${basename(mainFile, extname(mainFile))}.pdf`);
+    const pdfPath = expectedPdf;
     let pdfExists = true;
     try { await access(pdfPath); } catch { pdfExists = false; }
     const status = active.requestedState ?? (exitCode === 0 && pdfExists ? "succeeded" : "failed");
@@ -401,14 +407,14 @@ export class LatexmkCompilerService {
     const sourcePath = resolve(root, mainFile);
     const jobName = basename(sourcePath, extname(sourcePath));
     const componentLogs = await Promise.all([".log", ".blg"].map(async (extension) => {
-      for (const directory of [...new Set([root, dirname(sourcePath)])]) {
+      for (const directory of outputDirectory !== root ? [outputDirectory] : [...new Set([root, dirname(sourcePath)])]) {
         try { return await readFile(resolve(directory, `${jobName}${extension}`), "utf8"); }
         catch (error) { if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error; }
       }
       return "";
     }));
     const hasFinalToolLogs = componentLogs.some(Boolean);
-    const recorderInputs = await readRecorderInputs(root, mainFile, args);
+    const recorderInputs = await readRecorderInputs(root, mainFile, args, outputDirectory !== root);
     const finalDiagnostics = hasFinalToolLogs ? parseLatexDiagnostics(componentLogs.join("\n"), root, mainFile) : processDiagnostics;
     const toolDiagnostics = hasFinalToolLogs ? processDiagnostics.filter((item) => ["latexmk", "bibtex", "biber", "system", "filesystem", "external"].includes(item.source)) : [];
     const diagnostics = [...new Map([...finalDiagnostics, ...toolDiagnostics].map((item) => [`${item.severity}|${item.source}|${item.code ?? ""}|${item.message}|${item.file ?? ""}|${item.line ?? ""}`, item])).values()];

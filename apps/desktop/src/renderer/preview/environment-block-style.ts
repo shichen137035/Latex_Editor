@@ -2,6 +2,7 @@ import type { CSSProperties } from "react";
 import { environmentAccent } from "./environment-colors.js";
 import type { EnvironmentDefinition } from "./types.js";
 import { environmentTitleTypography } from "./environment-typography.js";
+import { environmentPreview, previewSizingStyle } from "./environment-preview.js";
 
 function cssValue(value: string | undefined, fallback: string): string {
   return value ? (value.startsWith("--") ? `var(${value})` : value) : `var(${fallback})`;
@@ -11,6 +12,7 @@ export function environmentBlockStyle(environmentId: string, family: string, def
   const accent = environmentAccent(environmentId, definition);
   const typography = environmentTitleTypography(environmentId, family, definition);
   return {
+    ...previewSizingStyle(environmentPreview(environmentId, definition).sizing),
     "--preview-title-font": typography.titleFontFamily,
     "--preview-title-size": `${typography.titleFontSize}px`,
     "--preview-title-weight": typography.titleFontWeight,

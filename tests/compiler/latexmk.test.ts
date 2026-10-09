@@ -1,4 +1,4 @@
-import { cp, mkdir, unlink, writeFile } from "node:fs/promises";
+import { cp, mkdir, readFile, unlink, writeFile } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import { resolve } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -41,6 +41,33 @@ describe("real latexmk compilation", () => {
     const result = await compiler.compile({ projectId: project.id, timeoutMs: 120_000 });
     expect(result.status).toBe("failed");
     expect(result.diagnostics.some((item) => item.severity === "error" && item.line !== undefined)).toBe(true);
+  }, 150_000);
+
+  it("compiles an independent nested document without overwriting same-named main artifacts", async context => {
+    if (!(await compiler.detectToolchain()).available) context.skip();
+    const project = await fixtureProject("compile-success"), root = project.canonicalPath;
+    await mkdir(resolve(root, "supplement"));
+    await writeFile(resolve(root, "shared.tex"), "Shared root resource.\n");
+    await writeFile(resolve(root, "supplement/main.tex"), "\\documentclass{article}\n\\begin{document}\nSecondary document text.\n\\input{shared}\n\\end{document}\n");
+    const primary = await compiler.compile({ projectId: project.id, timeoutMs: 120_000 });
+    expect(primary.status).toBe("succeeded");
+    const primaryPdf = await readFile(primary.pdfPath!);
+    const primarySync = await readFile(resolve(root, "main.synctex.gz"));
+    const secondary = await compiler.compile({ projectId: project.id, mainFile: "supplement/main.tex", timeoutMs: 120_000 });
+    expect(secondary.status, secondary.stdoutTail + secondary.stderrTail).toBe("succeeded");
+    expect(secondary.pdfPath).not.toBe(primary.pdfPath);
+    expect(secondary.pdfPath).toContain("targets");
+    expect(secondary.recorderInputs).toEqual(expect.arrayContaining(["supplement/main.tex", "shared.tex"]));
+    expect(await readFile(primary.pdfPath!)).toEqual(primaryPdf);
+    expect(await readFile(resolve(root, "main.synctex.gz"))).toEqual(primarySync);
+    const input = { root, pdfPath: secondary.pdfPath!, mainFile: secondary.mainFile };
+    const position = await forwardSync({ ...input, sourcePath: resolve(root, "supplement/main.tex"), line: 3, column: 1 });
+    expect(await reverseSync({ ...input, ...position })).toMatchObject({ file: "supplement/main.tex", line: 3 });
+    expect(backend.projects.getProject(project.id).mainFile).toBe("main.tex");
+    await unlink(secondary.pdfPath!.replace(/\.pdf$/, ".synctex.gz"));
+    await expect(reverseSync({ ...input, ...position })).rejects.toThrow("SYNCTEX_DATA_MISSING");
+    expect((await compiler.compile({ projectId: project.id, mainFile: secondary.mainFile, timeoutMs: 120_000 })).status).toBe("succeeded");
+    expect(existsSync(secondary.pdfPath!.replace(/\.pdf$/, ".synctex.gz"))).toBe(true);
   }, 150_000);
 
   it("regenerates missing SyncTeX even when latexmk considers the PDF up to date", async (context) => {

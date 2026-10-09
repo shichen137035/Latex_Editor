@@ -1,7 +1,8 @@
-import { useRef, useState, type DragEvent as ReactDragEvent, type MouseEvent, type MutableRefObject } from "react";
+import { useEffect, useRef, useState, type DragEvent as ReactDragEvent, type MouseEvent, type MutableRefObject } from "react";
 import type { Diagnostic, ProjectTreeNode, SyncTexPdfPosition } from "@latex-editor/contracts";
 import { t } from "../i18n/index.js";
 import { settings } from "../settings/service.js";
+import { readExpandedFileTree, writeExpandedFileTree } from "../collapseState.js";
 import type { SpellContextRequest } from "../spellcheck/SpellCheckController.js";
 import { PdfViewer, type PdfViewState } from "../pdf/PdfViewer.js";
 
@@ -68,7 +69,8 @@ function fileExtension(name: string): string {
   return dot > 0 ? name.slice(dot + 1).toLocaleLowerCase() : "";
 }
 
-export function Tree({ nodes, activePath, mainFile, filter, hideBuildArtifacts, sortBy, sortDirection, canMove, onOpen, onMove, onContextMenu }: {
+export function Tree({ projectId, nodes, activePath, mainFile, filter, hideBuildArtifacts, sortBy, sortDirection, canMove, onOpen, onMove, onContextMenu }: {
+  projectId: string;
   nodes: ProjectTreeNode[];
   activePath: string | undefined;
   mainFile: string | undefined;
@@ -82,7 +84,17 @@ export function Tree({ nodes, activePath, mainFile, filter, hideBuildArtifacts, 
   onContextMenu?: (path: string, kind: ProjectTreeNode["kind"], event: MouseEvent) => void;
 }) {
   const shouldHideBuildArtifacts = hideBuildArtifacts ?? settings.get("hideBuildArtifacts");
-  const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
+  const filterTerm = filter.trim().toLocaleLowerCase();
+  const [expanded, setExpanded] = useState<Set<string>>(() => readExpandedFileTree(projectId));
+  const [searchExpansion, setSearchExpansion] = useState({ query: filterTerm, overrides: new Map<string, boolean>() });
+  useEffect(() => { setSearchExpansion({ query: filterTerm, overrides: new Map() }); }, [filterTerm]);
+  const updateExpanded = (change: (current: ReadonlySet<string>) => Set<string>) => {
+    setExpanded(current => {
+      const next = change(current);
+      writeExpandedFileTree(projectId, next);
+      return next;
+    });
+  };
   const [draggingPath, setDraggingPath] = useState<string | undefined>(undefined);
   const [dropTargetPath, setDropTargetPath] = useState<string | undefined>(undefined);
   const draggingPathRef = useRef<string | undefined>(undefined);
@@ -114,8 +126,8 @@ export function Tree({ nodes, activePath, mainFile, filter, hideBuildArtifacts, 
     tree.scrollTop += amount;
     autoScrollFrameRef.current = requestAnimationFrame(autoScroll);
   };
-  const matchesFilter = (node: ProjectTreeNode): boolean => !filter
-    || `${node.name} ${node.relativePath}`.toLocaleLowerCase().includes(filter.toLocaleLowerCase())
+  const matchesFilter = (node: ProjectTreeNode): boolean => !filterTerm
+    || `${node.name} ${node.relativePath}`.toLocaleLowerCase().includes(filterTerm)
     || node.children?.some(matchesFilter) === true;
   const canMoveTo = (source: string | undefined, destination: string): boolean => {
     if (!canMove || !source || destination === source || destination.startsWith(source + "/")) return false;
@@ -136,16 +148,25 @@ export function Tree({ nodes, activePath, mainFile, filter, hideBuildArtifacts, 
       if (shouldHideBuildArtifacts && isBuildArtifact(node)) return null;
       if (!matchesFilter(node)) return null;
       const isDirectory = node.kind === "directory";
-      const isCollapsed = collapsed.has(node.relativePath);
+      // Search reveals matching descendants without changing the saved expansion state.
+      const searchExpanded = !!filterTerm && node.children?.some(matchesFilter);
+      const searchOverride = filterTerm && searchExpansion.query === filterTerm ? searchExpansion.overrides.get(node.relativePath) : undefined;
+      const isCollapsed = searchOverride !== undefined ? !searchOverride : !expanded.has(node.relativePath) && !searchExpanded;
       const isDropTarget = isDirectory && dropTargetPath === node.relativePath;
       return <div key={node.relativePath}>
         <button
           className={`tree-row ${activePath === node.relativePath ? "active" : ""} ${draggingPath === node.relativePath ? "dragging" : ""} ${isDropTarget ? "drop-target" : ""}`}
           data-path={node.relativePath}
           data-kind={node.kind}
+          aria-expanded={isDirectory ? !isCollapsed : undefined}
           draggable={canMove && node.kind !== "symlink"}
           style={{ paddingLeft: 10 + depth * 16 }}
-          onClick={() => isDirectory ? setCollapsed((value) => { const next = new Set(value); if (next.has(node.relativePath)) next.delete(node.relativePath); else next.add(node.relativePath); return next; }) : onOpen(node.relativePath)}
+          onClick={() => {
+            if (!isDirectory) { onOpen(node.relativePath); return; }
+            if (filterTerm) {
+              setSearchExpansion(current => ({ query: filterTerm, overrides: new Map(current.query === filterTerm ? current.overrides : []).set(node.relativePath, isCollapsed) }));
+            } else updateExpanded((value) => { const next = new Set(value); if (isCollapsed) next.add(node.relativePath); else next.delete(node.relativePath); return next; });
+          }}
           onDragStart={(event) => {
             if (!canMove || node.kind === "symlink") { event.preventDefault(); return; }
             draggingPathRef.current = node.relativePath;
@@ -199,7 +220,14 @@ export function Tree({ nodes, activePath, mainFile, filter, hideBuildArtifacts, 
         event.stopPropagation();
         const source = draggingPathRef.current ?? event.dataTransfer.getData(PROJECT_FILE_DRAG_TYPE);
         if (canMoveTo(source, destination)) {
-          if (destination) setCollapsed((value) => { const next = new Set(value); next.delete(destination); return next; });
+          if (destination) {
+            updateExpanded((value) => { const next = new Set(value); next.add(destination); return next; });
+            setSearchExpansion(current => {
+              if (!current.overrides.has(destination)) return current;
+              const overrides = new Map(current.overrides); overrides.delete(destination);
+              return { ...current, overrides };
+            });
+          }
           onMove(source, destination);
         }
         draggingPathRef.current = undefined;

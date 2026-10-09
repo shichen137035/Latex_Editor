@@ -91,7 +91,7 @@ async function run() {
   await evaluate(`document.querySelector('.activity-bar button[title="AI Editor"]').click()`);
   await until('!!document.querySelector(".ai-change-set")','AI changes card');
   await evaluate('document.querySelector(".ai-change-set header button").click()');
-  await until('!document.querySelector(".pdf-origin-label") && document.querySelector(".save-status")?.textContent.includes("Saved")','automatic project compile after accepting');
+  await until('document.querySelector(".pdf-origin-label")?.textContent === "main.tex" && document.querySelector(".save-status")?.textContent.includes("Saved")','automatic project compile after accepting');
   assert.equal(await readFile(join(project.canonicalPath,'main.tex'),'utf8'),aiSource);
   assert.notDeepEqual(await readFile(join(project.canonicalPath,'main.pdf')),realPdf);
   assert.equal((await readingPosition()).page,4);
@@ -112,6 +112,13 @@ async function run() {
   await evaluate(`window.latexEditor.files.write(${id},"nested/alternate.tex",${JSON.stringify(source('Alternate',1))})`);
   await evaluate(`window.latexEditor.projects.setMainFile(${id},"nested/alternate.tex")`);
   await until('!document.querySelector(".pdf-viewer")','main file change resets old PDF');
+  await evaluate(`document.querySelector('.activity-bar button[title="Files"]').click()`);
+  await evaluate(`document.querySelector('.sidebar-heading button[title="Refresh file tree"]').click()`);
+  await until(`!!document.querySelector('.tree-row[data-path="nested"]')`,'nested directory in file tree');
+  await evaluate(`document.querySelector('.tree-row[data-path="nested"]').click()`);
+  await until(`!!document.querySelector('.tree-row[data-path="nested/alternate.tex"]')`,'nested main in file tree');
+  await evaluate(`document.querySelector('.tree-row[data-path="nested/alternate.tex"]').click()`);
+  await until('document.querySelector(".editor-tabs button.active")?.textContent.includes("alternate.tex")','nested main selected');
   await compileUi();
   await until(`document.querySelectorAll('.pdf-page').length===1 && Array.from(document.querySelectorAll('.pdf-page .textLayer span')).some(el=>el.textContent.includes('Alternate'))`,'nested main PDF');
   assert.ok(await evaluate(`window.latexEditor.files.readPdf(${id},"alternate.pdf")`));

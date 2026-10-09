@@ -1,10 +1,27 @@
 import { describe, expect, it } from "vitest";
-import { cloneEnvironmentDefinitions, DEFAULT_ENVIRONMENTS } from "../../apps/desktop/src/renderer/preview/environments.js";
+import { cloneEnvironmentDefinitions, DEFAULT_ENVIRONMENTS, environmentOptionBrackets } from "../../apps/desktop/src/renderer/preview/environments.js";
 import { environmentTitleTypography } from "../../apps/desktop/src/renderer/preview/environment-typography.js";
 import { environmentBlockStyle } from "../../apps/desktop/src/renderer/preview/environment-block-style.js";
 import { serializeEnvironments } from "../../apps/desktop/src/renderer/preview/environmentConfig.js";
 
 describe("environment title typography", () => {
+  it("takes optional-argument brackets from catalog configuration and honors explicit overrides", () => {
+    const figure = cloneEnvironmentDefinitions().find(item => item.id === "figure")!;
+    const assumption = cloneEnvironmentDefinitions().find(item => item.id === "assumption")!;
+    expect(environmentOptionBrackets(figure)).toBe(true);
+    expect(environmentOptionBrackets(assumption)).toBe(false);
+    figure.behavior.showOptionBrackets = false;
+    assumption.behavior.showOptionBrackets = true;
+    expect(cloneEnvironmentDefinitions([figure, assumption]).map(environmentOptionBrackets)).toEqual([false, true]);
+    expect(serializeEnvironments([figure, assumption])).toContain('showOptionBrackets="true"');
+    expect(serializeEnvironments([figure])).toContain('showOptionBrackets="false"');
+    delete figure.behavior.showOptionBrackets;
+    expect(environmentOptionBrackets(figure)).toBe(true);
+    const custom = { ...figure, id: "my-own-environment", builtIn: false };
+    expect(environmentOptionBrackets(custom)).toBe(false);
+    custom.behavior.showOptionBrackets = true;
+    expect(environmentOptionBrackets(custom)).toBe(true);
+  });
   it("keeps a descending chapter hierarchy while ordinary environment titles stay restrained", () => {
     const sizes = ["chapter", "section", "subsection", "subsubsection", "paragraph"].map(id => environmentTitleTypography(id, "section").titleFontSize);
     expect(sizes).toEqual([28, 24, 21, 18, 16]);

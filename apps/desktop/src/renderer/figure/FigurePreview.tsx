@@ -4,6 +4,7 @@ import workerUrl from "pdfjs-dist/legacy/build/pdf.worker.min.mjs?url";
 import type { ResolvedGraphic } from "@latex-editor/contracts";
 import { parseFigure, optionValue } from "./parser.js";
 import { t } from "../i18n/index.js";
+import { environmentPreview, previewSizingStyle } from "../preview/environment-preview.js";
 
 GlobalWorkerOptions.workerSrc = workerUrl;
 type EditorApi = NonNullable<Window["latexEditor"]>;
@@ -36,7 +37,7 @@ function PdfImage({ dataUrl, alt, cacheKey }: { dataUrl: string; alt: string; ca
   return error ? <div className="figure-preview-placeholder">PDF preview unavailable</div> : <canvas ref={canvasRef} aria-label={alt}/>;
 }
 
-function FigureAsset({ api, projectId, texPath, sourcePath, graphicPaths, width, onChoose }: { api: EditorApi; projectId: string; texPath: string; sourcePath: string; graphicPaths: string[]; width: string | undefined; onChoose?(): void }) {
+function FigureAsset({ api, projectId, texPath, sourcePath, graphicPaths, width, onChoose, clickLabel }: { api: EditorApi; projectId: string; texPath: string; sourcePath: string; graphicPaths: string[]; width: string | undefined; onChoose?(): void; clickLabel?: string | undefined }) {
   const [asset, setAsset] = useState<ResolvedGraphic>();
   useEffect(() => {
     if (!sourcePath) { setAsset(undefined); return; }
@@ -47,7 +48,7 @@ function FigureAsset({ api, projectId, texPath, sourcePath, graphicPaths, width,
     });
     return () => { current = false; };
   }, [api, projectId, texPath, sourcePath, graphicPaths]);
-  if (!sourcePath) return <button type="button" className="figure-preview-empty-slot" onClick={(event) => { event.stopPropagation(); onChoose?.(); }}><span>＋</span><strong>Choose image</strong></button>;
+  if (!sourcePath) return <button type="button" className="figure-preview-empty-slot" onClick={(event) => { event.stopPropagation(); onChoose?.(); }}><span>＋</span><strong>{clickLabel ?? "Choose image"}</strong></button>;
   let content: ReactNode;
   if (!asset) content = <div className="figure-preview-placeholder loading">Loading {sourcePath}…</div>;
   else if (!asset.exists || !asset.dataUrl) content = <div className="figure-preview-placeholder"><strong>{sourcePath}</strong><span>{asset.error?.replaceAll("_", " ") ?? "Image not found"}</span></div>;
@@ -56,7 +57,7 @@ function FigureAsset({ api, projectId, texPath, sourcePath, graphicPaths, width,
     const cacheKey = `${projectId}:${asset.resolvedPath ?? sourcePath}:${asset.modifiedAt ?? ""}:${asset.size ?? 0}`;
     content = asset.format === "pdf" ? <PdfImage dataUrl={asset.dataUrl} alt={sourcePath} cacheKey={cacheKey}/> : <img src={asset.dataUrl} alt={sourcePath} style={style} loading="lazy" decoding="async" draggable={false}/>;
   }
-  return <div className={`figure-preview-image-choice${onChoose ? " editable" : ""}`} role={onChoose ? "button" : undefined} tabIndex={onChoose ? 0 : undefined} aria-label={onChoose ? t("image.replaceImage", { path: sourcePath }) : undefined} title={onChoose ? t("image.replaceImage", { path: sourcePath }) : undefined} onClick={event => {
+  return <div className={`figure-preview-image-choice${onChoose ? " editable" : ""}`} role={onChoose ? "button" : undefined} tabIndex={onChoose ? 0 : undefined} aria-label={onChoose ? clickLabel ?? t("image.replaceImage", { path: sourcePath }) : undefined} title={onChoose ? clickLabel ?? t("image.replaceImage", { path: sourcePath }) : undefined} onClick={event => {
     if (!onChoose || !(event.target as Element).closest("img, canvas, .figure-preview-placeholder")) return;
     event.stopPropagation(); onChoose();
   }} onKeyDown={event => {
@@ -65,10 +66,10 @@ function FigureAsset({ api, projectId, texPath, sourcePath, graphicPaths, width,
   }}>{content}</div>;
 }
 
-export function FigurePreview({ source, graphicPaths, api, projectId, texPath, onChooseSlot, captionContent }: { source: string; graphicPaths: string[]; api: EditorApi | undefined; projectId: string; texPath: string; onChooseSlot?: ((index: number) => void) | undefined; captionContent?: ReactNode }) {
+export function FigurePreview({ source, graphicPaths, api, projectId, texPath, onChooseSlot, captionContent, imageClickLabel, configuration = environmentPreview("") }: { source: string; graphicPaths: string[]; api: EditorApi | undefined; projectId: string; texPath: string; onChooseSlot?: ((index: number) => void) | undefined; captionContent?: ReactNode; imageClickLabel?: string | undefined; configuration?: ReturnType<typeof environmentPreview> }) {
   const figure = useMemo(() => parseFigure(source), [source]);
   if (!figure) return <div className="figure-preview-placeholder">No image source</div>;
   if (!api) return <div className="figure-preview-placeholder">Image preview unavailable</div>;
-  const imageGrid = <div className={figure.images.length > 1 ? "figure-preview-grid" : "figure-preview-single"}>{figure.images.map((image, index) => <FigureAsset key={image.id} api={api} projectId={projectId} texPath={texPath} sourcePath={image.sourcePath} graphicPaths={graphicPaths} width={optionValue(image, "width")} {...(onChooseSlot ? { onChoose: () => onChooseSlot(index) } : {})}/>)}</div>;
-  return <figure className={`preview-figure alignment-${figure.alignment}`}>{imageGrid}{(captionContent ?? figure.caption) && <figcaption>{captionContent ?? figure.caption}</figcaption>}{figure.label && <small>{figure.label}</small>}</figure>;
+  const imageGrid = <div className={figure.images.length > 1 ? "figure-preview-grid" : "figure-preview-single"}>{figure.images.map((image, index) => <FigureAsset key={image.id} api={api} projectId={projectId} texPath={texPath} sourcePath={image.sourcePath} graphicPaths={graphicPaths} width={optionValue(image, "width")} clickLabel={imageClickLabel} {...(onChooseSlot ? { onChoose: () => onChooseSlot(index) } : {})}/>)}</div>;
+  return <figure className={`preview-figure alignment-${figure.alignment}`} style={previewSizingStyle(configuration.sizing)}>{imageGrid}{configuration.behavior.showCaption && (captionContent ?? figure.caption) && <figcaption>{captionContent ?? figure.caption}</figcaption>}{configuration.behavior.showLabel && figure.label && <small>{figure.label}</small>}</figure>;
 }

@@ -72,12 +72,31 @@ async function run() {
   assert.equal(section.size, '24px'); assert.equal(section.weight, '600');
   assert.ok(section.family.includes('Space Grotesk')); assert.equal(section.spacing, '0.6px');
   const subsection = await typography(titleSelector('subsection')), assumption = await typography(titleSelector('assumption'));
+  assert.equal(await evaluate(`document.querySelector(${JSON.stringify(titleSelector('assumption'))}).textContent`), 'Regularity condition');
   assert.equal(subsection.size, '21px'); assert.equal(subsection.weight, '600');
   assert.equal(assumption.size, '16px'); assert.equal(assumption.weight, '500');
   await delay(200);
   writeFileSync(resolve(root, 'default-headings.png'), (await page.webContents.capturePage()).toPNG());
   console.log('PASS actual title buttons retain hierarchy and weight despite workbench button resets');
   await manager();
+  assert.equal(await evaluate('document.querySelectorAll(".environment-specialized-settings details").length'), 3);
+  assert.ok(await evaluate('Array.from(document.querySelectorAll(".environment-specialized-settings details")).every(details => !details.open)'));
+  await evaluate('document.querySelector(\'.environment-catalog-list [data-environment-id="assumption"]\').click()');
+  await until('document.querySelector(".environment-editor-title h2")?.textContent === "Assumption"', 'select Assumption');
+  await evaluate('Array.from(document.querySelectorAll(".behavior-grid label")).find(label => label.textContent.includes("Show argument brackets")).querySelector("input").click()');
+  await until(`window.latexEditor.settings.get(${id}).then(snapshot => snapshot.project.environments.find(item => item.id === 'assumption').behavior.showOptionBrackets === true)`, 'save bracket option');
+  await evaluate('document.querySelector(".environment-preview-sample-button").click()');
+  await until('document.querySelector(".environment-sample-dialog .preview-block-header-main strong")?.textContent.startsWith("[")', 'sample follows bracket option');
+  await evaluate('document.querySelector(".environment-sample-dialog > header button").click()');
+  await evaluate('document.querySelector(\'.environment-catalog-list [data-environment-id="section"]\').click()');
+  await evaluate('document.querySelector(\'.environment-specialized-settings details[data-preview-kind="advanced"] > summary\').click(); document.querySelector(\'.environment-specialized-settings details[data-preview-kind="table"] > summary\').click()');
+  const previewSizeSelector = '.environment-specialized-settings input[name="tableExpandedFontSize"]';
+  await evaluate(`document.querySelector(${JSON.stringify(previewSizeSelector)}).focus()`);
+  await setInput(previewSizeSelector, '22');
+  await press('TAB');
+  await until(`window.latexEditor.settings.get(${id}).then(snapshot => snapshot.project.environments.find(item => item.id === 'section').style.tableExpandedFontSize === 22)`, 'save bottom subtype configuration');
+  await delay(200);
+  writeFileSync(resolve(root, 'specialized-settings.png'), (await page.webContents.capturePage()).toPNG());
   await setInput('.typography-grid input[name="titleFontSize"]', '32');
   await until(`window.latexEditor.settings.get(${id}).then(snapshot => snapshot.project.environments.find(item => item.id === 'section').style.titleFontSize === 32)`, "save title size");
   await choose('.typography-grid select[name="titleFontWeight"]', '700');
@@ -89,6 +108,8 @@ async function run() {
   await evaluate('document.querySelector(".environment-sample-dialog > header button").click()');
   await evaluate('document.querySelectorAll(".environment-manager-mode button")[1].click()');
   await until('document.querySelector(".environment-xml textarea")?.value.includes(\'titleFontSize="32"\')', "XML includes typography");
+  assert.ok(await evaluate('document.querySelector(".environment-xml textarea").value.includes(\'showOptionBrackets="true"\')'));
+  assert.ok(await evaluate('document.querySelector(".environment-xml textarea").value.includes(\'tableExpandedFontSize="22"\')'));
   await editXml('30');
   await until(`window.latexEditor.settings.get(${id}).then(snapshot => snapshot.project.environments.find(item => item.id === 'section').style.titleFontSize === 30)`, "XML round trip");
   await editXml('0');
@@ -96,6 +117,7 @@ async function run() {
   assert.equal(await evaluate(`window.latexEditor.settings.get(${id}).then(snapshot => snapshot.project.environments.find(item => item.id === 'section').style.titleFontSize)`), 30);
   await evaluate('document.querySelector(".preferences-dialog > header .settings-close").click()');
   await until(`getComputedStyle(document.querySelector(${JSON.stringify(titleSelector('section'))})).fontSize === '30px'`, "Preview updates");
+  assert.equal(await evaluate(`document.querySelector(${JSON.stringify(titleSelector('assumption'))}).textContent`), '[Regularity condition]');
   assert.equal((await typography(titleSelector('subsection'))).size, '21px');
   await evaluate(`document.querySelector(${JSON.stringify(titleSelector('section'))}).click()`);
   await until('!!document.querySelector(".preview-block-title-editor")', "title editor");
@@ -111,6 +133,7 @@ async function run() {
   await until(`!!document.querySelector(${JSON.stringify(titleSelector('section'))})`, "reopened project");
   assert.equal((await typography(titleSelector('section'))).size, '30px');
   assert.equal((await typography(titleSelector('section'))).weight, '700');
+  assert.equal(await evaluate(`document.querySelector(${JSON.stringify(titleSelector('assumption'))}).textContent`), '[Regularity condition]');
   console.log('PASS project typography survives application reload');
   assert.deepEqual(errors, []);
 }
