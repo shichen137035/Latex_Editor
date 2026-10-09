@@ -1,3 +1,4 @@
+import { t } from "../i18n/index.js";
 import { useEffect, useMemo, useRef, type MutableRefObject } from "react";
 import type { BlockGraphSnapshot, BlockTextEdit, WorkingDocumentInput } from "@latex-editor/contracts";
 import type { EditorTab } from "./fileActions.js";
@@ -41,7 +42,7 @@ export function useWorkingDocuments(options: Options) {
         const state = current.current;
         const files: WorkingDocumentInput["files"] = state.tabsRef.current.filter(tab => /\.tex$/i.test(tab.path)).map(tab => {
           const savedContent = state.savedContents.current.get(tab.path);
-          if (savedContent === undefined) throw new Error(`The saved document baseline is unavailable: ${tab.path}`);
+          if (savedContent === undefined) throw new Error(t("ui.workingDocuments.the_saved_document_baseline_is_unavailable", { value1: tab.path }));
           const pending = mappings.get(tab.path);
           return { fileId: tab.path, content: tab.content, savedContent,
             ...(pending ? { rangeChanges: { beforeContent: pending.beforeContent, transactions: [...pending.transactions] } } : {}) };

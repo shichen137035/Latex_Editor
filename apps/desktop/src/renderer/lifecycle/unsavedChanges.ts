@@ -1,3 +1,4 @@
+import { t } from "../i18n/index.js";
 import { useLayoutEffect, useRef } from "react";
 
 export interface UnsavedParticipant {
@@ -31,7 +32,7 @@ export class UnsavedChangesRegistry {
         flush(() => undefined);
       }
     }
-    if (this.hasChanges()) throw new Error("Some changes could not be saved.");
+    if (this.hasChanges()) throw new Error(t("ui.unsavedChanges.some_changes_could_not_be_saved"));
   }
 }
 

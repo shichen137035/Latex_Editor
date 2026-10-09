@@ -34,7 +34,7 @@ function PdfImage({ dataUrl, alt, cacheKey }: { dataUrl: string; alt: string; ca
     return () => { cancelled = true; task.destroy(); };
   }, [dataUrl, cacheKey, cached]);
   if (cached) return <img src={cached} alt={alt}/>;
-  return error ? <div className="figure-preview-placeholder">PDF preview unavailable</div> : <canvas ref={canvasRef} aria-label={alt}/>;
+  return error ? <div className="figure-preview-placeholder">{t("ui.FigurePreview.pdf_preview_unavailable")}</div> : <canvas ref={canvasRef} aria-label={alt}/>;
 }
 
 function FigureAsset({ api, projectId, texPath, sourcePath, graphicPaths, width, onChoose, clickLabel }: { api: EditorApi; projectId: string; texPath: string; sourcePath: string; graphicPaths: string[]; width: string | undefined; onChoose?(): void; clickLabel?: string | undefined }) {
@@ -48,10 +48,10 @@ function FigureAsset({ api, projectId, texPath, sourcePath, graphicPaths, width,
     });
     return () => { current = false; };
   }, [api, projectId, texPath, sourcePath, graphicPaths]);
-  if (!sourcePath) return <button type="button" className="figure-preview-empty-slot" onClick={(event) => { event.stopPropagation(); onChoose?.(); }}><span>＋</span><strong>{clickLabel ?? "Choose image"}</strong></button>;
+  if (!sourcePath) return <button type="button" className="figure-preview-empty-slot" onClick={(event) => { event.stopPropagation(); onChoose?.(); }}><span>＋</span><strong>{clickLabel ?? t("ui.FigurePreview.choose_image")}</strong></button>;
   let content: ReactNode;
-  if (!asset) content = <div className="figure-preview-placeholder loading">Loading {sourcePath}…</div>;
-  else if (!asset.exists || !asset.dataUrl) content = <div className="figure-preview-placeholder"><strong>{sourcePath}</strong><span>{asset.error?.replaceAll("_", " ") ?? "Image not found"}</span></div>;
+  if (!asset) content = <div className="figure-preview-placeholder loading">{t("ui.FigurePreview.loading")}{sourcePath}…</div>;
+  else if (!asset.exists || !asset.dataUrl) content = <div className="figure-preview-placeholder"><strong>{sourcePath}</strong><span>{asset.error?.replaceAll("_", " ") ?? t("ui.FigurePreview.image_not_found")}</span></div>;
   else {
     const style = width && width.endsWith("\\textwidth") ? { width: `${Math.min(100, Number.parseFloat(width) * 100)}%` } : undefined;
     const cacheKey = `${projectId}:${asset.resolvedPath ?? sourcePath}:${asset.modifiedAt ?? ""}:${asset.size ?? 0}`;
@@ -68,8 +68,8 @@ function FigureAsset({ api, projectId, texPath, sourcePath, graphicPaths, width,
 
 export function FigurePreview({ source, graphicPaths, api, projectId, texPath, onChooseSlot, captionContent, imageClickLabel, configuration = environmentPreview("") }: { source: string; graphicPaths: string[]; api: EditorApi | undefined; projectId: string; texPath: string; onChooseSlot?: ((index: number) => void) | undefined; captionContent?: ReactNode; imageClickLabel?: string | undefined; configuration?: ReturnType<typeof environmentPreview> }) {
   const figure = useMemo(() => parseFigure(source), [source]);
-  if (!figure) return <div className="figure-preview-placeholder">No image source</div>;
-  if (!api) return <div className="figure-preview-placeholder">Image preview unavailable</div>;
+  if (!figure) return <div className="figure-preview-placeholder">{t("ui.FigurePreview.no_image_source")}</div>;
+  if (!api) return <div className="figure-preview-placeholder">{t("ui.FigurePreview.image_preview_unavailable")}</div>;
   const imageGrid = <div className={figure.images.length > 1 ? "figure-preview-grid" : "figure-preview-single"}>{figure.images.map((image, index) => <FigureAsset key={image.id} api={api} projectId={projectId} texPath={texPath} sourcePath={image.sourcePath} graphicPaths={graphicPaths} width={optionValue(image, "width")} clickLabel={imageClickLabel} {...(onChooseSlot ? { onChoose: () => onChooseSlot(index) } : {})}/>)}</div>;
   return <figure className={`preview-figure alignment-${figure.alignment}`} style={previewSizingStyle(configuration.sizing)}>{imageGrid}{configuration.behavior.showCaption && (captionContent ?? figure.caption) && <figcaption>{captionContent ?? figure.caption}</figcaption>}{configuration.behavior.showLabel && figure.label && <small>{figure.label}</small>}</figure>;
 }

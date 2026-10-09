@@ -40,7 +40,7 @@ export function createDocumentActions(options: DocumentActionsOptions) {
     const mainFile = resolveMainTexFile();
     if (!mainFile) {
       options.onCompileBatch?.([]);
-      options.setCompileResult({ compilationId: "ui-error", status: "failed", exitCode: null, startedAt: new Date().toISOString(), finishedAt: new Date().toISOString(), durationMs: 0, mainFile: "", diagnostics: [{ severity: "error", source: "system", message: "No LaTeX main file is configured." }], stdoutTail: "", stderrTail: "" });
+      options.setCompileResult({ compilationId: "ui-error", status: "failed", exitCode: null, startedAt: new Date().toISOString(), finishedAt: new Date().toISOString(), durationMs: 0, mainFile: "", diagnostics: [{ severity: "error", source: "system", message: t("ui.documentActions.no_latex_main_file_is_configured") }], stdoutTail: "", stderrTail: "" });
       options.setBottomTab("problems");
       options.setBottomVisible(true);
       return;

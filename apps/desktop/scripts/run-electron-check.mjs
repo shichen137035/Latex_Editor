@@ -18,6 +18,7 @@ const checks = new Map([
   ["pdf-preview", { script: "electron/check-pdf-preview.cjs" }],
   ["multi-compile", { script: "electron/check-multi-compile.cjs" }],
   ["file-tree-state", { script: "electron/check-file-tree-state.cjs" }],
+  ["i18n", { script: "electron/check-i18n.cjs" }],
   ["preview-startup", { script: "electron/check-preview-startup.cjs" }],
   ["preview-diagnostics", { script: "diagnostics/preview-performance.cjs" }]
 ]);

@@ -1,6 +1,6 @@
 {
   "name": "latex-editor",
-  "version": "0.6.4",
+  "version": "0.6.5",
   "main": "apps/desktop/dist/main/index.js",
   "private": true,
   "description": "Local-first LaTeX editor foundation",
@@ -12,6 +12,8 @@
   "scripts": {
     "typecheck": "tsc -b --pretty false && tsc -p tests/types/tsconfig.json --pretty false",
     "lint": "eslint .",
+    "i18n:check": "node apps/desktop/scripts/i18n-audit.mjs",
+    "desktop:test-i18n": "npm run desktop:build && node apps/desktop/scripts/run-electron-check.mjs i18n",
     "test": "vitest run",
     "test:unit": "vitest run --project unit",
     "test:integration": "vitest run --project integration",

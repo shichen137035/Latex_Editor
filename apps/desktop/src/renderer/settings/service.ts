@@ -1,3 +1,4 @@
+import { t } from "../i18n/index.js";
 import { useSyncExternalStore } from "react";
 import { preferenceDefaults, validPreference, type PreferenceKey, type PreferenceValues, type SettingsSnapshot } from "@latex-editor/contracts";
 import { setLocale } from "../i18n/index.js";
@@ -40,7 +41,7 @@ export const settings = {
   async set<K extends PreferenceKey>(key: K, value: PreferenceValues[K] | undefined, scope: "global" | "project" = "global") {
     try {
       const id = scope === "project" ? projectId : undefined;
-      if (scope === "project" && !id) throw new Error("No active project");
+      if (scope === "project" && !id) throw new Error(t("ui.service.no_active_project"));
       const next = await window.latexEditor!.settings.set(key, value, id);
       snapshot = id ? next : { ...snapshot, global: next.global, ...(next.toolchain ? { toolchain: next.toolchain } : {}) };
       error = ""; publish();

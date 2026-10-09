@@ -1,3 +1,4 @@
+import { t } from "../i18n/index.js";
 export interface TextPatch { start: number; removed: string; inserted: string }
 export type EditOperation = { kind: "text"; fileId: string; patch: TextPatch } | { kind: "file"; fileId: string; before: string | undefined; after: string | undefined } | { kind: "structure" };
 export type HistoryDirection = "undo" | "redo";
@@ -24,7 +25,7 @@ export function patchFromEdits(before: string, after: string, edits: Array<{ sta
 
 export function applyTextPatch(content: string, patch: TextPatch, direction: HistoryDirection): string {
   const [expected, replacement] = direction === "undo" ? [patch.inserted, patch.removed] : [patch.removed, patch.inserted];
-  if (patch.start > content.length || content.slice(patch.start, patch.start + expected.length) !== expected) throw new Error("The document changed outside this edit history. Undo was stopped to protect its contents.");
+  if (patch.start > content.length || content.slice(patch.start, patch.start + expected.length) !== expected) throw new Error(t("ui.EditHistory.the_document_changed_outside_this_edit_history"));
   return content.slice(0, patch.start) + replacement + content.slice(patch.start + expected.length);
 }
 

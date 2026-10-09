@@ -163,7 +163,7 @@ export function PdfViewer({ dataUrl, target, onReverse, onInteract, viewState, l
       {label && <small className="pdf-origin-label">{label}</small>}{loading && document && <small>{t("pdf.loading")}</small>}
     </div>
     {error && document && <div className="pdf-update-error" role="status">{error}</div>}
-    <div className="pdf-viewer" ref={scrollRef} aria-label="PDF preview" onPointerDown={interact} onWheel={interact} onKeyDown={interact} onScroll={remember}>
+    <div className="pdf-viewer" ref={scrollRef} aria-label={t("ui.PdfViewer.pdf_preview")} onPointerDown={interact} onWheel={interact} onKeyDown={interact} onScroll={remember}>
       {!document ? <div className={error ? "pdf-viewer-error" : "pdf-viewer-loading"}>{error ?? t("pdf.loading")}</div> :
         Array.from({ length: document.numPages }, (_, index) => <PdfPage key={index + 1} document={document} fallbackPage={firstPage} pageNumber={index + 1} zoom={zoom} size={size} target={target?.page === index + 1 ? target : undefined} onReverse={onReverse} onReady={page => { readyPages.current.add(page); geometryChanged.current(); }}/>)}
     </div>

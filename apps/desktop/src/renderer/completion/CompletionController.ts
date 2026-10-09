@@ -1,3 +1,4 @@
+import { t } from "../i18n/index.js";
 import type { CommandMetadata, ProjectTreeNode } from "@latex-editor/contracts";
 import type { Monaco } from "@monaco-editor/react";
 import type { IDisposable, editor } from "monaco-editor";
@@ -100,7 +101,7 @@ export class CompletionController {
             sortText: `${entry.sourceRank}-${entry.label}`,
             range: replacementRange,
             ...(entry.snippet ? { insertTextRules: options.monaco.languages.CompletionItemInsertTextRule.InsertAsSnippet } : {}),
-            ...(entry.label === "\\begin" ? { command: { id: "editor.action.triggerSuggest", title: "Suggest environments" } } : {})
+            ...(entry.label === "\\begin" ? { command: { id: "editor.action.triggerSuggest", title: t("ui.CompletionController.suggest_environments") } } : {})
           }))
         };
       }

@@ -1,3 +1,4 @@
+import { styleResourceName, styleResourceDescription } from "./i18n/displayNames.js";
 import { useEffect, useMemo, useRef, useState, type CSSProperties, type Dispatch, type ReactNode, type SetStateAction } from "react";
 import type { Project, StyleResource } from "@latex-editor/contracts";
 import { t } from "./i18n/index.js";
@@ -83,14 +84,14 @@ function ProjectStyleResourcePicker({ styleResources, baseResource, setBaseResou
     <div className="resource-picker-fields">
       <label className="resource-picker-control"><span>{t("resource.builtIn")}</span>
         <select value={baseResource} onChange={(event) => setBaseResource(event.target.value)}>
-          {presets.map((resource) => <option key={resource.id} value={resource.id}>{resource.name}</option>)}
+          {presets.map((resource) => <option key={resource.id} value={resource.id}>{styleResourceName(resource)}</option>)}
         </select>
-        {selectedPreset?.description && <small className="resource-picker-description">{selectedPreset.description}</small>}
+        {selectedPreset?.description && <small className="resource-picker-description">{styleResourceDescription(selectedPreset)}</small>}
       </label>
       <div className="resource-picker-control"><label htmlFor="project-extra-style">{t("resource.myResources")}</label>
         <div className="resource-picker-add"><select id="project-extra-style" value={resourceToAdd} onChange={(event) => setResourceToAdd(event.target.value)}>
           <option value="">{t("resource.chooseCustom")}</option>
-          {customResources.map((resource) => <option key={resource.id} value={resource.id} disabled={extraResources.includes(resource.id)}>{resource.name}</option>)}
+          {customResources.map((resource) => <option key={resource.id} value={resource.id} disabled={extraResources.includes(resource.id)}>{styleResourceName(resource)}</option>)}
         </select><button type="button" aria-label={t("resource.addToProject")} title={t("resource.addToProject")} disabled={!resourceToAdd} onClick={addSelectedResource}>＋</button></div>
         {customResources.length === 0 && <small className="resource-picker-description">{t("resource.none")}</small>}
       </div>

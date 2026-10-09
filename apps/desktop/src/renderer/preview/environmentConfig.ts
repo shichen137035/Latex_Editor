@@ -1,3 +1,4 @@
+import { t } from "../i18n/index.js";
 import { cloneEnvironmentDefinitions, DEFAULT_ENVIRONMENTS, environmentOptionBrackets } from "./environments.js";
 import type { EnvironmentDefinition, EnvironmentMatchRule } from "./types.js";
 import { settings } from "../settings/service.js";
@@ -34,7 +35,7 @@ export function createCustomEnvironment(existing: EnvironmentDefinition[]): Envi
     builtIn: false,
     match: { kind: "latex-environment", name: `custom${suffix}` },
     labelKey: `environment.custom-${suffix}`,
-    label: `Custom ${suffix}`,
+    label: t("ui.environmentConfig.custom", { value1: suffix }),
     family: "generic",
     style: {
       accentToken: "#2f84c5",
@@ -92,50 +93,50 @@ function parseMatch(kind: string, value: string): EnvironmentMatchRule {
   if (kind === "display-math") return { kind };
   if (kind === "virtual-block") return { kind, type: value };
   if (kind === "custom-pattern") return { kind, pattern: value };
-  throw new Error(`Unsupported match type: ${kind}`);
+  throw new Error(t("ui.environmentConfig.unsupported_match_type", { value1: kind }));
 }
 
 export function parseEnvironmentXml(xml: string): EnvironmentDefinition[] {
   const document = new DOMParser().parseFromString(xml, "application/xml");
   const parserError = document.querySelector("parsererror");
-  if (parserError) throw new Error(parserError.textContent?.trim() || "Invalid XML.");
+  if (parserError) throw new Error(parserError.textContent?.trim() || t("ui.environmentConfig.invalid_xml"));
   const definitions = Array.from(document.querySelectorAll("environment")).map((element): EnvironmentDefinition => {
     const id = element.getAttribute("id")?.trim() ?? "";
     const family = element.getAttribute("family") as EnvironmentDefinition["family"] | null;
     const matchElement = element.querySelector(":scope > match");
     const styleElement = element.querySelector(":scope > style");
     const behaviorElement = element.querySelector(":scope > behavior");
-    if (!id || !family || !families.includes(family) || !matchElement || !styleElement || !behaviorElement) throw new Error(`Environment '${id || "?"}' is incomplete.`);
+    if (!id || !family || !families.includes(family) || !matchElement || !styleElement || !behaviorElement) throw new Error(t("ui.environmentConfig.environment_is_incomplete", { value1: id || "?" }));
     const label = element.getAttribute("label")?.trim();
     const typography: Partial<Record<TitleNumericField, number>> = {};
     for (const field of Object.keys(titleNumericFields) as TitleNumericField[]) {
       const raw = styleElement.getAttribute(field);
       if (raw === null) continue;
       const value = Number(raw);
-      if (!raw.trim() || !validTitleNumber(field, value)) throw new Error(`Invalid ${field} for environment '${id}'.`);
+      if (!raw.trim() || !validTitleNumber(field, value)) throw new Error(t("ui.environmentConfig.invalid_for_environment", { value1: field, value2: id }));
       typography[field] = value;
     }
     const titleFontFamily = styleElement.getAttribute("titleFontFamily")?.trim();
     const showOptionBrackets = behaviorElement.getAttribute("showOptionBrackets");
-    if (showOptionBrackets !== null && showOptionBrackets !== "true" && showOptionBrackets !== "false") throw new Error(`Invalid showOptionBrackets for environment '${id}'.`);
+    if (showOptionBrackets !== null && showOptionBrackets !== "true" && showOptionBrackets !== "false") throw new Error(t("ui.environmentConfig.invalid_showoptionbrackets_for_environment", { value1: id }));
     const previewBehavior: Partial<EnvironmentBehavior> = {};
     for (const key of ["showCaption", "captionEditable", "allowExpandedEditor", "expandedToolbar"] as const) {
       const raw = behaviorElement.getAttribute(key);
       if (raw === null) continue;
-      if (raw !== "true" && raw !== "false") throw new Error(`Invalid ${key} for environment '${id}'.`);
+      if (raw !== "true" && raw !== "false") throw new Error(t("ui.environmentConfig.invalid_for_environment", { value1: key, value2: id }));
       previewBehavior[key] = raw === "true";
     }
     for (const [key, choices] of [["renderer", previewRenderers], ["imageClickAction", imageClickActions], ["tableToolbar", tableToolbarModes]] as const) {
       const raw = behaviorElement.getAttribute(key);
       if (raw === null) continue;
-      if (!(choices as readonly string[]).includes(raw)) throw new Error(`Invalid ${key} for environment '${id}'.`);
+      if (!(choices as readonly string[]).includes(raw)) throw new Error(t("ui.environmentConfig.invalid_for_environment", { value1: key, value2: id }));
       Object.assign(previewBehavior, { [key]: raw });
     }
     const previewSizing: Partial<Record<PreviewNumericField, number>> = {};
     for (const key of Object.keys(previewNumericFields) as PreviewNumericField[]) {
       const raw = styleElement.getAttribute(key);
       if (raw === null) continue;
-      if (!raw.trim() || !validPreviewNumber(key, Number(raw))) throw new Error(`Invalid ${key} for environment '${id}'.`);
+      if (!raw.trim() || !validPreviewNumber(key, Number(raw))) throw new Error(t("ui.environmentConfig.invalid_for_environment", { value1: key, value2: id }));
       previewSizing[key] = Number(raw);
     }
     return {
@@ -169,9 +170,9 @@ export function parseEnvironmentXml(xml: string): EnvironmentDefinition[] {
   });
   const ids = new Set<string>();
   for (const definition of definitions) {
-    if (ids.has(definition.id)) throw new Error(`Duplicate environment id: ${definition.id}`);
+    if (ids.has(definition.id)) throw new Error(t("ui.environmentConfig.duplicate_environment_id", { value1: definition.id }));
     ids.add(definition.id);
   }
-  if (!definitions.length) throw new Error("At least one environment definition is required.");
+  if (!definitions.length) throw new Error(t("ui.environmentConfig.at_least_one_environment_definition_is_required"));
   return definitions;
 }

@@ -208,7 +208,7 @@ export class SpellCheckController {
 
   private async addToDictionary(word: string): Promise<void> {
     try {
-      if (!await this.options.api.spellcheck.addToDictionary(word)) throw new Error("Dictionary rejected the word");
+      if (!await this.options.api.spellcheck.addToDictionary(word)) throw new Error(t("ui.SpellCheckController.dictionary_rejected_the_word"));
       window.dispatchEvent(new Event(vocabularyChanged));
     } catch (error) { window.alert(`${t("settings.saveFailed")} ${String(error)}`); }
   }

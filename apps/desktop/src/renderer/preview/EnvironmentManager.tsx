@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import { t, type MessageKey } from "../i18n/index.js";
+import { environmentName } from "../i18n/displayNames.js";
 import { ColorTokenInput } from "./ColorTokenInput.js";
 import { createCustomEnvironment, parseEnvironmentXml, resetBuiltIn, serializeEnvironments } from "./environmentConfig.js";
 import { environmentBlockStyle } from "./environment-block-style.js";
@@ -17,9 +18,7 @@ const families: EnvironmentDefinition["family"][] = ["section", "theorem", "defi
 const matchKinds: EnvironmentMatchRule["kind"][] = ["latex-environment", "command", "display-math", "virtual-block", "custom-pattern"];
 
 export function environmentDisplayName(definition: EnvironmentDefinition): string {
-  if (definition.label) return definition.label;
-  const translated = t(definition.labelKey as MessageKey);
-  return translated || definition.id.replaceAll("-", " ");
+  return environmentName(definition);
 }
 
 function matchValue(match: EnvironmentMatchRule): string {

@@ -269,7 +269,7 @@ export function AIView(props: Props) {
       let messageContent = draftContent;
       if (draftContent.length > AI_LONG_INPUT_THRESHOLD) {
         const bridge = window.latexEditor;
-        if (!bridge) throw new Error("The project file service is unavailable.");
+        if (!bridge) throw new Error(t("ui.AIView.the_project_file_service_is_unavailable"));
         const relativePath = longDraftFileRef.current?.content === draftContent
           ? longDraftFileRef.current.path
           : `.texweave/ai-inputs/chat-input-${Date.now()}-${crypto.randomUUID().slice(0, 8)}.txt`;
@@ -283,7 +283,7 @@ export function AIView(props: Props) {
       let conversation = activeConversation;
       if (!conversation) {
         conversation = await api.createConversation(activeMode, props.projectId);
-        if (!conversation) throw new Error("Could not create an AI conversation.");
+        if (!conversation) throw new Error(t("ui.AIView.could_not_create_an_ai_conversation"));
         setSnapshot((current) => ({ ...current, conversations: [conversation!, ...current.conversations] }));
         attachmentDraft?.adoptConversation(conversation.id);
         setActiveId(conversation.id);

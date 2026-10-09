@@ -1,3 +1,4 @@
+import { t } from "../i18n/index.js";
 import catalog from "../../../../../resources/environments/preview-environments.json" with { type: "json" };
 import type { EnvironmentBehavior, EnvironmentDefinition, EnvironmentMatchRule, EnvironmentStyle } from "./types.js";
 
@@ -25,7 +26,7 @@ function loadConfiguredDefaults(): EnvironmentDefinition[] {
   const configuration = catalog as unknown as EnvironmentCatalog;
   const ids = new Set<string>();
   return configuration.previewEnvironments.map((entry) => {
-    if (!entry.id || ids.has(entry.id)) throw new Error(`Invalid or duplicate Preview environment id: ${entry.id}`);
+    if (!entry.id || ids.has(entry.id)) throw new Error(t("ui.environments.invalid_or_duplicate_preview_environment_id", { value1: entry.id }));
     ids.add(entry.id);
     return {
       id: entry.id,

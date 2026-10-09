@@ -1,3 +1,4 @@
+import { t } from "../i18n/index.js";
 import katex from "katex";
 import type { MathContext, MathRenderOptions, MathRenderResult } from "./types.js";
 import { isMathEnvironment } from "./MathEnvironmentRegistry.js";
@@ -41,7 +42,7 @@ export class MathRenderService {
   render(source: string, context: MathContext, options: MathRenderOptions): MathRenderResult {
     const expression = source.trim();
     if (!expression) return {};
-    if (expression.length > maxFormulaLength) return { error: { message: "Formula is too long to preview", recoverable: true } };
+    if (expression.length > maxFormulaLength) return { error: { message: t("ui.MathRenderService.formula_is_too_long_to_preview"), recoverable: true } };
     let macroKey = this.#macroKeys.get(context.macros);
     if (macroKey === undefined) {
       macroKey = JSON.stringify(Object.entries(context.macros).sort(([a], [b]) => a.localeCompare(b)));

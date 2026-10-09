@@ -31,9 +31,11 @@ import { createProjectSourceArchive } from "./project-export.js";
 import { ProjectHistoryService } from "./project-history.js";
 import { registerHistoryIpc } from "./history-ipc.js";
 import { installRendererSecurity, resolveRendererTarget } from "./renderer-security.js";
+import { translateNative } from "./i18n.js";
 
 let context: DesktopContext | undefined;
 let settings: SettingsRepository;
+const nativeText = (key: string) => translateNative(settings?.global.locale ?? "en", key);
 const closeStates = new Map<number, { pending: string | undefined; approved: boolean; ready: boolean }>();
 let quitRequested = false;
 
@@ -135,17 +137,17 @@ async function createContext(): Promise<DesktopContext> {
     builtInSkillsRoot: resolve(resourceRoot, "ai", "skills"),
     createBlockApi: async ({ projectId, workspaceRoot }) => {
       const project = registry.get(projectId);
-      if (!project || project.missing) throw new Error("The source project is no longer available.");
+      if (!project || project.missing) throw new Error(nativeText("native.sourceProjectUnavailable"));
       // Block tools and shell edits share the same diff-reviewed working copy.
       return createWorkspaceBlockApi(project, workspaceRoot, () => environmentDefinitions(projectId), () => directiveDefinitions(projectId));
     },
     relationAccess: { api: id => relations.aiAPI(id), commit: (id, proposalId) => relations.commitRelationProposal(id, proposalId), reject: (id, proposalId) => relations.rejectProposal(id, proposalId) },
     compileWorkspace: async ({ projectId, workspaceRoot, mainFile }) => {
       const project = registry.get(projectId);
-      if (!project || project.missing) throw new Error("The source project is no longer available.");
+      if (!project || project.missing) throw new Error(nativeText("native.sourceProjectUnavailable"));
       const preferences = await settings.snapshot(projectId);
       const configuredMain = mainFile ?? project.mainFile;
-      if (!configuredMain) throw new Error("Set a main TeX file in the project before asking TeXWeave AI to compile it.");
+      if (!configuredMain) throw new Error(nativeText("native.aiMainFileRequired"));
       let result: CompileResult;
       try { result = await compiler.compileWorkspace({ workspaceRoot, mainFile: configuredMain, engine: preferences.project.engine ?? preferences.global.engine ?? "pdflatex" }); }
       catch (error) { result = failedCompilation(configuredMain, error); }
@@ -164,7 +166,7 @@ async function createContext(): Promise<DesktopContext> {
 }
 
 function requireContext(): DesktopContext {
-  if (!context) throw new Error("Application context is not ready");
+  if (!context) throw new Error(nativeText("native.contextNotReady"));
   return context;
 }
 
@@ -203,66 +205,67 @@ function registerIpcHandlers(): void {
   handleIpc(desktopInvoke.settings.get, (_event, projectId) => settings.snapshot(projectId));
   handleIpc(desktopInvoke.settings.set, async (_event, key, value, projectId) => {
     const snapshot = await settings.set(key, value, projectId);
+    if (key === "locale" && projectId === undefined) for (const window of BrowserWindow.getAllWindows()) window.setTitle(nativeText("native.windowTitle"));
     if (key === "themeDirectory" && projectId === undefined && context) await context.themes.setDirectory(typeof value === "string" ? value : "");
     return snapshot;
   });
   handleIpc(desktopInvoke.installation.state, () => context?.installation.snapshot());
   handleIpc(desktopInvoke.installation.setMode, (_event, mode, installDirectory) => {
-    if (context === undefined) throw new Error("Application context is not ready");
+    if (context === undefined) throw new Error(nativeText("native.contextNotReady"));
     return context.installation.setInstallMode(mode, installDirectory);
   });
   handleIpc(desktopInvoke.installation.recordComponent, (_event, component) => {
-    if (context === undefined) throw new Error("Application context is not ready");
+    if (context === undefined) throw new Error(nativeText("native.contextNotReady"));
     return context.installation.recordComponent(component);
   });
   handleIpc(desktopInvoke.installation.recordEnvironment, (_event, toolchain) => {
-    if (context === undefined) throw new Error("Application context is not ready");
+    if (context === undefined) throw new Error(nativeText("native.contextNotReady"));
     return context.installation.recordEnvironment(toolchain);
   });
   handleIpc(desktopInvoke.installation.removeUserData, (_event, options) => {
-    if (context === undefined) throw new Error("Application context is not ready");
+    if (context === undefined) throw new Error(nativeText("native.contextNotReady"));
     return context.installation.removeUserData(options);
   });
   handleIpc(desktopInvoke.resources.searchCommands, (_event, query) => context?.resources.searchCommands(query) ?? []);
   handleIpc(desktopInvoke.references.snapshot, (_event, projectId) => context?.references.snapshot(projectId));
   handleIpc(desktopInvoke.references.importFile, (_event, path) => {
-    if (!context) throw new Error("Application context is not ready");
+    if (!context) throw new Error(nativeText("native.contextNotReady"));
     return context.references.importBibFile(path);
   });
   handleIpc(desktopInvoke.references.saveEntry, (_event, input) => {
-    if (!context) throw new Error("Application context is not ready");
+    if (!context) throw new Error(nativeText("native.contextNotReady"));
     return context.references.saveEntry(input);
   });
   handleIpc(desktopInvoke.references.removeEntry, (_event, id) => {
-    if (!context) throw new Error("Application context is not ready");
+    if (!context) throw new Error(nativeText("native.contextNotReady"));
     return context.references.removeEntry(id);
   });
   handleIpc(desktopInvoke.references.setFavorite, (_event, id, favorite) => {
-    if (!context) throw new Error("Application context is not ready");
+    if (!context) throw new Error(nativeText("native.contextNotReady"));
     return context.references.setFavorite(id, favorite);
   });
   handleIpc(desktopInvoke.references.createCollection, (_event, name, parentId) => {
-    if (!context) throw new Error("Application context is not ready");
+    if (!context) throw new Error(nativeText("native.contextNotReady"));
     return context.references.createCollection(name, parentId);
   });
   handleIpc(desktopInvoke.references.createTag, (_event, name) => {
-    if (!context) throw new Error("Application context is not ready");
+    if (!context) throw new Error(nativeText("native.contextNotReady"));
     return context.references.createTag(name);
   });
   handleIpc(desktopInvoke.references.renameTag, (_event, id, name) => {
-    if (!context) throw new Error("Application context is not ready");
+    if (!context) throw new Error(nativeText("native.contextNotReady"));
     return context.references.renameTag(id, name);
   });
   handleIpc(desktopInvoke.references.removeTag, (_event, id) => {
-    if (!context) throw new Error("Application context is not ready");
+    if (!context) throw new Error(nativeText("native.contextNotReady"));
     return context.references.removeTag(id);
   });
   handleIpc(desktopInvoke.references.setProjectLink, (_event, link) => {
-    if (!context) throw new Error("Application context is not ready");
+    if (!context) throw new Error(nativeText("native.contextNotReady"));
     return context.references.setProjectLink(link);
   });
   handleIpc(desktopInvoke.references.removeProjectLink, (_event, projectId, entryId) => {
-    if (!context) throw new Error("Application context is not ready");
+    if (!context) throw new Error(nativeText("native.contextNotReady"));
     return context.references.removeProjectLink(projectId, entryId);
   });
   registerStructureIpc(() => requireContext().structure);
@@ -275,70 +278,70 @@ function registerIpcHandlers(): void {
   handleIpc(desktopInvoke.spellcheck.checkWords, (_event, words, language) => context?.spellcheck.checkWords(words, language) ?? []);
   handleIpc(desktopInvoke.spellcheck.suggestions, (_event, word, language) => context?.spellcheck.suggestions(word, language) ?? []);
   handleIpc(desktopInvoke.spellcheck.configure, (_event, mode, language) => {
-    if (context === undefined) throw new Error("Application context is not ready");
+    if (context === undefined) throw new Error(nativeText("native.contextNotReady"));
     return context.spellcheck.configure(mode, language);
   });
   handleIpc(desktopInvoke.spellcheck.addToDictionary, (_event, word) => {
-    if (context === undefined) throw new Error("Application context is not ready");
+    if (context === undefined) throw new Error(nativeText("native.contextNotReady"));
     return context.spellcheck.addToDictionary(word);
   });
   handleIpc(desktopInvoke.spellcheck.dictionaryWords, () => context?.spellcheck.dictionaryWords() ?? []);
   handleIpc(desktopInvoke.spellcheck.listDictionaries, (_event, query = "") => context?.spellcheck.listDictionaries(query) ?? []);
   handleIpc(desktopInvoke.spellcheck.refreshDictionaries, () => context?.spellcheck.refreshDictionaries() ?? []);
   handleIpc(desktopInvoke.spellcheck.installDictionary, async (_event, id) => {
-    if (context === undefined) throw new Error("Application context is not ready");
+    if (context === undefined) throw new Error(nativeText("native.contextNotReady"));
     return context.spellcheck.installDictionary(id);
   });
   handleIpc(desktopInvoke.spellcheck.removeDictionary, async (_event, id) => {
-    if (context === undefined) throw new Error("Application context is not ready");
+    if (context === undefined) throw new Error(nativeText("native.contextNotReady"));
     await context.spellcheck.removeDictionary(id);
     return context.spellcheck.status();
   });
   handleIpc(desktopInvoke.styleResources.list, () => context?.styleResources.list() ?? []);
   handleIpc(desktopInvoke.styleResources.readFile, (_event, id, targetPath) => {
-    if (context === undefined) throw new Error("Application context is not ready");
+    if (context === undefined) throw new Error(nativeText("native.contextNotReady"));
     return context.styleResources.getFile(id, targetPath);
   });
   handleIpc(desktopInvoke.styleResources.create, (_event, name) => {
-    if (context === undefined) throw new Error("Application context is not ready");
+    if (context === undefined) throw new Error(nativeText("native.contextNotReady"));
     return context.styleResources.createResource(name);
   });
   handleIpc(desktopInvoke.styleResources.importFiles, (_event, paths, name) => {
-    if (context === undefined) throw new Error("Application context is not ready");
+    if (context === undefined) throw new Error(nativeText("native.contextNotReady"));
     return context.styleResources.importFiles(paths, name);
   });
   handleIpc(desktopInvoke.styleResources.importFolder, (_event, folderPath) => {
-    if (context === undefined) throw new Error("Application context is not ready");
+    if (context === undefined) throw new Error(nativeText("native.contextNotReady"));
     return context.styleResources.importFolder(folderPath);
   });
   handleIpc(desktopInvoke.styleResources.duplicate, (_event, id) => {
-    if (context === undefined) throw new Error("Application context is not ready");
+    if (context === undefined) throw new Error(nativeText("native.contextNotReady"));
     return context.styleResources.duplicate(id);
   });
   handleIpc(desktopInvoke.styleResources.addFiles, (_event, id, paths) => {
-    if (context === undefined) throw new Error("Application context is not ready");
+    if (context === undefined) throw new Error(nativeText("native.contextNotReady"));
     return context.styleResources.addFiles(id, paths);
   });
   handleIpc(desktopInvoke.styleResources.rename, (_event, id, name) => {
-    if (context === undefined) throw new Error("Application context is not ready");
+    if (context === undefined) throw new Error(nativeText("native.contextNotReady"));
     return context.styleResources.renameResource(id, name);
   });
   handleIpc(desktopInvoke.styleResources.remove, (_event, id) => {
-    if (context === undefined) throw new Error("Application context is not ready");
+    if (context === undefined) throw new Error(nativeText("native.contextNotReady"));
     return context.styleResources.remove(id);
   });
   handleIpc(desktopInvoke.themes.list, () => context?.themes.list() ?? []);
   handleIpc(desktopInvoke.themes.directory, () => context?.themes.directory() ?? "");
   handleIpc(desktopInvoke.themes.importFiles, (_event, paths) => {
-    if (context === undefined) throw new Error("Application context is not ready");
+    if (context === undefined) throw new Error(nativeText("native.contextNotReady"));
     return context.themes.importFiles(paths);
   });
   handleIpc(desktopInvoke.themes.importFolder, (_event, folderPath) => {
-    if (context === undefined) throw new Error("Application context is not ready");
+    if (context === undefined) throw new Error(nativeText("native.contextNotReady"));
     return context.themes.importFolder(folderPath);
   });
   handleIpc(desktopInvoke.themes.remove, (_event, id) => {
-    if (context === undefined) throw new Error("Application context is not ready");
+    if (context === undefined) throw new Error(nativeText("native.contextNotReady"));
     return context.themes.remove(id);
   });
   handleIpc(desktopInvoke.settings.detectToolchain, async (_event, manual) => {
@@ -364,35 +367,35 @@ function registerIpcHandlers(): void {
     }));
   });
   handleIpc(desktopInvoke.projects.updateDirectoryEntry, (_event, projectId, patch) => {
-    if (!context) throw new Error("Application context is not ready");
+    if (!context) throw new Error(nativeText("native.contextNotReady"));
     const project = context.registry.get(projectId);
-    if (!project) throw new Error("Project not found");
+    if (!project) throw new Error(nativeText("native.projectNotFound"));
     const current = project.settings.projectDirectory && typeof project.settings.projectDirectory === "object"
       ? project.settings.projectDirectory as Record<string, unknown> : {};
     const next: Record<string, unknown> = { ...current };
     if (patch.displayName !== undefined) {
-      if (typeof patch.displayName !== "string") throw new Error("Display name must be text");
+      if (typeof patch.displayName !== "string") throw new Error(nativeText("native.displayNameText"));
       const displayName = patch.displayName.trim();
-      if (!displayName || displayName.length > 120) throw new Error("Display name must be between 1 and 120 characters");
+      if (!displayName || displayName.length > 120) throw new Error(nativeText("native.displayNameLength"));
       next.displayName = displayName;
     }
     if (patch.isFavorite !== undefined) {
-      if (typeof patch.isFavorite !== "boolean") throw new Error("Favorite state must be boolean");
+      if (typeof patch.isFavorite !== "boolean") throw new Error(nativeText("native.favoriteBoolean"));
       next.isFavorite = patch.isFavorite;
     }
     if (patch.isPinned !== undefined) {
-      if (typeof patch.isPinned !== "boolean") throw new Error("Pin state must be boolean");
+      if (typeof patch.isPinned !== "boolean") throw new Error(nativeText("native.pinBoolean"));
       next.isPinned = patch.isPinned;
     }
     if (patch.avatarLetter !== undefined) {
-      if (typeof patch.avatarLetter !== "string") throw new Error("Project avatar letter must be text");
+      if (typeof patch.avatarLetter !== "string") throw new Error(nativeText("native.avatarLetterText"));
       const letter = Array.from(patch.avatarLetter.trim());
       const codePoint = letter[0]?.codePointAt(0);
-      if (letter.length !== 1 || codePoint === undefined || codePoint <= 0x1f || codePoint === 0x7f) throw new Error("Project avatar must contain one character");
+      if (letter.length !== 1 || codePoint === undefined || codePoint <= 0x1f || codePoint === 0x7f) throw new Error(nativeText("native.avatarLetterLength"));
       next.avatarLetter = Array.from(letter[0]!.toLocaleUpperCase())[0] ?? "?";
     }
     if (patch.avatarColor !== undefined) {
-      if (typeof patch.avatarColor !== "string" || !/^#[\da-f]{6}$/i.test(patch.avatarColor)) throw new Error("Project avatar color must be a six-digit hex color");
+      if (typeof patch.avatarColor !== "string" || !/^#[\da-f]{6}$/i.test(patch.avatarColor)) throw new Error(nativeText("native.avatarColor"));
       next.avatarColor = patch.avatarColor.toLocaleLowerCase("en-US");
     }
     const updated = { ...project, settings: { ...project.settings, projectDirectory: next } };
@@ -400,15 +403,15 @@ function registerIpcHandlers(): void {
     return updated;
   });
   handleIpc(desktopInvoke.projects.removeFromDirectory, async (_event, projectId) => {
-    if (!context) throw new Error("Application context is not ready");
+    if (!context) throw new Error(nativeText("native.contextNotReady"));
     const result = await context.projects.remove({ projectId, mode: "registryOnly" });
     await context.blockGraph.reclaimProjectCaches(projectId, { kind: "project-removed" });
     return result;
   });
   handleIpc(desktopInvoke.projects.relocateInDirectory, async (_event, projectId, folderPath) => {
-    if (!context) throw new Error("Application context is not ready");
+    if (!context) throw new Error(nativeText("native.contextNotReady"));
     const previous = context.registry.get(projectId);
-    if (!previous) throw new Error("Project not found");
+    if (!previous) throw new Error(nativeText("native.projectNotFound"));
     const relocated = await context.projects.registerExistingFolder(folderPath);
     let mainFile: string | undefined;
     if (previous.mainFile) {
@@ -433,53 +436,53 @@ function registerIpcHandlers(): void {
     return updated;
   });
   handleIpc(desktopInvoke.projects.deleteToRecycleBin, async (_event, projectId, confirmedPath) => {
-    if (!context) throw new Error("Application context is not ready");
+    if (!context) throw new Error(nativeText("native.contextNotReady"));
     const project = context.registry.get(projectId);
-    if (!project || project.canonicalPath !== confirmedPath) throw new Error("Project path confirmation did not match");
-    if (project.missing || context.environment.isUnsafeDeleteTarget(project.canonicalPath)) throw new Error("This project folder cannot be safely moved to the Recycle Bin");
+    if (!project || project.canonicalPath !== confirmedPath) throw new Error(nativeText("native.pathConfirmationMismatch"));
+    if (project.missing || context.environment.isUnsafeDeleteTarget(project.canonicalPath)) throw new Error(nativeText("native.recycleUnsafe"));
     await shell.trashItem(project.canonicalPath);
     await context.projects.remove({ projectId, mode: "registryOnly" });
     await context.blockGraph.reclaimProjectCaches(projectId, { kind: "project-removed" });
     return true;
   });
   handleIpc(desktopInvoke.projects.revealInFileManager, (_event, projectId) => {
-    if (!context) throw new Error("Application context is not ready");
+    if (!context) throw new Error(nativeText("native.contextNotReady"));
     const project = context.registry.get(projectId);
-    if (!project || project.missing) throw new Error("Project folder is unavailable");
+    if (!project || project.missing) throw new Error(nativeText("native.projectFolderUnavailable"));
     shell.showItemInFolder(project.canonicalPath);
   });
   handleIpc(desktopInvoke.projects.copyProjectPath, (_event, projectId) => {
-    if (!context) throw new Error("Application context is not ready");
+    if (!context) throw new Error(nativeText("native.contextNotReady"));
     const project = context.registry.get(projectId);
-    if (!project) throw new Error("Project not found");
+    if (!project) throw new Error(nativeText("native.projectNotFound"));
     clipboard.writeText(project.canonicalPath);
   });
   handleIpc(desktopInvoke.projects.create, async (_event, input) => {
-    if (context === undefined) throw new Error("Application context is not ready");
+    if (context === undefined) throw new Error(nativeText("native.contextNotReady"));
     return context.projects.createProject(input);
   });
   handleIpc(desktopInvoke.projects.register, async (_event, folderPath) => {
-    if (context === undefined) throw new Error("Application context is not ready");
+    if (context === undefined) throw new Error(nativeText("native.contextNotReady"));
     return context.projects.registerExistingFolder(folderPath);
   });
   handleIpc(desktopInvoke.projects.open, async (_event, projectId) => {
-    if (context === undefined) throw new Error("Application context is not ready");
+    if (context === undefined) throw new Error(nativeText("native.contextNotReady"));
     return context.projects.openProject(projectId);
   });
   handleIpc(desktopInvoke.files.tree, async (_event, projectId) => {
-    if (context === undefined) throw new Error("Application context is not ready");
+    if (context === undefined) throw new Error(nativeText("native.contextNotReady"));
     return context.files.listTree(projectId);
   });
   handleIpc(desktopInvoke.files.read, async (_event, projectId, relativePath) => {
-    if (context === undefined) throw new Error("Application context is not ready");
+    if (context === undefined) throw new Error(nativeText("native.contextNotReady"));
     return context.files.readText(projectId, relativePath);
   });
   handleIpc(desktopInvoke.files.write, async (_event, projectId, relativePath, content) => {
-    if (context === undefined) throw new Error("Application context is not ready");
+    if (context === undefined) throw new Error(nativeText("native.contextNotReady"));
     return await context.documents.save(projectId, relativePath, content) as FileWriteResult;
   });
   handleIpc(desktopInvoke.files.readPdf, async (_event, projectId, relativePath) => {
-    if (context === undefined) throw new Error("Application context is not ready");
+    if (context === undefined) throw new Error(nativeText("native.contextNotReady"));
     try {
       const filePath = await context.files.resolveFilePath(projectId, relativePath, true);
       return `data:application/pdf;base64,${(await readFile(filePath)).toString("base64")}`;
@@ -490,49 +493,49 @@ function registerIpcHandlers(): void {
     }
   });
   handleIpc(desktopInvoke.files.createFile, async (_event, projectId, relativePath) => {
-    if (context === undefined) throw new Error("Application context is not ready");
+    if (context === undefined) throw new Error(nativeText("native.contextNotReady"));
     return context.files.createFile(projectId, relativePath);
   });
   handleIpc(desktopInvoke.files.createDirectory, async (_event, projectId, relativePath) => {
-    if (context === undefined) throw new Error("Application context is not ready");
+    if (context === undefined) throw new Error(nativeText("native.contextNotReady"));
     return context.files.createDirectory(projectId, relativePath);
   });
   handleIpc(desktopInvoke.files.rename, async (_event, projectId, fromRelativePath, toRelativePath) => {
-    if (context === undefined) throw new Error("Application context is not ready");
+    if (context === undefined) throw new Error(nativeText("native.contextNotReady"));
     return context.documents.mutateEntries(projectId, [fromRelativePath, toRelativePath], () => requireContext().files.renameEntry(projectId, fromRelativePath, toRelativePath));
   });
   handleIpc(desktopInvoke.files.copy, async (_event, projectId, fromRelativePath, toRelativePath) => {
-    if (context === undefined) throw new Error("Application context is not ready");
+    if (context === undefined) throw new Error(nativeText("native.contextNotReady"));
     return context.files.copyEntry(projectId, fromRelativePath, toRelativePath);
   });
   handleIpc(desktopInvoke.files.import, async (_event, projectId, sourcePath, destinationRelativePath) => {
-    if (context === undefined) throw new Error("Application context is not ready");
+    if (context === undefined) throw new Error(nativeText("native.contextNotReady"));
     return context.files.importEntry(projectId, sourcePath, destinationRelativePath);
   });
   handleIpc(desktopInvoke.files.remove, async (_event, projectId, relativePath) => {
-    if (context === undefined) throw new Error("Application context is not ready");
+    if (context === undefined) throw new Error(nativeText("native.contextNotReady"));
     return context.documents.mutateEntries(projectId, [relativePath], () => requireContext().files.removeEntry(projectId, relativePath));
   });
   handleIpc(desktopInvoke.images.pick, async (_event, multiple = false) => {
-    const result = await dialog.showOpenDialog({ properties: ["openFile", ...(multiple ? ["multiSelections" as const] : [])], filters: [{ name: "Images", extensions: ["png", "jpg", "jpeg", "webp", "svg", "pdf"] }] });
+    const result = await dialog.showOpenDialog({ properties: ["openFile", ...(multiple ? ["multiSelections" as const] : [])], filters: [{ name: nativeText("native.images"), extensions: ["png", "jpg", "jpeg", "webp", "svg", "pdf"] }] });
     return result.canceled ? [] : result.filePaths;
   });
   handleIpc(desktopInvoke.images.import, async (_event, projectId, sourcePaths, directory) => {
-    if (context === undefined) throw new Error("Application context is not ready");
+    if (context === undefined) throw new Error(nativeText("native.contextNotReady"));
     return context.images.importImages(projectId, sourcePaths, directory);
   });
   handleIpc(desktopInvoke.images.resolve, async (_event, projectId, texPath, requestedPath, graphicPaths) => {
-    if (context === undefined) throw new Error("Application context is not ready");
+    if (context === undefined) throw new Error(nativeText("native.contextNotReady"));
     return context.images.resolve(projectId, texPath, requestedPath, graphicPaths);
   });
   handleIpc(desktopInvoke.projects.setMainFile, async (_event, projectId, relativePath) => {
-    if (context === undefined) throw new Error("Application context is not ready");
+    if (context === undefined) throw new Error(nativeText("native.contextNotReady"));
     const updated = await context.projects.setMainFile(projectId, relativePath);
     BrowserWindow.getAllWindows().forEach(window => sendIpc(window.webContents, desktopEvents.toRenderer.projectUpdate, updated));
     return updated;
   });
   handleIpc(desktopInvoke.compile.run, async (_event, projectId, mainFile) => {
-    if (context === undefined) throw new Error("Application context is not ready");
+    if (context === undefined) throw new Error(nativeText("native.contextNotReady"));
     const preferences = await settings.snapshot(projectId);
     let result: CompileResult;
     try {
@@ -545,16 +548,16 @@ function registerIpcHandlers(): void {
     return { ...result, pdfDataUrl };
   });
   handleIpc(desktopInvoke.compile.readLog, (_event, projectId, compilationId) => {
-    if (context === undefined) throw new Error("Application context is not ready");
+    if (context === undefined) throw new Error(nativeText("native.contextNotReady"));
     return context.compiler.readLog(projectId, compilationId);
   });
   handleIpc(desktopInvoke.exports.sourceArchive, async (event, projectId, mainFile) => {
-    if (context === undefined) throw new Error("Application context is not ready");
+    if (context === undefined) throw new Error(nativeText("native.contextNotReady"));
     const project = await context.projects.openProject(projectId);
     const options = {
-      title: "Export project source",
+      title: nativeText("native.exportSource"),
       defaultPath: join(app.getPath("downloads"), `${project.name}-source.zip`),
-      filters: [{ name: "ZIP archive", extensions: ["zip"] }]
+      filters: [{ name: nativeText("native.zipArchive"), extensions: ["zip"] }]
     };
     const owner = BrowserWindow.fromWebContents(event.sender);
     const choice = owner ? await dialog.showSaveDialog(owner, options) : await dialog.showSaveDialog(options);
@@ -563,15 +566,15 @@ function registerIpcHandlers(): void {
     return choice.filePath;
   });
   handleIpc(desktopInvoke.exports.mainTex, async (event, projectId, mainFile) => {
-    if (context === undefined) throw new Error("Application context is not ready");
-    if (extname(mainFile).toLowerCase() !== ".tex") throw new Error("Choose a .tex file as the project's main file.");
+    if (context === undefined) throw new Error(nativeText("native.contextNotReady"));
+    if (extname(mainFile).toLowerCase() !== ".tex") throw new Error(nativeText("native.chooseMainFile"));
     const project = await context.projects.openProject(projectId);
     const sourcePath = await context.files.resolveFilePath(projectId, mainFile, true);
     const suggestedName = mainFile.split(/[\\/]/).at(-1) ?? `${project.name}.tex`;
     const options = {
-      title: "Export main TeX file",
+      title: nativeText("native.exportMain"),
       defaultPath: join(app.getPath("downloads"), suggestedName),
-      filters: [{ name: "TeX source", extensions: ["tex"] }]
+      filters: [{ name: nativeText("native.texSource"), extensions: ["tex"] }]
     };
     const owner = BrowserWindow.fromWebContents(event.sender);
     const choice = owner ? await dialog.showSaveDialog(owner, options) : await dialog.showSaveDialog(options);
@@ -583,16 +586,16 @@ function registerIpcHandlers(): void {
     return targetPath;
   });
   handleIpc(desktopInvoke.exports.pdf, async (event, projectId, mainFile): Promise<PdfExportResult> => {
-    if (context === undefined) throw new Error("Application context is not ready");
-    if (extname(mainFile).toLowerCase() !== ".tex") throw new Error("Choose a .tex file as the project's main file.");
+    if (context === undefined) throw new Error(nativeText("native.contextNotReady"));
+    if (extname(mainFile).toLowerCase() !== ".tex") throw new Error(nativeText("native.chooseMainFile"));
     const project = await context.projects.openProject(projectId);
     await context.files.resolveFilePath(projectId, mainFile, true);
     const texName = mainFile.split(/[\\/]/).at(-1) ?? `${project.name}.tex`;
     const pdfName = texName.replace(/\.tex$/i, ".pdf");
     const options = {
-      title: "Compile and export PDF",
+      title: nativeText("native.exportPdf"),
       defaultPath: join(app.getPath("downloads"), pdfName),
-      filters: [{ name: "PDF document", extensions: ["pdf"] }]
+      filters: [{ name: nativeText("native.pdfDocument"), extensions: ["pdf"] }]
     };
     const owner = BrowserWindow.fromWebContents(event.sender);
     const choice = owner ? await dialog.showSaveDialog(owner, options) : await dialog.showSaveDialog(options);
@@ -608,7 +611,7 @@ function registerIpcHandlers(): void {
       });
     } catch (error) {
       const code = error && typeof error === "object" && "code" in error ? String(error.code) : "COMPILATION_FAILED";
-      const message = code === "TOOLCHAIN_NOT_FOUND" ? "LaTeX toolchain unavailable. Open Settings > Compiler to detect or locate latexmk." : error instanceof Error ? error.message : String(error);
+      const message = code === "TOOLCHAIN_NOT_FOUND" ? nativeText("native.toolchainHint") : error instanceof Error ? error.message : String(error);
       const timestamp = new Date().toISOString();
       compilation = {
         compilationId: randomUUID(), status: "failed", exitCode: null,
@@ -627,13 +630,13 @@ function registerIpcHandlers(): void {
   });
   registerAiIpcHandlers(context, settings);
   handleIpc(desktopInvoke.synctex.forward, async (_event, projectId, sourceFile, pdfFile, line, column) => {
-    if (context === undefined) throw new Error("Application context is not ready");
+    if (context === undefined) throw new Error(nativeText("native.contextNotReady"));
     const project = await context.projects.openProject(projectId);
     const [sourcePath, pdfPath] = await Promise.all([context.files.resolveFilePath(projectId, sourceFile, true), context.files.resolveFilePath(projectId, pdfFile, true)]);
     return forwardSync({ root: project.canonicalPath, mainFile: project.mainFile, compilerArguments: context.resources.getCompilerProfile().arguments, sourcePath, pdfPath, line, column, ...(settings.toolchain?.binDirectory ? { binDirectory: settings.toolchain.binDirectory } : {}), ...(settings.toolchain?.latexmk ? { latexmk: settings.toolchain.latexmk } : {}) });
   });
   handleIpc(desktopInvoke.synctex.reverse, async (_event, projectId, pdfFile, page, x, y) => {
-    if (context === undefined) throw new Error("Application context is not ready");
+    if (context === undefined) throw new Error(nativeText("native.contextNotReady"));
     const project = await context.projects.openProject(projectId);
     const pdfPath = await context.files.resolveFilePath(projectId, pdfFile, true);
     return reverseSync({ root: project.canonicalPath, mainFile: project.mainFile, compilerArguments: context.resources.getCompilerProfile().arguments, pdfPath, page, x, y, ...(settings.toolchain?.binDirectory ? { binDirectory: settings.toolchain.binDirectory } : {}), ...(settings.toolchain?.latexmk ? { latexmk: settings.toolchain.latexmk } : {}) });
@@ -643,11 +646,11 @@ function registerIpcHandlers(): void {
     return result.canceled ? undefined : result.filePaths[0];
   });
   handleIpc(desktopInvoke.dialogs.pickFiles, async () => {
-    const result = await dialog.showOpenDialog({ properties: ["openFile", "multiSelections"], filters: [{ name: "TeX resources", extensions: ["sty", "cls", "bst", "bib", "tex", "cfg", "def", "ltx"] }] });
+    const result = await dialog.showOpenDialog({ properties: ["openFile", "multiSelections"], filters: [{ name: nativeText("native.texResources"), extensions: ["sty", "cls", "bst", "bib", "tex", "cfg", "def", "ltx"] }] });
     return result.canceled ? [] : result.filePaths;
   });
   handleIpc(desktopInvoke.dialogs.pickThemeFiles, async () => {
-    const result = await dialog.showOpenDialog({ properties: ["openFile", "multiSelections"], filters: [{ name: "CSS themes", extensions: ["css"] }] });
+    const result = await dialog.showOpenDialog({ properties: ["openFile", "multiSelections"], filters: [{ name: nativeText("native.cssThemes"), extensions: ["css"] }] });
     return result.canceled ? [] : result.filePaths;
   });
   handleIpc(desktopInvoke.dialogs.pickProjectFiles, async () => {
@@ -671,7 +674,7 @@ function createWindow(): BrowserWindow {
     minWidth: 960,
     minHeight: 640,
     backgroundColor: "#f5f7fb",
-    title: "TeXWeave — Local LaTeX Editor",
+    title: nativeText("native.windowTitle"),
     webPreferences: {
       preload: resolve(__dirname, "../preload/index.cjs"),
       contextIsolation: true,
@@ -719,7 +722,7 @@ app.whenReady().then(() => {
   }).catch((error: unknown) => {
     const message = error instanceof Error ? error.message : String(error);
     console.error("Failed to initialize desktop application", error);
-    dialog.showErrorBox("TeXWeave could not start", message);
+    dialog.showErrorBox(nativeText("native.startFailed"), message);
     app.quit();
   });
   app.on("activate", () => {

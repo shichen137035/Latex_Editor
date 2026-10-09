@@ -1,3 +1,4 @@
+import { t } from "../i18n/index.js";
 import type { Dispatch, DragEvent, MutableRefObject, SetStateAction } from "react";
 import type { PreferenceKey, PreferenceValues, Project } from "@latex-editor/contracts";
 import type { OnMount } from "@monaco-editor/react";
@@ -99,7 +100,7 @@ export function createDocumentInsertions(options: DocumentInsertionOptions) {
     const start = dialog.selection.start;
     if (current.content.slice(start, dialog.selection.end) !== dialog.selection.source) {
       setImageDialog(undefined);
-      throw new Error("The figure changed while choosing an image. Select the image again.");
+      throw new Error(t("ui.documentInsertions.the_figure_changed_while_choosing_an_image"));
     }
     const replacement = patchFigureSource(dialog.selection.source, { imageIndex: dialog.imageIndex, sourcePath: path });
     setEditorContent(current.content.slice(0, start) + replacement + current.content.slice(start + dialog.selection.source.length));

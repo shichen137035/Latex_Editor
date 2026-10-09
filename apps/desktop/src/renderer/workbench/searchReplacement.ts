@@ -1,3 +1,4 @@
+import { t } from "../i18n/index.js";
 import type { ReplacementPlan } from "../search/SearchEngine.js";
 import type { EditorTab } from "./fileActions.js";
 
@@ -17,15 +18,15 @@ export async function applySearchReplacements(options: ReplacementOptions): Prom
   const baselines = await Promise.all(plans.map(async plan => {
     const tab = options.tabs().find(item => item.path === plan.fileId);
     const content = tab?.content ?? await options.read(plan.fileId);
-    if (content !== plan.before) throw new Error(`Search results are outdated: ${plan.fileId}. Search again before replacing.`);
+    if (content !== plan.before) throw new Error(t("ui.searchReplacement.search_results_are_outdated_search_again_before", { value1: plan.fileId }));
     return { path: plan.fileId, content, dirty: false };
   }));
   await options.beforeApply?.();
-  if (!options.isCurrent()) throw new Error("Search changed before replacement. Search again.");
+  if (!options.isCurrent()) throw new Error(t("ui.searchReplacement.search_changed_before_replacement_search_again"));
   const currentTabs = options.tabs();
   for (const plan of plans) {
     const tab = currentTabs.find(item => item.path === plan.fileId);
-    if (tab && tab.content !== plan.before) throw new Error(`Search results are outdated: ${plan.fileId}. Search again before replacing.`);
+    if (tab && tab.content !== plan.before) throw new Error(t("ui.searchReplacement.search_results_are_outdated_search_again_before", { value1: plan.fileId }));
   }
   const missing = baselines.filter(item => !currentTabs.some(tab => tab.path === item.path));
   if (missing.length) options.open(missing);

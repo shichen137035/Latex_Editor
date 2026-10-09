@@ -747,14 +747,14 @@ export function Workbench({ project, projects, environments, onHome, onSwitch, o
   };
   const citeReference = (key: string) => {
     const path = activePathRef.current;
-    if (!project.writable || !path || !/\.tex$/i.test(path)) { setBlockNotice("Open a writable .tex file to insert a citation."); return; }
+    if (!project.writable || !path || !/\.tex$/i.test(path)) { setBlockNotice(t("ui.Workbench.open_a_writable_tex_file_to_insert")); return; }
     let text: string;
-    try { text = citationText(key); } catch { setBlockNotice("Invalid citation key."); return; }
+    try { text = citationText(key); } catch { setBlockNotice(t("ui.citationInsertion.invalid_citation_key")); return; }
     const currentLayout = layoutRef.current;
     const inCode = currentLayout.mode === "single" ? currentLayout.singlePane === "source" : currentLayout.leftPane === "source";
     if (!inCode && insertPreviewCitation(project.id, path, text)) return;
     if (inCode) {
-      if (sourceModelPath.current !== path || !editorRef.current?.getModel() || aiDiffFile) { setBlockNotice("Wait for the source editor to load before inserting a citation."); return; }
+      if (sourceModelPath.current !== path || !editorRef.current?.getModel() || aiDiffFile) { setBlockNotice(t("ui.Workbench.wait_for_the_source_editor_to_load")); return; }
       insertText(text, text.length);
       return;
     }
@@ -770,9 +770,9 @@ export function Workbench({ project, projects, environments, onHome, onSwitch, o
     previewClickAnchor.current = { fileId: path, offset: offset + text.length };
   };
   const writeLinkedBibliography = async (path: string, content: string) => {
-    if (!api || !project.writable) throw new Error("Project is read-only.");
+    if (!api || !project.writable) throw new Error(t("ui.Workbench.project_is_read_only"));
     const tab = tabsRef.current.find(item => item.path === path);
-    if (tab?.dirty) throw new Error(`Save or close ${path} before updating library links.`);
+    if (tab?.dirty) throw new Error(t("ui.Workbench.save_or_close_before_updating_library_links", { value1: path }));
     await api.files.write(project.id, path, content);
     savedContents.current.set(path, content);
     // Keep an open generated bibliography in sync with the successful disk write.

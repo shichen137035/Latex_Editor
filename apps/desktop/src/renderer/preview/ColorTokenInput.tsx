@@ -1,3 +1,4 @@
+import { t } from "../i18n/index.js";
 import "./color-token-input.css";
 
 function normalizePickerColor(value: string): string {
@@ -37,9 +38,9 @@ function swatchColor(value: string): string {
 export function ColorTokenInput({ value, label, onChange }: { value: string; label: string; onChange(value: string): void }) {
   return <div className="color-token-control">
     <label className="color-token-picker" title={label}>
-      <input type="color" aria-label={`${label} color picker`} value={normalizePickerColor(value)} onChange={(event) => onChange(event.target.value)}/>
+      <input type="color" aria-label={t("ui.ColorTokenInput.color_picker", { value1: label })} value={normalizePickerColor(value)} onChange={(event) => onChange(event.target.value)}/>
       <span aria-hidden="true" style={{ backgroundColor: swatchColor(value) }}/>
     </label>
-    <input className="color-token-value" aria-label={`${label} token or CSS color`} value={value} onChange={(event) => onChange(event.target.value)}/>
+    <input className="color-token-value" aria-label={t("ui.ColorTokenInput.token_or_css_color", { value1: label })} value={value} onChange={(event) => onChange(event.target.value)}/>
   </div>;
 }

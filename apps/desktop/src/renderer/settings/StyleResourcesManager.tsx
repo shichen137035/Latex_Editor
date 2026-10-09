@@ -1,3 +1,4 @@
+import { styleResourceName, styleResourceDescription } from "../i18n/displayNames.js";
 import { useCallback, useEffect, useState, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import type { StyleResource, StyleResourceFile } from "@latex-editor/contracts";
@@ -35,7 +36,7 @@ export function StyleResourcesManager({ toolbarTarget }: { toolbarTarget?: HTMLE
     setError("");
     void window.latexEditor!.styleResources.readFile(activeResourceId, expandedFilePath).then((file) => {
       if (cancelled) return;
-      if (file === undefined) throw new Error(`Resource file not found: ${expandedFilePath}`);
+      if (file === undefined) throw new Error(t("ui.StyleResourcesManager.resource_file_not_found", { value1: expandedFilePath }));
       setPreviewedFile(file);
     }).catch((reason: unknown) => {
       if (!cancelled) setError(reason instanceof Error ? reason.message : String(reason));
@@ -69,11 +70,11 @@ export function StyleResourcesManager({ toolbarTarget }: { toolbarTarget?: HTMLE
       <aside className="style-resource-list" aria-label={t("resource.title")}>
         <h3>{t("resource.builtIn")}</h3>
         {builtIns.map((resource) => <button className={selectedId === resource.id ? "active" : ""} key={resource.id} onClick={() => { setSelectedId(resource.id); setExpandedFilePath(""); }}>
-          <strong>{resource.name}</strong><small>{resource.files.length} {t("resource.files")}</small>
+          <strong>{styleResourceName(resource)}</strong><small>{resource.files.length} {t("resource.files")}</small>
         </button>)}
         <h3>{t("resource.myResources")}</h3>
         {customResources.map((resource) => <button className={selectedId === resource.id ? "active" : ""} key={resource.id} onClick={() => { setSelectedId(resource.id); setExpandedFilePath(""); }}>
-          <strong>{resource.name}</strong><small>{resource.files.length} {t("resource.files")}</small>
+          <strong>{styleResourceName(resource)}</strong><small>{resource.files.length} {t("resource.files")}</small>
         </button>)}
         {customResources.length === 0 && <p className="style-resource-empty">{t("resource.none")}</p>}
       </aside>
@@ -92,7 +93,7 @@ export function StyleResourcesManager({ toolbarTarget }: { toolbarTarget?: HTMLE
         </div>
         {selected ? <>
           <div className="style-resource-detail-head">
-            <div><span className="resource-source">{selected.source === "built-in" ? t("resource.builtIn") : t("resource.custom")}</span><h2>{selected.name}</h2><p>{selected.description ?? t("resource.noDescription")}</p></div>
+            <div><span className="resource-source">{selected.source === "built-in" ? t("resource.builtIn") : t("resource.custom")}</span><h2>{styleResourceName(selected)}</h2><p>{styleResourceDescription(selected)}</p></div>
             {selected.source === "user" && <div className="style-resource-detail-actions">
               <button disabled={busy} onClick={() => void run(async () => {
                 const paths = await window.latexEditor!.dialogs.pickFiles();

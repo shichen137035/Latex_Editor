@@ -3,6 +3,7 @@ import type { Diagnostic, ProjectTreeNode, SyncTexPdfPosition } from "@latex-edi
 import { t } from "../i18n/index.js";
 import { settings } from "../settings/service.js";
 import { readExpandedFileTree, writeExpandedFileTree } from "../collapseState.js";
+import { languageName } from "../i18n/displayNames.js";
 import type { SpellContextRequest } from "../spellcheck/SpellCheckController.js";
 import { PdfViewer, type PdfViewState } from "../pdf/PdfViewer.js";
 
@@ -35,8 +36,7 @@ export function ContextMenu({ context, items, onClose }: { context: Pick<FileCon
 }
 
 export function spellLanguageLabel(language: string): string {
-  const labels: Record<string, string> = { "en-US": "English (US)", "en-GB": "English (UK)", "ja-JP": "日本語", "de-DE": "Deutsch", "fr-FR": "Français", "es-ES": "Español", "zh-CN": "中文", "ko-KR": "한국어", "ru-RU": "Русский" };
-  return labels[language] ?? language.toUpperCase();
+  return languageName(language, language.toUpperCase());
 }
 
 export function SpellContextMenu({ request, onClose }: { request: SpellContextRequest; onClose(): void }) {
@@ -280,7 +280,7 @@ export function DiagnosticRow({ diagnostic, onOpen }: { diagnostic: Diagnostic; 
     const text = [location, diagnostic.message, diagnostic.rawExcerpt && diagnostic.rawExcerpt !== diagnostic.message ? diagnostic.rawExcerpt : undefined].filter(Boolean).join("\n");
     try {
       if (navigator.clipboard?.writeText) await navigator.clipboard.writeText(text);
-      else throw new Error("Clipboard API unavailable");
+      else throw new Error(t("ui.blockClipboard.clipboard_api_unavailable"));
       setCopied(true);
       window.setTimeout(() => setCopied(false), 1200);
     } catch {

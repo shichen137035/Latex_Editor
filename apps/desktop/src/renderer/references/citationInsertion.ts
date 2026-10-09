@@ -1,3 +1,4 @@
+import { t } from "../i18n/index.js";
 import { isValidCitationKey } from "./bibtex.js";
 
 // Local Preview editors register only while mounted. Closing a file/project removes its target.
@@ -12,7 +13,7 @@ export function insertPreviewCitation(projectId: string, path: string, text: str
   return false;
 }
 export function citationText(key: string): string {
-  if (!isValidCitationKey(key)) throw new Error("Invalid citation key.");
+  if (!isValidCitationKey(key)) throw new Error(t("ui.citationInsertion.invalid_citation_key"));
   return `\\cite{${key}}`;
 }
 export function citationInsertionOffset(content: string, requested?: number): number {

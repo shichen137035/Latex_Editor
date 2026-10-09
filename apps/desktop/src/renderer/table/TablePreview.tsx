@@ -81,7 +81,7 @@ export function TablePreview({ source, renderCell, onChange, onSelect, captionCo
     window.addEventListener("pointercancel", release);
     return () => { window.removeEventListener("pointerup", release); window.removeEventListener("pointercancel", release); };
   }, []);
-  if (!table) return <div className="table-preview-failed">Table preview unavailable. Edit this table in source mode.</div>;
+  if (!table) return <div className="table-preview-failed">{t("ui.TablePreview.table_preview_unavailable_edit_this_table_in")}</div>;
   const visible = table.tabular.cells.filter(cell => !table.tabular.cells.some(other => other.row < cell.row && other.row + other.rowSpan > cell.row && other.column <= cell.column && other.column + other.colSpan > cell.column));
   const area = selection ? bounds(selection) : undefined;
   const merged = !!area && visible.some(cell => intersects(cell, area) && (cell.colSpan > 1 || cell.rowSpan > 1));
@@ -108,7 +108,7 @@ export function TablePreview({ source, renderCell, onChange, onSelect, captionCo
   const run = (operation: (source: string) => string) => {
     const base = flush();
     const next = operation(base);
-    setNotice(next === base ? "This selection cannot be changed. Select complete cells." : "");
+    setNotice(next === base ? t("ui.TablePreview.this_selection_cannot_be_changed_select_complete") : "");
     publish(next);
     const updated = parseTable(next);
     if (updated && area) {
@@ -129,15 +129,15 @@ export function TablePreview({ source, renderCell, onChange, onSelect, captionCo
     setExpanded(false);
     requestAnimationFrame(() => expandButton.current?.focus());
   };
-  const toolbar = <div className="table-preview-toolbar" role="toolbar" aria-label="Table editing" onPointerDown={event => event.preventDefault()}>
-      <button disabled={!full || !area} onClick={() => area && run(value => insertTableRow(value, area.top, false))}>Row above</button>
-      <button disabled={!full || !area} onClick={() => area && run(value => insertTableRow(value, area.bottom, true))}>Row below</button>
-      <button disabled={!full || !area || table.tabular.rows.length <= 1} onClick={() => area && run(value => deleteTableRow(value, area.top))}>Delete row</button>
-      <button disabled={!full || !area} onClick={() => area && run(value => insertTableColumn(value, area.left, false))}>Column left</button>
-      <button disabled={!full || !area} onClick={() => area && run(value => insertTableColumn(value, area.right, true))}>Column right</button>
-      <button disabled={!full || !area || table.tabular.columns.length <= 1} onClick={() => area && run(value => deleteTableColumn(value, area.left))}>Delete column</button>
-      <button disabled={!full || !area || merged || (area.top === area.bottom && area.left === area.right)} onClick={() => area && run(value => mergeTableCells(value, area.top, area.left, area.bottom, area.right))}>Merge</button>
-      <button disabled={!full || !area || !merged} onClick={() => area && run(value => splitTableCells(value, area.top, area.left, area.bottom, area.right))}>Split</button>
+  const toolbar = <div className="table-preview-toolbar" role="toolbar" aria-label={t("ui.TablePreview.table_editing")} onPointerDown={event => event.preventDefault()}>
+      <button disabled={!full || !area} onClick={() => area && run(value => insertTableRow(value, area.top, false))}>{t("ui.TablePreview.row_above")}</button>
+      <button disabled={!full || !area} onClick={() => area && run(value => insertTableRow(value, area.bottom, true))}>{t("ui.TablePreview.row_below")}</button>
+      <button disabled={!full || !area || table.tabular.rows.length <= 1} onClick={() => area && run(value => deleteTableRow(value, area.top))}>{t("ui.TableInspector.delete_row")}</button>
+      <button disabled={!full || !area} onClick={() => area && run(value => insertTableColumn(value, area.left, false))}>{t("ui.TablePreview.column_left")}</button>
+      <button disabled={!full || !area} onClick={() => area && run(value => insertTableColumn(value, area.right, true))}>{t("ui.TablePreview.column_right")}</button>
+      <button disabled={!full || !area || table.tabular.columns.length <= 1} onClick={() => area && run(value => deleteTableColumn(value, area.left))}>{t("ui.TableInspector.delete_column")}</button>
+      <button disabled={!full || !area || merged || (area.top === area.bottom && area.left === area.right)} onClick={() => area && run(value => mergeTableCells(value, area.top, area.left, area.bottom, area.right))}>{t("ui.TablePreview.merge")}</button>
+      <button disabled={!full || !area || !merged} onClick={() => area && run(value => splitTableCells(value, area.top, area.left, area.bottom, area.right))}>{t("ui.TablePreview.split")}</button>
       {!expanded && configuration.behavior.allowExpandedEditor && <button type="button" onClick={open}>{t("table.expand")}</button>}
     </div>;
   const content = <figure ref={shell} style={previewSizingStyle(configuration.sizing)} className={`structured-table style-${table.tabular.style} alignment-${table.alignment}${expanded ? " table-expanded" : ""}`}
@@ -173,9 +173,9 @@ export function TablePreview({ source, renderCell, onChange, onSelect, captionCo
           edit({ row: cell.row, column: cell.column, value: cell.content });
           onSelect({ kind: "cell", row: cell.row, column: cell.column });
         }}>
-        {cell.column === 0 && <button className="table-row-selector" title="Select row" onPointerDown={event => event.preventDefault()} onClick={event => { event.stopPropagation(); commit(); setSelection({ anchor: { row: row.index, column: 0 }, focus: { row: row.index, column: table.tabular.columns.length - 1 } }); }}>{row.index + 1}</button>}
+        {cell.column === 0 && <button className="table-row-selector" title={t("ui.TablePreview.select_row")} onPointerDown={event => event.preventDefault()} onClick={event => { event.stopPropagation(); commit(); setSelection({ anchor: { row: row.index, column: 0 }, focus: { row: row.index, column: table.tabular.columns.length - 1 } }); }}>{row.index + 1}</button>}
         {editing?.row === cell.row && editing.column === cell.column
-          ? <textarea ref={input} autoFocus wrap="off" rows={Math.min(5, Math.max(2, editing.value.split("\n").length))} aria-label={`Row ${cell.row + 1}, column ${cell.column + 1}`} value={editing.value}
+          ? <textarea ref={input} autoFocus wrap="off" rows={Math.min(5, Math.max(2, editing.value.split("\n").length))} aria-label={t("ui.TablePreview.row_column", { value1: cell.row + 1, value2: cell.column + 1 })} value={editing.value}
             onClick={event => event.stopPropagation()} onPointerDown={event => event.stopPropagation()}
             onChange={event => edit({ ...editing, value: event.target.value })}
             onBlur={() => { if (draft.current?.row === cell.row && draft.current.column === cell.column) commit(); }}
@@ -190,7 +190,7 @@ export function TablePreview({ source, renderCell, onChange, onSelect, captionCo
       </td>)}</tr>)}</tbody>
     </table></div>
     {configuration.behavior.showCaption && (captionContent ?? table.caption) && <figcaption>{captionContent ?? renderCell(table.caption!)}</figcaption>}
-    {!structuralEditable && <small>Custom table: structural editing is unavailable; use source mode.</small>}
+    {!structuralEditable && <small>{t("ui.TablePreview.custom_table_structural_editing_is_unavailable_use")}</small>}
   </figure>;
   return expanded ? <><div className="table-expanded-placeholder" style={{ minHeight: inlineHeight }}>{t("table.editingExpanded")}</div><TableEditorDialog toolbar={configuration.behavior.expandedToolbar ? toolbar : null} onClose={close} style={previewSizingStyle(configuration.sizing)}>{content}</TableEditorDialog></> : <>{content}{(configuration.behavior.tableToolbar === "always" || configuration.behavior.tableToolbar === "selected" && active) && <FloatingTableToolbar anchor={shell}>{toolbar}</FloatingTableToolbar>}</>;
 }

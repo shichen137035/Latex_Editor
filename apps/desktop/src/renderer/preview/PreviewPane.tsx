@@ -1,7 +1,8 @@
+import { environmentName, directiveName } from "../i18n/displayNames.js";
 import { Fragment, memo, Profiler, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type MouseEvent, type PointerEvent as ReactPointerEvent, type ReactNode } from "react";
 import { createPortal, flushSync } from "react-dom";
 import { includeNewBuiltInDirectives, isRelationCapableBlock, type BlockGraphSnapshot, type BlockId, type PreviewDirectiveDefinition, type ProjectTreeNode, type RelationDirection } from "@latex-editor/contracts";
-import { t, type MessageKey } from "../i18n/index.js";
+import { t, getLocale } from "../i18n/index.js";
 import { definitionForId, environmentOptionBrackets } from "./environments.js";
 import { environmentPreview, imageClickAction } from "./environment-preview.js";
 import { environmentBlockStyle } from "./environment-block-style.js";
@@ -57,7 +58,7 @@ export interface PreviewRelationUi {
   onToggle(blockId: BlockId, x: number, y: number): void;
 }
 type PreviewSourceReader = Pick<string, "slice">;
-type PreviewEditorServices = { onFieldEditing(id: string, active: boolean): void; getOpenDocuments?: (() => Array<{ path: string; content: string }>) | undefined; nodeRanges: Pick<ReadonlyMap<string, SourceSpan>, "get">; api: EditorApi | undefined; projectId: string; tree: ProjectTreeNode[]; currentPath: string; graphicPaths: string[]; definitions: EnvironmentDefinition[]; directives: PreviewDirectiveDefinition[]; mathContext: MathContext; searchQuery: InlineSearchQuery; activeSearchResult?: SearchResult | undefined; filterQuery: FilterQuery; filterStates: Map<string, FilterState>; visibilitySignatures: ReadonlyMap<string, string>; relation?: PreviewRelationUi | undefined; selectedBlockIds: string[]; collapsedBlockIds: ReadonlySet<string>; virtual: VirtualPreviewController; virtualRoot: { current: HTMLDivElement | null }; forcedIds: ReadonlySet<string>; forceOffset?: number; initialHeight?: number | undefined; setSelectedBlockIds(ids: string[]): void; selectBlockWithModifiers(id: string, modifiers: { toggle: boolean; range: boolean }): void; toggleCollapse(ids: string[], collapsed?: boolean, scope?: "selected" | "children" | "siblings" | "all"): void; moveBlocks(ids: string[], targetId: string, position: MovePosition): void; copyBlocks(ids: string[], cut: boolean): void; duplicateBlocks(ids: string[]): void; pasteBlocks(targetId: string, position: MovePosition): void; disableBlocks(ids: string[]): void; enableBlocks(ids: string[]): void; deleteBlocks(ids: string[]): void; removeEnvironment(id: string): void; onBoundaryDraftChange(insertion: BoundaryInsertion, value: string): void; onFigureSelect: ((selection?: FigureSelection) => void) | undefined; onFigureSlotSelect: ((selection: FigureSelection) => void) | undefined; onTableSelect: ((selection?: TableSelection) => void) | undefined; onTableChange: ((selection: TableSelection, source: string) => void) | undefined; onSpellContextMenu(request: SpellContextRequest): void; onDetectedLanguage(language: string): void; onForwardSync(path: string, line: number, column?: number): void };
+type PreviewEditorServices = { locale: string; onFieldEditing(id: string, active: boolean): void; getOpenDocuments?: (() => Array<{ path: string; content: string }>) | undefined; nodeRanges: Pick<ReadonlyMap<string, SourceSpan>, "get">; api: EditorApi | undefined; projectId: string; tree: ProjectTreeNode[]; currentPath: string; graphicPaths: string[]; definitions: EnvironmentDefinition[]; directives: PreviewDirectiveDefinition[]; mathContext: MathContext; searchQuery: InlineSearchQuery; activeSearchResult?: SearchResult | undefined; filterQuery: FilterQuery; filterStates: Map<string, FilterState>; visibilitySignatures: ReadonlyMap<string, string>; relation?: PreviewRelationUi | undefined; selectedBlockIds: string[]; collapsedBlockIds: ReadonlySet<string>; virtual: VirtualPreviewController; virtualRoot: { current: HTMLDivElement | null }; forcedIds: ReadonlySet<string>; forceOffset?: number; initialHeight?: number | undefined; setSelectedBlockIds(ids: string[]): void; selectBlockWithModifiers(id: string, modifiers: { toggle: boolean; range: boolean }): void; toggleCollapse(ids: string[], collapsed?: boolean, scope?: "selected" | "children" | "siblings" | "all"): void; moveBlocks(ids: string[], targetId: string, position: MovePosition): void; copyBlocks(ids: string[], cut: boolean): void; duplicateBlocks(ids: string[]): void; pasteBlocks(targetId: string, position: MovePosition): void; disableBlocks(ids: string[]): void; enableBlocks(ids: string[]): void; deleteBlocks(ids: string[]): void; removeEnvironment(id: string): void; onBoundaryDraftChange(insertion: BoundaryInsertion, value: string): void; onFigureSelect: ((selection?: FigureSelection) => void) | undefined; onFigureSlotSelect: ((selection: FigureSelection) => void) | undefined; onTableSelect: ((selection?: TableSelection) => void) | undefined; onTableChange: ((selection: TableSelection, source: string) => void) | undefined; onSpellContextMenu(request: SpellContextRequest): void; onDetectedLanguage(language: string): void; onForwardSync(path: string, line: number, column?: number): void };
 
 function measurePreviewEditHeight(root: HTMLDivElement | null, id: string): number | undefined {
   if (!root) return undefined;
@@ -192,7 +193,7 @@ function inlineLatex(value: string | undefined, mathContext: MathContext, search
       const children = render(token.children ?? []);
       content = token.command === "textbf" ? <strong>{children}</strong> : token.command === "texttt" ? <code>{children}</code> : token.command === "textit" || token.command === "emph" ? <em>{children}</em> : children;
     } else if (token.kind === "citation") content = map(<span className="preview-citation" title={"\\" + token.command}>[{token.value}]</span>, token);
-    else if (token.kind === "reference") content = map(<button type="button" className="preview-reference" data-reference={token.value} data-reference-source-start={sourceStartOffset === undefined ? undefined : token.start} data-reference-source-end={sourceStartOffset === undefined ? undefined : token.end} title={`\\${token.command} ﾂｷ modifier-click to jump`}>[{token.value}]</button>, token);
+    else if (token.kind === "reference") content = map(<button type="button" className="preview-reference" data-reference={token.value} data-reference-source-start={sourceStartOffset === undefined ? undefined : token.start} data-reference-source-end={sourceStartOffset === undefined ? undefined : token.end} title={`\\${token.command} · modifier-click to jump`}>[{token.value}]</button>, token);
     else content = <span className="preview-algorithm-command" data-command={token.command?.toUpperCase()}>{sourceMapped(<strong>{token.command?.toUpperCase()}</strong>, sourceStartOffset === undefined ? undefined : token.start, sourceStartOffset === undefined ? undefined : token.start + (token.command?.length ?? 0) + 1, true)}{token.children && <span className="preview-algorithm-argument">{render(token.children)}</span>}</span>;
     return <Fragment key={token.kind + ":" + token.start}>{content}</Fragment>;
   });
@@ -304,9 +305,9 @@ function mathBodySource(node: StructuralBlock, source: PreviewSourceReader): str
 }
 
 function environmentLabel(definition: EnvironmentDefinition | undefined, id: string): string {
-  if (definition) return definition.label ?? t(definition.labelKey as MessageKey) ?? definition.id;
+  if (definition) return environmentName(definition);
   if (id.startsWith("virtual:")) return id.slice("virtual:".length).replaceAll("-", " ").toLocaleUpperCase();
-  if (id.startsWith("custom:")) return `${t("environment.custom")} ﾂｷ ${id.slice("custom:".length)}`;
+  if (id.startsWith("custom:")) return `${t("environment.custom")} · ${id.slice("custom:".length)}`;
   return id.replaceAll("-", " ").toLocaleUpperCase();
 }
 
@@ -506,7 +507,7 @@ function ContentRenderer({ node, source, editing, cursorOffset, boundary, beginE
   const disposition = filterDisposition(filterState, services.filterQuery.viewMode);
   if (disposition === "remove" && !editing && !insertion && !services.forcedIds.has(node.id)) return null;
   if (disposition === "collapse" && !editing && !insertion && !services.forcedIds.has(node.id)) {
-    return <div className="preview-filter-collapsed">站ｯ 1 {t("filter.blockCollapsed")}</div>;
+    return <div className="preview-filter-collapsed">▸ 1 {t("filter.blockCollapsed")}</div>;
   }
   const activeSearch = services.activeSearchResult ? services.activeSearchResult.matchStart >= node.source.startOffset && services.activeSearchResult.matchEnd <= node.source.endOffset : false;
   const effectiveSearch = services.filterQuery.enabled && queryFilterState !== "match" ? defaultInlineSearch : services.searchQuery;
@@ -517,7 +518,7 @@ function ContentRenderer({ node, source, editing, cursorOffset, boundary, beginE
   const directiveContent = node.contentType === "directive" || node.contentType === "spacer";
   return <Fragment>
     {insertion?.side === "before" && <LocalEditor value="" sourceStartOffset={insertion.position} onApply={(value) => applyBoundary(insertion, value)} onDraftChange={(value) => services.onBoundaryDraftChange(insertion, value)} onCancel={cancelEdit} {...services}/>}
-    {editing ? <LocalEditor value={nodeSource(node, source)} sourceStartLine={node.source.startLine} sourceStartOffset={node.source.startOffset} initialCursorOffset={cursorOffset === undefined ? undefined : cursorOffset - node.source.startOffset} onApply={applyEdit} onDraftChange={onDraftChange} onCancel={cancelEdit} onInsertBefore={(draft) => requestBoundary(node, "before", draft)} onInsertAfter={(draft) => requestBoundary(node, "after", draft)} {...services}/> : <div className={`preview-content-region${virtualClass} ${filterClass} ${activeSearch ? "search-result-active" : ""}${directiveContent ? ` preview-directive preview-directive-${directiveDisplay}` : ""}`} style={directiveContent ? { "--directive-color": directive?.color ?? "#a0afbc" } as CSSProperties : undefined} title={directiveContent ? directive?.label : undefined} data-node-id={node.id} data-source-line={node.source.startLine} data-source-start-offset={node.source.startOffset} data-source-end-offset={node.source.endOffset} onClick={(event) => { event.stopPropagation(); if (window.getSelection()?.isCollapsed !== false) beginEdit(directiveContent ? node.source.startOffset : sourceOffsetAtPoint(event.currentTarget, event)); }}>{directiveContent ? <><span className="preview-directive-line"/><span className="preview-directive-label">{node.directiveId === "blank-line" ? "" : directive?.label ?? node.raw.trim()}</span><span className="preview-directive-line"/>{directiveDisplay === "placeholder" && <code>{node.raw.trim()}</code>}</> : inlineLatex(node.raw, services.mathContext, effectiveSearch, activeSearch, node.source.startOffset)}</div>}
+    {editing ? <LocalEditor value={nodeSource(node, source)} sourceStartLine={node.source.startLine} sourceStartOffset={node.source.startOffset} initialCursorOffset={cursorOffset === undefined ? undefined : cursorOffset - node.source.startOffset} onApply={applyEdit} onDraftChange={onDraftChange} onCancel={cancelEdit} onInsertBefore={(draft) => requestBoundary(node, "before", draft)} onInsertAfter={(draft) => requestBoundary(node, "after", draft)} {...services}/> : <div className={`preview-content-region${virtualClass} ${filterClass} ${activeSearch ? "search-result-active" : ""}${directiveContent ? ` preview-directive preview-directive-${directiveDisplay}` : ""}`} style={directiveContent ? { "--directive-color": directive?.color ?? "#a0afbc" } as CSSProperties : undefined} title={directiveContent && directive ? directiveName(directive) : undefined} data-node-id={node.id} data-source-line={node.source.startLine} data-source-start-offset={node.source.startOffset} data-source-end-offset={node.source.endOffset} onClick={(event) => { event.stopPropagation(); if (window.getSelection()?.isCollapsed !== false) beginEdit(directiveContent ? node.source.startOffset : sourceOffsetAtPoint(event.currentTarget, event)); }}>{directiveContent ? <><span className="preview-directive-line"/><span className="preview-directive-label">{node.directiveId === "blank-line" ? "" : directive ? directiveName(directive) : node.raw.trim()}</span><span className="preview-directive-line"/>{directiveDisplay === "placeholder" && <code>{node.raw.trim()}</code>}</> : inlineLatex(node.raw, services.mathContext, effectiveSearch, activeSearch, node.source.startOffset)}</div>}
     {insertion?.side === "after" && <LocalEditor value="" sourceStartOffset={insertion.position} onApply={(value) => applyBoundary(insertion, value)} onDraftChange={(value) => services.onBoundaryDraftChange(insertion, value)} onCancel={cancelEdit} {...services}/>}
   </Fragment>;
 }
@@ -633,7 +634,7 @@ function BlockRenderer({ node, source, definitions, selectedId, editingId, curso
   const disposition = filterDisposition(filterState, services.filterQuery.viewMode);
   if (!editing && !insertion && !selected && !services.forcedIds.has(node.id) && disposition === "remove") return null;
   if (!editing && !insertion && !selected && !services.forcedIds.has(node.id) && disposition === "collapse") {
-    return <div className="preview-filter-collapsed">站ｯ 1 {t("filter.blockCollapsed")}</div>;
+    return <div className="preview-filter-collapsed">▸ 1 {t("filter.blockCollapsed")}</div>;
   }
   const filterClass = services.filterQuery.enabled || services.relation?.active ? `filter-${filterState} filter-view-${services.filterQuery.viewMode}` : "";
   const applyLabel = (label: string) => {
@@ -710,7 +711,7 @@ function BlockRenderer({ node, source, definitions, selectedId, editingId, curso
       </div>}
     </div>}
     {!(definition?.behavior.showHeader ?? true) && (node.environmentId !== "placeholder" || collapsed) && canCollapseBlock(node) && <div className="preview-block-compact-header">
-      <button className="preview-block-collapse" title={t(collapsed ? "blockOperation.expand" : "blockOperation.collapse")} aria-label={t(collapsed ? "blockOperation.expand" : "blockOperation.collapse")} aria-expanded={!collapsed} onClick={(event) => { event.stopPropagation(); services.toggleCollapse([node.id]); }}>{collapsed ? "笆ｸ" : "笆ｾ"}</button>
+      <button className="preview-block-collapse" title={t(collapsed ? "blockOperation.expand" : "blockOperation.collapse")} aria-label={t(collapsed ? "blockOperation.expand" : "blockOperation.collapse")} aria-expanded={!collapsed} onClick={(event) => { event.stopPropagation(); services.toggleCollapse([node.id]); }}>{collapsed ? "▸" : "▾"}</button>
       <span>{environmentLabel(definition, node.environmentId)}</span>
     </div>}
     {!collapsed && <div className="preview-block-body" onClickCapture={(event) => {
@@ -764,7 +765,7 @@ const PreviewNodeRenderer = memo(function RenderPreviewNode(props: PreviewNodeRe
 function samePreviewNodeRender(previous: PreviewNodeRendererProps, next: PreviewNodeRendererProps): boolean {
   if (previous.node !== next.node || previous.source !== next.source || previous.definitions !== next.definitions || previous.onDraftChange !== next.onDraftChange) return false;
   const a = previous.services, b = next.services;
-  if (a.api !== b.api || a.projectId !== b.projectId || a.tree !== b.tree || a.currentPath !== b.currentPath || a.graphicPaths !== b.graphicPaths || a.mathContext.sourceVersion !== b.mathContext.sourceVersion || a.searchQuery !== b.searchQuery || a.filterQuery !== b.filterQuery) return false;
+  if (a.locale !== b.locale || a.api !== b.api || a.projectId !== b.projectId || a.tree !== b.tree || a.currentPath !== b.currentPath || a.graphicPaths !== b.graphicPaths || a.mathContext.sourceVersion !== b.mathContext.sourceVersion || a.searchQuery !== b.searchQuery || a.filterQuery !== b.filterQuery) return false;
   if (a.visibilitySignatures.get(previous.node.id) !== b.visibilitySignatures.get(next.node.id)) return false;
   if (a.forcedIds.has(previous.node.id) !== b.forcedIds.has(next.node.id)) return false;
   const activeIn = (services: PreviewEditorServices, node: PreviewNode) => services.activeSearchResult && services.activeSearchResult.matchStart >= node.source.startOffset && services.activeSearchResult.matchEnd <= node.source.endOffset
@@ -814,7 +815,7 @@ function PreviewNodeList({ nodes, ...props }: { nodes: PreviewNode[] } & Omit<Pr
   }
   return <VirtualPreviewList items={rows} controller={props.services.virtual} rootRef={props.services.virtualRoot} forcedIds={props.services.forcedIds} renderItem={(row) => row.node
     ? <PreviewNodeRenderer node={row.node} {...props}/>
-    : <div className="preview-filter-collapsed">站ｯ {row.collapsed} {t("filter.blocksCollapsed")}</div>}/>;
+    : <div className="preview-filter-collapsed">▸ {row.collapsed} {t("filter.blocksCollapsed")}</div>}/>;
 }
 
 function canCollapseBlock(node: StructuralBlock): boolean {
@@ -839,7 +840,7 @@ function PreviewPerformancePanel({ virtual, timing, total }: { virtual: VirtualP
     const timer = window.setInterval(update, 600);
     return () => window.clearInterval(timer);
   }, [open, virtual]);
-  return <details className="preview-performance-panel" open={open} onToggle={(event) => setOpen(event.currentTarget.open)}><summary>Preview metrics</summary><div>Parse {timing.current.parseMs.toFixed(1)} ms ({timing.current.parseMode}) ﾂｷ Index {timing.current.indexMs.toFixed(1)} ms ﾂｷ React {timing.current.reactMs.toFixed(1)} ms</div><div>Direct {timing.current.directUpdates} ﾂｷ Local reparse {timing.current.localReparses} ﾂｷ Full fallback {timing.current.fullFallbacks}</div><div>Fallback reasons {Object.entries(timing.current.fallbackReasons).map(([reason, count]) => `${reason}: ${count}`).join(" ﾂｷ ") || "none"}</div><div>Visible {snapshot.visible} ﾂｷ Mounted {snapshot.mounted} / {total}</div><div>KaTeX {snapshot.math.calls - snapshot.math.hits} renders ﾂｷ cache {(snapshot.math.hitRate * 100).toFixed(0)}%</div><div>Height cache {(snapshot.heightHitRate * 100).toFixed(0)}%</div></details>;
+  return <details className="preview-performance-panel" open={open} onToggle={(event) => setOpen(event.currentTarget.open)}><summary>{t("ui.PreviewPane.preview_metrics")}</summary><div>{t("preview.metrics.timing", { parse: timing.current.parseMs.toFixed(1), mode: t(`preview.metrics.mode.${timing.current.parseMode}`), index: timing.current.indexMs.toFixed(1), react: timing.current.reactMs.toFixed(1) })}</div><div>{t("preview.metrics.updates", { direct: timing.current.directUpdates, local: timing.current.localReparses, full: timing.current.fullFallbacks })}</div><div>{t("preview.metrics.fallbacks", { reasons: Object.entries(timing.current.fallbackReasons).map(([reason, count]) => `${reason}: ${count}`).join(" · ") || t("ui.PreviewPane.none") })}</div><div>{t("preview.metrics.items", { visible: snapshot.visible, mounted: snapshot.mounted, total })}</div><div>{t("preview.metrics.math", { renders: snapshot.math.calls - snapshot.math.hits, cache: (snapshot.math.hitRate * 100).toFixed(0) })}</div><div>{t("preview.metrics.height", { cache: (snapshot.heightHitRate * 100).toFixed(0) })}</div></details>;
 }
 
 export function PreviewPane({ filePath, source, sourceTransaction, definitions, mathContext = EMPTY_MATH_CONTEXT, searchQuery = defaultInlineSearch, searchResults, filterQuery = defaultFilterQuery, activeSearchResult, highlightRange, locateRequest, restoreOffset, restoreScrollTop, onLocated, onHighlightLocated, relation, onSourceChange, onSelectionChange, onSelectionContextMenu, onViewportAnchorChange, onClickSourcePosition, onJumpFromPosition, onInsertionAnchorChange, onFigureSelect, onFigureSlotSelect, onTableSelect, onTableChange, api, projectId, tree, getOpenDocuments, onSpellContextMenu, onDetectedLanguage, onForwardSync }: { getOpenDocuments?: (() => Array<{ path: string; content: string }>) | undefined; filePath?: string | undefined; source?: string | undefined; sourceTransaction?: PreviewSourceTransaction | undefined; definitions: EnvironmentDefinition[]; mathContext?: MathContext; searchQuery?: SearchQuery; searchResults?: SearchResult[]; filterQuery?: FilterQuery; activeSearchResult?: SearchResult | undefined; highlightRange?: { fileId: string; start: number; end: number; nonce: number } | undefined; locateRequest?: { fileId: string; offset: number; nonce: number } | undefined; restoreOffset?: number | undefined; restoreScrollTop?: number | undefined; onLocated?(nonce: number): void; onHighlightLocated?(nonce: number): void; relation?: PreviewRelationUi | undefined; onSourceChange(next: string, changes?: PreviewTextChange[]): void; onSelectionChange?(selection?: DocumentSelection): void; onSelectionContextMenu?(selection: DocumentSelection, x: number, y: number): void; onViewportAnchorChange?(anchor: { fileId: string; offset: number; scrollTop: number }): void; onClickSourcePosition?(anchor: { fileId: string; offset: number }): void; onJumpFromPosition?(anchor: { fileId: string; offset: number; targetOffset: number; linkText: string; targetLabel: string }): void; onInsertionAnchorChange?(anchor?: { fileId: string; offset: number }): void; onFigureSelect?(selection?: FigureSelection): void; onFigureSlotSelect?(selection: FigureSelection): void; onTableSelect?(selection?: TableSelection): void; onTableChange?(selection: TableSelection, source: string): void; api: EditorApi | undefined; projectId: string; tree: ProjectTreeNode[]; onSpellContextMenu(request: SpellContextRequest): void; onDetectedLanguage(language: string): void; onForwardSync(path: string, line: number, column?: number): void }) {
@@ -1307,7 +1308,7 @@ export function PreviewPane({ filePath, source, sourceTransaction, definitions, 
     setEditingInitialHeight(undefined); setBlockToolbarPosition(undefined); setBoundary(undefined); onFigureSelect?.(undefined); onTableSelect?.(undefined);
   };
   const commitBlockTransaction = (before: string, planned: BlockSourceTransaction) => {
-    if (sourceValueRef.current !== before) { setOperationNotice("The document changed while this block operation was pending. Try again."); return; }
+    if (sourceValueRef.current !== before) { setOperationNotice(t("ui.PreviewPane.the_document_changed_while_this_block_operation")); return; }
     if (planned.affectedNodeCount >= 8 && api && filePath) {
       void api.history.snapshot(projectId, "manual", `Before ${planned.description.toLowerCase()} in ${filePath}`, [{ path: filePath, content: before }]).catch((error: unknown) => console.warn("Unable to capture a block-operation snapshot", error));
     }
@@ -1422,13 +1423,13 @@ export function PreviewPane({ filePath, source, sourceTransaction, definitions, 
     try {
       const payload = await readBlockClipboard();
       if (payload && payload.sourceProjectId !== projectId && payload.assets.length) {
-        setOperationNotice("This copied block uses project assets. Copy the assets into this project before pasting it.");
+        setOperationNotice(t("ui.PreviewPane.this_copied_block_uses_project_assets_copy"));
         return;
       }
       const rawLatex = payload?.rawLatex ?? await navigator.clipboard.readText();
-      if (!rawLatex.trim()) { setOperationNotice("The clipboard has no LaTeX block to paste."); return; }
+      if (!rawLatex.trim()) { setOperationNotice(t("ui.PreviewPane.the_clipboard_has_no_latex_block_to")); return; }
       runBlockPlan(() => planPasteBlocks(source, document.nodes, targetId, position, rawLatex, definitions), "other");
-      if (payload?.relations.length) setOperationNotice("The source blocks were pasted. Review their relationships before recreating links to the new blocks.");
+      if (payload?.relations.length) setOperationNotice(t("ui.PreviewPane.the_source_blocks_were_pasted_review_their"));
     } catch (error) { setOperationNotice(error instanceof Error ? error.message : String(error)); }
   };
   useEffect(() => {
@@ -1530,7 +1531,7 @@ export function PreviewPane({ filePath, source, sourceTransaction, definitions, 
     relationToggle: (id, x, y) => relation?.onToggle(id, x, y)
   };
   const services: PreviewEditorServices = {
-    nodeRanges, api, projectId, tree, getOpenDocuments, currentPath: filePath, graphicPaths: stableGraphicPaths, definitions, directives: previewDirectives, mathContext, searchQuery: inlineSearch,
+    locale: getLocale(), nodeRanges, api, projectId, tree, getOpenDocuments, currentPath: filePath, graphicPaths: stableGraphicPaths, definitions, directives: previewDirectives, mathContext, searchQuery: inlineSearch,
     activeSearchResult: activeSearchResult?.fileId === filePath ? activeSearchResult : undefined,
     filterQuery, filterStates: filterEvaluation?.states ?? new Map(), visibilitySignatures,
     relation: relation ? { ...relation, transientToBlockId: mappedRelationIds, onFocus: actions.relationFocus, onToggle: actions.relationToggle } : undefined,
@@ -1646,7 +1647,7 @@ export function PreviewPane({ filePath, source, sourceTransaction, definitions, 
     {showPreviewMetrics && <PreviewPerformancePanel virtual={virtual} timing={previewTiming} total={renderIndex.entries.length}/>}
     {filterQuery.enabled && filterEvaluation && filterEvaluation.matches.size === 0 && <aside className="preview-filter-empty">{t("filter.noMatches")}</aside>}
     {document?.diagnostics.length ? <aside className="preview-diagnostics"><strong>{t("preview.recovered")}</strong>{document.diagnostics.map((message, index) => <p key={index}>{message}</p>)}</aside> : null}
-    {operationNotice && <div className="preview-operation-notice" role="alert"><span>{operationNotice}</span><button type="button" aria-label={t("common.close")} onClick={() => setOperationNotice(undefined)}>ﾃ・</button></div>}
+    {operationNotice && <div className="preview-operation-notice" role="alert"><span>{operationNotice}</span><button type="button" aria-label={t("common.close")} onClick={() => setOperationNotice(undefined)}>×</button></div>}
     {operationPreview && <div className="preview-operation-backdrop" onClick={(event) => { if (event.target === event.currentTarget) setOperationPreview(undefined); }}><section className="preview-operation-dialog" role="dialog" aria-modal="true" aria-label={t("blockOperation.previewTitle")}><h2>{t("blockOperation.previewTitle")}</h2><p>{t(`blockOperation.preview.${operationPreview.action}`, { count: operationPreview.transaction.affectedNodeCount })}</p><small>{operationPreview.transaction.description}</small><footer><button onClick={() => setOperationPreview(undefined)}>{t("preview.cancel")}</button><button className="primary" onClick={() => commitBlockTransaction(operationPreview.before, operationPreview.transaction)}>{t("blockOperation.confirm")}</button></footer></section></div>}
   </div>;
 }

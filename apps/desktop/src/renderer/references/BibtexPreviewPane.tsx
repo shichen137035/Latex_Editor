@@ -1,3 +1,4 @@
+import { t } from "../i18n/index.js";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useUnsavedChanges } from "../lifecycle/unsavedChanges.js";
 import type { ReferenceLibraryEntry, ReferenceLibrarySnapshot } from "@latex-editor/contracts";
@@ -52,14 +53,14 @@ export function BibtexPreviewPane({ source, filePath, projectId, documents, rest
     return candidate;
   };
   const writeLibraryEntryToProject = (entry: ReferenceLibraryEntry, key = entry.citationKey) => {
-    if (!onSourceChange) { setNotice("This BibTeX source is read-only."); return; }
+    if (!onSourceChange) { setNotice(t("ui.BibtexPreviewPane.this_bibtex_source_is_read_only")); return; }
     const existing = parsed.entries.some((item) => citationKeyIdentity(item.citationKey) === citationKeyIdentity(key));
-    if (existing) { setNotice(`Citation key “${key}” already exists in this file.`); return; }
+    if (existing) { setNotice(t("ui.BibtexPreviewPane.citation_key_already_exists_in_this_file", { value1: key })); return; }
     const raw = bibtexEntryWithKey(entry, key);
     const prefix = source.length === 0 || source.endsWith("\n\n") ? "" : source.endsWith("\n") ? "\n" : "\n\n";
     const suffix = source.length && !source.endsWith("\n") ? "\n" : "";
     onSourceChange(`${source}${prefix}${raw}${suffix}`);
-    setNotice(`Added “${key}” to ${filePath}.`);
+    setNotice(t("ui.BibtexPreviewPane.added_to", { value1: key, value2: filePath }));
     setPendingDuplicate(undefined);
     setLibraryPickerOpen(false);
   };
@@ -77,7 +78,7 @@ export function BibtexPreviewPane({ source, filePath, projectId, documents, rest
     try {
       await api.references.saveEntry({ citationKey: entry.citationKey, entryType: entry.entryType, fields: entry.fields, rawBibtex: entry.rawBibtex, sourceFile: filePath });
       await reload();
-      setNotice(`Added “${entry.citationKey}” to the Library.`);
+      setNotice(t("ui.BibtexPreviewPane.added_to_the_library", { value1: entry.citationKey }));
     } catch (error) { setNotice(error instanceof Error ? error.message : String(error)); }
     finally { setBusy(false); }
   };
@@ -99,7 +100,7 @@ export function BibtexPreviewPane({ source, filePath, projectId, documents, rest
         added += 1;
       }
       await reload();
-      setNotice(`${added} added${skipped ? `; ${skipped} existing or duplicate entries skipped` : ""}.`);
+      setNotice(t("ui.BibtexPreviewPane.added", { value1: added, value2: (skipped ? t("ui.BibtexPreviewPane.existing_or_duplicate_entries_skipped", { value1: skipped }) : "") }));
     } catch (error) { setNotice(error instanceof Error ? error.message : String(error)); await reload(); }
     finally { setBusy(false); }
   };
@@ -112,39 +113,39 @@ export function BibtexPreviewPane({ source, filePath, projectId, documents, rest
   const saveSourceEdit = (entry: BibEntryPreview) => {
     const parsedDraft = parseBibtex(sourceDraft);
     if (parsedDraft.entries.length !== 1 || parsedDraft.invalid.length || !parsedDraft.entries[0]?.valid) {
-      setSourceError("Enter exactly one complete, valid BibTeX entry.");
+      setSourceError(t("ui.BibtexPreviewPane.enter_exactly_one_complete_valid_bibtex_entry"));
       return false;
     }
     const updated = parsedDraft.entries[0];
     if (!isValidCitationKey(updated.citationKey)) {
-      setSourceError("Citation keys cannot contain spaces, commas, or BibTeX delimiters.");
+      setSourceError(t("ui.BibtexPreviewPane.citation_keys_cannot_contain_spaces_commas_or"));
       return false;
     }
     if (parsed.entries.some((item) => item.start !== entry.start && citationKeyIdentity(item.citationKey) === citationKeyIdentity(updated.citationKey))) {
-      setSourceError(`Citation key “${updated.citationKey}” is already used in this file.`);
+      setSourceError(t("ui.BibtexPreviewPane.citation_key_is_already_used_in_this", { value1: updated.citationKey }));
       return false;
     }
     if (!onSourceChange) {
-      setSourceError("This BibTeX source is read-only.");
+      setSourceError(t("ui.BibtexPreviewPane.this_bibtex_source_is_read_only"));
       return false;
     }
     onSourceChange(source.slice(0, entry.start) + sourceDraft + source.slice(entry.end));
     setEditingSourceStart(undefined);
     setSourceError("");
-    setNotice(`Updated “${updated.citationKey}” in ${filePath}.`);
+    setNotice(t("ui.BibtexPreviewPane.updated_in", { value1: updated.citationKey, value2: filePath }));
     return true;
   };
   const editingEntry = parsed.entries.find((entry) => entry.start === editingSourceStart);
   useUnsavedChanges({
     hasChanges: () => !!onSourceChange && !!editingEntry && sourceDraft !== editingEntry.rawBibtex,
-    commit: () => { if (editingEntry && !saveSourceEdit(editingEntry)) throw new Error(`Could not save the BibTeX draft in ${filePath}. Please fix its syntax or duplicate citation key first.`); }
+    commit: () => { if (editingEntry && !saveSourceEdit(editingEntry)) throw new Error(t("ui.BibtexPreviewPane.could_not_save_the_bibtex_draft_in", { value1: filePath })); }
   });
   const confirmDuplicateAdd = () => {
     if (!pendingDuplicate) return;
     const key = duplicateKey.trim();
-    if (!isValidCitationKey(key)) { setDuplicateKeyError("Use a key without spaces, commas, or BibTeX delimiters."); return; }
+    if (!isValidCitationKey(key)) { setDuplicateKeyError(t("ui.BibtexPreviewPane.use_a_key_without_spaces_commas_or")); return; }
     if (parsed.entries.some((item) => citationKeyIdentity(item.citationKey) === citationKeyIdentity(key))) {
-      setDuplicateKeyError(`Citation key “${key}” is still duplicated. Choose a different key.`);
+      setDuplicateKeyError(t("ui.BibtexPreviewPane.citation_key_is_still_duplicated_choose_a", { value1: key }));
       return;
     }
     writeLibraryEntryToProject(pendingDuplicate, key);
@@ -159,32 +160,32 @@ export function BibtexPreviewPane({ source, filePath, projectId, documents, rest
     else if (source[start - 1] === "\n" || source[start - 1] === "\r") start -= 1;
     const references = occurrences.filter((item) => citationKeyIdentity(item.key) === citationKeyIdentity(removeRequest.citationKey)).length;
     onSourceChange(source.slice(0, start) + source.slice(end));
-    setNotice(references ? `Removed “${removeRequest.citationKey}” from this .bib; ${references} citation occurrence${references === 1 ? " remains" : "s remain"} in project files.` : `Removed “${removeRequest.citationKey}” from this .bib.`);
+    setNotice(references ? t("ui.BibtexPreviewPane.removed_from_this_bib_citation_occurrence_s", { value1: removeRequest.citationKey, value2: references }) : t("ui.BibtexPreviewPane.removed_from_this_bib", { value1: removeRequest.citationKey }));
     setRemoveRequest(undefined);
     if (editingSourceStart === removeRequest.start) setEditingSourceStart(undefined);
   };
 
   return <section ref={paneRef} className="bib-preview-pane" onScroll={(event) => onScrollPositionChange?.(event.currentTarget.scrollTop)}>
-    <header className="bib-preview-header"><div><p className="reference-eyebrow">BIBTEX PREVIEW</p><h2>{filePath}</h2><p>{parsed.entries.length} entries · {parsed.invalid.length} warnings · source order preserved</p></div><div className="bib-preview-actions"><button onClick={() => setOnlyCited((value) => !value)} className={onlyCited ? "active" : ""}>{onlyCited ? "Cited only" : "All entries"}</button><button onClick={() => { setLibraryQuery(""); setLibraryPickerOpen((value) => !value); }} disabled={busy || !onSourceChange}>+ Add from Library</button><button onClick={() => void addAll()} disabled={busy}>Import valid to Library</button></div></header>
-    <div className="bib-preview-toolbar"><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search citation key, title, author..."/><span>{entries.length} shown</span></div>
+    <header className="bib-preview-header"><div><p className="reference-eyebrow">{t("ui.BibtexPreviewPane.bibtex_preview")}</p><h2>{filePath}</h2><p>{parsed.entries.length} {t("ui.BibtexPreviewPane.entries")}{parsed.invalid.length} {t("ui.BibtexPreviewPane.warnings_source_order_preserved")}</p></div><div className="bib-preview-actions"><button onClick={() => setOnlyCited((value) => !value)} className={onlyCited ? "active" : ""}>{onlyCited ? t("ui.BibtexPreviewPane.cited_only") : t("ui.BibtexPreviewPane.all_entries")}</button><button onClick={() => { setLibraryQuery(""); setLibraryPickerOpen((value) => !value); }} disabled={busy || !onSourceChange}>{t("ui.BibtexPreviewPane.add_from_library")}</button><button onClick={() => void addAll()} disabled={busy}>{t("ui.BibtexPreviewPane.import_valid_to_library")}</button></div></header>
+    <div className="bib-preview-toolbar"><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder={t("ui.BibtexPreviewPane.search_citation_key_title_author")}/><span>{entries.length} {t("ui.BibtexPreviewPane.shown")}</span></div>
     {notice && <p className="bib-preview-notice" role="status">{notice}</p>}
-    {duplicateKeys.length > 0 && <div className="bib-warning-card bib-duplicate-warning" role="alert"><strong>Duplicate citation keys</strong><span>This file contains repeated keys: {duplicateKeys.join(", ")}. Imports will not add another entry with those keys.</span></div>}
-    {libraryPickerOpen && <section className="bib-library-picker" aria-label="Add a reference from the Library"><header><div><strong>Add from Library</strong><span>Choose an entry to append to this project’s .bib file.</span></div><button onClick={() => setLibraryPickerOpen(false)} aria-label="Close">×</button></header><input value={libraryQuery} onChange={(event) => setLibraryQuery(event.target.value)} placeholder="Search title, author, or citation key..."/>{availableLibraryEntries.length ? <div className="bib-library-picker-list">{availableLibraryEntries.map((entry) => { const duplicate = parsed.entries.some((item) => citationKeyIdentity(item.citationKey) === citationKeyIdentity(entry.citationKey)); return <article key={entry.id}><div><strong>{field(entry, "title") || "Untitled reference"}</strong><span>{entry.citationKey} · {field(entry, "author") || entry.entryType} {duplicate && <em>Key already exists</em>}</span></div><button onClick={() => selectLibraryEntry(entry)}>{duplicate ? "Resolve duplicate…" : "Add to .bib"}</button></article>; })}</div> : <p className="bib-library-picker-empty">{snapshot ? "No matching references in the Library." : "Loading Library…"}</p>}</section>}
-    {parsed.invalid.map((item, index) => <div className="bib-warning-card" key={`${item.start}-${index}`}><strong>Parse warning</strong><span>{item.message}</span><button onClick={() => onLocate?.({ filePath, offset: item.start })}>Open source</button></div>)}
+    {duplicateKeys.length > 0 && <div className="bib-warning-card bib-duplicate-warning" role="alert"><strong>{t("ui.BibtexPreviewPane.duplicate_citation_keys")}</strong><span>{t("ui.BibtexPreviewPane.this_file_contains_repeated_keys")}{duplicateKeys.join(", ")}{t("ui.BibtexPreviewPane.imports_will_not_add_another_entry_with")}</span></div>}
+    {libraryPickerOpen && <section className="bib-library-picker" aria-label={t("ui.BibtexPreviewPane.add_a_reference_from_the_library")}><header><div><strong>{t("ui.BibtexPreviewPane.add_from_library_2")}</strong><span>{t("ui.BibtexPreviewPane.choose_an_entry_to_append_to_this")}</span></div><button onClick={() => setLibraryPickerOpen(false)} aria-label={t("ai.history.close")}>×</button></header><input value={libraryQuery} onChange={(event) => setLibraryQuery(event.target.value)} placeholder={t("ui.BibtexPreviewPane.search_title_author_or_citation_key")}/>{availableLibraryEntries.length ? <div className="bib-library-picker-list">{availableLibraryEntries.map((entry) => { const duplicate = parsed.entries.some((item) => citationKeyIdentity(item.citationKey) === citationKeyIdentity(entry.citationKey)); return <article key={entry.id}><div><strong>{field(entry, "title") || t("ui.BibtexPreviewPane.untitled_reference")}</strong><span>{entry.citationKey} · {field(entry, "author") || entry.entryType} {duplicate && <em>{t("ui.BibtexPreviewPane.key_already_exists")}</em>}</span></div><button onClick={() => selectLibraryEntry(entry)}>{duplicate ? t("ui.BibtexPreviewPane.resolve_duplicate") : t("ui.BibtexPreviewPane.add_to_bib")}</button></article>; })}</div> : <p className="bib-library-picker-empty">{snapshot ? t("ui.BibtexPreviewPane.no_matching_references_in_the_library") : t("ui.BibtexPreviewPane.loading_library")}</p>}</section>}
+    {parsed.invalid.map((item, index) => <div className="bib-warning-card" key={`${item.start}-${index}`}><strong>{t("ui.BibtexPreviewPane.parse_warning")}</strong><span>{item.message}</span><button onClick={() => onLocate?.({ filePath, offset: item.start })}>{t("ui.BibtexPreviewPane.open_source")}</button></div>)}
     <div className="bib-entry-list">{entries.map((entry) => <BibEntryCard key={`${entry.citationKey}:${entry.start}`} entry={entry} inLibrary={Boolean(snapshot?.entries.some((item) => item.citationKey === entry.citationKey))} duplicateInFile={duplicateStarts.has(entry.start)} canEditProject={Boolean(onSourceChange)} usage={occurrences.filter((item) => item.key === entry.citationKey)} onAdd={() => void add(entry)} onRemoveFromProject={() => setRemoveRequest(entry)} onLocate={onLocate} filePath={filePath} busy={busy} sourceEditing={editingSourceStart === entry.start} sourceDraft={sourceDraft} sourceError={sourceError} onBeginSourceEdit={() => beginSourceEdit(entry)} onSourceDraftChange={setSourceDraft} onSaveSource={() => saveSourceEdit(entry)} onCancelSource={() => { setEditingSourceStart(undefined); setSourceError(""); }}/>)}</div>
-    {pendingDuplicate && <div className="bib-operation-backdrop"><section className="bib-operation-dialog" role="alertdialog" aria-modal="true" aria-labelledby="bib-duplicate-title"><h2 id="bib-duplicate-title">Citation key already exists</h2><p><code>{pendingDuplicate.citationKey}</code> is already present in this .bib file. Choose a new key to add this Library entry as a separate reference.</p><label>New citation key<input autoFocus value={duplicateKey} onChange={(event) => { setDuplicateKey(event.target.value); setDuplicateKeyError(""); }} onKeyDown={(event) => { if (event.key === "Enter") confirmDuplicateAdd(); if (event.key === "Escape") setPendingDuplicate(undefined); }}/></label>{duplicateKeyError && <p className="bib-operation-error" role="alert">{duplicateKeyError}</p>}<div><button onClick={() => setPendingDuplicate(undefined)}>Cancel</button><button className="primary" onClick={confirmDuplicateAdd}>Add with new key</button></div></section></div>}
-    {removeRequest && <div className="bib-operation-backdrop"><section className="bib-operation-dialog" role="alertdialog" aria-modal="true" aria-labelledby="bib-remove-title"><h2 id="bib-remove-title">Remove from this .bib file?</h2><p>Remove <code>{removeRequest.citationKey}</code> from this project file?{occurrences.some((item) => citationKeyIdentity(item.key) === citationKeyIdentity(removeRequest.citationKey)) && <> It is cited in {occurrences.filter((item) => citationKeyIdentity(item.key) === citationKeyIdentity(removeRequest.citationKey)).length} project location(s); those citations may become unresolved.</>}</p><div><button onClick={() => setRemoveRequest(undefined)}>Cancel</button><button className="danger" onClick={removeCurrentEntry}>Remove entry</button></div></section></div>}
+    {pendingDuplicate && <div className="bib-operation-backdrop"><section className="bib-operation-dialog" role="alertdialog" aria-modal="true" aria-labelledby="bib-duplicate-title"><h2 id="bib-duplicate-title">{t("ui.BibtexPreviewPane.citation_key_already_exists")}</h2><p><code>{pendingDuplicate.citationKey}</code> {t("ui.BibtexPreviewPane.is_already_present_in_this_bib_file")}</p><label>{t("ui.BibtexPreviewPane.new_citation_key")}<input autoFocus value={duplicateKey} onChange={(event) => { setDuplicateKey(event.target.value); setDuplicateKeyError(""); }} onKeyDown={(event) => { if (event.key === "Enter") confirmDuplicateAdd(); if (event.key === "Escape") setPendingDuplicate(undefined); }}/></label>{duplicateKeyError && <p className="bib-operation-error" role="alert">{duplicateKeyError}</p>}<div><button onClick={() => setPendingDuplicate(undefined)}>{t("settings.aiSkillsCancel")}</button><button className="primary" onClick={confirmDuplicateAdd}>{t("ui.BibtexPreviewPane.add_with_new_key")}</button></div></section></div>}
+    {removeRequest && <div className="bib-operation-backdrop"><section className="bib-operation-dialog" role="alertdialog" aria-modal="true" aria-labelledby="bib-remove-title"><h2 id="bib-remove-title">{t("ui.BibtexPreviewPane.remove_from_this_bib_file")}</h2><p>{t("settings.spellcheckRemove")}<code>{removeRequest.citationKey}</code> {t("ui.BibtexPreviewPane.from_this_project_file")}{occurrences.some((item) => citationKeyIdentity(item.key) === citationKeyIdentity(removeRequest.citationKey)) && <> {t("ui.BibtexPreviewPane.it_is_cited_in")}{occurrences.filter((item) => citationKeyIdentity(item.key) === citationKeyIdentity(removeRequest.citationKey)).length} {t("ui.BibtexPreviewPane.project_location_s_those_citations_may_become")}</>}</p><div><button onClick={() => setRemoveRequest(undefined)}>{t("settings.aiSkillsCancel")}</button><button className="danger" onClick={removeCurrentEntry}>{t("ui.BibtexPreviewPane.remove_entry")}</button></div></section></div>}
   </section>;
 }
 
 function BibEntryCard({ entry, inLibrary, duplicateInFile, canEditProject, usage, onAdd, onRemoveFromProject, onLocate, filePath, busy, sourceEditing, sourceDraft, sourceError, onBeginSourceEdit, onSourceDraftChange, onSaveSource, onCancelSource }: { entry: BibEntryPreview; inLibrary: boolean; duplicateInFile: boolean; canEditProject: boolean; usage: CitationOccurrence[]; onAdd(): void; onRemoveFromProject(): void; onLocate?: ((location: ReferenceSourceLocation) => void) | undefined; filePath: string; busy: boolean; sourceEditing: boolean; sourceDraft: string; sourceError: string; onBeginSourceEdit(): void; onSourceDraftChange(value: string): void; onSaveSource(): void; onCancelSource(): void }) {
   const [expanded, setExpanded] = useState(false);
   return <article className={`bib-entry-card ${entry.valid ? "" : "invalid"} ${duplicateInFile ? "duplicate-key" : ""}`}>
-    <header><span className="reference-entry-type">{entry.entryType}</span><strong>{field(entry, "author") || "Unknown author"} {field(entry, "year") && `(${field(entry, "year")})`}</strong><code>{entry.citationKey || "missing-key"}</code>{inLibrary ? <span className="reference-library-state linked">✓ In Library</span> : <button className="reference-library-state" onClick={onAdd} disabled={!entry.valid || busy}>+ Add to Library</button>}</header>
-    {duplicateInFile && <div className="bib-entry-duplicate-warning">This citation key is duplicated in the current .bib file.</div>}
-    <h3>{field(entry, "title") || "Untitled entry"}</h3><p className="bib-entry-publication">{field(entry, "journal") || field(entry, "booktitle") || field(entry, "publisher") || "No publication field"}</p>
-    <div className="bib-entry-row"><span>{usage.length ? `Cited · ${usage.length} occurrence${usage.length === 1 ? "" : "s"}` : "Not cited / not indexed"}</span><button onClick={() => setExpanded((value) => !value)}>{expanded ? "Hide fields" : "Show fields"}</button><button className={sourceEditing ? "active" : ""} onClick={sourceEditing ? onCancelSource : onBeginSourceEdit}>{sourceEditing ? "Close source" : "Source"}</button><button className="danger" onClick={onRemoveFromProject} disabled={busy || !canEditProject}>Remove from .bib</button></div>
+    <header><span className="reference-entry-type">{entry.entryType}</span><strong>{field(entry, "author") || t("ui.BibtexPreviewPane.unknown_author")} {field(entry, "year") && `(${field(entry, "year")})`}</strong><code>{entry.citationKey || t("ui.BibtexPreviewPane.missing_key")}</code>{inLibrary ? <span className="reference-library-state linked">{t("ui.BibtexPreviewPane.in_library")}</span> : <button className="reference-library-state" onClick={onAdd} disabled={!entry.valid || busy}>{t("ui.BibtexPreviewPane.add_to_library")}</button>}</header>
+    {duplicateInFile && <div className="bib-entry-duplicate-warning">{t("ui.BibtexPreviewPane.this_citation_key_is_duplicated_in_the")}</div>}
+    <h3>{field(entry, "title") || t("ui.BibtexPreviewPane.untitled_entry")}</h3><p className="bib-entry-publication">{field(entry, "journal") || field(entry, "booktitle") || field(entry, "publisher") || t("ui.BibtexPreviewPane.no_publication_field")}</p>
+    <div className="bib-entry-row"><span>{usage.length ? t("ui.BibtexPreviewPane.cited_occurrence_s", { value1: usage.length }) : t("ui.BibtexPreviewPane.not_cited_not_indexed")}</span><button onClick={() => setExpanded((value) => !value)}>{expanded ? t("ui.BibtexPreviewPane.hide_fields") : t("ui.BibtexPreviewPane.show_fields")}</button><button className={sourceEditing ? "active" : ""} onClick={sourceEditing ? onCancelSource : onBeginSourceEdit}>{sourceEditing ? t("ui.BibtexPreviewPane.close_source") : t("shortcut.source")}</button><button className="danger" onClick={onRemoveFromProject} disabled={busy || !canEditProject}>{t("ui.BibtexPreviewPane.remove_from_bib")}</button></div>
     {expanded && <><dl className="bib-fields">{Object.entries(entry.fields).map(([key, value]) => <div key={key}><dt>{key}</dt><dd>{value}</dd></div>)}</dl>{usage.length > 0 && <div className="bib-occurrences">{usage.map((item) => <button key={`${item.filePath}:${item.start}`} onClick={() => onLocate?.({ filePath: item.filePath, offset: item.start, line: item.line, column: item.column })}>{item.filePath}:{item.line} · \{item.command}{`{${item.key}}`}</button>)}</div>}</>}
-    {sourceEditing && <div className="bib-entry-source-editor"><label>Entry source <small>{filePath}</small></label><textarea aria-label={`BibTeX source for ${entry.citationKey}`} spellCheck={false} value={sourceDraft} onChange={(event) => onSourceDraftChange(event.target.value)}/>{sourceError && <p role="alert">{sourceError}</p>}<div><button onClick={onCancelSource}>Cancel</button><button className="primary" onClick={onSaveSource}>Apply to project</button></div></div>}
+    {sourceEditing && <div className="bib-entry-source-editor"><label>{t("ui.BibtexPreviewPane.entry_source")}<small>{filePath}</small></label><textarea aria-label={t("ui.BibtexPreviewPane.bibtex_source_for", { value1: entry.citationKey })} spellCheck={false} value={sourceDraft} onChange={(event) => onSourceDraftChange(event.target.value)}/>{sourceError && <p role="alert">{sourceError}</p>}<div><button onClick={onCancelSource}>{t("settings.aiSkillsCancel")}</button><button className="primary" onClick={onSaveSource}>{t("ui.BibtexPreviewPane.apply_to_project")}</button></div></div>}
   </article>;
 }

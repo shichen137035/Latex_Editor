@@ -141,7 +141,7 @@ export function useSearchController(options: SearchControllerOptions) {
       if (lifecycle.current.signal.aborted || sequence !== navigationSequence.current) return;
       if (!baseline || baseline.content !== content || latest.current !== selectedRequest) {
         if (!open && content !== undefined) updateSavedSearchDocument(result.fileId, content);
-        throw new Error("Search results changed. Search again before jumping.");
+        throw new Error(t("ui.searchController.search_results_changed_search_again_before_jumping"));
       }
       await options.navigateTo(result.fileId, { offset: result.matchStart });
       if (!lifecycle.current.signal.aborted && sequence === navigationSequence.current) setActiveSearchResult(result);
@@ -159,10 +159,10 @@ export function useSearchController(options: SearchControllerOptions) {
       const files = new Set(results.map(item => item.fileId));
       const response = await runSearchJob({ kind: "replace", query: searchQuery, documents: request.documents.filter(item => files.has(item.fileId)), results, replacement }, signal);
       if ("error" in response) throw new Error(response.error);
-      if (response.kind !== "replace") throw new Error("Invalid replacement response.");
+      if (response.kind !== "replace") throw new Error(t("ui.searchController.invalid_replacement_response"));
       await applySearchReplacements({
         plans: response.value, tabs: () => options.tabsRef.current,
-        read: async path => { if (!options.api) throw new Error("Project unavailable."); return (await options.api.files.read(options.project.id, path)).content; },
+        read: async path => { if (!options.api) throw new Error(t("ui.searchController.project_unavailable")); return (await options.api.files.read(options.project.id, path)).content; },
         isCurrent: () => !signal.aborted && latest.current === selectedRequest,
         beforeApply: async () => {
           const removed = response.value.reduce((sum, plan) => sum + Math.max(0, plan.before.length - plan.after.length), 0);

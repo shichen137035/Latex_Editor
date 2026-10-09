@@ -1,3 +1,4 @@
+import { t } from "../i18n/index.js";
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { AIAttachment } from "@latex-editor/contracts";
 
@@ -40,8 +41,8 @@ export class AttachmentDraftController {
   async paste(files: File[]): Promise<void> {
     const generation = this.#generation;
     if (this.#closed || generation.loading || !files.length) return;
-    if (files.some(file => file.size > 20 * 1024 * 1024)) { this.onError(new Error("Attachments must be smaller than 20 MB.")); return; }
-    if (generation.items.length + files.length > 20 || [...generation.items, ...files].reduce((total, file) => total + file.size, 0) > 50 * 1024 * 1024) { this.onError(new Error("Use at most 20 attachments totaling 50 MB.")); return; }
+    if (files.some(file => file.size > 20 * 1024 * 1024)) { this.onError(new Error(t("ui.attachmentDraft.attachments_must_be_smaller_than_20_mb"))); return; }
+    if (generation.items.length + files.length > 20 || [...generation.items, ...files].reduce((total, file) => total + file.size, 0) > 50 * 1024 * 1024) { this.onError(new Error(t("ai.pasteFileLimit"))); return; }
     generation.loading = true; this.#publish();
     try {
       await this.#ready(generation);
@@ -68,7 +69,7 @@ export class AttachmentDraftController {
   async payload(): Promise<Payload> {
     const generation = this.#generation;
     await this.#ready(generation);
-    if (generation.closed || generation.loading) throw new Error("The attachment draft changed. Please try again.");
+    if (generation.closed || generation.loading) throw new Error(t("ui.attachmentDraft.the_attachment_draft_changed_please_try_again"));
     return { attachmentDraftId: generation.id, attachmentIds: generation.items.map(item => item.id) };
   }
   sent(payload: Payload): void {
@@ -85,7 +86,7 @@ export class AttachmentDraftController {
   }
   #newGeneration(): Generation { return { id: crypto.randomUUID(), items: [], loading: false, closed: false }; }
   #ready(generation: Generation): Promise<void> {
-    if (this.#closed || generation.closed) return Promise.reject(new Error("Attachment draft is closed."));
+    if (this.#closed || generation.closed) return Promise.reject(new Error(t("ui.attachmentDraft.attachment_draft_is_closed")));
     return generation.ready ??= this.api.openAttachmentDraft(this.projectId, generation.id);
   }
   async #close(generation: Generation): Promise<void> {

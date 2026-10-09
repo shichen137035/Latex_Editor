@@ -1,3 +1,4 @@
+import { t } from "../i18n/index.js";
 import type { ReplacementPlan } from "./SearchEngine.js";
 import type { SearchDocument, SearchQuery, SearchResponse, SearchResult } from "./types.js";
 
@@ -26,10 +27,11 @@ export function runSearchJob(job: SearchJob, signal?: AbortSignal, createWorker:
       if (error) reject(error); else resolve(value!);
     };
     const abort = () => finish(new DOMException("Cancelled", "AbortError"));
-    const timer = setTimeout(() => finish(new Error("Search timed out. Simplify the expression or narrow the scope.")), timeout);
+    const timer = setTimeout(() => finish(new Error(t("ui.searchJob.search_timed_out_simplify_the_expression_or"))), timeout);
     signal?.addEventListener("abort", abort, { once: true });
-    worker.onmessage = event => finish(undefined, event.data);
-    worker.onerror = event => { event.preventDefault(); finish(new Error(event.message || "Search worker failed.")); };
+    // The worker sends message keys; UI localization stays out of its parsing bundle.
+    worker.onmessage = event => finish(undefined, "error" in event.data ? { error: t(event.data.error) } : event.data);
+    worker.onerror = event => { event.preventDefault(); finish(new Error(event.message || t("ui.searchJob.search_worker_failed"))); };
     try { worker.postMessage(job); } catch (error) { finish(error instanceof Error ? error : new Error(String(error))); }
   });
 }

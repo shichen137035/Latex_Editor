@@ -1,6 +1,7 @@
 import type { CSSProperties } from "react";
 import type { RelationDirection, SemanticBlock } from "@latex-editor/contracts";
 import { t } from "../i18n/index.js";
+import { environmentName } from "../i18n/displayNames.js";
 import type { EnvironmentDefinition } from "../preview/types.js";
 import { environmentAccent, environmentDefinition } from "../preview/environment-colors.js";
 import { blockRole } from "./model.js";
@@ -12,8 +13,8 @@ export function blockColorStyle(block: SemanticBlock, definitions: EnvironmentDe
 
 export function blockTypeLabel(block: SemanticBlock, definitions: EnvironmentDefinition[]): string {
   const type = blockRole(block), definition = environmentDefinition(type, definitions);
-  if (definition?.label) return definition.label;
-  const translated = t(definition?.labelKey ?? `environment.${type}`);
+  if (definition) return environmentName(definition);
+  const translated = t(`environment.${type}`);
   return translated.startsWith("environment.") ? type : translated;
 }
 

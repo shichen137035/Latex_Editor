@@ -77,14 +77,14 @@ export function planReplacement(document: SearchDocument, results: SearchResult[
   const sorted = [...new Map(results.map(result => [result.id, result])).values()].sort((a, b) => a.matchStart - b.matchStart);
   let previousEnd = -1;
   for (const result of sorted) {
-    if (result.fileId !== document.fileId || result.matchStart < previousEnd || result.matchStart < 0 || result.matchEnd < result.matchStart || result.matchEnd > document.content.length) throw new Error("Invalid or overlapping replacement ranges.");
+    if (result.fileId !== document.fileId || result.matchStart < previousEnd || result.matchStart < 0 || result.matchEnd < result.matchStart || result.matchEnd > document.content.length) throw new Error("ui.SearchEngine.invalid_or_overlapping_replacement_ranges");
     previousEnd = result.matchEnd;
   }
   const edits: ReplacementPlan["edits"] = [], parts: string[] = [];
   const replacements = new Map<string, string>();
   if (query?.useRegex) {
     const expression = searchPattern(query).expression;
-    if (!expression) throw new Error("Invalid search expression.");
+    if (!expression) throw new Error("ui.SearchEngine.invalid_search_expression");
     const wanted = new Set(sorted.map(result => `${result.matchStart}:${result.matchEnd}`));
     let projectedLength = document.content.length;
     for (const match of document.content.matchAll(expression)) {
@@ -92,7 +92,7 @@ export function planReplacement(document: SearchDocument, results: SearchResult[
       if (wanted.has(key)) {
         const inserted = substitution(replacement, match[0], match.slice(1), match.groups, document.content, match.index!);
         projectedLength += inserted.length - match[0].length;
-        if (projectedLength > Math.max(20_000_000, document.content.length + 5_000_000)) throw new Error("Replacement output is too large.");
+        if (projectedLength > Math.max(20_000_000, document.content.length + 5_000_000)) throw new Error("ui.SearchEngine.replacement_output_is_too_large");
         replacements.set(key, inserted);
       }
     }
@@ -100,9 +100,9 @@ export function planReplacement(document: SearchDocument, results: SearchResult[
   let cursor = 0, length = document.content.length;
   for (const result of sorted) {
     const inserted = query?.useRegex ? replacements.get(`${result.matchStart}:${result.matchEnd}`) : replacement;
-    if (inserted === undefined) throw new Error("Search results changed; run the search again.");
+    if (inserted === undefined) throw new Error("ui.SearchEngine.search_results_changed_run_the_search_again");
     length += inserted.length - (result.matchEnd - result.matchStart);
-    if (length > Math.max(20_000_000, document.content.length + 5_000_000)) throw new Error("Replacement output is too large.");
+    if (length > Math.max(20_000_000, document.content.length + 5_000_000)) throw new Error("ui.SearchEngine.replacement_output_is_too_large");
     parts.push(document.content.slice(cursor, result.matchStart), inserted);
     edits.push({ start: result.matchStart, end: result.matchEnd, newLength: inserted.length }); cursor = result.matchEnd;
   }

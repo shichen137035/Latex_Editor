@@ -1,3 +1,4 @@
+import { t } from "../i18n/index.js";
 import type { BlockGraphSnapshot } from "@latex-editor/contracts";
 import type { PreviewNode, StructuralBlock } from "./types.js";
 
@@ -54,7 +55,7 @@ export function createBlockClipboardPayload(projectId: string, filePath: string,
 
 async function writePlainText(value: string): Promise<void> {
   try {
-    if (!navigator.clipboard?.writeText) throw new Error("Clipboard API unavailable");
+    if (!navigator.clipboard?.writeText) throw new Error(t("ui.blockClipboard.clipboard_api_unavailable"));
     await navigator.clipboard.writeText(value);
   } catch {
     const textarea = document.createElement("textarea");
@@ -65,7 +66,7 @@ async function writePlainText(value: string): Promise<void> {
     textarea.select();
     const copied = document.execCommand("copy");
     textarea.remove();
-    if (!copied) throw new Error("Could not copy selected LaTeX blocks");
+    if (!copied) throw new Error(t("ui.blockClipboard.could_not_copy_selected_latex_blocks"));
   }
 }
 

@@ -1,3 +1,4 @@
+import { t } from "../i18n/index.js";
 import type { AIChangeHunk, AIChangeSet, AIFileChange } from "@latex-editor/contracts";
 import { isAIEditableProjectPath } from "@latex-editor/contracts/ai-paths";
 
@@ -22,7 +23,7 @@ export function fileWithAppliedHunks(file: AIFileChange, included: (hunk: AIChan
   if (file.type === "delete") return selected.length ? undefined : file.originalContent;
   const result = lines(file.originalContent ?? "");
   for (const hunk of selected.slice().sort((a, b) => b.oldStart - a.oldStart)) {
-    if (result.slice(hunk.oldStart, hunk.oldStart + hunk.oldLines).join("") !== hunk.oldText) throw new Error(`Invalid AI diff in ${file.path}.`);
+    if (result.slice(hunk.oldStart, hunk.oldStart + hunk.oldLines).join("") !== hunk.oldText) throw new Error(t("ui.changeOperations.invalid_ai_diff_in", { value1: file.path }));
     result.splice(hunk.oldStart, hunk.oldLines, ...lines(hunk.newText));
   }
   return result.join("");
@@ -30,7 +31,7 @@ export function fileWithAppliedHunks(file: AIFileChange, included: (hunk: AIChan
 
 /** Preview edits are reversible until explicitly kept. Never overwrite newer user edits. */
 export function transitionAIFile(file: AIFileChange, current: string | undefined, ids: Set<string>, apply: boolean): string | undefined {
-  if (!apply && file.hunks.some(hunk => ids.has(hunk.id) && hunk.decision === "accepted")) throw new Error("Accepted AI changes use the editor undo history.");
+  if (!apply && file.hunks.some(hunk => ids.has(hunk.id) && hunk.decision === "accepted")) throw new Error(t("ui.changeOperations.accepted_ai_changes_use_the_editor_undo"));
   const before = fileWithAppliedHunks(file);
   const after = fileWithAppliedHunks(file, hunk => hunk.decision !== "rejected" && (ids.has(hunk.id) ? apply : isHunkApplied(hunk)));
   // Retry after a successful edit whose acknowledgement failed is safe. A
