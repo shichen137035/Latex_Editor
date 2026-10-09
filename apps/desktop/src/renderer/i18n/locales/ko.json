@@ -402,5 +402,7 @@
   "settings.aiSkillSource.built-in": "기본 제공",
   "settings.aiSkillSource.custom": "사용자 지정",
   "settings.aiSkillSource.customized": "수정됨",
-  "settings.autoSaveDelaySeconds": "자동 저장 간격 (초)"
+  "settings.autoSaveDelaySeconds": "자동 저장 간격 (초)",
+  "preview.editDocumentTitle": "문서 제목 소스 편집",
+  "preview.documentTitleSource": "문서 제목 소스"
 }

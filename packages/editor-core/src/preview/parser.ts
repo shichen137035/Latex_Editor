@@ -3,9 +3,10 @@ import type { EnvironmentDefinition, PreviewDocument, PreviewNode, SourceSpan, S
 import { includeNewBuiltInDirectives, inferBlockKind, type BlockKind, type PreviewDirectiveDefinition } from "@latex-editor/contracts";
 import { automaticLabelOccurrences, findBlockLabel, isAutomaticLabel } from "./labels.js";
 import type { BlockLabelRange } from "./labels.js";
+import { documentTitleRegion } from "./document-title.js";
 
 /** Bump when source ownership changes so persisted indexes refresh on upgrade. */
-export const STRUCTURE_PARSER_REVISION = 5;
+export const STRUCTURE_PARSER_REVISION = 6;
 
 interface RawBlock {
   start: number;
@@ -64,31 +65,6 @@ function metadataValue(metadata: string, key: string): string | undefined {
   const quoted = new RegExp(`${key}="([^"]*)"`).exec(metadata)?.[1];
   if (quoted !== undefined) return quoted;
   return new RegExp(`${key}=([^\\s]+)`).exec(metadata)?.[1];
-}
-
-function commandArgument(source: string, command: string): string | undefined {
-  const expression = new RegExp(`\\\\${command}\\*?(?:\\s*\\[[^\\]]*\\])?\\s*\\{`, "g");
-  for (const match of source.matchAll(expression)) {
-    const start = match.index ?? 0;
-    if (commentedAt(source, start)) continue;
-    let depth = 1;
-    let cursor = start + match[0].length;
-    const contentStart = cursor;
-    while (cursor < source.length && depth > 0) {
-      const character = source[cursor];
-      if (character === "%" && commentedAt(source, cursor)) {
-        const lineEnd = source.indexOf("\n", cursor);
-        cursor = lineEnd < 0 ? source.length : lineEnd + 1;
-        continue;
-      }
-      if (character === "\\") { cursor += 2; continue; }
-      if (character === "{") depth += 1;
-      else if (character === "}") depth -= 1;
-      if (depth > 0) cursor += 1;
-    }
-    if (depth === 0) return source.slice(contentStart, cursor).trim();
-  }
-  return undefined;
 }
 
 function stripForVisibility(value: string): string {
@@ -290,20 +266,13 @@ export function parsePreview(source: string, filePath: string, definitions: Envi
   }
   for (const entry of open) diagnostics.push(`Unclosed ${entry.marker} ${entry.name} at offset ${entry.start}.`);
 
-  const titleCommand = /\\maketitle\b/g;
-  const hasMakeTitle = [...source.matchAll(titleCommand)].some((match) => {
-    const start = match.index ?? 0;
-    return start >= documentStart && start < documentEnd && !commentedAt(source, start);
-  });
-  const preamble = source.slice(0, documentStart);
-  const titleText = hasMakeTitle ? commandArgument(preamble, "title") : undefined;
-  const authorText = hasMakeTitle ? commandArgument(preamble, "author") : undefined;
-  const dateText = hasMakeTitle ? commandArgument(preamble, "date") : undefined;
-  const title = hasMakeTitle ? {
-    ...(titleText !== undefined ? { title: titleText } : {}),
-    ...(authorText !== undefined ? { author: authorText } : {}),
-    // LaTeX's default \maketitle date is \today when no \date is declared.
-    date: dateText ?? "\\today"
+  const titleRegion = documentTitleRegion(source, documentStart, documentEnd);
+  const title = titleRegion ? {
+    ...(titleRegion.title !== undefined ? { title: titleRegion.title } : {}),
+    ...(titleRegion.author !== undefined ? { author: titleRegion.author } : {}),
+    date: titleRegion.date,
+    source: span(source, filePath, titleRegion.start, titleRegion.end, positionAt),
+    bodySource: span(source, filePath, titleRegion.bodyStart, titleRegion.end, positionAt)
   } : undefined;
 
   // Heading commands have implicit ends. Commands that switch document parts
@@ -389,7 +358,8 @@ export function parsePreview(source: string, filePath: string, definitions: Envi
   }
 
   const candidates = rawBlocks
-    .filter((block) => block.start >= documentStart && block.end <= documentEnd && block.end > block.start)
+    .filter((block) => block.start >= documentStart && block.end <= documentEnd && block.end > block.start
+      && !(title && block.start >= title.bodySource.startOffset && block.end <= title.bodySource.endOffset))
     .sort((left, right) => left.start - right.start || right.end - left.end);
   const valid: RawBlock[] = [];
   const stack: RawBlock[] = [];
@@ -437,8 +407,10 @@ export function parsePreview(source: string, filePath: string, definitions: Envi
       const label = parent ? ownedLabels.get(parent) : undefined;
       // A structural owner's label is metadata, not paragraph source. Keeping
       // it in a paragraph would let prose-only edits silently erase references.
-      const gaps = label && label.startOffset >= from && label.endOffset <= to
+      const labelGaps = label && label.startOffset >= from && label.endOffset <= to
         ? [[from, label.startOffset], [label.endOffset, to]] : [[from, to]];
+      const gaps = labelGaps.flatMap(([left = from, right = to]) => !title || right <= title.bodySource.startOffset || left >= title.bodySource.endOffset
+        ? [[left, right]] : [[left, Math.max(left, title.bodySource.startOffset)], [Math.min(right, title.bodySource.endOffset), right]]);
       for (const [left, right] of gaps) {
         const addSlices = (from: number, to: number) => {
           for (const part of paragraphRanges(source, from, to)) {

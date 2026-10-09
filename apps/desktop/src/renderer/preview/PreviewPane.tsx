@@ -35,6 +35,7 @@ import { tokenizeInlineSource, type InlineSourceToken } from "./inlineSource.js"
 import { sourceOffsetAtPoint } from "./sourceMapping.js";
 import { upsertBlockLabel } from "./labels.js";
 import { PreviewLocalEditor } from "./PreviewLocalEditor.js";
+import { DocumentTitleEditor } from "./DocumentTitleEditor.js";
 import { captionSourceField, environmentOptionField, replaceSourceField, type PreviewSourceField } from "./sourceFields.js";
 import { useUnsavedChanges } from "../lifecycle/unsavedChanges.js";
 import { BlockOperationError, blockSourceForCopy, blocksInSelectionRanges, decodeDisabledSource, normalizeBlockSelection, planDeleteBlocks, planDisableBlocks, planEnableBlocks, planMoveBlocks, planPasteBlocks, type BlockSourceTransaction, type MovePosition } from "./blockOperations.js";
@@ -1600,7 +1601,7 @@ export function PreviewPane({ filePath, source, sourceTransaction, definitions, 
       setForcedTargetId(jump.node.id);
       return;
     }
-    if (clickTarget?.closest(".preview-local-editor, .preview-block-header-actions, .preview-block-footer-actions, .preview-selection-toolbar, button, input, textarea, select, [contenteditable='true']")) return;
+    if (clickTarget?.closest(".preview-local-editor, [data-preview-field], .preview-block-header-actions, .preview-block-footer-actions, .preview-selection-toolbar, button, input, textarea, select, [contenteditable='true']")) return;
     const root = previewRootRef.current;
     const sourceRegion = root && sourceElement(event.target as Node, root);
     const sourceOffset = sourceRegion ? sourceOffsetAtPoint(sourceRegion, event) : undefined;
@@ -1617,7 +1618,7 @@ export function PreviewPane({ filePath, source, sourceTransaction, definitions, 
     onSelectionChange?.(selection);
     return selection;
   };
-  const article = <article>{document?.title && <DocumentTitlePreview {...document.title} mathContext={mathContext} searchQuery={inlineSearch}/>}<PreviewNodeList nodes={document?.nodes ?? []} source={sourceReader} definitions={definitions} selectedId={selectedId} editingId={editingId} cursorOffset={editingCursorOffset} boundary={boundary} select={actions.select} edit={actions.edit} applyEdit={actions.applyEdit} applyBoundary={actions.applyBoundary} cancelEdit={actions.cancelEdit} requestBoundary={actions.requestBoundary} services={services}/></article>;
+  const article = <article>{document?.title && <DocumentTitleEditor key={filePath} title={document.title} source={source ?? ""} services={services} onSourceChange={onSourceChange} onOpen={offset => { setSelectedId(undefined); setAdditionalSelectedIds([]); setBlockToolbarPosition(undefined); onFigureSelect?.(undefined); onTableSelect?.(undefined); if (filePath) onClickSourcePosition?.({ fileId: filePath, offset }); }}><DocumentTitlePreview {...document.title} mathContext={mathContext} searchQuery={inlineSearch}/></DocumentTitleEditor>}<PreviewNodeList nodes={document?.nodes ?? []} source={sourceReader} definitions={definitions} selectedId={selectedId} editingId={editingId} cursorOffset={editingCursorOffset} boundary={boundary} select={actions.select} edit={actions.edit} applyEdit={actions.applyEdit} applyBoundary={actions.applyBoundary} cancelEdit={actions.cancelEdit} requestBoundary={actions.requestBoundary} services={services}/></article>;
   return <div ref={previewRootRef} className={`structured-preview${marqueeRect ? " marquee-selecting" : ""}`} onPointerDown={startBlockMarquee} onPointerMove={moveBlockMarquee} onPointerLeave={() => { hoveredJumpElementRef.current = undefined; updateJumpCursor(undefined, false); }} onPointerUp={finishBlockMarquee} onPointerCancel={cancelBlockMarquee} onClickCapture={onPreviewClick} onMouseUp={() => emitSelection()} onKeyUp={() => emitSelection()} onContextMenu={(event) => {
     if (event.target instanceof Element && event.target.closest(".table-editor-backdrop, .table-floating-tools")) return;
     if (event.target instanceof Element && event.target.closest("[data-preview-field]")) return;

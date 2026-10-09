@@ -532,5 +532,7 @@
   "settings.aiSkillSource.built-in": "內建",
   "settings.aiSkillSource.custom": "自訂",
   "settings.aiSkillSource.customized": "已自訂",
-  "settings.autoSaveDelaySeconds": "自動儲存間隔（秒）"
+  "settings.autoSaveDelaySeconds": "自動儲存間隔（秒）",
+  "preview.editDocumentTitle": "編輯文章標題原始碼",
+  "preview.documentTitleSource": "文章標題原始碼"
 }

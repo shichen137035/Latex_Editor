@@ -1800,5 +1800,7 @@
   "settings.blockNamesHint": "Choose a fixed display language for environment blocks and special commands. Turn it off to follow the interface language.",
   "settings.fixedBlockNameLanguage": "Use a fixed name language",
   "settings.blockNameLanguage": "Preferred name language",
-  "settings.autoSaveDelaySeconds": "Auto-save delay (seconds)"
+  "settings.autoSaveDelaySeconds": "Auto-save delay (seconds)",
+  "preview.editDocumentTitle": "Edit document title source",
+  "preview.documentTitleSource": "Document title source"
 }

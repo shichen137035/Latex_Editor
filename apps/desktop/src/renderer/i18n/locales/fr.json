@@ -402,5 +402,7 @@
   "settings.aiSkillSource.built-in": "Intégrée",
   "settings.aiSkillSource.custom": "Personnalisée",
   "settings.aiSkillSource.customized": "Modifiée",
-  "settings.autoSaveDelaySeconds": "Délai de sauvegarde automatique (secondes)"
+  "settings.autoSaveDelaySeconds": "Délai de sauvegarde automatique (secondes)",
+  "preview.editDocumentTitle": "Modifier le source du titre du document",
+  "preview.documentTitleSource": "Source du titre du document"
 }

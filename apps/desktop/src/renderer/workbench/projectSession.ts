@@ -28,8 +28,9 @@ interface ProjectSessionOptions {
 }
 
 export function createProjectSessionController(options: ProjectSessionOptions) {
-  const saveTabs = async (all: boolean, flush: (update: () => void) => void = (update) => update()) => {
+  const saveTabs = async (all: boolean, flush: (update: () => void) => void = flushSync) => {
     if (!options.api) return;
+    unsavedChanges.commitDrafts(flush);
     const pending = options.tabsRef.current.filter((tab) => tab.dirty && (all || tab.path === options.activePath));
     if (!pending.length) return;
     options.editHistory.current.breakGroup();

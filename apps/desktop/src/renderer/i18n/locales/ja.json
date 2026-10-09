@@ -683,5 +683,7 @@
   "settings.aiSkillSource.built-in": "組み込み",
   "settings.aiSkillSource.custom": "カスタム",
   "settings.aiSkillSource.customized": "編集済み",
-  "settings.autoSaveDelaySeconds": "自動保存の待機時間（秒）"
+  "settings.autoSaveDelaySeconds": "自動保存の待機時間（秒）",
+  "preview.editDocumentTitle": "文書タイトルのソースを編集",
+  "preview.documentTitleSource": "文書タイトルのソース"
 }

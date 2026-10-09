@@ -108,7 +108,7 @@ export interface PreviewDocument {
   filePath: string;
   nodes: PreviewNode[];
   diagnostics: string[];
-  title?: { title?: string; author?: string; date?: string };
+  title?: { title?: string; author?: string; date?: string; source: SourceSpan; bodySource: SourceSpan };
 }
 
 export interface PreviewInteractionState {

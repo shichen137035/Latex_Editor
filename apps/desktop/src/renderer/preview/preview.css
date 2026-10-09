@@ -11,6 +11,10 @@
 .preview-document-title h1 { margin: 0 0 16px; color: var(--color-text-primary); font: 700 clamp(28px, 4vw, 40px)/1.2 "Space Grotesk", Georgia, serif; letter-spacing: -.025em; }
 .preview-document-authors { margin: 0 auto 9px; color: var(--color-text-secondary); font: 500 16px/1.6 "Space Grotesk", sans-serif; white-space: pre-line; }
 .preview-document-title time { color: var(--color-text-muted); font: 400 13px/1.5 "Space Grotesk", sans-serif; }
+.preview-title-trigger { cursor: text; border-radius: 10px; }
+.preview-title-trigger:hover, .preview-title-trigger:focus-visible { outline: 1px solid var(--color-border); outline-offset: 4px; }
+.preview-title-object.editing { margin-bottom: 24px; }
+.preview-title-editor-label { margin-bottom: 8px; color: var(--color-text-secondary); font-size: 12px; font-weight: 600; }
 .preview-content-region { margin: 5px 4px 16px; padding: 4px 8px; border: 1px solid transparent; border-radius: 5px; white-space: pre-line; cursor: text; transition: .15s ease; }
 .preview-content-region:hover { border-color: var(--env-border-hover); background: rgba(225,241,250,.35); }
 .preview-content-region.preview-directive { display: flex; align-items: center; gap: 8px; min-height: 25px; margin: 4px 8px 10px; padding: 2px 6px; color: var(--directive-color); cursor: text; font: 600 11px "Space Grotesk", sans-serif; white-space: nowrap; }

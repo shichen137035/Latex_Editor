@@ -186,6 +186,8 @@ export function tryIncrementalPreviewUpdate(
   if (edit === "invalid") return { fallbackReason: "invalid-transaction" };
   if (edit === "multi") return { fallbackReason: "multi-edit" };
   if (!edit) return { fallbackReason: "unchanged" };
+  // Title metadata can begin in the preamble; update its exact ranges together.
+  if (previousDocument.title && edit.start < previousDocument.title.source.endOffset) return { fallbackReason: "structural-change" };
   if (Math.max(edit.removed.length, edit.inserted.length) > Math.max(512, previousSource.length * 0.2)) return { fallbackReason: "large-edit" };
   const target = collectEditablePath(previousDocument.nodes, edit, previousSource);
   if (!target) return { fallbackReason: "ambiguous-target" };

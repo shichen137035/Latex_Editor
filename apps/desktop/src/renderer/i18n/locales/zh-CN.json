@@ -1800,5 +1800,7 @@
   "settings.blockNamesHint": "统一指定环境块和特殊命令的显示语言；关闭后跟随界面语言。",
   "settings.fixedBlockNameLanguage": "固定名称语言",
   "settings.blockNameLanguage": "优先使用的名称语言",
-  "settings.autoSaveDelaySeconds": "自动保存间隔（秒）"
+  "settings.autoSaveDelaySeconds": "自动保存间隔（秒）",
+  "preview.editDocumentTitle": "编辑文章标题源码",
+  "preview.documentTitleSource": "文章标题源码"
 }
