@@ -105,6 +105,7 @@ export interface PreviewDirectiveDefinition {
   enabled: boolean;
   match: { kind: "command"; name: string } | { kind: "blank-line" };
   label: string;
+  labels?: Record<string, string>;
   display: "divider" | "placeholder" | "spacer";
   color: string;
   /** Ownership within implicit chapter/section scopes; paired environments retain their source wrappers. */
@@ -150,6 +151,8 @@ export function includeNewBuiltInDirectives(saved: PreviewDirectiveDefinition[])
 }
 export interface PreferenceValues {
   locale: "en" | "ja" | "zh-CN" | "zh-TW" | "ko" | "fr";
+  fixedBlockNameLanguage: boolean;
+  blockNameLanguage: PreferenceValues["locale"];
   /** Built-in ids are light/dark; custom ids are provided by the theme catalog. */
   theme: string;
   /** Empty means the application-local themes directory. */
@@ -170,6 +173,7 @@ export interface PreferenceValues {
   tabSize: number;
   wordWrap: boolean;
   autoSave: "off" | "afterDelay";
+  autoSaveDelaySeconds: number;
   hideBuildArtifacts: boolean;
   documentWordCompletion: boolean;
   autoPairSymbols: boolean;
@@ -199,16 +203,22 @@ export interface PreferenceValues {
 }
 export type PreferenceKey = keyof PreferenceValues;
 export const preferenceDefaults: PreferenceValues = {
+  fixedBlockNameLanguage: true, blockNameLanguage: "en",
   locale: "en", theme: "light", themeDirectory: "", aiCodexExecutable: "", aiModel: "", aiCopilotModel: "", aiReasoningEffort: "", aiCopilotReasoningEffort: "", aiDefaultMode: "chat", aiPermissionMode: "auto", aiIncludeCurrentFile: false, fontSize: 15, tabSize: 2, wordWrap: true,
-  autoSave: "off", hideBuildArtifacts: true, documentWordCompletion: true, autoPairSymbols: true, mathPreviewOnHover: false, showPreviewMetrics: false, autoEnvironmentLabels: true, confirmPreviewEdits: true, warnIncompatibleEnvironmentConversion: true, visibleFilterGroups: ["blockType", "location", "file", "properties"], referenceLinkModifier: "ctrl", spellCheckMode: "auto", spellCheckLanguage: "en-US", spellCheckActiveLanguages: ["en-US"], maximize: true, restoreProject: false,
+  autoSave: "off", autoSaveDelaySeconds: 3, hideBuildArtifacts: true, documentWordCompletion: true, autoPairSymbols: true, mathPreviewOnHover: false, showPreviewMetrics: false, autoEnvironmentLabels: true, confirmPreviewEdits: true, warnIncompatibleEnvironmentConversion: true, visibleFilterGroups: ["blockType", "location", "file", "properties"], referenceLinkModifier: "ctrl", spellCheckMode: "auto", spellCheckLanguage: "en-US", spellCheckActiveLanguages: ["en-US"], maximize: true, restoreProject: false,
   lastProject: "", engine: "pdflatex", keybindings: {}, environments: [], previewDirectives: defaultPreviewDirectives, layout: {}, sidePanelDisplay: "overlay", wheelAcceleration: defaultWheelAccelerationPreferences, images: defaultImagePreferences, tables: defaultTablePreferences, history: defaultHistoryPreferences
 };
 // Project overrides inherit from global preferences; machine-wide paths and workspace UI stay global.
-export const projectPreferenceKeys: PreferenceKey[] = ["fontSize", "tabSize", "wordWrap", "autoSave", "autoPairSymbols", "mathPreviewOnHover", "confirmPreviewEdits", "engine", "environments", "previewDirectives", "layout", "images", "tables", "history", "keybindings"];
+export const projectPreferenceKeys: PreferenceKey[] = ["fontSize", "tabSize", "wordWrap", "autoSave", "autoSaveDelaySeconds", "autoPairSymbols", "mathPreviewOnHover", "confirmPreviewEdits", "engine", "environments", "previewDirectives", "layout", "images", "tables", "history", "keybindings"];
 export interface SettingsSnapshot { global: Partial<PreferenceValues>; project: Partial<PreferenceValues>; toolchain?: LatexToolchain }
+export function validLocalizedNames(value: unknown): boolean {
+  return value === undefined || !!value && typeof value === "object" && !Array.isArray(value)
+    && Object.entries(value).every(([locale, name]) => !!locale.trim() && typeof name === "string");
+}
 export function validPreference(key: string, value: unknown): boolean {
   switch (key) {
-    case "locale": return ["en", "ja", "zh-CN", "zh-TW", "ko", "fr"].includes(String(value));
+    case "locale": case "blockNameLanguage": return ["en", "ja", "zh-CN", "zh-TW", "ko", "fr"].includes(String(value));
+    case "fixedBlockNameLanguage": return typeof value === "boolean";
     case "theme": return typeof value === "string" && /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/.test(value);
     case "engine": return ["pdflatex", "xelatex", "lualatex"].includes(String(value));
     case "spellCheckMode": return value === "auto" || value === "manual" || value === "disabled";
@@ -225,6 +235,7 @@ export function validPreference(key: string, value: unknown): boolean {
     case "fontSize": return typeof value === "number" && Number.isInteger(value) && value >= 10 && value <= 32;
     case "tabSize": return typeof value === "number" && [2, 4, 8].includes(value);
     case "autoSave": return value === "off" || value === "afterDelay";
+    case "autoSaveDelaySeconds": return typeof value === "number" && Number.isInteger(value) && value >= 1 && value <= 3600;
     case "wordWrap": case "hideBuildArtifacts": case "documentWordCompletion": case "autoPairSymbols": case "mathPreviewOnHover": case "showPreviewMetrics": case "autoEnvironmentLabels": case "confirmPreviewEdits": case "warnIncompatibleEnvironmentConversion": case "maximize": case "restoreProject": case "aiIncludeCurrentFile": return typeof value === "boolean";
     case "aiDefaultMode": return value === "chat" || value === "codex";
     case "aiPermissionMode": return value === "ask" || value === "auto" || value === "full";
@@ -238,7 +249,8 @@ export function validPreference(key: string, value: unknown): boolean {
     case "environments": return Array.isArray(value) && value.every((entry) => {
       if (!entry || typeof entry !== "object") return false;
       const e = entry as Record<string, unknown>;
-      return typeof e.id === "string" && typeof e.enabled === "boolean" && typeof e.labelKey === "string" && typeof e.family === "string" && !!e.match && !!e.style && !!e.behavior;
+      return typeof e.id === "string" && typeof e.enabled === "boolean" && typeof e.labelKey === "string" && typeof e.family === "string" && !!e.match && !!e.style && !!e.behavior
+        && validLocalizedNames(e.labels);
     });
     case "previewDirectives": return Array.isArray(value) && value.length <= 256 && value.every((entry) => {
       if (!entry || typeof entry !== "object") return false;
@@ -246,6 +258,7 @@ export function validPreference(key: string, value: unknown): boolean {
       return typeof item.id === "string" && /^[a-z][a-z0-9-]{0,63}$/.test(item.id)
         && typeof item.builtIn === "boolean" && typeof item.enabled === "boolean"
         && typeof item.label === "string" && item.label.length <= 100
+        && validLocalizedNames(item.labels)
         && ["divider", "placeholder", "spacer"].includes(String(item.display))
         && (item.placement === undefined || ["nested", "trailing", "independent"].includes(item.placement))
         && typeof item.color === "string" && /^#[0-9a-fA-F]{6}$/.test(item.color)

@@ -169,9 +169,6 @@
   "sidebar.collapse": "Réduire",
   "sidebar.refresh": "Actualiser",
   "sidebar.fileSearch": "Filtrer les fichiers…",
-  "sidebar.searchPlaceholder": "Rechercher…",
-  "placeholder.relationsTitle": "Relations entre blocs",
-  "placeholder.relations": "Le graphe des relations sera disponible dans une prochaine version.",
   "placeholder.pdfTitle": "Aperçu PDF",
   "placeholder.pdf": "Le PDF compilé apparaîtra ici.",
   "editor.noFile": "Ouvrez un fichier depuis l’arborescence",
@@ -242,7 +239,7 @@
   "settings.resetAll": "Restaurer les valeurs par défaut",
   "settings.autoSave": "Enregistrement automatique",
   "settings.off": "Désactivé",
-  "settings.afterDelay": "Après un délai",
+  "settings.afterDelay": "Après une pause de saisie",
   "settings.fontSize": "Taille de police",
   "settings.wordWrap": "Retour automatique à la ligne",
   "settings.tabSize": "Taille des tabulations",
@@ -405,5 +402,5 @@
   "settings.aiSkillSource.built-in": "Intégrée",
   "settings.aiSkillSource.custom": "Personnalisée",
   "settings.aiSkillSource.customized": "Modifiée",
-  "app.version": "v{{version}}"
+  "settings.autoSaveDelaySeconds": "Délai de sauvegarde automatique (secondes)"
 }

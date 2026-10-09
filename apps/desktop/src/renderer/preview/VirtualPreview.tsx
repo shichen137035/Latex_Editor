@@ -1,4 +1,6 @@
 import { Fragment, Profiler, useCallback, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore, type ReactNode, type RefObject } from "react";
+import { flushSync } from "react-dom";
+import { capturePreviewScrollAnchor, restorePreviewScrollAnchor, type PreviewScrollAnchor } from "./scrollAnchor.js";
 
 export interface VirtualPreviewItem {
   id: string;
@@ -34,6 +36,8 @@ export class VirtualPreviewController {
   #heightHits = 0;
   #warnedRows = new Set<string>();
   #warnedMounted = false;
+  #anchor: PreviewScrollAnchor | undefined;
+  readonly #pendingHeights = new Map<string, number>();
 
   subscribe = (listener: () => void): (() => void) => {
     this.#listeners.add(listener);
@@ -50,15 +54,34 @@ export class VirtualPreviewController {
     for (const listener of this.#listeners) listener();
   };
   #onScroll = () => {
+    if (this.root) {
+      restorePreviewScrollAnchor(this.root, this.#anchor);
+      this.#anchor = capturePreviewScrollAnchor(this.root);
+    }
+    this.#schedule();
+  };
+  #schedule = () => {
     if (this.#frame) return;
-    this.#frame = requestAnimationFrame(() => { this.#frame = 0; this.#emit(); });
+    this.#frame = requestAnimationFrame(() => {
+      this.#frame = 0;
+      if (this.#pendingHeights.size) {
+        for (const [id, height] of this.#pendingHeights) this.heights.set(id, height);
+        this.#pendingHeights.clear(); this.#heightRevision++;
+      }
+      // Batch geometry commits; compensate the resulting DOM shift once.
+      flushSync(this.#emit);
+      if (this.root) {
+        restorePreviewScrollAnchor(this.root, this.#anchor);
+        this.#anchor = capturePreviewScrollAnchor(this.root);
+      }
+    });
   };
   connect(root: HTMLElement): void {
     if (this.root === root) return;
     this.disconnect();
     this.root = root;
     root.addEventListener("scroll", this.#onScroll, { passive: true });
-    this.#rootObserver = new ResizeObserver(this.#onScroll);
+    this.#rootObserver = new ResizeObserver(this.#schedule);
     this.#rootObserver.observe(root);
     this.#emit();
   }
@@ -67,9 +90,10 @@ export class VirtualPreviewController {
     this.#rootObserver?.disconnect();
     if (this.#frame) cancelAnimationFrame(this.#frame);
     this.#frame = 0;
+    this.#pendingHeights.clear(); this.#anchor = undefined;
     this.root = null;
   }
-  reset(): void { this.heights.clear(); this.mounted.clear(); this.#heightLookups = 0; this.#heightHits = 0; this.#warnedRows.clear(); this.#warnedMounted = false; this.#heightRevision += 1; this.#emit(); }
+  reset(): void { this.heights.clear(); this.mounted.clear(); this.#pendingHeights.clear(); this.#anchor = undefined; this.#heightLookups = 0; this.#heightHits = 0; this.#warnedRows.clear(); this.#warnedMounted = false; this.#heightRevision += 1; this.#emit(); }
   heightFor(id: string, estimate: number): number {
     this.#heightLookups += 1;
     const cached = this.heights.get(id);
@@ -85,13 +109,12 @@ export class VirtualPreviewController {
   }
   measure(id: string, height: number, element: HTMLElement, estimate: number): void {
     if (!Number.isFinite(height) || height < 1) return;
-    const old = this.heights.get(id) ?? estimate;
-    if (Math.abs(old - height) < 1) return;
-    this.heights.set(id, height);
-    this.#heightRevision += 1;
-    const root = this.root;
-    if (root && element.getBoundingClientRect().bottom < root.getBoundingClientRect().top) root.scrollTop += height - old;
-    this.#emit();
+    const cached = this.#pendingHeights.get(id) ?? this.heights.get(id);
+    const old = cached ?? estimate;
+    if (cached !== undefined && Math.abs(old - height) < 1) return;
+    if (!element.isConnected) return;
+    this.#pendingHeights.set(id, height);
+    this.#schedule();
   }
   mountedCount(): number { return this.mounted.size; }
 }
@@ -102,16 +125,24 @@ function MeasuredRow({ item, controller, children, as = "div", ordinal }: { item
     const element = ref.current;
     if (!element) return;
     controller.mounted.add(item.id);
-    const measure = () => controller.measure(item.id, element.getBoundingClientRect().height, element, item.estimatedHeight);
+    const measure = () => {
+      if (!element.isConnected) return;
+      const pending = !!element.querySelector(".figure-preview-placeholder.loading") || Array.from(element.querySelectorAll("img")).some(image => !image.complete)
+        || Array.from(element.querySelectorAll(".figure-preview-image-choice canvas")).some(canvas => !canvas.hasAttribute("width"));
+      const cached = controller.heights.get(item.id);
+      // A remounted media row must not collapse to its loading placeholder.
+      const reserved = pending && cached !== undefined ? `${cached}px` : "";
+      if (element.style.minHeight !== reserved) element.style.minHeight = reserved;
+      controller.measure(item.id, element.getBoundingClientRect().height, element, item.estimatedHeight);
+    };
     measure();
-    let frame = 0;
-    // External-store notifications synchronously render React. Doing that
-    // inside ResizeObserver can resize its own targets in the same delivery.
-    const observer = new ResizeObserver(() => {
-      if (!frame) frame = requestAnimationFrame(() => { frame = 0; if (element.isConnected) measure(); });
-    });
+    // Queue measurements without rendering inside ResizeObserver delivery.
+    const observer = new ResizeObserver(measure);
+    const mutations = new MutationObserver(measure);
     observer.observe(element);
-    return () => { observer.disconnect(); if (frame) cancelAnimationFrame(frame); controller.mounted.delete(item.id); };
+    mutations.observe(element, { childList: true, subtree: true });
+    element.addEventListener("load", measure, true); element.addEventListener("error", measure, true);
+    return () => { observer.disconnect(); mutations.disconnect(); element.removeEventListener("load", measure, true); element.removeEventListener("error", measure, true); controller.mounted.delete(item.id); };
   }, [controller, item.id]);
   return as === "li"
     ? <li className="preview-virtual-row" ref={ref as RefObject<HTMLLIElement>} data-virtual-node-id={item.id} value={ordinal}>{children}</li>

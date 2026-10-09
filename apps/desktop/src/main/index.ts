@@ -32,6 +32,7 @@ import { ProjectHistoryService } from "./project-history.js";
 import { registerHistoryIpc } from "./history-ipc.js";
 import { installRendererSecurity, resolveRendererTarget } from "./renderer-security.js";
 import { translateNative } from "./i18n.js";
+import { readAppInfo } from "./app-info.js";
 
 let context: DesktopContext | undefined;
 let settings: SettingsRepository;
@@ -47,8 +48,7 @@ app.setAppUserModelId("com.texweave.editor");
 
 
 async function createContext(): Promise<DesktopContext> {
-  const packageInfo = JSON.parse(await readFile(resolve(__dirname, "../../../../package.json"), "utf8")) as { version?: unknown };
-  const appVersion = typeof packageInfo.version === "string" ? packageInfo.version : app.getVersion();
+  const { version: appVersion } = await readAppInfo();
   // Backend packages are ESM; dynamic import keeps this Electron entry CommonJS-compatible.
   const [{ ProjectService, createProjectBlockServices, WorkingDocumentFiles, ProjectWorkingDocumentService }, { systemClock }, { NodeProjectEnvironment, NodeProjectFileService }, { SQLiteProjectRegistry }, { FileResourceCatalog }, { LatexmkCompilerService }] = await Promise.all([
     import("@latex-editor/application"),
@@ -118,7 +118,7 @@ async function createContext(): Promise<DesktopContext> {
   await spellcheck.initialize();
   spellcheck.configure(settings.global.spellCheckMode ?? "auto", settings.global.spellCheckLanguage ?? "en-US");
   await installation.recordComponent({ id: "core", version: appVersion, ownership: "installed-by-texweave", path: app.getAppPath() });
-  const images = new ProjectImageService(files);
+  const images = new ProjectImageService(files, { reclamation: cacheReclamation });
   const references = new ReferenceLibraryRepository(app.getPath("userData"));
   await references.initialize();
   const ai = new CodexAppServer({
@@ -178,6 +178,7 @@ async function showUnsavedDialog(event: IpcMainInvokeEvent, labels: UnsavedDialo
 }
 
 function registerIpcHandlers(): void {
+  handleIpc(desktopInvoke.app.info, () => readAppInfo());
   onIpc(desktopEvents.toMain.closeReady, (event) => {
     const window = BrowserWindow.fromWebContents(event.sender);
     const state = window && closeStates.get(window.id);

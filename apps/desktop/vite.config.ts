@@ -1,16 +1,11 @@
 import react from "@vitejs/plugin-react";
 import { defineConfig } from "vite";
-import { readFileSync } from "node:fs";
-import { fileURLToPath } from "node:url";
-
-const rootPackage = JSON.parse(readFileSync(fileURLToPath(new URL("../../package.json", import.meta.url)), "utf8")) as { version: string };
 
 export default defineConfig(({ command }) => ({
   root: "apps/desktop/src/renderer",
   // Relative asset URLs work both with Vite's dev server and Electron's
   // production file:// load, where absolute /assets URLs resolve incorrectly.
   base: "./",
-  define: { __APP_VERSION__: JSON.stringify(rootPackage.version) },
   plugins: [react(), {
     name: "texweave-content-security-policy",
     transformIndexHtml(html) {

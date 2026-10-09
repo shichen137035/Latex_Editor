@@ -8,6 +8,7 @@ type ConfigEntry = {
   builtIn?: boolean;
   labelKey?: string;
   label?: string;
+  labels?: Record<string, string>;
   family: EnvironmentDefinition["family"];
   match: EnvironmentMatchRule;
   style?: Partial<EnvironmentStyle>;
@@ -35,6 +36,7 @@ function loadConfiguredDefaults(): EnvironmentDefinition[] {
       match: { ...entry.match },
       labelKey: entry.labelKey ?? `environment.${entry.id}`,
       ...(entry.label ? { label: entry.label } : {}),
+      ...(entry.labels ? { labels: { ...entry.labels } } : {}),
       family: entry.family,
       style: { ...configuration.defaultStyle, ...configuration.familyStyles[entry.family], ...entry.style },
       behavior: { ...configuration.defaultBehavior, ...entry.behavior }
@@ -62,6 +64,7 @@ export function includeNewBuiltInEnvironments(definitions: EnvironmentDefinition
 export function cloneEnvironmentDefinitions(definitions: EnvironmentDefinition[] = DEFAULT_ENVIRONMENTS): EnvironmentDefinition[] {
   return definitions.map((definition) => ({
     ...definition,
+    ...(definition.labels ? { labels: { ...definition.labels } } : {}),
     match: { ...definition.match },
     style: { ...definition.style },
     behavior: {

@@ -55,11 +55,7 @@ export class WorkingDocumentFiles implements DocumentStructureFilePort {
     catch (error) { if (error instanceof AppError && error.code === "FILE_NOT_FOUND") return undefined; throw error; }
   }
   async savedGraph(projectId: string): Promise<BlockGraphManager> {
-    let content = await this.savedMetadata(projectId);
-    if (content === undefined) {
-      try { content = (await this.disk.readText(projectId, ".texweave/block-graph.json")).content; }
-      catch (error) { if (!(error instanceof AppError) || error.code !== "FILE_NOT_FOUND") throw error; }
-    }
+    const content = await this.savedMetadata(projectId);
     return content === undefined ? BlockGraphManager.empty() : BlockGraphManager.fromUnknown(JSON.parse(content));
   }
 }

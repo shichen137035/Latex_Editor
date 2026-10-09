@@ -61,13 +61,31 @@ async function run() {
     return { ...entry, style, enabled: true, builtIn: true, labelKey: `environment.${entry.id}`, behavior: { ...catalog.defaultBehavior, ...entry.behavior } };
   });
   await evaluate(`window.latexEditor.settings.set("environments", ${JSON.stringify(saved)}, ${id})`);
-  const source = "\\documentclass{article}\n\\begin{document}\n\\begin{assumption}[Regularity condition]\\label{ass:one}A short condition.\\end{assumption}\n\\section{Model and Residual Structure}\\label{sec:model}\nA paragraph.\n\\subsection{Projection Pursuit Autoregressive Model}\nAnother paragraph.\n\\end{document}";
+  const longLabel = 'sec:' + 'model-residual-'.repeat(40);
+  const longCitation = Array.from({ length: 18 }, (_, index) => `author${index}2026${'longkey'.repeat(6)}`).join(',');
+  const source = `\\documentclass{article}\n\\begin{document}\n\\begin{assumption}[Regularity condition]\\label{ass:one}A short condition.\\end{assumption}\n\\section{Model and Residual Structure}\\label{${longLabel}}\nA paragraph. See \\ref{${longLabel}} and \\cite{${longCitation}}.\n\\subsection{Projection Pursuit Autoregressive Model}\nAnother paragraph.\n\\end{document}`;
   await evaluate(`window.latexEditor.files.write(${id}, "main.tex", ${JSON.stringify(source)})`);
   page.reload();
   await until('!!document.querySelector(".directory-project-row")', "project list");
   await evaluate('document.querySelector(".directory-project-row").click()');
   await until(`!!document.querySelector(${JSON.stringify(titleSelector('subsection'))}) && !!document.querySelector(${JSON.stringify(titleSelector('assumption'))})`, "headings");
   page.focus();
+  async function checkTruncation() {
+    const tokens = await evaluate(`Array.from(document.querySelectorAll('.structured-preview .preview-citation, .structured-preview .preview-reference, .structured-preview [data-environment="section"] > .preview-block-header .preview-block-label')).map(element => { const style = getComputedStyle(element), rect = element.getBoundingClientRect(), region = element.closest('.preview-content-region, .preview-block-header').getBoundingClientRect(); return { clipped: element.scrollWidth > element.clientWidth, ellipsis: style.textOverflow, nowrap: style.whiteSpace, contained: rect.left >= region.left - 1 && rect.right <= region.right + 1, text: element.textContent, title: element.title }; })`);
+    assert.equal(tokens.length, 3);
+    for (const token of tokens) { assert.equal(token.ellipsis, 'ellipsis'); assert.equal(token.nowrap, 'nowrap'); assert.ok(token.clipped); assert.ok(token.contained); assert.ok(token.title.includes(token.text.replace(/^\[|\]$/g, ''))); }
+    assert.ok(await evaluate(`(() => { const preview = document.querySelector('.structured-preview'); return preview.scrollWidth <= preview.clientWidth + 1; })()`));
+  }
+  await checkTruncation();
+  page.unmaximize(); page.setContentSize(960, 720);
+  await delay(250);
+  await checkTruncation();
+  await evaluate(`document.querySelector('.structured-preview [data-environment="section"] > .preview-block-header .preview-block-label').click()`);
+  await until('!!document.querySelector(".preview-block-label-editor")', 'truncated label is still editable');
+  assert.equal(await evaluate('document.querySelector(".preview-block-label-editor").value'), longLabel);
+  await press('ESC');
+  page.maximize(); await delay(250);
+  console.log('PASS long labels, references and citations use ellipsis without horizontal overflow at wide and narrow sizes; full labels remain editable');
   const section = await typography(titleSelector('section'));
   assert.equal(section.size, '24px'); assert.equal(section.weight, '600');
   assert.ok(section.family.includes('Space Grotesk')); assert.equal(section.spacing, '0.6px');

@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { AppError, inferBlockKind, type CreateSemanticBlockInput, type ParsedBlockDescriptor } from "@latex-editor/contracts";
 import { ProjectBlockGraphService, type BlockGraphFilePort } from "../../packages/application/src/block-graph-service.js";
 import { BlockGraphManager } from "../../packages/editor-core/src/block-graph.js";
+import { WorkingDocumentFiles } from "../../packages/application/src/working-documents.js";
 
 function createGraph(...ids: string[]): BlockGraphManager {
   const graph = BlockGraphManager.empty();
@@ -308,9 +309,9 @@ describe("project block graph persistence", () => {
     expect(files.contents.get("project:.texweave/structure.json")).toContain('"version": 2');
   });
 
-  it("keeps structural undo separate from editor undo and migrates the legacy metadata path", async () => {
+  it("keeps structural undo separate from editor undo in the canonical metadata file", async () => {
     const files = new MemoryGraphFiles();
-    files.contents.set("project:.texweave/block-graph.json", JSON.stringify({ version: 1, blocks: [{ id: "A", type: "definition" }, { id: "B", type: "theorem" }], dependencies: [], structuralParents: [] }));
+    files.contents.set("project:.texweave/structure.json", JSON.stringify(createGraph("A", "B").toPersistenceSnapshot()));
     const service = new ProjectBlockGraphService(files, { next: () => "unused" });
     await service.addDependency("project", "A", "B");
     expect(service.historyState("project")).toEqual({ canUndo: true, canRedo: false });
@@ -320,6 +321,15 @@ describe("project block graph persistence", () => {
     expect(service.historyState("project")).toEqual({ canUndo: false, canRedo: true });
     expect((await service.redo("project")).dependencies).toEqual([{ from: "A", to: "B" }]);
     expect(files.contents.has("project:.texweave/structure.json")).toBe(true);
+  });
+
+  it("does not resurrect obsolete graph metadata in saved or working document views", async () => {
+    const files = new MemoryGraphFiles();
+    files.contents.set("project:.texweave/block-graph.json", JSON.stringify(createGraph("obsolete").toPersistenceSnapshot()));
+    const service = new ProjectBlockGraphService(files, { next: () => "unused" });
+    expect((await service.snapshot("project")).blocks).toEqual([]);
+    const working = new WorkingDocumentFiles({ readText: files.readText.bind(files), writeText: files.writeText.bind(files), listTree: async () => [] });
+    expect((await working.savedGraph("project")).toSnapshot().blocks).toEqual([]);
   });
 
   it("persists parser reconciliation without adding it to structural undo history", async () => {

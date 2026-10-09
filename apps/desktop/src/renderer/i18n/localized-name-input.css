@@ -1,0 +1,6 @@
+.localized-name-field { min-width: 0; display: grid; gap: 7px; align-content: start; }
+.localized-name-field > span { color: var(--color-text-secondary, #6b879e); font-size: 11px; font-weight: 600; }
+.localized-name-control { display: grid; grid-template-columns: minmax(0, 1fr) minmax(110px, 35%); gap: 8px; }
+.localized-name-control input, .localized-name-control select { width: 100%; min-width: 0; }
+.localized-name-field > small { color: var(--color-text-secondary, #6b879e); font-size: 11px; line-height: 1.5; }
+@media (max-width: 700px) { .localized-name-control { grid-template-columns: minmax(0, 1fr); } }

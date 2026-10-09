@@ -152,6 +152,18 @@ async function run() {
   await evaluate('document.querySelector(".preview-figure img").click()');
   assert.equal(await evaluate('!!document.querySelector(".image-insert-dialog, .preview-local-editor")'), false);
   assert.ok(await evaluate('Math.abs(parseFloat(getComputedStyle(document.querySelector(".preview-figure img")).maxHeight) - innerHeight * .45) < 1'));
+  await evaluate('document.querySelectorAll(".preview-figure img")[1].click()');
+  await until('document.querySelector(".figure-inspector-fields input")?.value === "figures/new.svg"', 'select the second image in inspector');
+  await evaluate('document.querySelectorAll(".figure-inspector-tabs button")[1].click()');
+  const figureDraft = await evaluate('document.querySelector(".figure-inspector > textarea").value');
+  const singleImage = figureDraft.split('\n').filter(line => !line.includes('figures/new.svg')).join('\n');
+  await evaluate(`(() => { const input = document.querySelector('.figure-inspector > textarea'); Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value').set.call(input, ${JSON.stringify(singleImage)}); input.dispatchEvent(new Event('input', {bubbles:true})); })()`);
+  await until('document.querySelectorAll(".preview-figure img").length === 1', 'remove the selected image in advanced source');
+  await evaluate('document.querySelector(".figure-inspector-tabs button").click()');
+  await until('document.querySelector(".figure-inspector-fields input")?.value === "figures/old.svg"', 'inspector clamps selection to the remaining image');
+  await evaluate(`(() => { const input = document.querySelector('.figure-inspector-fields input'); Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set.call(input, 'figures/new.svg'); input.dispatchEvent(new Event('input', {bubbles:true})); })()`);
+  await until('document.querySelector(".preview-figure img")?.alt === "figures/new.svg"', 'property edit uses the clamped image index');
+  console.log('PASS inspector remains editable after removing the previously selected image');
   configuredFigure.behavior.imageClickAction = 'source';
   await evaluate(`window.latexEditor.settings.set("environments", ${JSON.stringify(definitions)}, ${id})`);
   await reloadProject();

@@ -5,6 +5,7 @@ import type { AIChangeSet, BlockGraphSnapshot, BlockId, BlockTextEdit, CompileRe
 import toolbarActions from "../resources/toolbar-actions.json" with { type: "json" };
 import { t, type MessageKey } from "../i18n/index.js";
 import { PreviewPane } from "../preview/PreviewPane.js";
+import { releaseFigurePreviewCache } from "../figure/FigurePreview.js";
 import { createPreviewTransaction, type PreviewSourceTransaction, type PreviewTextChange } from "../preview/incremental.js";
 import { SettingsDialog, type SettingsSection } from "../settings/SettingsDialog.js";
 import { useSettings, settings } from "../settings/service.js";
@@ -62,7 +63,7 @@ import { useWorkingDocuments } from "./workingDocuments.js";
 import { OutlineList } from "./OutlineList.js";
 import { createUserBlockController, type BoundaryRepairPrompt } from "./userBlockController.js";
 
-type SidebarMode = "files" | "search" | "library" | "ai" | "history" | "relations" | "settings" | "help";
+type SidebarMode = "files" | "search" | "library" | "ai" | "history" | "relations" | "help";
 type BottomTab = "problems" | "output" | "compileLog";
 type MenuName = "file" | "edit" | "view" | "history" | "projects";
 
@@ -74,6 +75,7 @@ type BlockCreationAvailability = { kind: "none" | "checking" | "valid" | "repair
 
 
 export function Workbench({ project, projects, environments, onHome, onSwitch, onOpenLibrary }: { project: Project; projects: Project[]; environments: EnvironmentDefinition[]; onHome(): void; onSwitch(project: Project): void; onOpenLibrary(): void }) {
+  useEffect(() => () => releaseFigurePreviewCache(project.id), [project.id]);
   const store = useSettings();
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [settingsInitial, setSettingsInitial] = useState<SettingsSection>("general");
@@ -552,9 +554,9 @@ export function Workbench({ project, projects, environments, onHome, onSwitch, o
 
   useEffect(() => {
     if (store.get("autoSave") !== "afterDelay" || !tabs.some((tab) => tab.dirty)) return;
-    const timer = setTimeout(() => { void saveTabs(true).catch(() => undefined); }, 1200);
+    const timer = setTimeout(() => { void saveTabs(true).catch(() => undefined); }, store.get("autoSaveDelaySeconds") * 1000);
     return () => clearTimeout(timer);
-  }, [tabs, store.get("autoSave")]);
+  }, [tabs, store.get("autoSave"), store.get("autoSaveDelaySeconds")]);
   useEffect(() => {
     const registrations = [
       commands.register("edit.undo", { execute: () => replayHistory("undo"), when: documentHistoryFocused }),
@@ -906,7 +908,7 @@ export function Workbench({ project, projects, environments, onHome, onSwitch, o
     resizeCleanup.current = cleanup;
   };
 
-  const selectActivity = (mode: SidebarMode) => { if (mode === "settings") { commands.execute("settings.open"); return; } if (mode === "relations") setInspectorBlock(undefined); if (sidebarMode === mode && layout.sidebarVisible) setLayout((value) => ({ ...value, sidebarVisible: false })); else { setSidebarMode(mode); setLayout((value) => ({ ...value, sidebarVisible: true })); } };
+  const selectActivity = (mode: SidebarMode) => { if (mode === "relations") setInspectorBlock(undefined); if (sidebarMode === mode && layout.sidebarVisible) setLayout((value) => ({ ...value, sidebarVisible: false })); else { setSidebarMode(mode); setLayout((value) => ({ ...value, sidebarVisible: true })); } };
   const configureSpell = async (mode: "auto" | "manual" | "disabled", language: string) => {
     if (mode === "manual") await settings.set("spellCheckLanguage", language);
     await settings.set("spellCheckMode", mode);
@@ -998,7 +1000,7 @@ export function Workbench({ project, projects, environments, onHome, onSwitch, o
     <div className="workbench-body">
       <aside className="activity-bar">
         <div>{(["files", "search", "library", "ai", "history", "relations"] as const).map((mode) => <button key={mode} className={layout.sidebarVisible && sidebarMode === mode ? "active" : ""} title={t(`activity.${mode}` as MessageKey)} onClick={() => selectActivity(mode)}><Icon name={mode}/><span>{t(`activity.${mode}` as MessageKey)}</span></button>)}</div>
-        <div><button className={layout.sidebarVisible && sidebarMode === "settings" ? "active" : ""} title={t("activity.settings")} onClick={() => selectActivity("settings")}><Icon name="settings"/><span>{t("activity.settings")}</span></button><button className={layout.sidebarVisible && sidebarMode === "help" ? "active" : ""} title={t("activity.help")} onClick={() => selectActivity("help")}><Icon name="help"/><span>{t("activity.help")}</span></button></div>
+        <div><button className={settingsOpen ? "active" : ""} title={t("activity.settings")} onClick={() => commands.execute("settings.open")}><Icon name="settings"/><span>{t("activity.settings")}</span></button><button className={layout.sidebarVisible && sidebarMode === "help" ? "active" : ""} title={t("activity.help")} onClick={() => selectActivity("help")}><Icon name="help"/><span>{t("activity.help")}</span></button></div>
       </aside>
       {layout.sidebarVisible && <><aside className="sidebar" style={{ width: layout.sidebarWidth }}>
         <div className="sidebar-heading">
@@ -1015,8 +1017,7 @@ export function Workbench({ project, projects, environments, onHome, onSwitch, o
         {sidebarMode === "library" && <ReferenceLibraryPanel key={project.id} project={project} documents={searchDocuments} canCite={project.writable && !!activePath && /\.tex$/i.test(activePath)} onOpenReference={(path, offset) => void navigateTo(path, { offset })} onWriteBibliography={writeLinkedBibliography} onOpenLibrary={onOpenLibrary} onCite={citeReference}/>}
         {sidebarMode === "ai" && <AIView projectId={project.id} projectRoot={project.canonicalPath} mathContext={mathContext} overrides={tabs.map(({ path, content }) => ({ path, content }))} {...(activeTab ? { currentFile: activeTab.path, currentFileContent: activeTab.content } : {})} {...(creationSelection && activeTab && creationSelection.fileId === activeTab.path ? { selectedText: activeTab.content.slice(creationSelection.start, creationSelection.end) } : {})} onApplyChanges={applyAIChanges} onUndoChanges={undoAIChanges} onViewChanges={viewAIChanges} onOpenFile={(path, line) => { void navigateTo(path, line ? { line, column: 1 } : {}).catch((reason: unknown) => setBlockNotice(String(reason))); }} onReviewChanges={setAiReviewChanges} onOpenSettings={() => { setSettingsInitial("ai"); setSettingsOpen(true); }}/>}
         {sidebarMode === "history" && <ProjectHistoryPanel projectId={project.id} onBeforeCapture={() => saveTabs(true)} onRestored={refreshAfterHistoryRestore} onOpenSettings={() => { setSettingsInitial("history"); setSettingsOpen(true); }}/>}
-        {sidebarMode === "settings" && <div className="generic-sidebar"><p>{t("placeholder.settings")}</p><dl><div><dt>{t("settings.language")}</dt><dd>{t("settings.english")}</dd></div><div><dt>{t("settings.theme")}</dt><dd>{t("settings.light")}</dd></div></dl></div>}
-        {sidebarMode === "help" && <div className="generic-sidebar"><p>{t("placeholder.help")}</p></div>}
+        {sidebarMode === "help" && <div className="generic-sidebar help-sidebar"><button onClick={() => { setSettingsInitial("shortcuts"); setSettingsOpen(true); }}>{t("settings.manager.shortcuts")}</button><button onClick={() => commands.execute("settings.open")}>{t("activity.settings")}</button></div>}
       </aside><div className="vertical-resizer" onPointerDown={(event) => startResize("sidebar", event)}/></>}
       <main className="workspace"><div className="workspace-main">{layout.mode === "single" ? singlePane : <><div className="split-toolbar-row">{splitToolbar}</div><div className="split-layout"><div style={{ width: `${layout.splitRatio}%` }}>{splitLeftContent}</div><div className="split-resizer" onPointerDown={(event) => startResize("split", event)}/><div style={{ width: `${100 - layout.splitRatio}%` }}>{secondaryContent}</div></div></>}</div>{bottomVisible && <><div className="bottom-resizer" onPointerDown={(event) => startResize("bottom", event)}/><section className="bottom-panel" style={{ height: layout.bottomPanelHeight }}><div className="bottom-tabs">{(["problems", "output", "compileLog"] as const).map((tab) => <button className={bottomTab === tab ? "active" : ""} key={tab} onClick={() => setBottomTab(tab)}>{t(`panel.${tab}` as MessageKey)}{tab === "problems" && diagnostics.length > 0 && <span>{diagnostics.length}</span>}</button>)}{bottomTab === "compileLog" && <CompileResultPicker results={compileResults} selected={compileResult} onSelect={setCompileResult}/>}<button className="panel-close" onClick={() => setBottomVisible(false)} title={t("common.close")}><Icon name="close"/></button></div><div className="panel-content">{bottomTab === "problems" && (diagnostics.length ? <div className="diagnostic-groups">{diagnosticGroups.map(([category, items]) => <section className="diagnostic-group" key={category}><h3>{category} <span>{items.length}</span></h3>{items.map((diagnostic, index) => <DiagnosticRow diagnostic={diagnostic} onOpen={() => void openDiagnostic(diagnostic)} key={`${diagnostic.message}-${index}`}/>)}</section>)}</div> : <p>{t("panel.noProblems")}</p>)}{bottomTab === "compileLog" && (compileResult ? <><div className="compile-log-status" aria-live="polite">{compileLogView?.compilationId === compileResult.compilationId && compileLogView.loading ? t("panel.loadingLog") : compileLogView?.compilationId === compileResult.compilationId && compileLogView.error ? `${t("panel.logUnavailable")} ${compileLogView.error}` : compileResult.logPath ? compileResult.logPath : ""}</div><pre>{compileLogView?.compilationId === compileResult.compilationId ? compileLogView.text : `${compileResult.stdoutTail}\n${compileResult.stderrTail}`}</pre></> : <p>{t("panel.noOutput")}</p>)}{bottomTab === "output" && <p>{t("panel.noOutput")}</p>}</div></section></>}</main>
       {figureSelection ? <FigureInspector selection={figureSelection} onClose={() => setFigureSelection(undefined)} onLocate={(imageIndex) => setImageDialog({ kind: "replace", selection: figureSelection, imageIndex })} onChange={(replacement) => {

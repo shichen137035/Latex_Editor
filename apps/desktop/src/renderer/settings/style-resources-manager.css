@@ -44,7 +44,7 @@
 .style-resource-viewer-loading span { width: 22px; height: 22px; border: 2px solid var(--color-border); border-top-color: var(--color-primary); border-radius: 50%; animation: style-resource-spin .7s linear infinite; }
 @keyframes style-resource-spin { to { transform: rotate(360deg); } }
 .style-resource-empty-files { padding: 14px; border: 1px dashed var(--color-border); border-radius: 9px; color: var(--color-text-secondary); }
-.settings-manager-style-resources .online-resource-placeholder { margin-top: 18px; }
+
 
 @media (max-width: 950px) {
   .style-resource-actions { gap: 5px; }

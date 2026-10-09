@@ -1,21 +1,9 @@
+import { latexCommandField, maskLatexComments, readLatexGroup } from "@latex-editor/editor-core/latex-source";
 import type { TableBorder, TableCell, TableColumn, TableObject, TableRow, TableSourceRange, TabularObject } from "./model.js";
 
 function balancedArgument(source: string, opening: number): { value: string; range: TableSourceRange; end: number } | undefined {
-  if (source[opening] !== "{") return undefined;
-  let depth = 0;
-  for (let index = opening; index < source.length; index += 1) {
-    const character = source[index];
-    if (character === "{" && source[index - 1] !== "\\") depth += 1;
-    else if (character === "}" && source[index - 1] !== "\\") {
-      depth -= 1;
-      if (depth === 0) return { value: source.slice(opening + 1, index), range: { start: opening + 1, end: index }, end: index + 1 };
-    }
-  }
-  return undefined;
-}
-
-function commandValue(source: string, command: string): string | undefined {
-  return new RegExp(`\\\\${command}\\s*\\{([^{}]*)\\}`).exec(source)?.[1]?.trim();
+  const group = readLatexGroup(source, opening);
+  return group ? { value: group.value, range: { start: group.start, end: group.end }, end: group.end + 1 } : undefined;
 }
 
 function columnsFromSpec(spec: string): { columns: TableColumn[]; partial: boolean; vertical: number[] } {
@@ -116,26 +104,31 @@ function cellFrom(source: string, range: TableSourceRange, row: number, column: 
 }
 
 function parseTabular(source: string): TabularObject | undefined {
-  const opening = /\\begin\{(tabular\*?|tabularx|longtable|array)\}/.exec(source);
+  const masked = maskLatexComments(source);
+  const opening = /\\begin\{(tabular\*?|tabularx|longtable|array)\}/.exec(masked);
   if (!opening) return undefined;
   const environment = opening[1] as TabularObject["environment"];
-  let argumentStart = (opening.index ?? 0) + opening[0].length;
-  while (/\s/.test(source[argumentStart] ?? "")) argumentStart += 1;
-  if (source[argumentStart] === "[") { const close = source.indexOf("]", argumentStart); argumentStart = close < 0 ? argumentStart : close + 1; }
-  while (/\s/.test(source[argumentStart] ?? "")) argumentStart += 1;
-  let first = balancedArgument(source, argumentStart);
-  if (!first) return undefined;
-  if (environment === "tabularx") {
-    argumentStart = first.end;
-    while (/\s/.test(source[argumentStart] ?? "")) argumentStart += 1;
-    first = balancedArgument(source, argumentStart);
-    if (!first) return undefined;
+  let argumentStart = opening.index + opening[0].length;
+  while (/\s/.test(masked[argumentStart] ?? "")) argumentStart++;
+  if (environment === "tabularx" || environment === "tabular*") {
+    const width = balancedArgument(masked, argumentStart);
+    if (!width) return;
+    argumentStart = width.end;
+    while (/\s/.test(masked[argumentStart] ?? "")) argumentStart++;
   }
+  if (masked[argumentStart] === "[") {
+    const position = readLatexGroup(masked, argumentStart, "[", "]");
+    if (!position) return;
+    argumentStart = position.end + 1;
+  }
+  while (/\s/.test(masked[argumentStart] ?? "")) argumentStart++;
+  const first = balancedArgument(masked, argumentStart);
+  if (!first) return;
   const closingText = `\\end{${environment}}`;
   const bodyStart = first.end;
-  const closing = source.indexOf(closingText, bodyStart);
+  const closing = masked.indexOf(closingText, bodyStart);
   if (closing < 0) return undefined;
-  const body = source.slice(bodyStart, closing);
+  const body = masked.slice(bodyStart, closing);
   const parsedColumns = columnsFromSpec(first.value);
   const borders: TableBorder[] = parsedColumns.vertical.map((position, index) => ({ id: `border:v:${index}`, orientation: "vertical", position, start: 0, end: Number.MAX_SAFE_INTEGER, semanticRole: "custom", preferredSyntax: "custom", command: "|" }));
   const rows: TableRow[] = [];
@@ -174,18 +167,20 @@ function parseTabular(source: string): TabularObject | undefined {
   const horizontal = borders.some((border) => border.orientation === "horizontal");
   const vertical = borders.some((border) => border.orientation === "vertical");
   const style = booktabs ? "booktabs-three-line" : vertical ? "grid" : horizontal ? "horizontal" : "plain";
-  return { id: `tabular:${opening.index ?? 0}`, environment, columnSpec: first.value, columnSpecRange: first.range, columns: parsedColumns.columns, rows, cells, borders, style, sourceRange: { start: opening.index ?? 0, end: closing + closingText.length }, bodyRange: { start: bodyStart, end: closing }, editableLevel: parsedColumns.partial ? "partial" : diagnostics.length > 3 ? "source-only" : "full", diagnostics };
+  const protectedSource = body !== source.slice(bodyStart, closing) || /\\\\(?:\*|\s*\[)/.test(body);
+  return { id: `tabular:${opening.index ?? 0}`, environment, columnSpec: first.value, columnSpecRange: first.range, columns: parsedColumns.columns, rows, cells, borders, style, sourceRange: { start: opening.index ?? 0, end: closing + closingText.length }, bodyRange: { start: bodyStart, end: closing }, editableLevel: parsedColumns.partial || protectedSource ? "partial" : diagnostics.length > 3 ? "source-only" : "full", diagnostics };
 }
 
 export function parseTable(source: string): TableObject | undefined {
-  const outer = /\\begin\{(table\*?)\}(?:\[([^\]]*)\])?/.exec(source);
+  const masked = maskLatexComments(source);
+  const outer = /\\begin\{(table\*?)\}(?:\[([^\]]*)\])?/.exec(masked);
   const tabular = parseTabular(source);
   if (!tabular) return undefined;
   const environment = outer ? outer[1] as "table" | "table*" : "none";
   const endText = outer ? `\\end{${environment}}` : "";
-  const endIndex = outer ? source.lastIndexOf(endText) : source.length;
-  const caption = commandValue(source, "caption");
-  const label = commandValue(source, "label");
+  const endIndex = outer ? masked.lastIndexOf(endText) : source.length;
+  const caption = latexCommandField(source, "caption")?.body.value.trim();
+  const label = latexCommandField(source, "label")?.body.value.trim();
   return {
     id: `table:${outer?.index ?? tabular.sourceRange.start}`,
     environment,

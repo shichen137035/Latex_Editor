@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { defaultTablePreferences } from "@latex-editor/contracts";
 import { addLatexPackage, hasLatexPackage, tableInsertion } from "../../apps/desktop/src/renderer/table/insert.js";
 import { parseTable } from "../../apps/desktop/src/renderer/table/parser.js";
-import { deleteTableColumn, deleteTableRow, insertTableColumn, insertTableRow, mergeTableCellRight, mergeTableCells, patchTableSource, setTableStyle, splitTableCell, splitTableCells } from "../../apps/desktop/src/renderer/table/patch.js";
+import { deleteTableColumn, deleteTableRow, insertTableColumn, insertTableRow, mergeTableCellRight, mergeTableCells, patchTableSource, setTableColumnAlignment, setTableStyle, splitTableCell, splitTableCells } from "../../apps/desktop/src/renderer/table/patch.js";
 
 const threeLine = String.raw`\begin{table}[htbp]
   \centering
@@ -113,5 +113,44 @@ describe("v0.4.2 table system", () => {
     const split = parseTable(splitTableCells(merged, 0, 0, 1, 1))!;
     expect(split.tabular.rows[0]?.cells).toHaveLength(3);
     expect(split.tabular.cells[0]).toMatchObject({ colSpan: 1, rowSpan: 1, content: "A B D E" });
+  });
+
+  it("patches nested, short and empty float metadata without changing cell contents", () => {
+    const source = String.raw`\begin{table}[]
+% \caption{Comment}
+\begin{tabular}{cc} A & B \\ \end{tabular}
+\caption[Short]{A \textbf{bold} caption}\label{}
+\end{table}`;
+    expect(parseTable(source)?.caption).toBe(String.raw`A \textbf{bold} caption`);
+    const result = patchTableSource(source, { caption: "Updated", label: "tab:new", placement: "H", alignment: "center" });
+    expect(result).toContain(String.raw`\begin{table}[H]`);
+    expect(result).toContain(String.raw`\caption[Short]{Updated}\label{tab:new}`);
+    expect(result).toContain(String.raw`% \caption{Comment}`);
+    expect(result).toContain(String.raw`\centering`);
+    expect(parseTable(result)?.tabular.cells.map(cell => cell.content)).toEqual(["A", "B"]);
+  });
+  it("reads the width argument of tabular* separately from its column specification", () => {
+    const source = String.raw`\begin{tabular*}{\textwidth}{lc} A & B \\ C & D \\ \end{tabular*}`;
+    expect(parseTable(source)?.tabular).toMatchObject({ columnSpec: "lc", diagnostics: [] });
+    const result = insertTableColumn(source, 0, true);
+    expect(result).toContain(String.raw`\begin{tabular*}{\textwidth}{lcc}`);
+  });
+  it("refuses structural regeneration of malformed rows while allowing a targeted cell edit", () => {
+    const source = String.raw`\begin{tabular}{cc} A & B & EXTRA \\ C & D \\ \end{tabular}`;
+    expect(parseTable(source)?.tabular.diagnostics.length).toBeGreaterThan(0);
+    for (const edit of [insertTableColumn(source, 0, true), deleteTableRow(source, 1), mergeTableCellRight(source, 0, 0), setTableStyle(source, "grid")]) expect(edit).toBe(source);
+    expect(patchTableSource(source, { cell: { row: 0, column: 0, content: "Edited" } })).toContain("Edited & B & EXTRA");
+  });
+  it("changes column alignment without losing vertical borders, whitespace or row formatting", () => {
+    const source = String.raw`\begin{tabular}{| l | c |} A & B \\ \hline C & D \\ \end{tabular}`;
+    expect(setTableColumnAlignment(source, 0, "r")).toBe(source.replace("{| l | c |}", "{| r | c |}"));
+    expect(parseTable(setTableColumnAlignment(source, 1, "r"))?.tabular.style).toBe("grid");
+  });
+  it("preserves comments and custom row spacing by restricting regeneration to source editing", () => {
+    for (const source of [String.raw`\begin{tabular}{cc} A & B \\[2pt] C & D \\ \end{tabular}`, "\\begin{tabular}{cc} A & B \\\\\n% annotation\nC & D \\\\ \\end{tabular}"]) {
+      expect(parseTable(source)?.tabular.editableLevel).toBe("partial");
+      expect(insertTableColumn(source, 0, true)).toBe(source);
+      expect(patchTableSource(source, { cell: { row: 0, column: 0, content: "Edited" } })).toContain("Edited & B");
+    }
   });
 });

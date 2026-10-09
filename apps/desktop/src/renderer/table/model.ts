@@ -68,6 +68,11 @@ export interface TableObject {
   tabular: TabularObject;
 }
 
+/** Structural regeneration must not silently discard malformed or unsupported cells. */
+export function canRestructureTable(table: TableObject): boolean {
+  return table.tabular.editableLevel === "full" && table.tabular.diagnostics.length === 0;
+}
+
 export type TableSelection = {
   fileId: string;
   start: number;

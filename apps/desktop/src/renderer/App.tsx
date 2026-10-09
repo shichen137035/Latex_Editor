@@ -122,7 +122,14 @@ function ProjectDirectory({ projects, onProjectsChange, onOpen, onOpenLibrary, s
   const [extraResources, setExtraResources] = useState<string[]>([]);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string>();
+  const [appVersion, setAppVersion] = useState("");
   const api = window.latexEditor;
+  useEffect(() => {
+    let cancelled = false;
+    void api!.app.info().then(info => { if (!cancelled) setAppVersion(`v${info.version}`); })
+      .catch((reason: unknown) => { if (!cancelled) setError(reason instanceof Error ? reason.message : String(reason)); });
+    return () => { cancelled = true; };
+  }, [api]);
   const searchRef = useRef<HTMLInputElement>(null);
   const avatarAssignmentInProgress = useRef(false);
   const failedAvatarAssignments = useRef(new Set<string>());
@@ -309,7 +316,7 @@ function ProjectDirectory({ projects, onProjectsChange, onOpen, onOpenLibrary, s
       </div>
       <footer className="directory-result-count">{t("directory.showingResults", { shown: filtered.length, total: projects.length })}</footer>
     </section>
-    <footer className="dashboard-footer directory-footer"><span><span className="status-dot"/>{t("project.savedLocally")}</span><span>{t("app.name")} {t("app.version")}</span></footer>
+    <footer className="dashboard-footer directory-footer"><span><span className="status-dot"/>{t("project.savedLocally")}</span><span>{t("app.name")} <span data-app-version={appVersion}>{appVersion}</span></span></footer>
   </main>
   {createOpen && <div className="modal-backdrop"><section className="modal-card project-creation-card"><div className="modal-heading"><div><p className="eyebrow">{t("common.projectSetup")}</p><h2>{t("project.createTitle")}</h2></div><button className="close-button" onClick={() => setCreateOpen(false)}>×</button></div><label className="field-label">{t("project.name")}<input autoFocus value={name} onChange={(event) => setName(event.target.value)}/></label><label className="field-label">{t("project.parent")}<div className="path-input"><input value={parentPath} onChange={(event) => setParentPath(event.target.value)}/><button onClick={() => void chooseFolder()}><FolderIcon/>{t("project.browse")}</button></div></label><ProjectStyleResourcePicker styleResources={styleResources} baseResource={baseResource} setBaseResource={setBaseResource} extraResources={extraResources} setExtraResources={setExtraResources}/><div className="modal-actions"><button className="secondary-button" onClick={() => setCreateOpen(false)}>{t("project.cancel")}</button><button className="primary-button" disabled={busy} onClick={() => void createProject()}>{t(busy ? "project.creating" : "project.create")}</button></div></section></div>}
     {settingsOpen && <SettingsDialog onClose={() => { setSettingsOpen(false); void onRefreshResources(); }}/>} 

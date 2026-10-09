@@ -1,19 +1,20 @@
-import { t } from "../i18n/index.js";
+import { catalogs, getLocale, t } from "../i18n/index.js";
+import { environmentName, environmentNames } from "../i18n/displayNames.js";
 import { cloneEnvironmentDefinitions, DEFAULT_ENVIRONMENTS, environmentOptionBrackets } from "./environments.js";
 import type { EnvironmentDefinition, EnvironmentMatchRule } from "./types.js";
 import { settings } from "../settings/service.js";
 import { environmentTitleTypography, titleNumericFields, validTitleNumber, type TitleNumericField } from "./environment-typography.js";
 import { environmentPreview, previewNumericFields, previewRenderers, imageClickActions, tableToolbarModes, validPreviewNumber, type PreviewNumericField } from "./environment-preview.js";
 import type { EnvironmentBehavior } from "./types.js";
+import { validLocalizedNames } from "@latex-editor/contracts";
 
-export const GLOBAL_ENVIRONMENTS_KEY = "texweave.environments.global.v1";
 
 const families: EnvironmentDefinition["family"][] = ["section", "theorem", "definition", "proof", "equation", "remark", "example", "figure", "table", "list", "quote", "code", "virtual", "generic"];
 
 function isDefinition(value: unknown): value is EnvironmentDefinition {
   if (!value || typeof value !== "object") return false;
   const item = value as Partial<EnvironmentDefinition>;
-  return typeof item.id === "string" && typeof item.enabled === "boolean" && typeof item.builtIn === "boolean" && typeof item.labelKey === "string" && Boolean(item.match) && Boolean(item.style) && Boolean(item.behavior) && families.includes(item.family as EnvironmentDefinition["family"]);
+  return typeof item.id === "string" && typeof item.enabled === "boolean" && typeof item.builtIn === "boolean" && typeof item.labelKey === "string" && validLocalizedNames(item.labels) && Boolean(item.match) && Boolean(item.style) && Boolean(item.behavior) && families.includes(item.family as EnvironmentDefinition["family"]);
 }
 
 export function loadGlobalEnvironments(): EnvironmentDefinition[] {
@@ -34,8 +35,8 @@ export function createCustomEnvironment(existing: EnvironmentDefinition[]): Envi
     enabled: true,
     builtIn: false,
     match: { kind: "latex-environment", name: `custom${suffix}` },
-    labelKey: `environment.custom-${suffix}`,
-    label: t("ui.environmentConfig.custom", { value1: suffix }),
+    labelKey: "",
+    labels: { [getLocale()]: t("ui.environmentConfig.custom", { value1: suffix }) },
     family: "generic",
     style: {
       accentToken: "#2f84c5",
@@ -47,6 +48,22 @@ export function createCustomEnvironment(existing: EnvironmentDefinition[]): Envi
     },
     behavior: { inlineEditable: true, allowChildren: true, showHeader: true, showLabel: true, showOptionBrackets: environmentOptionBrackets() }
   };
+}
+
+export function duplicateEnvironment(definition: EnvironmentDefinition, existing: EnvironmentDefinition[]): EnvironmentDefinition {
+  const base = `${definition.id}-copy`;
+  let id = base;
+  let suffix = 2;
+  while (existing.some(item => item.id === id)) id = `${base}-${suffix++}`;
+  const names = environmentNames(definition);
+  if (!Object.keys(names).length) names[getLocale()] = environmentName(definition);
+  const labels = Object.fromEntries(Object.entries(names).map(([locale, name]) => {
+    const template = catalogs[locale as keyof typeof catalogs]?.["environment.copySuffix"] ?? catalogs.en["environment.copySuffix"]!;
+    return [locale, template.replaceAll("{{name}}", name)];
+  }));
+  const copy = cloneEnvironmentDefinitions([definition])[0]!;
+  delete copy.label;
+  return { ...copy, id, builtIn: false, labelKey: "", labels };
 }
 
 export function resetBuiltIn(definition: EnvironmentDefinition): EnvironmentDefinition {
@@ -73,8 +90,9 @@ export function serializeEnvironments(definitions: EnvironmentDefinition[]): str
     const preview = environmentPreview(definition.id, definition);
     const previewAttributes = Object.entries(preview.sizing).filter(([key]) => definition.style[key as PreviewNumericField] !== undefined || preview.renderer === "figure" || preview.renderer === "table").map(([key, value]) => `${key}="${value}"`).join(" ");
     const behaviorAttributes = Object.entries(preview.behavior).map(([key, value]) => `${key}="${escapeXml(String(value))}"`).join(" ");
+    const names = Object.entries(definition.labels ?? {}).map(([locale, name]) => `    <name locale="${escapeXml(locale)}" value="${escapeXml(name)}" />`).join("\n");
     return `  <environment id="${escapeXml(definition.id)}" enabled="${definition.enabled}" builtIn="${definition.builtIn}" family="${definition.family}" label="${escapeXml(definition.label ?? "")}" labelKey="${escapeXml(definition.labelKey)}">
-    <match type="${definition.match.kind}" value="${escapeXml(matchValue(definition.match))}" />
+${names ? names + "\n" : ""}    <match type="${definition.match.kind}" value="${escapeXml(matchValue(definition.match))}" />
     <style accentToken="${escapeXml(definition.style.accentToken)}" fillToken="${escapeXml(definition.style.fillToken)}" borderToken="${escapeXml(definition.style.borderToken)}" selectedBorderToken="${escapeXml(definition.style.selectedBorderToken)}" labelBackgroundToken="${escapeXml(definition.style.labelBackgroundToken)}" labelTextToken="${escapeXml(definition.style.labelTextToken)}" ${titleAttributes} ${previewAttributes} />
     <behavior ${behaviorAttributes} />
   </environment>`;
@@ -108,6 +126,12 @@ export function parseEnvironmentXml(xml: string): EnvironmentDefinition[] {
     const behaviorElement = element.querySelector(":scope > behavior");
     if (!id || !family || !families.includes(family) || !matchElement || !styleElement || !behaviorElement) throw new Error(t("ui.environmentConfig.environment_is_incomplete", { value1: id || "?" }));
     const label = element.getAttribute("label")?.trim();
+    const labels: Record<string, string> = {};
+    for (const name of Array.from(element.querySelectorAll(":scope > name"))) {
+      const locale = name.getAttribute("locale")?.trim();
+      if (!locale || Object.hasOwn(labels, locale)) throw new Error(t("environment.invalidNameLocale", { id }));
+      Object.defineProperty(labels, locale, { value: name.getAttribute("value") ?? "", enumerable: true, configurable: true, writable: true });
+    }
     const typography: Partial<Record<TitleNumericField, number>> = {};
     for (const field of Object.keys(titleNumericFields) as TitleNumericField[]) {
       const raw = styleElement.getAttribute(field);
@@ -144,8 +168,9 @@ export function parseEnvironmentXml(xml: string): EnvironmentDefinition[] {
       enabled: booleanAttribute(element, "enabled", true),
       builtIn: booleanAttribute(element, "builtIn", false),
       match: parseMatch(matchElement.getAttribute("type") ?? "", matchElement.getAttribute("value") ?? ""),
-      labelKey: element.getAttribute("labelKey") || `environment.${id}`,
+      labelKey: element.getAttribute("labelKey") ?? (booleanAttribute(element, "builtIn", false) ? `environment.${id}` : ""),
       ...(label ? { label } : {}),
+      ...(Object.keys(labels).length ? { labels } : {}),
       family,
       style: {
         ...typography,

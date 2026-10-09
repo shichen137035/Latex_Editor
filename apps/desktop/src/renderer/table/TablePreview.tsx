@@ -10,6 +10,7 @@ import { defaultTablePreferences } from "@latex-editor/contracts";
 import { parseTable } from "./parser.js";
 import { deleteTableColumn, deleteTableRow, insertTableColumn, insertTableRow, mergeTableCells, patchTableSource, splitTableCells } from "./patch.js";
 import type { TableCell } from "./model.js";
+import { canRestructureTable } from "./model.js";
 
 export interface TablePreviewSelection { kind: "table" | "cell" | "row" | "column"; row?: number; column?: number }
 interface Point { row: number; column: number }
@@ -36,6 +37,12 @@ function cellScrollbarHit(event: { target: EventTarget | null; clientX: number; 
 export function TablePreview({ source, renderCell, onChange, onSelect, captionContent, active = false, editorId, onExpandedChange, onEditSource, autoAddRowOnTab = defaultTablePreferences.editing.autoAddRowOnTab, configuration = environmentPreview("") }: { source: string; renderCell(content: string): ReactNode; onChange(source: string): void; onSelect(selection: TablePreviewSelection): void; captionContent?: ReactNode; active?: boolean; editorId?: string; onExpandedChange?(active: boolean): void; onEditSource?: (() => void) | undefined; autoAddRowOnTab?: boolean; configuration?: ReturnType<typeof environmentPreview> }) {
   const table = useMemo(() => parseTable(source), [source]);
   const [selection, setSelection] = useState<Range>();
+  const [selectionDetail, setSelectionDetail] = useState<TablePreviewSelection>();
+  const onSelectRef = useRef(onSelect);
+  onSelectRef.current = onSelect;
+  // Notify after the source edit has rendered, so the inspector receives the
+  // current source/range rather than the pre-commit table captured by an event.
+  useEffect(() => { if (selectionDetail) onSelectRef.current(selectionDetail); }, [selectionDetail]);
   const [editing, setEditing] = useState<Draft>();
   const draft = useRef<Draft | undefined>(undefined);
   const currentSource = useRef(source);
@@ -85,7 +92,7 @@ export function TablePreview({ source, renderCell, onChange, onSelect, captionCo
   const visible = table.tabular.cells.filter(cell => !table.tabular.cells.some(other => other.row < cell.row && other.row + other.rowSpan > cell.row && other.column <= cell.column && other.column + other.colSpan > cell.column));
   const area = selection ? bounds(selection) : undefined;
   const merged = !!area && visible.some(cell => intersects(cell, area) && (cell.colSpan > 1 || cell.rowSpan > 1));
-  const structuralEditable = table.tabular.editableLevel === "full" && !table.tabular.diagnostics.length;
+  const structuralEditable = canRestructureTable(table);
   const full = configuration.behavior.inlineEditable && !onEditSource && structuralEditable;
   const navigate = (backwards: boolean, vertical: boolean) => {
     const value = draft.current;
@@ -99,11 +106,11 @@ export function TablePreview({ source, renderCell, onChange, onSelect, captionCo
       publish(updatedSource);
       const updated = parseTable(updatedSource);
       const firstCell = updated?.tabular.cells.find(cell => cell.row === updated.tabular.rows.length - 1 && cell.column === 0);
-      if (firstCell) { setSelection(cellRange(firstCell)); edit({ row: firstCell.row, column: firstCell.column, value: firstCell.content }); onSelect({ kind: "cell", row: firstCell.row, column: firstCell.column }); }
+      if (firstCell) { setSelection(cellRange(firstCell)); edit({ row: firstCell.row, column: firstCell.column, value: firstCell.content }); setSelectionDetail({ kind: "cell", row: firstCell.row, column: firstCell.column }); }
       return;
     }
     commit();
-    if (next) { setSelection(cellRange(next)); edit({ row: next.row, column: next.column, value: next.content }); }
+    if (next) { setSelection(cellRange(next)); edit({ row: next.row, column: next.column, value: next.content }); setSelectionDetail({ kind: "cell", row: next.row, column: next.column }); }
   };
   const run = (operation: (source: string) => string) => {
     const base = flush();
@@ -145,7 +152,7 @@ export function TablePreview({ source, renderCell, onChange, onSelect, captionCo
     {!expanded && configuration.behavior.allowExpandedEditor && <button ref={expandButton} type="button" className="table-expand-button" aria-label={t("table.expand")} title={t("table.expand")} onPointerDown={event => event.preventDefault()} onClick={open}><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="1.7" aria-hidden="true"><path d="M8 3H3v5m13-5h5v5M3 16v5h5m13-5v5h-5M3 3l6 6m12-6-6 6M3 21l6-6m12 6-6-6"/></svg></button>}
     {notice && <small role="status">{notice}</small>}
     <div className="structured-table-scroll"><table>
-      <thead className="table-column-selectors"><tr>{table.tabular.columns.map(column => <th key={column.id}><button onPointerDown={event => event.preventDefault()} onClick={() => { commit(); setSelection({ anchor: { row: 0, column: column.index }, focus: { row: table.tabular.rows.length - 1, column: column.index } }); }}>{column.index + 1}</button></th>)}</tr></thead>
+      <thead className="table-column-selectors"><tr>{table.tabular.columns.map(column => <th key={column.id}><button onPointerDown={event => event.preventDefault()} onClick={() => { commit(); setSelection({ anchor: { row: 0, column: column.index }, focus: { row: table.tabular.rows.length - 1, column: column.index } }); setSelectionDetail({ kind: "column", column: column.index }); }}>{column.index + 1}</button></th>)}</tr></thead>
       <tbody>{table.tabular.rows.map(row => <tr key={row.id} className={row.role === "header" ? "header-row" : ""}>{row.cells.filter(cell => visible.includes(cell)).map(cell => <td key={cell.id}
         colSpan={cell.colSpan} rowSpan={cell.rowSpan} aria-selected={!!area && intersects(cell, area)}
         className={area && intersects(cell, area) ? "table-cell-selected" : ""}
@@ -171,9 +178,9 @@ export function TablePreview({ source, renderCell, onChange, onSelect, captionCo
           if (table.tabular.editableLevel === "source-only") return;
           setSelection(cellRange(cell));
           edit({ row: cell.row, column: cell.column, value: cell.content });
-          onSelect({ kind: "cell", row: cell.row, column: cell.column });
+          setSelectionDetail({ kind: "cell", row: cell.row, column: cell.column });
         }}>
-        {cell.column === 0 && <button className="table-row-selector" title={t("ui.TablePreview.select_row")} onPointerDown={event => event.preventDefault()} onClick={event => { event.stopPropagation(); commit(); setSelection({ anchor: { row: row.index, column: 0 }, focus: { row: row.index, column: table.tabular.columns.length - 1 } }); }}>{row.index + 1}</button>}
+        {cell.column === 0 && <button className="table-row-selector" title={t("ui.TablePreview.select_row")} onPointerDown={event => event.preventDefault()} onClick={event => { event.stopPropagation(); commit(); setSelection({ anchor: { row: row.index, column: 0 }, focus: { row: row.index, column: table.tabular.columns.length - 1 } }); setSelectionDetail({ kind: "row", row: row.index }); }}>{row.index + 1}</button>}
         {editing?.row === cell.row && editing.column === cell.column
           ? <textarea ref={input} autoFocus wrap="off" rows={Math.min(5, Math.max(2, editing.value.split("\n").length))} aria-label={t("ui.TablePreview.row_column", { value1: cell.row + 1, value2: cell.column + 1 })} value={editing.value}
             onClick={event => event.stopPropagation()} onPointerDown={event => event.stopPropagation()}

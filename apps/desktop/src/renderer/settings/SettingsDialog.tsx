@@ -4,6 +4,7 @@ import { createPortal } from "react-dom";
 import { includeNewBuiltInDirectives, isEnglishSpellDictionary, preferenceDefaults, projectPreferenceKeys, type AIProjectSkill, type DictionaryPackage, type HistoryPreferences, type ImagePreferences, type LatexToolchain, type PreferenceKey, type PreviewDirectiveDefinition, type TablePreferences, type TableStylePreset, type ThemeDefinition, type WheelAccelerationPreferences } from "@latex-editor/contracts";
 import type { SpellCheckStatus } from "@latex-editor/contracts";
 import { t } from "../i18n/index.js";
+import { LanguageSelect } from "../i18n/LanguageSelect.js";
 import { EnvironmentManager } from "../preview/EnvironmentManager.js";
 import { DirectiveManager } from "../preview/DirectiveManager.js";
 import { StyleResourcesManager } from "./StyleResourcesManager.js";
@@ -37,7 +38,7 @@ const managerDefinitions: Record<ManagerId, { category: SettingsCategory; title:
 };
 
 const categoryPreferences: Record<SettingsCategory, PreferenceKey[]> = {
-  general: ["autoSave", "hideBuildArtifacts", "restoreProject", "maximize", "sidePanelDisplay", "locale", "wheelAcceleration"],
+  general: ["autoSave", "autoSaveDelaySeconds", "hideBuildArtifacts", "restoreProject", "maximize", "sidePanelDisplay", "locale", "fixedBlockNameLanguage", "blockNameLanguage", "wheelAcceleration"],
   appearance: ["theme", "themeDirectory", "fontSize", "tabSize"],
   editor: ["wordWrap", "autoPairSymbols", "mathPreviewOnHover", "showPreviewMetrics", "documentWordCompletion", "autoEnvironmentLabels", "confirmPreviewEdits", "warnIncompatibleEnvironmentConversion", "spellCheckMode", "spellCheckLanguage", "spellCheckActiveLanguages", "keybindings", "referenceLinkModifier"],
   filter: ["visibleFilterGroups"],
@@ -47,7 +48,7 @@ const categoryPreferences: Record<SettingsCategory, PreferenceKey[]> = {
 };
 
 const searchEntries: Array<{ id: string; category: SettingsCategory; level: SettingsLevel | "manager"; titleKey?: string; title?: string; keywords?: string[]; manager?: ManagerId }> = [
-  ...(["autoSave", "hideBuildArtifacts", "restore", "maximize", "sidePanelDisplay", "language", "wheelAccelerationEnabled"] as const).map((key) => ({ id: key, category: "general" as const, level: "basic" as const, titleKey: key === "restore" ? "settings.restore" : key === "language" ? "settings.language" : key === "wheelAccelerationEnabled" ? "settings.wheelAccelerationEnabled" : `settings.${key}`, keywords: ["startup", "save", "scroll"] })),
+  ...(["autoSave", "autoSaveDelaySeconds", "hideBuildArtifacts", "restore", "maximize", "sidePanelDisplay", "language", "fixedBlockNameLanguage", "blockNameLanguage", "wheelAccelerationEnabled"] as const).map((key) => ({ id: key, category: "general" as const, level: "basic" as const, titleKey: key === "restore" ? "settings.restore" : key === "language" ? "settings.language" : key === "wheelAccelerationEnabled" ? "settings.wheelAccelerationEnabled" : `settings.${key}`, keywords: ["startup", "save", "scroll"] })),
   ...(["wheelStrength", "wheelMaximum", "wheelDecay"] as const).map((key) => ({ id: key, category: "general" as const, level: "advanced" as const, titleKey: `settings.${key}`, keywords: ["scroll", "acceleration", "speed"] })),
   ...(["fontSize", "tabSize"] as const).map((key) => ({ id: key, category: "appearance" as const, level: "basic" as const, titleKey: `settings.${key}`, keywords: ["font", "text", "tab", "indent", "appearance"] })),
   { id: "theme", category: "appearance", level: "basic", titleKey: "settings.activeTheme", keywords: ["colors", "appearance"] },
@@ -77,7 +78,7 @@ const searchEntries: Array<{ id: string; category: SettingsCategory; level: Sett
 ];
 
 const projectSettingsByCategory: Partial<Record<SettingsCategory, PreferenceKey[]>> = {
-  general: ["autoSave"],
+  general: ["autoSave", "autoSaveDelaySeconds"],
   appearance: ["fontSize", "tabSize"],
   editor: ["wordWrap", "autoPairSymbols", "mathPreviewOnHover", "confirmPreviewEdits", "keybindings"],
   tools: ["images", "tables"],
@@ -204,7 +205,7 @@ function SpellCheckPreferencesPanel({ store, scope }: { store: ReturnType<typeof
   return <SettingGroup title={t("settings.group.spellcheckBasics")}>
     {scope === "project" && <p>{t("settings.globalOnly")}</p>}
     <label className="preference-row"><span><strong>{t("settings.spellcheckMode")}</strong><small>{t("settings.spellcheckModeHint")}</small></span><select disabled={scope === "project"} value={mode} onChange={(event) => void store.set("spellCheckMode", event.target.value as "auto" | "manual" | "disabled") }><option value="auto">{t("settings.spellcheckAuto")}</option><option value="manual">{t("settings.spellcheckManual")}</option><option value="disabled">{t("settings.spellcheckDisabled")}</option></select></label>
-    {mode === "manual" && <label className="preference-row"><span><strong>{t("settings.spellcheckLanguage")}</strong><small>{t("settings.spellcheckLanguageHint")}</small></span><select disabled={scope === "project"} value={language} onChange={(event) => void store.set("spellCheckLanguage", event.target.value)}>{languages.map((item) => <option key={item} value={item}>{item}</option>)}</select></label>}
+    {mode === "manual" && <label className="preference-row"><span><strong>{t("settings.spellcheckLanguage")}</strong><small>{t("settings.spellcheckLanguageHint")}</small></span><LanguageSelect disabled={scope === "project"} aria-label={t("settings.spellcheckLanguage")} value={language} languages={languages} onValueChange={value => void store.set("spellCheckLanguage", value)}/></label>}
   </SettingGroup>;
 }
 
@@ -469,12 +470,12 @@ export function SettingsDialog({ onClose, initial = "general" }: { onClose(): vo
   const resetButton = (key: PreferenceKey, allowed = true) => isModified(key) && allowed
     ? <button type="button" className="preference-reset" aria-label={`${t("settings.reset")} ${t(`settings.${key}`)}`} onClick={() => void store.reset(key, scope)}>{t("settings.reset")}</button>
     : null;
-  const row = (key: PreferenceKey, label: string, options?: Array<[string, string]>, numeric = false) => {
+  const row = (key: PreferenceKey, label: string, options?: Array<[string, string]>, numeric = false, limits = { min: 10, max: 32 }) => {
     const allowed = scope === "global" || projectPreferenceKeys.includes(key);
     const value = read(key);
     const hint = key === "hideBuildArtifacts" ? t("settings.hideBuildArtifactsHint") : key === "documentWordCompletion" ? t("settings.documentWordCompletionHint") : key === "autoPairSymbols" ? t("settings.autoPairSymbolsHint") : key === "mathPreviewOnHover" ? t("settings.mathPreviewOnHoverHint") : key === "showPreviewMetrics" ? t("settings.showPreviewMetricsHint") : key === "autoEnvironmentLabels" ? t("settings.autoEnvironmentLabelsHint") : key === "confirmPreviewEdits" ? t("settings.confirmPreviewEditsHint") : key === "warnIncompatibleEnvironmentConversion" ? t("settings.warnIncompatibleEnvironmentConversionHint") : undefined;
     return <label className="preference-row" data-setting={key} key={key}><span><strong>{t(label)}</strong>{hint && <small>{hint}</small>}{scope === "project" && allowed && !(key in snapshot.project) && <small>{t("settings.inherited")}</small>}</span>
-      {options ? <select disabled={!allowed} value={String(value)} onChange={(event) => void store.set(key, numeric ? Number(event.target.value) : event.target.value as never, scope)}>{options.map(([id, labelKey]) => <option key={id} value={id}>{t(labelKey)}</option>)}</select> : numeric ? <input disabled={!allowed} type="number" min={10} max={32} value={Number(value)} onChange={(event) => { const next = Number(event.target.value); if (next >= 10 && next <= 32) void store.set(key, next, scope); }}/> : <input disabled={!allowed} type="checkbox" checked={Boolean(value)} onChange={(event) => void store.set(key, event.target.checked, scope)}/>}
+      {key === "locale" || key === "blockNameLanguage" ? <LanguageSelect disabled={!allowed} aria-label={t(label)} value={String(value)} onValueChange={value => void store.set(key, value as typeof preferenceDefaults.locale, scope)}/> : options ? <select disabled={!allowed} value={String(value)} onChange={(event) => void store.set(key, numeric ? Number(event.target.value) : event.target.value as never, scope)}>{options.map(([id, labelKey]) => <option key={id} value={id}>{t(labelKey)}</option>)}</select> : numeric ? <input disabled={!allowed} type="number" min={limits.min} max={limits.max} step={1} value={Number(value)} onChange={(event) => { const next = Number(event.target.value); if (Number.isInteger(next) && next >= limits.min && next <= limits.max) void store.set(key, next, scope); }}/> : <input disabled={!allowed} type="checkbox" checked={Boolean(value)} onChange={(event) => void store.set(key, event.target.checked, scope)}/>}
       {resetButton(key, allowed)}</label>;
   };
   const configured = read("environments") as EnvironmentDefinition[];
@@ -514,9 +515,10 @@ export function SettingsDialog({ onClose, initial = "general" }: { onClose(): vo
   const renderCategory = () => {
     if (category === "general") return <div className="settings-page"><h2>{t("settings.category.general")}</h2>
       {level === "basic" && <SettingGroup title={t("settings.group.generalBasics")}>
-        {row("autoSave", "settings.autoSave", [["off", "settings.off"], ["afterDelay", "settings.afterDelay"]])}{row("hideBuildArtifacts", "settings.hideBuildArtifacts")}{row("restoreProject", "settings.restore")}{row("maximize", "settings.maximize")}
-        {row("sidePanelDisplay", "settings.sidePanelDisplay", [["overlay", "settings.sidePanelOverlay"], ["push", "settings.sidePanelPush"]])}{row("locale", "settings.language", [["en", "settings.localeEnglish"], ["ja", "settings.localeJapanese"], ["zh-CN", "settings.localeSimplifiedChinese"], ["zh-TW", "settings.localeTraditionalChinese"], ["ko", "settings.localeKorean"], ["fr", "settings.localeFrench"]])}
+        {row("autoSave", "settings.autoSave", [["off", "settings.off"], ["afterDelay", "settings.afterDelay"]])}{row("autoSaveDelaySeconds", "settings.autoSaveDelaySeconds", undefined, true, { min: 1, max: 3600 })}{row("hideBuildArtifacts", "settings.hideBuildArtifacts")}{row("restoreProject", "settings.restore")}{row("maximize", "settings.maximize")}
+        {row("sidePanelDisplay", "settings.sidePanelDisplay", [["overlay", "settings.sidePanelOverlay"], ["push", "settings.sidePanelPush"]])}{row("locale", "settings.language")}
       </SettingGroup>}
+      {level === "basic" && <SettingGroup title={t("settings.blockNames")}><p>{t("settings.blockNamesHint")}</p>{row("fixedBlockNameLanguage", "settings.fixedBlockNameLanguage")}{row("blockNameLanguage", "settings.blockNameLanguage")}</SettingGroup>}
       <WheelAccelerationSettingsPanel store={store} scope={scope} level={level}/>
     </div>;
     if (category === "appearance") return <div className="settings-page"><h2>{t("settings.category.appearance")}</h2>{level === "basic" ? <ThemeBasicSettingsPanel store={store} scope={scope}>{row("fontSize", "settings.fontSize", undefined, true)}{row("tabSize", "settings.tabSize", [["2", "2"], ["4", "4"], ["8", "8"]], true)}</ThemeBasicSettingsPanel> : <ManagerEntry manager="themes" title={t(managerDefinitions.themes.title)} description={t(managerDefinitions.themes.description)} onOpen={() => openManager("themes")}/>}</div>;

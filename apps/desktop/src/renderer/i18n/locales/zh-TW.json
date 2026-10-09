@@ -208,9 +208,6 @@
   "sidebar.collapse": "收合",
   "sidebar.refresh": "重新整理",
   "sidebar.fileSearch": "篩選檔案…",
-  "sidebar.searchPlaceholder": "搜尋…",
-  "placeholder.relationsTitle": "區塊關係",
-  "placeholder.relations": "區塊關係圖將在後續版本提供。",
   "placeholder.pdfTitle": "PDF 預覽",
   "placeholder.pdf": "編譯後將在此顯示 PDF。",
   "editor.noFile": "從檔案樹開啟檔案",
@@ -289,7 +286,7 @@
   "settings.resetAll": "恢復預設設定",
   "settings.autoSave": "自動儲存",
   "settings.off": "關閉",
-  "settings.afterDelay": "延遲後",
+  "settings.afterDelay": "停止輸入後儲存",
   "settings.fontSize": "字型大小",
   "settings.wordWrap": "自動換行",
   "settings.tabSize": "定位點大小",
@@ -535,5 +532,5 @@
   "settings.aiSkillSource.built-in": "內建",
   "settings.aiSkillSource.custom": "自訂",
   "settings.aiSkillSource.customized": "已自訂",
-  "app.version": "v{{version}}"
+  "settings.autoSaveDelaySeconds": "自動儲存間隔（秒）"
 }

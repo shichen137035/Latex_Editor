@@ -64,7 +64,7 @@ async function run() {
   assert.equal(await evaluate('!!document.querySelector(".preview-limit-notice")'), false, "no load-more gate remains");
   console.log(`PASS large document opens with ${first.rendered} mounted nodes`);
   await click('.preview-reference[data-reference="sec:last"]', ["control"]);
-  await until('!!document.querySelector(".reference-target") && Array.from(document.querySelectorAll("[data-environment=section] .preview-block-header-main strong")).some(item => item.textContent.includes("Section 1400"))', "jump to an unmounted target");
+  await until('!!document.querySelector(".reference-target") && Array.from(document.querySelectorAll("[data-environment=section] .preview-block-header-main :is(strong, .preview-block-title)")).some(item => item.textContent.includes("Section 1400"))', "jump to an unmounted target");
   assert.ok(await evaluate('document.querySelector(".structured-preview").scrollTop > 10000'), "reference jump reaches the distant block");
   console.log("PASS reference jump mounts a distant block on demand");
   await evaluate('document.querySelector(".structured-preview").scrollTop = document.querySelector(".structured-preview").scrollHeight / 2');
@@ -88,6 +88,8 @@ ${Array.from({ length: 700 }, (_, index) => `Paragraph ${index + 1} in the long 
 ${Array.from({ length: 700 }, (_, index) => `\\item Item ${index + 1} in the long list.\n`).join("")}
 \end{itemize}
 \end{document}`;
+  await click('.logo-button');
+  await until('!!document.querySelector(".directory-project-row")', 'release document session before changing the fixture');
   await evaluate(`window.latexEditor.files.write(${JSON.stringify(project.id)}, "main.tex", ${JSON.stringify(nestedSource)})`);
   await page.webContents.reload();
   await until('!!document.querySelector(".directory-project-row")', "nested project list");

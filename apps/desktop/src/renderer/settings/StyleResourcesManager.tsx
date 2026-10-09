@@ -127,7 +127,6 @@ export function StyleResourcesManager({ toolbarTarget }: { toolbarTarget?: HTMLE
               })}
             </div>
           </> : <p className="style-resource-empty-files">{t("resource.emptyFiles")}</p>}
-          <section className="online-resource-placeholder"><h3>{t("resource.onlineTitle")}</h3><p>{t("resource.onlineHint")}</p><span>{t("resource.comingLater")}</span></section>
         </> : <p>{t("resource.selectHint")}</p>}
         {error && <p role="alert" className="inline-error">{error}</p>}
       </section>

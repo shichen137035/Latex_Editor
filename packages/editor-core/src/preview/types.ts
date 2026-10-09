@@ -95,7 +95,9 @@ export interface EnvironmentDefinition {
   builtIn: boolean;
   match: EnvironmentMatchRule;
   labelKey: string;
-  /** User-facing label for custom definitions; built-ins continue to use i18n keys. */
+  /** Names by locale. Blank entries are absent; display resolution belongs to the UI. */
+  labels?: Record<string, string>;
+  /** Original/default name, also retained as a fallback for existing authored names. */
   label?: string;
   family: "section" | "theorem" | "definition" | "proof" | "equation" | "remark" | "example" | "figure" | "table" | "list" | "quote" | "code" | "virtual" | "generic";
   style: EnvironmentStyle;

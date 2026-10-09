@@ -169,9 +169,6 @@
   "sidebar.collapse": "접기",
   "sidebar.refresh": "새로 고침",
   "sidebar.fileSearch": "파일 필터…",
-  "sidebar.searchPlaceholder": "검색…",
-  "placeholder.relationsTitle": "블록 관계",
-  "placeholder.relations": "블록 관계 그래프는 이후 버전에서 제공됩니다.",
   "placeholder.pdfTitle": "PDF 미리보기",
   "placeholder.pdf": "컴파일 후 PDF가 여기에 표시됩니다.",
   "editor.noFile": "파일 트리에서 파일을 여세요",
@@ -242,7 +239,7 @@
   "settings.resetAll": "기본값 복원",
   "settings.autoSave": "자동 저장",
   "settings.off": "끄기",
-  "settings.afterDelay": "지연 후",
+  "settings.afterDelay": "입력 중지 후 저장",
   "settings.fontSize": "글꼴 크기",
   "settings.wordWrap": "자동 줄 바꿈",
   "settings.tabSize": "탭 크기",
@@ -405,5 +402,5 @@
   "settings.aiSkillSource.built-in": "기본 제공",
   "settings.aiSkillSource.custom": "사용자 지정",
   "settings.aiSkillSource.customized": "수정됨",
-  "app.version": "v{{version}}"
+  "settings.autoSaveDelaySeconds": "자동 저장 간격 (초)"
 }

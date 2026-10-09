@@ -1,13 +1,12 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { t, type MessageKey } from "../i18n/index.js";
+import { environmentName } from "../i18n/displayNames.js";
 import type { EnvironmentDefinition } from "./types.js";
 import { environmentAccent } from "./environment-colors.js";
 import "./environment-picker.css";
 
 export function environmentDisplayName(definition: EnvironmentDefinition): string {
-  if (definition.label) return definition.label;
-  const key = definition.labelKey as Parameters<typeof t>[0];
-  return t(key) || definition.id.replaceAll("-", " ");
+  return environmentName(definition);
 }
 
 function indentBody(value: string): string {
@@ -68,7 +67,7 @@ type EnvironmentPickerPanelProps = {
 /** Shared project-aware picker used by both insertion and block conversion. */
 export function EnvironmentPickerPanel({ definitions, title = t("editor.environmentPicker.title"), hint = t("editor.environmentPicker.hint"), include = () => true, onSelect, onClose }: EnvironmentPickerPanelProps) {
   const [query, setQuery] = useState("");
-  const available = useMemo(() => definitions.filter((definition) => definition.enabled && include(definition) && `${environmentDisplayName(definition)} ${definition.id} ${definition.family}`.toLocaleLowerCase().includes(query.trim().toLocaleLowerCase())), [definitions, include, query]);
+  const available = definitions.filter((definition) => definition.enabled && include(definition) && `${environmentDisplayName(definition)} ${definition.id} ${definition.family}`.toLocaleLowerCase().includes(query.trim().toLocaleLowerCase()));
   return <section className="environment-picker" role="dialog" aria-label={title}>
     <header><div><strong>{title}</strong><small>{hint}</small></div><button onClick={onClose} aria-label={t("common.close")}>×</button></header>
     <input autoFocus value={query} onChange={(event) => setQuery(event.target.value)} placeholder={t("editor.environmentPicker.search")}/>

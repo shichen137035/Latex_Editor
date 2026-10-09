@@ -32,7 +32,6 @@ import { BlockGraphManager } from "@latex-editor/editor-core";
 import type { ProjectCacheReclamationManager, ProjectCacheReclamationReason } from "./project-cache-reclamation.js";
 
 const graphMetadataPath = ".texweave/structure.json";
-const legacyGraphMetadataPath = ".texweave/block-graph.json";
 
 interface HistoryEntry {
   before: BlockGraphSnapshot;
@@ -314,12 +313,7 @@ export class ProjectBlockGraphService {
       return BlockGraphManager.fromUnknown(value);
     };
     try {
-      try {
-        return await readSnapshot(graphMetadataPath);
-      } catch (error: unknown) {
-        if (!(error instanceof AppError) || error.code !== "FILE_NOT_FOUND") throw error;
-        return await readSnapshot(legacyGraphMetadataPath);
-      }
+      return await readSnapshot(graphMetadataPath);
     } catch (error: unknown) {
       if (error instanceof AppError && error.code === "FILE_NOT_FOUND") return BlockGraphManager.empty();
       throw error;

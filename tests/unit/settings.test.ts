@@ -19,6 +19,12 @@ describe("v0.2.3 foundations", () => {
     expect(preferenceDefaults.documentWordCompletion).toBe(true);
     expect(preferenceDefaults.autoPairSymbols).toBe(true);
     expect(preferenceDefaults.mathPreviewOnHover).toBe(false);
+    expect(preferenceDefaults.autoSaveDelaySeconds).toBe(3);
+    expect(sanitizePreferences({ autoSaveDelaySeconds: 1 })).toEqual({ autoSaveDelaySeconds: 1 });
+    expect(sanitizePreferences({ autoSaveDelaySeconds: 3600 }, true)).toEqual({ autoSaveDelaySeconds: 3600 });
+    for (const autoSaveDelaySeconds of [0, -1, 1.5, 3601, Infinity, NaN, "3", null]) {
+      expect(sanitizePreferences({ autoSaveDelaySeconds })).toEqual({});
+    }
     expect(preferenceDefaults.wheelAcceleration.decayMs).toBe(250);
     expect(preferenceDefaults.warnIncompatibleEnvironmentConversion).toBe(true);
     expect(preferenceDefaults.tables.defaultStyle).toBe("booktabs-three-line");
@@ -43,6 +49,10 @@ describe("v0.2.3 foundations", () => {
       await repository.initialize();
       await Promise.all([repository.set("fontSize", 18), repository.set("theme", "dark"), repository.set("locale", "ja")]);
       await repository.set("fontSize", 24, "a");
+      await repository.set("autoSaveDelaySeconds", 10);
+      await repository.set("autoSaveDelaySeconds", 5, "a");
+      expect((await repository.snapshot("a")).project.autoSaveDelaySeconds).toBe(5);
+      expect((await repository.snapshot("b")).global.autoSaveDelaySeconds).toBe(10);
       expect((await repository.snapshot("a")).project.fontSize).toBe(24);
       expect((await repository.snapshot("b")).project).toEqual({});
       await expect(repository.set("locale", "ja", "a")).rejects.toThrow();
@@ -51,6 +61,9 @@ describe("v0.2.3 foundations", () => {
       const restarted = new SettingsRepository(join(root, "user"), projectPath);
       await restarted.initialize();
       expect((await restarted.snapshot()).global).toMatchObject({ fontSize: 18, theme: "dark", locale: "ja" });
+      expect((await restarted.snapshot("a")).project.autoSaveDelaySeconds).toBe(5);
+      await restarted.set("autoSaveDelaySeconds", undefined, "a");
+      expect((await restarted.snapshot("a")).project.autoSaveDelaySeconds).toBeUndefined();
       expect(JSON.parse(await readFile(join(root, "user", "settings.json"), "utf8")).version).toBe(1);
     } finally { await rm(root, { recursive: true, force: true }); }
   });

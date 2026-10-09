@@ -1,6 +1,6 @@
 import { t } from "../i18n/index.js";
 import { useSyncExternalStore } from "react";
-import { preferenceDefaults, validPreference, type PreferenceKey, type PreferenceValues, type SettingsSnapshot } from "@latex-editor/contracts";
+import { preferenceDefaults, type PreferenceKey, type PreferenceValues, type SettingsSnapshot } from "@latex-editor/contracts";
 import { setLocale } from "../i18n/index.js";
 
 let snapshot: SettingsSnapshot = { global: {}, project: {} };
@@ -23,19 +23,6 @@ export const settings = {
   subscribe(listener: () => void) { listeners.add(listener); return () => { listeners.delete(listener); }; },
   async load(id?: string) {
     const next = await window.latexEditor!.settings.get(id);
-    // Legacy localStorage is read once for migration; all future writes use IPC.
-    const legacy: Array<[PreferenceKey, string]> = id ? [["environments", `texweave.environments.project.${id}`], ["layout", `texweave.layout.${id}`]] : [["environments", "texweave.environments.global.v1"], ["hideBuildArtifacts", "texweave.settings.hideBuildArtifacts"]];
-    for (const [key, oldKey] of legacy) {
-      const scope = id ? next.project : next.global;
-      if (scope[key] !== undefined) continue;
-      try {
-        const raw = localStorage.getItem(oldKey);
-        if (raw !== null) {
-          const value: unknown = JSON.parse(raw);
-          if (validPreference(key, value)) { Object.assign(next, await window.latexEditor!.settings.set(key, value, id)); localStorage.removeItem(oldKey); }
-        }
-      } catch { /* Keep readable legacy data if migration could not be persisted. */ }
-    }
     projectId = id; snapshot = next; publish();
   },
   async set<K extends PreferenceKey>(key: K, value: PreferenceValues[K] | undefined, scope: "global" | "project" = "global") {

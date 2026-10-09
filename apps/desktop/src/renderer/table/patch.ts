@@ -1,21 +1,11 @@
+import { canRestructureTable } from "./model.js";
+import { latexCommandField, latexControlSequences, maskLatexComments, patchLatexCommand } from "@latex-editor/editor-core/latex-source";
 import { parseTable } from "./parser.js";
 import type { TablePatch } from "./model.js";
 import type { TableCell, TableObject, TableStylePreset } from "./model.js";
 
 function replaceRange(source: string, start: number, end: number, value: string): string {
   return source.slice(0, start) + value + source.slice(end);
-}
-
-function patchCommand(source: string, command: string, value: string | undefined, before: number): string {
-  if (value === undefined) return source;
-  const match = new RegExp(`\\\\${command}\\s*\\{([^{}]*)\\}`).exec(source);
-  if (match) {
-    const current = match[1] ?? "";
-    const start = (match.index ?? 0) + match[0].lastIndexOf(current);
-    return replaceRange(source, start, start + current.length, value);
-  }
-  if (!value) return source;
-  return replaceRange(source, before, before, `  \\${command}{${value}}\n`);
 }
 
 /** Minimal patches preserve all unrecognised table source around the edited field. */
@@ -30,22 +20,26 @@ export function patchTableSource(source: string, patch: TablePatch): string {
   table = parseTable(result);
   if (!table) return result;
   if (patch.placement !== undefined && table.environment !== "none") {
-    const opening = /\\begin\{table\*?\}(?:\[([^\]]*)\])?/.exec(result);
+    const opening = /\\begin\{table\*?\}(?:\[([^\]]*)\])?/.exec(maskLatexComments(result));
     if (opening) {
       const current = opening[1];
       const at = (opening.index ?? 0) + opening[0].length;
-      result = current !== undefined ? replaceRange(result, (opening.index ?? 0) + opening[0].indexOf(current), (opening.index ?? 0) + opening[0].indexOf(current) + current.length, patch.placement) : replaceRange(result, at, at, patch.placement ? `[${patch.placement}]` : "");
+      result = current !== undefined ? replaceRange(result, at - current.length - 1, at - 1, patch.placement) : replaceRange(result, at, at, patch.placement ? `[${patch.placement}]` : "");
     }
   }
   if (patch.alignment !== undefined && table.environment !== "none") {
     const desired = patch.alignment === "center" ? "\\centering" : patch.alignment === "left" ? "\\raggedright" : patch.alignment === "right" ? "\\raggedleft" : "";
-    const existing = /\\(?:centering|raggedright|raggedleft)\b/.exec(result);
-    if (existing) result = replaceRange(result, existing.index, existing.index + existing[0].length, desired);
+    const existing = [...latexControlSequences(result)].find(token => token.environmentDepth <= 1 && ["centering", "raggedright", "raggedleft"].includes(token.name));
+    if (existing) result = replaceRange(result, existing.start, existing.end, desired);
+    else if (desired) {
+      const opening = /\\begin\{table\*?\}(?:\[[^\]]*\])?/.exec(maskLatexComments(result));
+      if (opening) { const at = opening.index + opening[0].length; result = replaceRange(result, at, at, `\n  ${desired}`); }
+    }
   }
   const tabularStart = parseTable(result)?.tabular.sourceRange.start ?? result.length;
-  result = patchCommand(result, "caption", patch.caption, tabularStart);
+  result = patchLatexCommand(result, "caption", patch.caption, tabularStart);
   const nextTabularStart = parseTable(result)?.tabular.sourceRange.start ?? result.length;
-  return patchCommand(result, "label", patch.label, nextTabularStart);
+  return patchLatexCommand(result, "label", patch.label, latexCommandField(result, "caption")?.end ?? nextTabularStart);
 }
 
 function cellSource(cell: Pick<TableCell, "content" | "colSpan" | "rowSpan" | "alignment">): string {
@@ -95,7 +89,7 @@ function matrix(table: TableObject): TableCell[][] {
 
 function structuralPatch(source: string, transform: (table: TableObject, rows: TableCell[][]) => { rows: TableCell[][]; columnSpec?: string; style?: TableStylePreset } | undefined): string {
   const table = parseTable(source);
-  if (!table || table.tabular.editableLevel !== "full") return source;
+  if (!table || !canRestructureTable(table)) return source;
   const changed = transform(table, matrix(table));
   if (!changed) return source;
   let result = replaceRange(source, table.tabular.bodyRange.start, table.tabular.bodyRange.end, serializeBody(table, changed.rows, changed.style));
@@ -170,12 +164,16 @@ export function deleteTableColumn(source: string, columnIndex: number): string {
 }
 
 export function setTableColumnAlignment(source: string, columnIndex: number, alignment: "l" | "c" | "r"): string {
-  return structuralPatch(source, (table, rows) => {
-    const specs = table.tabular.columns.map((column) => column.rawSpec);
-    if (!specs[columnIndex]) return undefined;
-    specs[columnIndex] = alignment;
-    return { rows, columnSpec: specs.join("") };
-  });
+  const table = parseTable(source);
+  if (!table || !canRestructureTable(table) || !Number.isInteger(columnIndex) || !table.tabular.columns[columnIndex]) return source;
+  let cursor = 0;
+  for (const column of table.tabular.columns) {
+    const start = table.tabular.columnSpec.indexOf(column.rawSpec, cursor);
+    if (start < 0) return source;
+    if (column.index === columnIndex) return replaceRange(source, table.tabular.columnSpecRange.start + start, table.tabular.columnSpecRange.start + start + column.rawSpec.length, alignment);
+    cursor = start + column.rawSpec.length;
+  }
+  return source;
 }
 
 export function setTableStyle(source: string, style: TableStylePreset): string {

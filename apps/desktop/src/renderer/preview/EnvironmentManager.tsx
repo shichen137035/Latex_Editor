@@ -1,9 +1,10 @@
 import { useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import { t, type MessageKey } from "../i18n/index.js";
-import { environmentName } from "../i18n/displayNames.js";
+import { environmentName, environmentNames } from "../i18n/displayNames.js";
+import { LocalizedNameInput } from "../i18n/LocalizedNameInput.js";
 import { ColorTokenInput } from "./ColorTokenInput.js";
-import { createCustomEnvironment, parseEnvironmentXml, resetBuiltIn, serializeEnvironments } from "./environmentConfig.js";
+import { createCustomEnvironment, duplicateEnvironment, parseEnvironmentXml, resetBuiltIn, serializeEnvironments } from "./environmentConfig.js";
 import { environmentBlockStyle } from "./environment-block-style.js";
 import { environmentOptionBrackets } from "./environments.js";
 import { environmentPreview } from "./environment-preview.js";
@@ -35,23 +36,6 @@ function matchFrom(kind: EnvironmentMatchRule["kind"], value: string): Environme
   if (kind === "virtual-block") return { kind, type: value };
   if (kind === "custom-pattern") return { kind, pattern: value };
   return { kind: "display-math" };
-}
-
-function duplicateDefinition(definition: EnvironmentDefinition, existing: EnvironmentDefinition[]): EnvironmentDefinition {
-  const base = `${definition.id}-copy`;
-  let id = base;
-  let suffix = 2;
-  while (existing.some((item) => item.id === id)) id = `${base}-${suffix++}`;
-  return {
-    ...definition,
-    id,
-    builtIn: false,
-    labelKey: `environment.${id}`,
-    label: t("environment.copySuffix", { name: environmentDisplayName(definition) }),
-    match: { ...definition.match },
-    style: { ...definition.style },
-    behavior: { ...definition.behavior }
-  };
 }
 
 function Toggle({ checked, onChange, label }: { checked: boolean; onChange(value: boolean): void; label: string }) {
@@ -119,7 +103,7 @@ function DefinitionEditor({ definition, definitions, onChange, onSelect }: { def
     onChange(definitions.map(item => item.id === definition.id ? merged : item));
   };
   const update = <K extends keyof EnvironmentDefinition>(key: K, value: EnvironmentDefinition[K]) => replace({ ...definition, [key]: value });
-  const addDuplicate = () => { const copy = duplicateDefinition(definition, definitions); onChange([...definitions, copy]); onSelect(copy.id); };
+  const addDuplicate = () => { const copy = duplicateEnvironment(definition, definitions); onChange([...definitions, copy]); onSelect(copy.id); };
   const remove = () => {
     if (definition.builtIn || !window.confirm(t("environment.deleteConfirm", { name: environmentDisplayName(definition) }))) return;
     const next = definitions.filter((item) => item.id !== definition.id);
@@ -131,7 +115,7 @@ function DefinitionEditor({ definition, definitions, onChange, onSelect }: { def
   return <div className="environment-editor">
     <div className="environment-editor-title"><div><p>{definition.builtIn ? t("environment.builtIn") : t("environment.customGroup")}</p><h2>{environmentDisplayName(definition)}</h2></div><div className="environment-editor-title-actions"><button type="button" className="environment-preview-sample-button" onClick={() => setSampleOpen(true)}>{t("environment.previewSample")}</button><Toggle checked={definition.enabled} onChange={(enabled) => update("enabled", enabled)} label={definition.enabled ? t("environment.on") : t("environment.off")}/></div></div>
     <section className="environment-form-section"><h3>{t("environment.identity")}</h3><div className="environment-form-grid">
-      <label><span>{t("environment.label")}</span><input value={definition.label ?? environmentDisplayName(definition)} onChange={(event) => update("label", event.target.value)}/></label>
+      <LocalizedNameInput id={definition.id} label={t("environment.label")} names={environmentNames(definition)} overrides={definition.labels} fallback={locale => environmentName(definition, locale)} onChange={labels => update("labels", labels)}/>
       <label><span>{t("environment.family")}</span><select value={definition.family} onChange={(event) => update("family", event.target.value as EnvironmentDefinition["family"])}>{families.map((family) => <option key={family} value={family}>{t(`environment.family.${family}` as MessageKey)}</option>)}</select></label>
     </div></section>
     <section className="environment-form-section"><h3>{t("environment.typography")}</h3><div className="environment-form-grid typography-grid">
@@ -171,7 +155,7 @@ export function EnvironmentManager({ definitions, onChange, toolbarTarget }: { d
   const normalizedQuery = query.trim().toLocaleLowerCase();
   const filteredDefinitions = definitions.filter((definition) => {
     const sourceName = matchValue(definition.match);
-    const matchesQuery = !normalizedQuery || `${definition.id} ${definition.label ?? ""} ${environmentDisplayName(definition)} ${sourceName}`.toLocaleLowerCase().includes(normalizedQuery);
+    const matchesQuery = !normalizedQuery || `${definition.id} ${Object.values(environmentNames(definition)).join(" ")} ${environmentDisplayName(definition)} ${sourceName}`.toLocaleLowerCase().includes(normalizedQuery);
     return matchesQuery && (sourceFilter === "all" || definition.match.kind === sourceFilter) && (familyFilter === "all" || definition.family === familyFilter);
   });
   const selected = filteredDefinitions.find((item) => item.id === selectedId) ?? filteredDefinitions[0];

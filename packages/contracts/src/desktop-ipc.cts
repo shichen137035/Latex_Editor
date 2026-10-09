@@ -15,9 +15,13 @@ const invoke = <F extends (...args: never[]) => Promise<unknown>>(channel: strin
 type ProjectScoped<F extends (...args: never[]) => Promise<unknown>> = (projectId: string, ...args: Parameters<F>) => ReturnType<F>;
 export type UnsavedDialogLabels = { title: string; message: string; detail: string; buttons: [string, string, string] };
 export type UnsavedDialogChoice = "save" | "discard" | "cancel";
+export interface DesktopAppInfo { version: string }
 
 /** Desktop transport contract. Existing public method and wire names remain stable. */
 export const desktopInvoke = {
+  app: {
+    info: invoke<() => Promise<DesktopAppInfo>>("app:info"),
+  },
   documents: {
     sync: invoke<(projectId: string, input: WorkingDocumentInput) => Promise<WorkingDocumentResult>>("documents:sync"),
     close: invoke<(projectId: string, sessionId: string) => Promise<void>>("documents:close"),

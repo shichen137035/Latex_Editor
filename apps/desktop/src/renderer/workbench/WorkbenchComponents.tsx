@@ -255,7 +255,7 @@ export function Tree({ projectId, nodes, activePath, mainFile, filter, hideBuild
 }
 export function Placeholder({ type, pdfDataUrl, pdfTarget, pdfViewState, pdfLabel, onPdfDoubleClick, onPdfInteract }: { pdfViewState?: MutableRefObject<PdfViewState | undefined> | undefined; pdfLabel?: string | undefined; type: "preview" | "pdf"; pdfDataUrl?: string | undefined; pdfTarget?: SyncTexPdfPosition | undefined; onPdfDoubleClick?(page: number, x: number, y: number): void; onPdfInteract?(): void }) {
   if (type === "pdf" && pdfDataUrl) return <PdfViewer viewState={pdfViewState} label={pdfLabel} dataUrl={pdfDataUrl} target={pdfTarget} onReverse={(page, x, y) => onPdfDoubleClick?.(page, x, y)} onInteract={() => onPdfInteract?.()}/>;
-  return <div className="pane-placeholder"><div className="placeholder-orbit"><Logo /></div><h2>{t(type === "preview" ? "placeholder.previewTitle" : "placeholder.pdfTitle")}</h2><p>{t(type === "preview" ? "placeholder.preview" : "placeholder.pdf")}</p>{type === "preview" && <small>{t("placeholder.previewPlan")}</small>}</div>;
+  return <div className="pane-placeholder"><div className="placeholder-orbit"><Logo /></div><h2>{t(type === "preview" ? "placeholder.previewTitle" : "placeholder.pdfTitle")}</h2><p>{t(type === "preview" ? "placeholder.preview" : "placeholder.pdf")}</p></div>;
 }
 
 export function EntryNameInput({ message, fallback, finish }: { message: string; fallback: string; finish(value?: string): void }) {
