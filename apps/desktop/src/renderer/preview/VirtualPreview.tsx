@@ -104,9 +104,14 @@ function MeasuredRow({ item, controller, children, as = "div", ordinal }: { item
     controller.mounted.add(item.id);
     const measure = () => controller.measure(item.id, element.getBoundingClientRect().height, element, item.estimatedHeight);
     measure();
-    const observer = new ResizeObserver(measure);
+    let frame = 0;
+    // External-store notifications synchronously render React. Doing that
+    // inside ResizeObserver can resize its own targets in the same delivery.
+    const observer = new ResizeObserver(() => {
+      if (!frame) frame = requestAnimationFrame(() => { frame = 0; if (element.isConnected) measure(); });
+    });
     observer.observe(element);
-    return () => { observer.disconnect(); controller.mounted.delete(item.id); };
+    return () => { observer.disconnect(); if (frame) cancelAnimationFrame(frame); controller.mounted.delete(item.id); };
   }, [controller, item.id]);
   return as === "li"
     ? <li className="preview-virtual-row" ref={ref as RefObject<HTMLLIElement>} data-virtual-node-id={item.id} value={ordinal}>{children}</li>

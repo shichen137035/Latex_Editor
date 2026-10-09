@@ -1,9 +1,9 @@
-import { useRef, useState, type DragEvent as ReactDragEvent, type MouseEvent } from "react";
+import { useRef, useState, type DragEvent as ReactDragEvent, type MouseEvent, type MutableRefObject } from "react";
 import type { Diagnostic, ProjectTreeNode, SyncTexPdfPosition } from "@latex-editor/contracts";
 import { t } from "../i18n/index.js";
 import { settings } from "../settings/service.js";
 import type { SpellContextRequest } from "../spellcheck/SpellCheckController.js";
-import { PdfViewer } from "../pdf/PdfViewer.js";
+import { PdfViewer, type PdfViewState } from "../pdf/PdfViewer.js";
 
 export type FileContext = { x: number; y: number; path?: string; kind?: ProjectTreeNode["kind"] };
 export type WorkbenchMenuItem = { label: string; disabled?: boolean; action?: () => void; divider?: boolean };
@@ -225,8 +225,8 @@ export function Tree({ nodes, activePath, mainFile, filter, hideBuildArtifacts, 
     }}
   >{renderNodes(nodes, 0)}</div>;
 }
-export function Placeholder({ type, pdfDataUrl, pdfTarget, onPdfDoubleClick, onPdfInteract }: { type: "preview" | "pdf"; pdfDataUrl?: string | undefined; pdfTarget?: SyncTexPdfPosition | undefined; onPdfDoubleClick?(page: number, x: number, y: number): void; onPdfInteract?(): void }) {
-  if (type === "pdf" && pdfDataUrl) return <PdfViewer dataUrl={pdfDataUrl} target={pdfTarget} onReverse={(page, x, y) => onPdfDoubleClick?.(page, x, y)} onInteract={() => onPdfInteract?.()}/>;
+export function Placeholder({ type, pdfDataUrl, pdfTarget, pdfViewState, pdfLabel, onPdfDoubleClick, onPdfInteract }: { pdfViewState?: MutableRefObject<PdfViewState | undefined> | undefined; pdfLabel?: string | undefined; type: "preview" | "pdf"; pdfDataUrl?: string | undefined; pdfTarget?: SyncTexPdfPosition | undefined; onPdfDoubleClick?(page: number, x: number, y: number): void; onPdfInteract?(): void }) {
+  if (type === "pdf" && pdfDataUrl) return <PdfViewer viewState={pdfViewState} label={pdfLabel} dataUrl={pdfDataUrl} target={pdfTarget} onReverse={(page, x, y) => onPdfDoubleClick?.(page, x, y)} onInteract={() => onPdfInteract?.()}/>;
   return <div className="pane-placeholder"><div className="placeholder-orbit"><Logo /></div><h2>{t(type === "preview" ? "placeholder.previewTitle" : "placeholder.pdfTitle")}</h2><p>{t(type === "preview" ? "placeholder.preview" : "placeholder.pdf")}</p>{type === "preview" && <small>{t("placeholder.previewPlan")}</small>}</div>;
 }
 

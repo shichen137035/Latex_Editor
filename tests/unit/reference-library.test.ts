@@ -6,6 +6,22 @@ import { citationKeyIdentity, citationOccurrences, isValidCitationKey, parseBibt
 import { ReferenceLibraryRepository } from "../../apps/desktop/src/main/references.js";
 
 describe("reference library", () => {
+  it("rejects invalid library keys, missing link targets, and conflicting project aliases", async () => {
+    const root = await mkdtemp(join(tmpdir(), "texweave-reference-links-"));
+    const repository = new ReferenceLibraryRepository(root);
+    try {
+      await repository.initialize();
+      await expect(repository.saveEntry({ citationKey: "bad%key", entryType: "book", fields: {} })).rejects.toThrow("Invalid citation key");
+      const first = await repository.saveEntry({ citationKey: "first", entryType: "book", fields: {} });
+      const second = await repository.saveEntry({ citationKey: "second", entryType: "book", fields: {} });
+      const link = { projectId: "project", libraryEntryId: first.id, citationKeyInProject: "alias", mode: "link" as const };
+      repository.setProjectLink(link);
+      expect(() => repository.setProjectLink({ ...link, libraryEntryId: second.id, citationKeyInProject: "ALIAS" })).toThrow("already linked");
+      expect(() => repository.setProjectLink({ ...link, libraryEntryId: "missing" })).toThrow("not found");
+      expect(() => repository.setProjectLink({ ...link, citationKeyInProject: "bad,key" })).toThrow("Invalid project");
+      expect(repository.snapshot("project").projectLinks).toHaveLength(1);
+    } finally { repository.close(); await rm(root, { recursive: true, force: true }); }
+  });
   it("parses entries without losing comments, macros, or source ranges", () => {
     const source = `% keep this comment\n@string{venue = "Journal"}\n@article{chen2006,\n  author = {Chen and Fan},\n  title = {A model},\n  journal = venue,\n  year = {2006}\n}`;
     const parsed = parseBibtex(source);

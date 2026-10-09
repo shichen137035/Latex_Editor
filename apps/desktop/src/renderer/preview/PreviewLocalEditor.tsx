@@ -16,6 +16,7 @@ import type { MathContext } from "../math/types.js";
 import { editorThemeName } from "../themes/runtime.js";
 import type { EnvironmentDefinition } from "./types.js";
 import { useUnsavedChanges } from "../lifecycle/unsavedChanges.js";
+import { registerCitationTarget } from "../references/citationInsertion.js";
 
 type EditorApi = NonNullable<Window["latexEditor"]>;
 
@@ -28,6 +29,8 @@ export interface PreviewLocalEditorProps {
   onInsertAfter?(draft: string): void;
   mathDraft?: boolean;
   sourceStartLine?: number;
+  sourceStartOffset?: number;
+  getOpenDocuments?: (() => Array<{ path: string; content: string }>) | undefined;
   initialCursorOffset?: number | undefined;
   initialHeight?: number | undefined;
   api: EditorApi | undefined;
@@ -42,7 +45,7 @@ export interface PreviewLocalEditorProps {
 }
 
 /** Monaco-backed editor for a source range opened from the visual preview. */
-export function PreviewLocalEditor({ value, onApply, onDraftChange, onCancel, onInsertBefore, onInsertAfter, mathDraft = false, sourceStartLine = 1, initialCursorOffset, initialHeight, api, projectId, tree, currentPath, definitions, mathContext, onSpellContextMenu, onDetectedLanguage, onForwardSync }: PreviewLocalEditorProps) {
+export function PreviewLocalEditor({ value, onApply, onDraftChange, onCancel, onInsertBefore, onInsertAfter, mathDraft = false, sourceStartLine = 1, sourceStartOffset, getOpenDocuments, initialCursorOffset, initialHeight, api, projectId, tree, currentPath, definitions, mathContext, onSpellContextMenu, onDetectedLanguage, onForwardSync }: PreviewLocalEditorProps) {
   const preferences = useSettings();
   const [draft, setDraft] = useState(value);
   const [measuredContentHeight, setMeasuredContentHeight] = useState<number>();
@@ -56,6 +59,8 @@ export function PreviewLocalEditor({ value, onApply, onDraftChange, onCancel, on
   const applyRef = useRef(onApply);
   const cancelRef = useRef(onCancel);
   const completionController = useRef<CompletionController | null>(null);
+  const completionContext = useRef({ tree, currentPath, definitions, getOpenDocuments, sourceStartOffset, value });
+  completionContext.current = { tree, currentPath, definitions, getOpenDocuments, sourceStartOffset, value };
   const spellCheckController = useRef<SpellCheckController | null>(null);
   const contextActions = useRef<{ dispose(): void } | null>(null);
   const symbolPairing = useRef<{ dispose(): void } | null>(null);
@@ -68,6 +73,14 @@ export function PreviewLocalEditor({ value, onApply, onDraftChange, onCancel, on
   applyRef.current = onApply;
   cancelRef.current = onCancel;
   useUnsavedChanges({ hasChanges: () => draftRef.current !== value, commit: () => applyRef.current(draftRef.current) });
+  useEffect(() => registerCitationTarget(projectId, currentPath, text => {
+    const editor = localEditorRef.current;
+    const selection = editor?.getSelection();
+    if (!editor || !selection || !editor.getModel()) return false;
+    editor.executeEdits("reference-library", [{ range: selection, text, forceMoveMarkers: true }]);
+    editor.focus();
+    return true;
+  }), [projectId, currentPath]);
   useEffect(() => () => { completionController.current?.dispose(); spellCheckController.current?.dispose(); contextActions.current?.dispose(); symbolPairing.current?.dispose(); }, []);
   useEffect(() => { spellCheckController.current?.refresh(); }, [mode, language]);
   useEffect(() => {
@@ -75,7 +88,10 @@ export function PreviewLocalEditor({ value, onApply, onDraftChange, onCancel, on
       commands.register("edit.undo", { execute: () => localEditorRef.current?.trigger("command", "undo", null), when: () => localEditorRef.current?.hasTextFocus() === true }),
       commands.register("edit.redo", { execute: () => localEditorRef.current?.trigger("command", "redo", null), when: () => localEditorRef.current?.hasTextFocus() === true }),
       commands.register("preview.applyDraft", { execute: () => applyRef.current(draftRef.current) }),
-      commands.register("preview.cancelDraft", { execute: () => cancelRef.current() }),
+      commands.register("preview.cancelDraft", {
+        when: () => !localEditorRef.current?.getDomNode()?.querySelector(".suggest-widget.visible, .parameter-hints-widget.visible"),
+        execute: () => cancelRef.current()
+      }),
       commands.register("block.insertBefore", { when: () => !!onInsertBefore, execute: () => onInsertBefore?.(draftRef.current) }),
       commands.register("block.insertAfter", { when: () => !!onInsertAfter, execute: () => onInsertAfter?.(draftRef.current) })
     ];
@@ -137,7 +153,10 @@ export function PreviewLocalEditor({ value, onApply, onDraftChange, onCancel, on
     editor.onDidBlurEditorWidget(() => { if (!mathPopoverInteracting.current) setCursorMath(undefined); });
     updateCursorMath();
     if (!api) return;
-    completionController.current = new CompletionController({ monaco, api, projectId, getTree: () => tree, getCurrentPath: () => currentPath, getEnvironments: () => definitions, isDocumentWordCompletionEnabled: () => preferences.get("documentWordCompletion") });
+    completionController.current = new CompletionController({ monaco, api, projectId, getModel: () => localEditorRef.current?.getModel() ?? null, getOpenDocuments: () => completionContext.current.getOpenDocuments?.() ?? [], getSourceRange: () => {
+      const { sourceStartOffset, value } = completionContext.current;
+      return sourceStartOffset === undefined ? undefined : { start: sourceStartOffset, end: sourceStartOffset + value.length };
+    }, getTree: () => completionContext.current.tree, getCurrentPath: () => completionContext.current.currentPath, getEnvironments: () => completionContext.current.definitions, isDocumentWordCompletionEnabled: () => preferences.get("documentWordCompletion") });
     spellCheckController.current = new SpellCheckController({ editor, api, getCurrentPath: () => currentPath, getMode: () => preferences.get("spellCheckMode"), getManualLanguage: () => preferences.get("spellCheckLanguage"), onDetectedLanguage, onContextMenu: onSpellContextMenu });
   };
   const blockMath = useMemo(() => mathDraft ? extractMathExpression(draft) : undefined, [draft, mathDraft]);

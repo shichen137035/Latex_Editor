@@ -1,4 +1,7 @@
 .pdf-document { display: flex; flex-direction: column; flex: 1; min-width: 0; min-height: 0; overflow: hidden; }
+.pdf-origin-label { color: var(--color-text-muted); }
+.pdf-update-error { padding: 6px 12px; color: var(--color-error); background: var(--color-bg-panel); }
+.pdf-document > .pdf-viewer { overflow-anchor: none; }
 .pdf-zoom-toolbar { display: flex; align-items: center; justify-content: center; flex: 0 0 auto; gap: 8px; padding: 6px 10px; border-bottom: 1px solid var(--color-border); background: var(--color-bg-panel); color: var(--color-text-primary); }
 .pdf-zoom-toolbar button { padding: 3px 8px; border-radius: 5px; color: inherit; }
 .pdf-zoom-toolbar button:hover { background: var(--color-bg-hover); }

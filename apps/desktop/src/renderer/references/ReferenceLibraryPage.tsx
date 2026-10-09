@@ -50,7 +50,7 @@ export function ReferenceLibraryPage({ projects, onBack, returnToProject = false
     else comparison = left.createdAt.localeCompare(right.createdAt);
     if (comparison === 0) comparison = left.citationKey.localeCompare(right.citationKey, undefined, { sensitivity: "base" });
     return sortDirection === "asc" ? comparison : -comparison;
-  }), [collection, filter, query, snapshot, sort, sortDirection, type]);
+  }), [collection, filter, query, snapshot, sort, sortDirection, tagFilter, type]);
   const selected = snapshot?.entries.find((entry) => entry.id === selectedId);
   const projectNames = useMemo(() => new Map(projects.map((project) => [project.id, project.name])), [projects]);
 

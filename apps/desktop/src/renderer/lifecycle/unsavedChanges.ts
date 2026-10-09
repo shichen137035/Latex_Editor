@@ -14,11 +14,15 @@ export class UnsavedChangesRegistry {
     return () => { this.participants.delete(participant); };
   }
   hasChanges(): boolean { return [...this.participants].some(participant => participant.hasChanges()); }
-  async saveAll(flush: (commit: () => void) => void): Promise<void> {
+  hasDraftChanges(): boolean { return [...this.participants].some(participant => participant.commit && participant.hasChanges()); }
+  commitDrafts(flush: (commit: () => void) => void): void {
     const drafts = [...this.participants].filter(participant => participant.hasChanges() && participant.commit);
+    if (drafts.length) flush(() => { for (const participant of drafts) participant.commit?.(); });
+  }
+  async saveAll(flush: (commit: () => void) => void): Promise<void> {
     // Flushing updates the Workbench's file snapshots synchronously. Saving an
     // old React closure here would silently omit newly committed Preview edits.
-    flush(() => { for (const participant of drafts) participant.commit?.(); });
+    this.commitDrafts(flush);
     for (const participant of [...this.participants]) {
       if (participant.hasChanges() && participant.save) {
         await participant.save();
@@ -39,8 +43,8 @@ export function useUnsavedChanges(participant: UnsavedParticipant): void {
   latest.current = participant;
   useLayoutEffect(() => unsavedChanges.register({
     hasChanges: () => latest.current.hasChanges(),
-    commit: () => latest.current.commit?.(),
-    save: async () => { await latest.current.save?.(); }
+    ...(participant.commit ? { commit: () => latest.current.commit?.() } : {}),
+    ...(participant.save ? { save: async () => { await latest.current.save?.(); } } : {})
   }), []);
 }
 

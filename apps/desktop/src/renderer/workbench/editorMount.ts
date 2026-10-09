@@ -9,9 +9,11 @@ import { MathNodeIndex } from "../math/MathNodeLocator.js";
 import { extractMathExpression } from "../math/MathRenderService.js";
 import { installEditorContextActions } from "./editorContextActions.js";
 import { installSymbolPairing } from "../editor/symbolPairing.js";
+import { sourceReferenceAtOffset } from "../editor/sourceReferences.js";
 import { commands } from "../settings/commands.js";
 import { t } from "../i18n/index.js";
 import type { DocumentSelection } from "../custom-blocks/selection.js";
+import type { IndexedDocument } from "../completion/ProjectIndex.js";
 
 export interface SourceMathPreview { source: string; displayMode: boolean; anchor: DOMRect; kind: "source-cursor" | "source-hover" }
 
@@ -44,6 +46,8 @@ interface WorkbenchEditorMountOptions {
   forwardSyncToPdf(path: string, line: number, column?: number): Promise<void>;
   treeRef: MutableRefObject<ProjectTreeNode[]>;
   environmentsRef: MutableRefObject<EnvironmentDefinition[]>;
+  getOpenDocuments(): IndexedDocument[];
+  onReferenceJump(jump: NonNullable<ReturnType<typeof sourceReferenceAtOffset>>): void;
   setDetectedSpellLanguage: Dispatch<SetStateAction<string>>;
   setSpellContextMenu: Dispatch<SetStateAction<SpellContextRequest | undefined>>;
 }
@@ -69,12 +73,19 @@ export function createWorkbenchEditorMount(options: WorkbenchEditorMountOptions)
     symbolPairingListener.current = installSymbolPairing(editor, () => store.get("autoPairSymbols"));
     const blockAction = editor.addAction({ id: "texweave.createCustomBlock", label: t("block.createFromSelection"), precondition: "editorHasSelection", contextMenuGroupId: "navigation", contextMenuOrder: 0.45, run: () => { commands.execute("block.createFromSelection"); } });
     let indexedVersion = -1;
+    let indexedModel: ReturnType<typeof editor.getModel> = null;
     let mathIndex = new MathNodeIndex([]);
     let cursorMathActive = false;
     let mathTimer: number | undefined;
     let hoverExitTimer: number | undefined;
     let pendingMathKind: SourceMathPreview["kind"] | undefined;
     let activeMath: { source: string; displayMode: boolean; kind: SourceMathPreview["kind"]; start: number; end: number } | undefined;
+    const cancelPendingMath = (kind?: SourceMathPreview["kind"]) => {
+      if (kind && pendingMathKind !== kind) return;
+      if (mathTimer !== undefined) window.clearTimeout(mathTimer);
+      mathTimer = undefined;
+      pendingMathKind = undefined;
+    };
     const clearHoverMathPreview = () => {
       if (pendingMathKind === "source-hover") {
         if (mathTimer !== undefined) window.clearTimeout(mathTimer);
@@ -87,7 +98,8 @@ export function createWorkbenchEditorMount(options: WorkbenchEditorMountOptions)
     clearHoverMathPreviewRef.current = clearHoverMathPreview;
     const currentMathIndex = () => {
       const model = editor.getModel();
-      if (model && model.getVersionId() !== indexedVersion) {
+      if (model && (model !== indexedModel || model.getVersionId() !== indexedVersion)) {
+        indexedModel = model;
         indexedVersion = model.getVersionId();
         mathIndex = MathNodeIndex.fromSource(model.getValue());
       }
@@ -125,10 +137,14 @@ export function createWorkbenchEditorMount(options: WorkbenchEditorMountOptions)
       const mathNode = currentMathIndex().findMathNodeAtOffset(offset);
       if (!mathNode || !mathAnchor(mathNode.start, mathNode.end)) return false;
       const extracted = extractMathExpression(model.getValue().slice(mathNode.start, mathNode.end));
+      const version = model.getVersionId();
+      const path = activePathRef.current;
       if (mathTimer !== undefined) window.clearTimeout(mathTimer);
       mathTimer = window.setTimeout(() => {
         mathTimer = undefined;
         pendingMathKind = undefined;
+        if (editor.getModel() !== model || model.isDisposed() || model.getVersionId() !== version || activePathRef.current !== path
+          || (kind === "source-cursor" && !editor.hasTextFocus()) || (kind === "source-hover" && !hoverPosition)) return;
         if (kind === "source-hover" && !store.get("mathPreviewOnHover")) {
           clearHoverMathPreview();
           return;
@@ -142,6 +158,7 @@ export function createWorkbenchEditorMount(options: WorkbenchEditorMountOptions)
     const updateCursorMath = (position: { lineNumber: number; column: number }) => {
       cursorMathActive = scheduleMathPreview(position, "source-cursor");
       if (!cursorMathActive) {
+        cancelPendingMath("source-cursor");
         if (activeMath?.kind === "source-cursor") activeMath = undefined;
         setSourceMathPreview((current) => current?.kind === "source-cursor" ? undefined : current);
       }
@@ -157,15 +174,25 @@ export function createWorkbenchEditorMount(options: WorkbenchEditorMountOptions)
     });
     const selectionListener = editor.onDidChangeCursorSelection((event) => {
       const model = editor.getModel();
-      const path = activePathRef.current;
-      if (!model || !path || event.selection.isEmpty()) { setSourceSelection(undefined); return; }
+      const path = sourceModelPath.current;
+      if (!model || !path || path !== activePathRef.current || event.selection.isEmpty()) { setSourceSelection(undefined); return; }
       setSourceSelection({ fileId: path, start: model.getOffsetAt(event.selection.getStartPosition()), end: model.getOffsetAt(event.selection.getEndPosition()), origin: "source" });
     });
     const contentListener = editor.onDidChangeModelContent(() => {
+      cancelPendingMath();
       indexedVersion = -1;
       activeMath = undefined;
       const position = editor.getPosition();
       if (position) updateCursorMath(position);
+    });
+    const modelListener = editor.onDidChangeModel(() => {
+      cancelPendingMath();
+      indexedModel = null;
+      indexedVersion = -1;
+      activeMath = undefined;
+      cursorMathActive = false;
+      setSourceMathPreview(undefined);
+      setSourceSelection(undefined);
     });
     const scrollListener = editor.onDidScrollChange(() => {
       refreshMathPreview();
@@ -179,6 +206,7 @@ export function createWorkbenchEditorMount(options: WorkbenchEditorMountOptions)
     const layoutListener = editor.onDidLayoutChange(refreshMathPreview);
     const blurListener = editor.onDidBlurEditorWidget(() => {
       if (mathPopoverInteracting.current) return;
+      cancelPendingMath("source-cursor");
       cursorMathActive = false;
       if (activeMath?.kind === "source-cursor") activeMath = undefined;
       setSourceMathPreview((current) => current?.kind === "source-cursor" ? undefined : current);
@@ -187,40 +215,10 @@ export function createWorkbenchEditorMount(options: WorkbenchEditorMountOptions)
       const modifier = store.get("referenceLinkModifier");
       return modifier === "ctrl" ? event.ctrlKey : modifier === "alt" ? event.altKey : modifier === "shift" ? event.shiftKey : event.metaKey;
     };
-    const isCommented = (value: string, index: number) => {
-      const percent = value.lastIndexOf("%", index);
-      if (percent < 0) return false;
-      let slashes = 0;
-      for (let cursor = percent - 1; cursor >= 0 && value[cursor] === "\\"; cursor -= 1) slashes += 1;
-      return slashes % 2 === 0;
-    };
     const referenceAtPosition = (position: { lineNumber: number; column: number }) => {
-      if (!/\.tex$/i.test(activePathRef.current ?? "")) return undefined;
       const model = editor.getModel();
-      if (!model) return undefined;
-      const line = model.getLineContent(position.lineNumber);
-      const referencePattern = /\\([A-Za-z]*ref[A-Za-z]*)\s*\{([^}\n]+)\}/g;
-      for (const match of line.matchAll(referencePattern)) {
-        if (isCommented(line, match.index ?? 0)) continue;
-        const startColumn = (match.index ?? 0) + 1;
-        const endColumn = startColumn + match[0].length;
-        if (position.column >= startColumn && position.column <= endColumn) {
-          const label = (match[2] ?? "").split(",").map((value) => value.trim()).filter(Boolean)[0];
-          if (label) return label;
-        }
-      }
-      return undefined;
-    };
-    const labelPosition = (label: string) => {
-      const model = editor.getModel();
-      if (!model) return undefined;
-      const labelPattern = /\\label\s*\{([^}\n]+)\}/g;
-      for (const match of model.getValue().matchAll(labelPattern)) {
-        if (match[1]?.trim() !== label) continue;
-        const position = model.getPositionAt(match.index ?? 0);
-        if (!isCommented(model.getLineContent(position.lineNumber), position.column - 1)) return position;
-      }
-      return undefined;
+      if (!model || sourceModelPath.current !== activePathRef.current || !/\.tex$/i.test(activePathRef.current ?? "")) return undefined;
+      return sourceReferenceAtOffset(model.getValue(), model.getOffsetAt(position));
     };
     const setReferenceCursor = (enabled: boolean) => editor.getDomNode()?.classList.toggle("texweave-reference-cursor", enabled);
     let hoverPosition: { lineNumber: number; column: number } | undefined;
@@ -244,13 +242,10 @@ export function createWorkbenchEditorMount(options: WorkbenchEditorMountOptions)
       }
       if (!modifierPressed(event.event)) return;
       const position = event.target.position;
-      const label = position ? referenceAtPosition(position) : undefined;
-      const target = label ? labelPosition(label) : undefined;
-      if (!target) return;
+      const reference = position ? referenceAtPosition(position) : undefined;
+      if (!reference) return;
       event.event.preventDefault();
-      editor.revealLineInCenter(target.lineNumber);
-      editor.setPosition({ lineNumber: target.lineNumber, column: target.column });
-      editor.focus();
+      options.onReferenceJump(reference);
     });
     const mouseMove = editor.onMouseMove((event) => {
       hoverPosition = event.target.position ?? undefined;
@@ -267,10 +262,10 @@ export function createWorkbenchEditorMount(options: WorkbenchEditorMountOptions)
     window.addEventListener("keyup", modifierChange);
     const initialPosition = editor.getPosition();
     if (initialPosition) updateCursorMath(initialPosition);
-    const contextActions = installEditorContextActions(editor, (line, column) => { if (activePathRef.current) void forwardSyncToPdf(activePathRef.current, line, column); });
-    referenceMouseListener.current = { dispose: () => { if (mathTimer !== undefined) window.clearTimeout(mathTimer); if (hoverExitTimer !== undefined) window.clearTimeout(hoverExitTimer); activeMath = undefined; mathPopoverInteracting.current = false; mathPopoverInteractionChangeRef.current = () => undefined; if (clearHoverMathPreviewRef.current === clearHoverMathPreview) clearHoverMathPreviewRef.current = () => undefined; blockAction.dispose(); contextActions.dispose(); symbolPairingListener.current?.dispose(); symbolPairingListener.current = null; cursorListener.dispose(); selectionListener.dispose(); contentListener.dispose(); scrollListener.dispose(); layoutListener.dispose(); blurListener.dispose(); mouseDown.dispose(); mouseMove.dispose(); mouseLeave.dispose(); window.removeEventListener("keydown", modifierChange); window.removeEventListener("keyup", modifierChange); setReferenceCursor(false); setSourceMathPreview(undefined); } };
+    const contextActions = installEditorContextActions(editor, (line, column) => { if (activePathRef.current) void forwardSyncToPdf(activePathRef.current, line, column); }, () => activePathRef.current);
+    referenceMouseListener.current = { dispose: () => { if (mathTimer !== undefined) window.clearTimeout(mathTimer); if (hoverExitTimer !== undefined) window.clearTimeout(hoverExitTimer); activeMath = undefined; mathPopoverInteracting.current = false; mathPopoverInteractionChangeRef.current = () => undefined; if (clearHoverMathPreviewRef.current === clearHoverMathPreview) clearHoverMathPreviewRef.current = () => undefined; blockAction.dispose(); contextActions.dispose(); symbolPairingListener.current?.dispose(); symbolPairingListener.current = null; cursorListener.dispose(); selectionListener.dispose(); contentListener.dispose(); modelListener.dispose(); scrollListener.dispose(); layoutListener.dispose(); blurListener.dispose(); mouseDown.dispose(); mouseMove.dispose(); mouseLeave.dispose(); window.removeEventListener("keydown", modifierChange); window.removeEventListener("keyup", modifierChange); setReferenceCursor(false); setSourceMathPreview(undefined); } };
     if (api) {
-      completionController.current = new CompletionController({ monaco, api, projectId: project.id, getTree: () => treeRef.current, getCurrentPath: () => activePathRef.current, getEnvironments: () => environmentsRef.current, isDocumentWordCompletionEnabled: () => store.get("documentWordCompletion") });
+      completionController.current = new CompletionController({ monaco, api, projectId: project.id, getModel: () => editor.getModel(), getOpenDocuments: options.getOpenDocuments, getTree: () => treeRef.current, getCurrentPath: () => activePathRef.current, getEnvironments: () => environmentsRef.current, isDocumentWordCompletionEnabled: () => store.get("documentWordCompletion") });
       spellCheckController.current = new SpellCheckController({ editor, api, getCurrentPath: () => activePathRef.current, getMode: () => store.get("spellCheckMode"), getManualLanguage: () => store.get("spellCheckLanguage"), onDetectedLanguage: setDetectedSpellLanguage, onContextMenu: setSpellContextMenu });
     }
   };

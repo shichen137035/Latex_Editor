@@ -2,6 +2,8 @@ import type { CommandMetadata, ProjectTreeNode } from "@latex-editor/contracts";
 import { parseMathNodes } from "../math/MathNodeLocator.js";
 import type { EnvironmentDefinition } from "../preview/types.js";
 import type { CompletionContext } from "./context.js";
+import { parseBibtex } from "@latex-editor/editor-core/bibtex";
+import { maskLatexComments } from "@latex-editor/editor-core/latex-source";
 
 export interface IndexedDocument {
   path: string;
@@ -35,7 +37,7 @@ interface IndexedCitation {
   detail: string;
 }
 
-const imageExtensions = new Set([".png", ".jpg", ".jpeg", ".gif", ".svg", ".eps", ".pdf"]);
+const imageExtensions = new Set([".png", ".jpg", ".jpeg", ".webp", ".gif", ".svg", ".eps", ".pdf"]);
 const documentWordPattern = /[\p{L}\p{N}][\p{L}\p{N}'’_-]*/gu;
 const mathSymbolPattern = /[\p{L}][\p{L}\p{N}_]*/gu;
 const mathTextCommandPattern = /\\(?:text|textnormal|textrm|textit|textbf|mathrm|operatorname|mbox)\s*\{[^{}]*\}/g;
@@ -128,7 +130,7 @@ export class ProjectIndex {
     const mathSymbolEntries = new Map<string, CompletionEntry>();
     for (const document of documents) {
       const path = document.path;
-      const content = document.content;
+      const content = extension(path) === ".bib" ? document.content : maskLatexComments(document.content);
       if (extension(path) === ".tex") {
         const mathNodes = parseMathNodes(content);
         let mathNodeIndex = 0;
@@ -173,28 +175,24 @@ export class ProjectIndex {
         if (!name) continue;
         addPreferred(environmentEntries, { label: name, insertText: `${name}}\n\t$0\n\\end{${name}}`, detail: `Theorem environment · ${path}`, kind: "environment", filterText: name, snippet: true, sourceRank: 0 });
       }
-      const labelPattern = /\\label\s*\{([^{}\n]+)\}/g;
+      const labelPattern = /(?<!\\)\\label\s*\{([^{}\n]+)\}/g;
       for (const match of content.matchAll(labelPattern)) {
         const key = match[1]?.trim();
         if (key) labels.push({ key, detail: `${path}:${lineNumber(content, match.index ?? 0)}` });
       }
       if (extension(path) === ".bib") {
-        const entries = [...content.matchAll(/@\w+\s*\{\s*([^,\s]+)\s*,([\s\S]*?)(?=\n\s*@|$)/g)];
-        for (const match of entries) {
-          const key = match[1]?.trim();
-          if (!key) continue;
-          const body = match[2] ?? "";
-          const author = cleanField(/\bauthor\s*=\s*[{"']([^}\n"']+)/i.exec(body)?.[1]);
-          const year = cleanField(/\byear\s*=\s*[{"']([^}\n"']+)/i.exec(body)?.[1]);
-          const title = cleanField(/\btitle\s*=\s*[{"']([^}\n"']+)/i.exec(body)?.[1]);
-          citations.push({ key, detail: [author, year, title, path].filter(Boolean).join(" · ") });
+        for (const entry of parseBibtex(content).entries) {
+          const author = cleanField(entry.fields.author ?? entry.fields.editor);
+          const year = cleanField(entry.fields.year ?? entry.fields.date);
+          const title = cleanField(entry.fields.title);
+          citations.push({ key: entry.citationKey, detail: [author, year, title, path].filter(Boolean).join(" · ") });
         }
       }
     }
     this.commands = [...commandEntries.values()];
     this.environments = [...environmentEntries.values()];
-    this.labels = labels;
-    this.citations = citations;
+    this.labels = [...new Map(labels.map(item => [item.key, item])).values()];
+    this.citations = [...new Map(citations.map(item => [item.key, item])).values()];
     this.words = [...wordEntries.values()];
     this.mathSymbols = [...mathSymbolEntries.values()];
   }
@@ -210,7 +208,7 @@ export class ProjectIndex {
 
     const wanted = context.mode === "image-file" ? imageExtensions : context.mode === "bib-file" ? new Set([".bib"]) : new Set([".tex"]);
     const entries = this.files.filter((file) => wanted.has(extension(file.path))).map((file) => {
-      const relative = relativePath(currentPath, file.path);
+      const relative = context.mode === "image-file" && !context.prefix.startsWith("../") ? file.path : relativePath(currentPath, file.path);
       const insertText = context.mode === "tex-file" ? relative.replace(/\.tex$/i, "") : relative;
       return { label: insertText, insertText, detail: `Project file · ${file.path}`, kind: "file" as const, filterText: insertText, sourceRank: 0 };
     });

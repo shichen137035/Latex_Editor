@@ -1,8 +1,9 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { getDocument, GlobalWorkerOptions } from "pdfjs-dist/legacy/build/pdf.mjs";
 import workerUrl from "pdfjs-dist/legacy/build/pdf.worker.min.mjs?url";
 import type { ResolvedGraphic } from "@latex-editor/contracts";
 import { parseFigure, optionValue } from "./parser.js";
+import { t } from "../i18n/index.js";
 
 GlobalWorkerOptions.workerSrc = workerUrl;
 type EditorApi = NonNullable<Window["latexEditor"]>;
@@ -47,17 +48,27 @@ function FigureAsset({ api, projectId, texPath, sourcePath, graphicPaths, width,
     return () => { current = false; };
   }, [api, projectId, texPath, sourcePath, graphicPaths]);
   if (!sourcePath) return <button type="button" className="figure-preview-empty-slot" onClick={(event) => { event.stopPropagation(); onChoose?.(); }}><span>＋</span><strong>Choose image</strong></button>;
-  if (!asset) return <div className="figure-preview-placeholder loading">Loading {sourcePath}…</div>;
-  if (!asset.exists || !asset.dataUrl) return <div className="figure-preview-placeholder"><strong>{sourcePath}</strong><span>{asset.error?.replaceAll("_", " ") ?? "Image not found"}</span></div>;
-  const style = width && width.endsWith("\\textwidth") ? { width: `${Math.min(100, Number.parseFloat(width) * 100)}%` } : undefined;
-  const cacheKey = `${projectId}:${asset.resolvedPath ?? sourcePath}:${asset.modifiedAt ?? ""}:${asset.size ?? 0}`;
-  return asset.format === "pdf" ? <PdfImage dataUrl={asset.dataUrl} alt={sourcePath} cacheKey={cacheKey}/> : <img src={asset.dataUrl} alt={sourcePath} style={style} loading="lazy" decoding="async"/>;
+  let content: ReactNode;
+  if (!asset) content = <div className="figure-preview-placeholder loading">Loading {sourcePath}…</div>;
+  else if (!asset.exists || !asset.dataUrl) content = <div className="figure-preview-placeholder"><strong>{sourcePath}</strong><span>{asset.error?.replaceAll("_", " ") ?? "Image not found"}</span></div>;
+  else {
+    const style = width && width.endsWith("\\textwidth") ? { width: `${Math.min(100, Number.parseFloat(width) * 100)}%` } : undefined;
+    const cacheKey = `${projectId}:${asset.resolvedPath ?? sourcePath}:${asset.modifiedAt ?? ""}:${asset.size ?? 0}`;
+    content = asset.format === "pdf" ? <PdfImage dataUrl={asset.dataUrl} alt={sourcePath} cacheKey={cacheKey}/> : <img src={asset.dataUrl} alt={sourcePath} style={style} loading="lazy" decoding="async" draggable={false}/>;
+  }
+  return <div className={`figure-preview-image-choice${onChoose ? " editable" : ""}`} role={onChoose ? "button" : undefined} tabIndex={onChoose ? 0 : undefined} aria-label={onChoose ? t("image.replaceImage", { path: sourcePath }) : undefined} title={onChoose ? t("image.replaceImage", { path: sourcePath }) : undefined} onClick={event => {
+    if (!onChoose || !(event.target as Element).closest("img, canvas, .figure-preview-placeholder")) return;
+    event.stopPropagation(); onChoose();
+  }} onKeyDown={event => {
+    if (!onChoose || event.ctrlKey || event.metaKey || event.altKey || event.shiftKey || !["Enter", " "].includes(event.key)) return;
+    event.preventDefault(); event.stopPropagation(); onChoose();
+  }}>{content}</div>;
 }
 
-export function FigurePreview({ source, graphicPaths, api, projectId, texPath, onChooseSlot }: { source: string; graphicPaths: string[]; api: EditorApi | undefined; projectId: string; texPath: string; onChooseSlot?(index: number): void }) {
+export function FigurePreview({ source, graphicPaths, api, projectId, texPath, onChooseSlot, captionContent }: { source: string; graphicPaths: string[]; api: EditorApi | undefined; projectId: string; texPath: string; onChooseSlot?: ((index: number) => void) | undefined; captionContent?: ReactNode }) {
   const figure = useMemo(() => parseFigure(source), [source]);
   if (!figure) return <div className="figure-preview-placeholder">No image source</div>;
   if (!api) return <div className="figure-preview-placeholder">Image preview unavailable</div>;
-  const imageGrid = <div className={figure.images.length > 1 ? "figure-preview-grid" : "figure-preview-single"}>{figure.images.map((image, index) => <FigureAsset key={image.id} api={api} projectId={projectId} texPath={texPath} sourcePath={image.sourcePath} graphicPaths={graphicPaths} width={optionValue(image, "width")} onChoose={() => onChooseSlot?.(index)}/>)}</div>;
-  return <figure className={`preview-figure alignment-${figure.alignment}`}>{imageGrid}{figure.caption && <figcaption>{figure.caption}</figcaption>}{figure.label && <small>{figure.label}</small>}</figure>;
+  const imageGrid = <div className={figure.images.length > 1 ? "figure-preview-grid" : "figure-preview-single"}>{figure.images.map((image, index) => <FigureAsset key={image.id} api={api} projectId={projectId} texPath={texPath} sourcePath={image.sourcePath} graphicPaths={graphicPaths} width={optionValue(image, "width")} {...(onChooseSlot ? { onChoose: () => onChooseSlot(index) } : {})}/>)}</div>;
+  return <figure className={`preview-figure alignment-${figure.alignment}`}>{imageGrid}{(captionContent ?? figure.caption) && <figcaption>{captionContent ?? figure.caption}</figcaption>}{figure.label && <small>{figure.label}</small>}</figure>;
 }

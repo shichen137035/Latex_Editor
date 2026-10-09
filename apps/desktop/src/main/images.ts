@@ -67,7 +67,7 @@ export class ProjectImageService {
 
   async resolve(projectId: string, texPath: string, requestedPath: string, graphicPaths: string[] = []): Promise<ResolvedGraphic> {
     const request = requestedPath.trim().replaceAll("\\", "/");
-    if (!request || request.includes("..") || /^[A-Za-z]:\//.test(request) || request.startsWith("/")) return { requestedPath, exists: false, error: "PATH_OUTSIDE_PROJECT" };
+    if (!request || /^[A-Za-z]:/.test(request) || request.startsWith("/")) return { requestedPath, exists: false, error: "PATH_OUTSIDE_PROJECT" };
     const texDirectory = posix.dirname(texPath) === "." ? "" : posix.dirname(texPath);
     const graphicBases = graphicPaths.flatMap((entry) => {
       const direct = safeResolutionBase(entry);
@@ -79,6 +79,7 @@ export class ProjectImageService {
     const suffixes = suppliedExtension ? [""] : ["", ...formats.map((format) => `.${format}`)];
     for (const base of bases) for (const suffix of suffixes) {
       const relativePath = posix.normalize(posix.join(base, `${request}${suffix}`));
+      if (relativePath === ".." || relativePath.startsWith("../")) continue;
       try {
         const absolutePath = await this.#files.resolveFilePath(projectId, relativePath, true);
         const extension = extname(relativePath).slice(1).toLocaleLowerCase();

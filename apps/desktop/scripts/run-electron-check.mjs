@@ -8,6 +8,13 @@ const checks = new Map([
   ["ai-attachments", { script: "electron/check-ai-attachments.cjs" }],
   ["ai-connection", { script: "electron/check-ai-connection.cjs", cleanCodexPath: true }],
   ["preview-caret", { script: "electron/check-preview-caret.cjs" }],
+  ["preview-navigation", { script: "electron/check-preview-navigation.cjs" }],
+  ["project-references", { script: "electron/check-project-references.cjs" }],
+  ["source-editor", { script: "electron/check-source-editor.cjs" }],
+  ["search-filter", { script: "electron/check-search-filter.cjs" }],
+  ["environment-typography", { script: "electron/check-environment-typography.cjs" }],
+  ["image-completion", { script: "electron/check-image-completion.cjs" }],
+  ["pdf-preview", { script: "electron/check-pdf-preview.cjs" }],
   ["preview-startup", { script: "electron/check-preview-startup.cjs" }],
   ["preview-diagnostics", { script: "diagnostics/preview-performance.cjs" }]
 ]);

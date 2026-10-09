@@ -1,4 +1,4 @@
-import { useEffect, type Dispatch, type MutableRefObject, type SetStateAction } from "react";
+import { useEffect, useLayoutEffect, type Dispatch, type MutableRefObject, type SetStateAction } from "react";
 import type { OnMount } from "@monaco-editor/react";
 import type { SearchResponse, SearchResult } from "../search/types.js";
 import { sourcePositionAtOffset } from "./layout.js";
@@ -23,6 +23,9 @@ interface EditorStateEffectsOptions {
 }
 
 export function useEditorStateEffects(options: EditorStateEffectsOptions): void {
+  useLayoutEffect(() => {
+    if (!options.sourceEditorVisible || options.sourceModelPath.current !== options.activePath) options.sourceModelPath.current = undefined;
+  }, [options.sourceEditorVisible, options.activePath]);
   useEffect(() => {
     if (!options.sourceEditorVisible) { options.sourceRestoredFor.current = undefined; return; }
     if (!options.activeTab) return;
@@ -62,7 +65,7 @@ export function useEditorStateEffects(options: EditorStateEffectsOptions): void 
     };
     frame = requestAnimationFrame(applyWhenReady);
     return () => cancelAnimationFrame(frame);
-  }, [options.sourceEditorVisible, options.activePath, options.activeTab?.path, options.navigationRequest, options.editorMountVersion]);
+  }, [options.sourceEditorVisible, options.activePath, options.activeTab?.path, options.activeTab?.content, options.navigationRequest, options.editorMountVersion]);
 
   useEffect(() => {
     const openAIFile = (event: Event) => {
@@ -86,5 +89,5 @@ export function useEditorStateEffects(options: EditorStateEffectsOptions): void 
         options: { inlineClassName: result.id === options.activeSearchResult?.id ? "texweave-search-match-active" : "texweave-search-match" }
       };
     }));
-  }, [options.searchResponse, options.activeSearchResult, options.activePath, options.activeTab?.content]);
+  }, [options.searchResponse, options.activeSearchResult, options.activePath, options.activeTab?.content, options.editorMountVersion]);
 }

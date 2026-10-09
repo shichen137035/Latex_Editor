@@ -35,6 +35,12 @@ describe("v0.2.5 completion index", () => {
     expect(context("\\citet{chen2006,pat")).toMatchObject({ mode: "citation", prefix: "pat" });
     expect(context("\\citep{chen")).toMatchObject({ mode: "citation", prefix: "chen" });
     expect(context("\\includegraphics{fig")).toMatchObject({ mode: "image-file", prefix: "fig" });
+    expect(context("\\includegraphics[width=.5\\textwidth]{fig")).toMatchObject({ mode: "image-file", prefix: "fig" });
+    expect(context("\\citep*[see][p.2]{key, ne")).toMatchObject({ mode: "citation", prefix: "ne" });
+    expect(context("\\bibliography{old, new")).toMatchObject({ mode: "bib-file", prefix: "new" });
+    expect(context("\\Cref{thm:")).toMatchObject({ mode: "reference", prefix: "thm:" });
+    expect(context("% commented \\cite{old")).toMatchObject({ mode: "unknown" });
+    expect(context("\\\\ref{old")).toMatchObject({ mode: "unknown" });
   });
 
   it("detects document words only in natural-language text", () => {
@@ -101,5 +107,26 @@ describe("v0.2.5 completion index", () => {
     expect(completionEndColumn("environment", "\\begin{the}", 11)).toBe(12);
     expect(completionEndColumn("environment", "\\begin{the", 11)).toBe(11);
     expect(completionEndColumn("command", "\\sec", 5)).toBe(5);
+  });
+  it("recognizes multiline citation/reference/image arguments without replacing preceding lines", () => {
+    const analyze = (source: string) => {
+      const lines = source.split("\n");
+      return analyzeCompletionContext({ getLineContent: line => lines[line - 1]!, getValue: () => source, getOffsetAt: () => source.length }, { lineNumber: lines.length, column: lines.at(-1)!.length + 1 });
+    };
+    expect(analyze("\\citep[see]{old,\n  ne")).toMatchObject({ mode: "citation", prefix: "ne", startColumn: 3 });
+    expect(analyze("\\ref{\n fig:chart")).toMatchObject({ mode: "reference", prefix: "fig:chart", startColumn: 2 });
+    expect(analyze("\\includegraphics[width=.5\\textwidth]{\n figures/im")).toMatchObject({ mode: "image-file", prefix: "figures/im", startColumn: 2 });
+    expect(analyze("% \\cite{bad\nplain")).toMatchObject({ mode: "unknown" });
+    expect(completionEndColumn("citation", "\\cite{newKey}", 9)).toBe(13);
+  });
+  it("indexes all bibliography entries and image files even if nothing references them yet", () => {
+    const index = new ProjectIndex();
+    index.rebuild([{ name: "unreferenced.webp", relativePath: "figures/unreferenced.webp", kind: "file" }], [
+      { path: "unused.bib", content: '@book(first,title="First") @article{second,title={Second}}\n% @book{fake,title={Comment}}' },
+      { path: "other.tex", content: "\\label{fig:unused}\n% \\label{fig:commented}" }
+    ], DEFAULT_ENVIRONMENTS, []);
+    expect(index.complete(context("\\cite{"), "main.tex").map(item => item.label)).toEqual(["first", "second"]);
+    expect(index.complete(context("\\ref{fig:"), "main.tex").map(item => item.label)).toEqual(["fig:unused"]);
+    expect(index.complete(context("\\includegraphics{"), "chapters/intro.tex").map(item => item.insertText)).toEqual(["figures/unreferenced.webp"]);
   });
 });

@@ -18,7 +18,7 @@ function cellRange(cell: TableCell): Range {
   return { anchor: { row: cell.row, column: cell.column }, focus: { row: cell.row + cell.rowSpan - 1, column: cell.column + cell.colSpan - 1 } };
 }
 
-export function TablePreview({ source, renderCell, onChange, onSelect }: { source: string; renderCell(content: string): ReactNode; onChange(source: string): void; onSelect(selection: TablePreviewSelection): void }) {
+export function TablePreview({ source, renderCell, onChange, onSelect, captionContent }: { source: string; renderCell(content: string): ReactNode; onChange(source: string): void; onSelect(selection: TablePreviewSelection): void; captionContent?: ReactNode }) {
   const table = useMemo(() => parseTable(source), [source]);
   const [selection, setSelection] = useState<Range>();
   const [editing, setEditing] = useState<Draft>();
@@ -135,7 +135,7 @@ export function TablePreview({ source, renderCell, onChange, onSelect }: { sourc
           : <span className="table-cell-content">{cell.content ? renderCell(cell.content) : "\u00a0"}</span>}
       </td>)}</tr>)}</tbody>
     </table></div>
-    {table.caption && <figcaption>{renderCell(table.caption)}</figcaption>}
+    {(captionContent ?? table.caption) && <figcaption>{captionContent ?? renderCell(table.caption!)}</figcaption>}
     {!full && <small>Custom table: structural editing is unavailable; use source mode.</small>}
   </figure>;
 }

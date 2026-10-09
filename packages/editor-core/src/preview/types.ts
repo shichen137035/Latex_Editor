@@ -56,6 +56,12 @@ export interface EnvironmentStyle {
   labelTextToken: string;
   borderToken: string;
   selectedBorderToken: string;
+  /** Header title typography; absent values use the environment catalog defaults. */
+  titleFontFamily?: string;
+  titleFontSize?: number;
+  titleFontWeight?: number;
+  titleLineHeight?: number;
+  titleLetterSpacing?: number;
 }
 
 export interface EnvironmentBehavior {

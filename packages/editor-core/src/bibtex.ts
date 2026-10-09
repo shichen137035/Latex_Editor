@@ -1,3 +1,5 @@
+import { maskLatexComments } from "./latex-source.js";
+
 export interface BibEntry {
   entryType: string;
   citationKey: string;
@@ -119,9 +121,9 @@ export function parseBibtex(source: string): { entries: BibEntry[]; invalid: Bib
     const parts = splitTopLevel(content);
     const citationKey = parts.shift()?.trim() ?? "";
     const fields: Record<string, string> = {};
-    let valid = Boolean(citationKey);
-    let error = citationKey ? undefined : `@${entryType} is missing a citation key.`;
-    if (!citationKey) invalid.push({ raw: rawBibtex, message: error!, start, end });
+    let valid = isValidCitationKey(citationKey);
+    let error = valid ? undefined : citationKey ? `Invalid citation key in @${entryType}.` : `@${entryType} is missing a citation key.`;
+    if (!valid) invalid.push({ raw: rawBibtex, message: error!, start, end });
 
     for (const part of parts) {
       const equal = part.indexOf("=");
@@ -147,7 +149,7 @@ export function field(entry: Pick<BibEntry, "fields">, name: string): string {
 }
 
 export function isValidCitationKey(key: string): boolean {
-  return Boolean(key.trim()) && !/[\s,{}()]/.test(key);
+  return Boolean(key.trim()) && !/[\s,{}()\\%#]/.test(key);
 }
 
 export function citationKeyIdentity(key: string): string {
@@ -171,12 +173,14 @@ export function bibtexEntryWithKey(entry: Pick<BibEntry, "entryType" | "citation
 
 export function citationOccurrences(documents: Array<{ filePath: string; content: string }>): CitationOccurrence[] {
   const occurrences: CitationOccurrence[] = [];
-  const pattern = /\\([A-Za-z]*cite[A-Za-z]*)\s*(?:\[[^\]]*\]\s*)?\{([^{}]*)\}/g;
+  const pattern = /(?<!\\)\\([A-Za-z]*cite[A-Za-z]*)\*?\s*(?:\[[^\]]*\]\s*)*\{([^{}]*)\}/g;
   for (const document of documents) {
-    for (const match of document.content.matchAll(pattern)) {
+    // Mask comments without changing offsets used by source navigation.
+    const searchable = maskLatexComments(document.content);
+    for (const match of searchable.matchAll(pattern)) {
       const command = match[1] ?? "cite";
       const body = match[2] ?? "";
-      const keyStart = (match.index ?? 0) + match[0].indexOf("{") + 1;
+      const keyStart = (match.index ?? 0) + match[0].lastIndexOf("{") + 1;
       let bodyOffset = 0;
       for (const key of body.split(",").map((item) => item.trim()).filter(Boolean)) {
         const local = body.indexOf(key, bodyOffset);

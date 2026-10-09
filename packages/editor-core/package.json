@@ -5,6 +5,7 @@
   "exports": {
     ".": { "types": "./dist/index.d.ts", "import": "./dist/index.js" },
     "./bibtex": { "types": "./dist/bibtex.d.ts", "import": "./dist/bibtex.js" },
+    "./latex-source": { "types": "./dist/latex-source.d.ts", "import": "./dist/latex-source.js" },
     "./preview/*": { "types": "./dist/preview/*.d.ts", "import": "./dist/preview/*.js" }
   }
 }

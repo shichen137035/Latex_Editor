@@ -26,6 +26,7 @@ import { CopilotChatService } from "./ai/copilot-chat.js";
 import { AIWorkspaceService } from "./ai/ai-workspace.js";
 import { createWorkspaceBlockApi } from "./ai/workspace-block-api.js";
 import { registerAiIpcHandlers } from "./ai/ipc.js";
+import { failedCompilation, publishWorkspaceCompilation } from "./compile-preview.js";
 import { createProjectSourceArchive } from "./project-export.js";
 import { ProjectHistoryService } from "./project-history.js";
 import { registerHistoryIpc } from "./history-ipc.js";
@@ -145,9 +146,17 @@ async function createContext(): Promise<DesktopContext> {
       const preferences = await settings.snapshot(projectId);
       const configuredMain = mainFile ?? project.mainFile;
       if (!configuredMain) throw new Error("Set a main TeX file in the project before asking TeXWeave AI to compile it.");
-      return compiler.compileWorkspace({ workspaceRoot, mainFile: configuredMain, engine: preferences.project.engine ?? preferences.global.engine ?? "pdflatex" });
+      let result: CompileResult;
+      try { result = await compiler.compileWorkspace({ workspaceRoot, mainFile: configuredMain, engine: preferences.project.engine ?? preferences.global.engine ?? "pdflatex" }); }
+      catch (error) { result = failedCompilation(configuredMain, error); }
+      return publishWorkspaceCompilation(projectId, result, files, update => {
+        BrowserWindow.getAllWindows().forEach(window => sendIpc(window.webContents, desktopEvents.toRenderer.compileUpdate, update));
+      });
     },
-    setMainFile: async (projectId, relativePath) => { await projects.setMainFile(projectId, relativePath); },
+    setMainFile: async (projectId, relativePath) => {
+      const updated = await projects.setMainFile(projectId, relativePath);
+      BrowserWindow.getAllWindows().forEach(window => sendIpc(window.webContents, desktopEvents.toRenderer.projectUpdate, updated));
+    },
     onUpdate: (kind, payload) => BrowserWindow.getAllWindows().forEach((window) => sendIpc(window.webContents, desktopEvents.toRenderer.aiUpdate, { kind, payload }))
   });
   await aiWorkspaces.initialize();
@@ -518,7 +527,9 @@ function registerIpcHandlers(): void {
   });
   handleIpc(desktopInvoke.projects.setMainFile, async (_event, projectId, relativePath) => {
     if (context === undefined) throw new Error("Application context is not ready");
-    return context.projects.setMainFile(projectId, relativePath);
+    const updated = await context.projects.setMainFile(projectId, relativePath);
+    BrowserWindow.getAllWindows().forEach(window => sendIpc(window.webContents, desktopEvents.toRenderer.projectUpdate, updated));
+    return updated;
   });
   handleIpc(desktopInvoke.compile.run, async (_event, projectId, mainFile) => {
     if (context === undefined) throw new Error("Application context is not ready");
@@ -527,13 +538,10 @@ function registerIpcHandlers(): void {
     try {
       result = await context.compiler.compile({ projectId, engine: preferences.project.engine ?? preferences.global.engine ?? "pdflatex", ...(mainFile === undefined ? {} : { mainFile }) });
     } catch (error) {
-      const code = error && typeof error === "object" && "code" in error ? String(error.code) : "COMPILATION_FAILED";
-      const message = code === "TOOLCHAIN_NOT_FOUND" ? "LaTeX toolchain unavailable. Open Settings > Compiler to detect or locate latexmk." : error instanceof Error ? error.message : String(error);
-      const now = new Date().toISOString();
-      return { compilationId: randomUUID(), status: "failed", exitCode: null, startedAt: now, finishedAt: now, durationMs: 0, mainFile: mainFile ?? "", diagnostics: [{ severity: "error", source: "system", code, message }], stdoutTail: "", stderrTail: message } satisfies CompileResult;
+      return failedCompilation(mainFile ?? "", error);
     }
-    if (result.pdfPath === undefined) return result;
-    const pdfDataUrl = `data:application/pdf;base64,${(await readFile(result.pdfPath)).toString("base64")}`;
+    if (result.status !== "succeeded" || result.pdfPath === undefined) return result;
+    const pdfDataUrl = `data:application/pdf;base64,${(await readFile(result.pdfArtifactPath ?? result.pdfPath)).toString("base64")}`;
     return { ...result, pdfDataUrl };
   });
   handleIpc(desktopInvoke.compile.readLog, (_event, projectId, compilationId) => {
@@ -613,8 +621,8 @@ function registerIpcHandlers(): void {
     const targetPath = resolve(choice.filePath);
     const normalizedSource = process.platform === "win32" ? compilation.pdfPath.toLocaleLowerCase("en-US") : compilation.pdfPath;
     const normalizedTarget = process.platform === "win32" ? targetPath.toLocaleLowerCase("en-US") : targetPath;
-    if (normalizedSource !== normalizedTarget) await copyFile(compilation.pdfPath, targetPath);
-    const pdfDataUrl = `data:application/pdf;base64,${(await readFile(compilation.pdfPath)).toString("base64")}`;
+    if (normalizedSource !== normalizedTarget) await copyFile(compilation.pdfArtifactPath ?? compilation.pdfPath, targetPath);
+    const pdfDataUrl = `data:application/pdf;base64,${(await readFile(compilation.pdfArtifactPath ?? compilation.pdfPath)).toString("base64")}`;
     return { status: "exported", path: targetPath, compilation, pdfDataUrl };
   });
   registerAiIpcHandlers(context, settings);
@@ -622,13 +630,13 @@ function registerIpcHandlers(): void {
     if (context === undefined) throw new Error("Application context is not ready");
     const project = await context.projects.openProject(projectId);
     const [sourcePath, pdfPath] = await Promise.all([context.files.resolveFilePath(projectId, sourceFile, true), context.files.resolveFilePath(projectId, pdfFile, true)]);
-    return forwardSync({ root: project.canonicalPath, sourcePath, pdfPath, line, column, ...(settings.toolchain?.binDirectory ? { binDirectory: settings.toolchain.binDirectory } : {}), ...(settings.toolchain?.latexmk ? { latexmk: settings.toolchain.latexmk } : {}) });
+    return forwardSync({ root: project.canonicalPath, mainFile: project.mainFile, compilerArguments: context.resources.getCompilerProfile().arguments, sourcePath, pdfPath, line, column, ...(settings.toolchain?.binDirectory ? { binDirectory: settings.toolchain.binDirectory } : {}), ...(settings.toolchain?.latexmk ? { latexmk: settings.toolchain.latexmk } : {}) });
   });
   handleIpc(desktopInvoke.synctex.reverse, async (_event, projectId, pdfFile, page, x, y) => {
     if (context === undefined) throw new Error("Application context is not ready");
     const project = await context.projects.openProject(projectId);
     const pdfPath = await context.files.resolveFilePath(projectId, pdfFile, true);
-    return reverseSync({ root: project.canonicalPath, pdfPath, page, x, y, ...(settings.toolchain?.binDirectory ? { binDirectory: settings.toolchain.binDirectory } : {}), ...(settings.toolchain?.latexmk ? { latexmk: settings.toolchain.latexmk } : {}) });
+    return reverseSync({ root: project.canonicalPath, mainFile: project.mainFile, compilerArguments: context.resources.getCompilerProfile().arguments, pdfPath, page, x, y, ...(settings.toolchain?.binDirectory ? { binDirectory: settings.toolchain.binDirectory } : {}), ...(settings.toolchain?.latexmk ? { latexmk: settings.toolchain.latexmk } : {}) });
   });
   handleIpc(desktopInvoke.dialogs.pickFolder, async () => {
     const result = await dialog.showOpenDialog({ properties: ["openDirectory", "createDirectory"] });

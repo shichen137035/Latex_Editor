@@ -1,6 +1,7 @@
 import { cloneEnvironmentDefinitions, DEFAULT_ENVIRONMENTS } from "./environments.js";
 import type { EnvironmentDefinition, EnvironmentMatchRule } from "./types.js";
 import { settings } from "../settings/service.js";
+import { environmentTitleTypography, titleNumericFields, validTitleNumber, type TitleNumericField } from "./environment-typography.js";
 
 export const GLOBAL_ENVIRONMENTS_KEY = "texweave.environments.global.v1";
 
@@ -63,11 +64,15 @@ function matchValue(match: EnvironmentMatchRule): string {
 }
 
 export function serializeEnvironments(definitions: EnvironmentDefinition[]): string {
-  const rows = definitions.map((definition) => `  <environment id="${escapeXml(definition.id)}" enabled="${definition.enabled}" builtIn="${definition.builtIn}" family="${definition.family}" label="${escapeXml(definition.label ?? "")}" labelKey="${escapeXml(definition.labelKey)}">
+  const rows = definitions.map((definition) => {
+    const typography = environmentTitleTypography(definition.id, definition.family, definition);
+    const titleAttributes = Object.entries(typography).filter(([key]) => key.startsWith("title")).map(([key, value]) => `${key}="${escapeXml(String(value))}"`).join(" ");
+    return `  <environment id="${escapeXml(definition.id)}" enabled="${definition.enabled}" builtIn="${definition.builtIn}" family="${definition.family}" label="${escapeXml(definition.label ?? "")}" labelKey="${escapeXml(definition.labelKey)}">
     <match type="${definition.match.kind}" value="${escapeXml(matchValue(definition.match))}" />
-    <style accentToken="${escapeXml(definition.style.accentToken)}" fillToken="${escapeXml(definition.style.fillToken)}" borderToken="${escapeXml(definition.style.borderToken)}" selectedBorderToken="${escapeXml(definition.style.selectedBorderToken)}" labelBackgroundToken="${escapeXml(definition.style.labelBackgroundToken)}" labelTextToken="${escapeXml(definition.style.labelTextToken)}" />
+    <style accentToken="${escapeXml(definition.style.accentToken)}" fillToken="${escapeXml(definition.style.fillToken)}" borderToken="${escapeXml(definition.style.borderToken)}" selectedBorderToken="${escapeXml(definition.style.selectedBorderToken)}" labelBackgroundToken="${escapeXml(definition.style.labelBackgroundToken)}" labelTextToken="${escapeXml(definition.style.labelTextToken)}" ${titleAttributes} />
     <behavior inlineEditable="${definition.behavior.inlineEditable}" allowChildren="${definition.behavior.allowChildren}" showHeader="${definition.behavior.showHeader}" showLabel="${definition.behavior.showLabel}" />
-  </environment>`);
+  </environment>`;
+  });
   return `<environments version="1">\n${rows.join("\n")}\n</environments>`;
 }
 
@@ -97,6 +102,15 @@ export function parseEnvironmentXml(xml: string): EnvironmentDefinition[] {
     const behaviorElement = element.querySelector(":scope > behavior");
     if (!id || !family || !families.includes(family) || !matchElement || !styleElement || !behaviorElement) throw new Error(`Environment '${id || "?"}' is incomplete.`);
     const label = element.getAttribute("label")?.trim();
+    const typography: Partial<Record<TitleNumericField, number>> = {};
+    for (const field of Object.keys(titleNumericFields) as TitleNumericField[]) {
+      const raw = styleElement.getAttribute(field);
+      if (raw === null) continue;
+      const value = Number(raw);
+      if (!raw.trim() || !validTitleNumber(field, value)) throw new Error(`Invalid ${field} for environment '${id}'.`);
+      typography[field] = value;
+    }
+    const titleFontFamily = styleElement.getAttribute("titleFontFamily")?.trim();
     return {
       id,
       enabled: booleanAttribute(element, "enabled", true),
@@ -106,6 +120,8 @@ export function parseEnvironmentXml(xml: string): EnvironmentDefinition[] {
       ...(label ? { label } : {}),
       family,
       style: {
+        ...typography,
+        ...(titleFontFamily ? { titleFontFamily } : {}),
         accentToken: styleElement.getAttribute("accentToken") || "--env-generic-accent",
         fillToken: styleElement.getAttribute("fillToken") || "transparent",
         borderToken: styleElement.getAttribute("borderToken") || "--env-border-default",

@@ -41,7 +41,7 @@ export function useRelationController(options: RelationControllerOptions) {
   const [relationDirection, setRelationDirection] = useState<RelationDirection>("both");
   const [relationDepth, setRelationDepth] = useState<number | "all">(2);
   const [relationFilters, setRelationFilters] = useState<RelationFilters>(defaultRelationFilters);
-  const [relationLocateRequest, setRelationLocateRequest] = useState<{ blockId: BlockId; nonce: number }>();
+  const [relationLocateRequest, setRelationLocateRequest] = useState<{ fileId: string; blockId: BlockId; nonce: number }>();
   const [relationChooser, setRelationChooser] = useState<{ candidateId: BlockId; x: number; y: number }>();
   const [relationGraphOpen, setRelationGraphOpen] = useState(false);
   const [relationGraphFocusId, setRelationGraphFocusId] = useState<BlockId | null>(null);
@@ -165,7 +165,7 @@ export function useRelationController(options: RelationControllerOptions) {
     if (options.layout.mode === "single" && options.layout.singlePane === "pdf") {
       options.setLayout((value) => ({ ...value, singlePane: pane }));
     }
-    if (pane === "preview" && offset === undefined) setRelationLocateRequest({ blockId, nonce: Date.now() });
+    if (pane === "preview" && offset === undefined && line === undefined) setRelationLocateRequest({ fileId: path, blockId, nonce: Date.now() });
     if (offset !== undefined) await options.navigateTo(path, { offset });
     else if (line !== undefined) await options.navigateTo(path, { line, column });
     else if (path !== options.activePath) await options.navigateTo(path);

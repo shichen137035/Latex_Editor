@@ -13,13 +13,14 @@ function fixture() {
   });
   const changeDocument = vi.fn((path: string, content: string) => { tabsRef.current = tabsRef.current.map(tab => tab.path === path ? { ...tab, content, dirty: true } : tab); });
   const notice = vi.fn();
+  const onSourcesChanged = vi.fn();
   const options = {
     api: { ai: { conversations: async () => ({ conversations: [], changeSets: [structuredClone(changes)] }), markChangeSetApplied: mark }, files: { tree: async () => [{ name: "main.tex", relativePath: "main.tex", kind: "file" }] } },
     project: { id: "project" }, tabsRef, savedContents: { current: new Map([["main.tex", "old"]]) }, editHistory: { current: new EditHistory() },
     navigationHistory: { current: { clear: vi.fn() } }, activePathRef: { current: "main.tex" }, aiOperationQueue: { current: Promise.resolve() },
-    setActivePath: vi.fn(), setTabs: vi.fn(), setSaveState: vi.fn(), setBlockNotice: notice, setAiDiffFile: vi.fn(), setLayout: vi.fn(), refreshTree: vi.fn(), openFile: vi.fn(), changeDocument
+    setActivePath: vi.fn(), setTabs: vi.fn(), setSaveState: vi.fn(), setBlockNotice: notice, setAiDiffFile: vi.fn(), setLayout: vi.fn(), refreshTree: vi.fn(), openFile: vi.fn(), changeDocument, onSourcesChanged
   } as unknown as Parameters<typeof createAIChangeController>[0];
-  return { changes, mark, tabsRef, changeDocument, notice, controller: createAIChangeController(options) };
+  return { changes, mark, tabsRef, changeDocument, notice, onSourcesChanged, controller: createAIChangeController(options) };
 }
 
 it("persists manual application conflicts on the changes card without accepting the proposal", async () => {
@@ -27,6 +28,7 @@ it("persists manual application conflicts on the changes card without accepting 
   await expect(f.controller.applyAIChanges(f.changes, ["hunk"])).rejects.toThrow();
   expect(f.changeDocument).not.toHaveBeenCalled(); expect(f.notice).toHaveBeenCalled();
   expect(f.changes.autoApplyError).toBeTruthy(); expect(f.changes.files[0]!.hunks[0]!.decision).toBe("pending");
+  expect(f.onSourcesChanged).not.toHaveBeenCalled();
 });
 
 it("does not report success when the editor failed to update its buffer", async () => {
@@ -42,4 +44,5 @@ it("retries failed application acknowledgements without applying the edit twice"
   expect(f.tabsRef.current[0]!.content).toBe("new"); expect(f.changes.autoApplyError).toContain("History write failed");
   await expect(f.controller.applyAIChanges(f.changes, ["hunk"])).resolves.toMatchObject({ appliedIds: ["hunk"] });
   expect(f.changeDocument).toHaveBeenCalledOnce(); expect(f.changes.autoApplyError).toBeUndefined();
+  expect(f.onSourcesChanged).toHaveBeenCalledOnce();
 });

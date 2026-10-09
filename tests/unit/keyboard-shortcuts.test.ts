@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { analyzeBindingConflicts, commandBindings, defaultBindings, eventBinding, parseBinding, validBinding, type CommandId } from "../../apps/desktop/src/renderer/settings/commands.js";
+import { analyzeBindingConflicts, commandBindings, commandCatalog, defaultBindings, eventBinding, parseBinding, resolveBindingSequence, validBinding, type CommandId } from "../../apps/desktop/src/renderer/settings/commands.js";
 
 function withBindings(overrides: Partial<Record<CommandId, string>> = {}): Record<CommandId, string> {
   return { ...defaultBindings, ...overrides };
@@ -7,13 +7,22 @@ function withBindings(overrides: Partial<Record<CommandId, string>> = {}): Recor
 
 describe("v0.6.2.3 shortcut conflict model", () => {
   it("allows reuse between sibling contexts", () => {
-    const conflicts = analyzeBindingConflicts("edit.find", "Mod+K", withBindings({ "block.insertBefore": "Mod+K" }));
+    const conflicts = analyzeBindingConflicts("edit.replace", "Mod+K", withBindings({ "block.insertBefore": "Mod+K" }));
     expect(conflicts).toEqual([]);
   });
 
   it("warns when a child context shadows a parent context", () => {
     const conflicts = analyzeBindingConflicts("file.save", "Mod+K", withBindings({ "block.insertBefore": "Mod+K" }));
     expect(conflicts).toMatchObject([{ kind: "overlap", commandId: "block.insertBefore" }]);
+  });
+
+  it("exposes configurable Ctrl+F search throughout the workspace", () => {
+    expect(commandCatalog["edit.find"]).toMatchObject({ group: "search", context: "workspace", defaultBinding: "Mod+F" });
+    for (const context of ["workspace.editor.source.text", "workspace.editor.preview", "workspace.editor.preview.block-edit", "workspace.file-tree", "workspace.search"]) {
+      expect(resolveBindingSequence("Mod+F", "global", context).commandId).toBe("edit.find");
+    }
+    expect(resolveBindingSequence("Mod+F", "global", "manager.shortcut-manager").commandId).toBeUndefined();
+    expect(analyzeBindingConflicts("edit.find", "Mod+K", withBindings({ "block.insertBefore": "Mod+K" }))).toMatchObject([{ kind: "overlap", commandId: "block.insertBefore" }]);
   });
 
   it("reports same-context duplicate bindings as direct conflicts", () => {

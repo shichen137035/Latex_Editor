@@ -19,6 +19,7 @@ describe("v0.2.3 foundations", () => {
     expect(preferenceDefaults.documentWordCompletion).toBe(true);
     expect(preferenceDefaults.autoPairSymbols).toBe(true);
     expect(preferenceDefaults.mathPreviewOnHover).toBe(false);
+    expect(preferenceDefaults.wheelAcceleration.decayMs).toBe(250);
     expect(preferenceDefaults.warnIncompatibleEnvironmentConversion).toBe(true);
     expect(preferenceDefaults.tables.defaultStyle).toBe("booktabs-three-line");
     expect(preferenceDefaults.referenceLinkModifier).toBe("ctrl");

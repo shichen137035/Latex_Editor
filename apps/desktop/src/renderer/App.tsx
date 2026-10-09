@@ -345,6 +345,10 @@ export function App() {
     return () => { cancelled = true; };
   }, []);
   useEffect(() => { void refreshStyleResources(); }, []);
+  useEffect(() => window.latexEditor!.projects.onUpdate(updated => {
+    setProjects(current => current.map(project => project.id === updated.id ? updated : project));
+    setActiveProject(current => current?.id === updated.id ? updated : current);
+  }), []);
   useEffect(installShortcuts, []);
   useEffect(() => installWheelAcceleration(() => settings.global("wheelAcceleration")), []);
   useEffect(() => {

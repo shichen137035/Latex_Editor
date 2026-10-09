@@ -1,4 +1,4 @@
-import { Fragment, memo, Profiler, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type MouseEvent, type PointerEvent as ReactPointerEvent, type ReactNode } from "react";
+import { Fragment, memo, Profiler, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type MouseEvent, type PointerEvent as ReactPointerEvent, type ReactNode } from "react";
 import { createPortal, flushSync } from "react-dom";
 import { includeNewBuiltInDirectives, isRelationCapableBlock, type BlockGraphSnapshot, type BlockId, type PreviewDirectiveDefinition, type ProjectTreeNode, type RelationDirection } from "@latex-editor/contracts";
 import { t, type MessageKey } from "../i18n/index.js";
@@ -16,8 +16,8 @@ import { MathRenderer } from "./MathRenderer.js";
 import { mathRenderService } from "../math/MathRenderService.js";
 import { bindings, commands, eventBinding } from "../settings/commands.js";
 import { EMPTY_MATH_CONTEXT, type MathContext } from "../math/types.js";
-import { searchPattern } from "../search/SearchEngine.js";
-import type { SearchQuery, SearchResult } from "../search/types.js";
+import { inlineMatchRanges } from "../search/inlineMatches.js";
+import type { InlineSearchQuery, SearchQuery, SearchResult } from "../search/types.js";
 import { FilterEngine } from "../filter/FilterEngine.js";
 import { combineFilterStates, defaultFilterQuery, filterDisposition, type FilterQuery, type FilterState } from "../filter/types.js";
 import type { DocumentSelection } from "../custom-blocks/selection.js";
@@ -33,11 +33,13 @@ import { tokenizeInlineSource, type InlineSourceToken } from "./inlineSource.js"
 import { sourceOffsetAtPoint } from "./sourceMapping.js";
 import { upsertBlockLabel } from "./labels.js";
 import { PreviewLocalEditor } from "./PreviewLocalEditor.js";
+import { captionSourceField, environmentOptionField, replaceSourceField, type PreviewSourceField } from "./sourceFields.js";
 import { useUnsavedChanges } from "../lifecycle/unsavedChanges.js";
 import { BlockOperationError, blockSourceForCopy, blocksInSelectionRanges, decodeDisabledSource, normalizeBlockSelection, planDeleteBlocks, planDisableBlocks, planEnableBlocks, planMoveBlocks, planPasteBlocks, type BlockSourceTransaction, type MovePosition } from "./blockOperations.js";
 import { createBlockClipboardPayload, readBlockClipboard, writeBlockClipboard } from "./blockClipboard.js";
 import { BlockActionToolbar } from "./BlockActionToolbar.js";
 import { readCollapsedPreview, writeCollapsedPreview } from "../collapseState.js";
+import { PreviewNavigationEvents, previewNodeAtOffset as nodeAtOffset, previewSpanContains } from "./navigation.js";
 
 type EditorApi = NonNullable<Window["latexEditor"]>;
 export interface PreviewRelationUi {
@@ -48,12 +50,13 @@ export interface PreviewRelationUi {
   direction: RelationDirection;
   matchIds: Set<BlockId>;
   contextIds: Set<BlockId>;
-  locateRequest?: { blockId: BlockId; nonce: number } | undefined;
+  locateRequest?: { fileId: string; blockId: BlockId; nonce: number } | undefined;
+  onLocated?(nonce: number): void;
   onFocus(blockId: BlockId): void;
   onToggle(blockId: BlockId, x: number, y: number): void;
 }
 type PreviewSourceReader = Pick<string, "slice">;
-type PreviewEditorServices = { nodeRanges: Pick<ReadonlyMap<string, SourceSpan>, "get">; api: EditorApi | undefined; projectId: string; tree: ProjectTreeNode[]; currentPath: string; graphicPaths: string[]; definitions: EnvironmentDefinition[]; directives: PreviewDirectiveDefinition[]; mathContext: MathContext; searchQuery: SearchQuery; activeSearchResult?: SearchResult | undefined; filterQuery: FilterQuery; filterStates: Map<string, FilterState>; visibilitySignatures: ReadonlyMap<string, string>; relation?: PreviewRelationUi | undefined; selectedBlockIds: string[]; collapsedBlockIds: ReadonlySet<string>; virtual: VirtualPreviewController; virtualRoot: { current: HTMLDivElement | null }; forcedIds: ReadonlySet<string>; forceOffset?: number; initialHeight?: number | undefined; setSelectedBlockIds(ids: string[]): void; selectBlockWithModifiers(id: string, modifiers: { toggle: boolean; range: boolean }): void; toggleCollapse(ids: string[], collapsed?: boolean, scope?: "selected" | "children" | "siblings" | "all"): void; moveBlocks(ids: string[], targetId: string, position: MovePosition): void; copyBlocks(ids: string[], cut: boolean): void; duplicateBlocks(ids: string[]): void; pasteBlocks(targetId: string, position: MovePosition): void; disableBlocks(ids: string[]): void; enableBlocks(ids: string[]): void; deleteBlocks(ids: string[]): void; removeEnvironment(id: string): void; onBoundaryDraftChange(insertion: BoundaryInsertion, value: string): void; onFigureSelect: ((selection?: FigureSelection) => void) | undefined; onFigureSlotSelect: ((selection: FigureSelection) => void) | undefined; onTableSelect: ((selection?: TableSelection) => void) | undefined; onTableChange: ((selection: TableSelection, source: string) => void) | undefined; onSpellContextMenu(request: SpellContextRequest): void; onDetectedLanguage(language: string): void; onForwardSync(path: string, line: number, column?: number): void };
+type PreviewEditorServices = { onFieldEditing(id: string, active: boolean): void; getOpenDocuments?: (() => Array<{ path: string; content: string }>) | undefined; nodeRanges: Pick<ReadonlyMap<string, SourceSpan>, "get">; api: EditorApi | undefined; projectId: string; tree: ProjectTreeNode[]; currentPath: string; graphicPaths: string[]; definitions: EnvironmentDefinition[]; directives: PreviewDirectiveDefinition[]; mathContext: MathContext; searchQuery: InlineSearchQuery; activeSearchResult?: SearchResult | undefined; filterQuery: FilterQuery; filterStates: Map<string, FilterState>; visibilitySignatures: ReadonlyMap<string, string>; relation?: PreviewRelationUi | undefined; selectedBlockIds: string[]; collapsedBlockIds: ReadonlySet<string>; virtual: VirtualPreviewController; virtualRoot: { current: HTMLDivElement | null }; forcedIds: ReadonlySet<string>; forceOffset?: number; initialHeight?: number | undefined; setSelectedBlockIds(ids: string[]): void; selectBlockWithModifiers(id: string, modifiers: { toggle: boolean; range: boolean }): void; toggleCollapse(ids: string[], collapsed?: boolean, scope?: "selected" | "children" | "siblings" | "all"): void; moveBlocks(ids: string[], targetId: string, position: MovePosition): void; copyBlocks(ids: string[], cut: boolean): void; duplicateBlocks(ids: string[]): void; pasteBlocks(targetId: string, position: MovePosition): void; disableBlocks(ids: string[]): void; enableBlocks(ids: string[]): void; deleteBlocks(ids: string[]): void; removeEnvironment(id: string): void; onBoundaryDraftChange(insertion: BoundaryInsertion, value: string): void; onFigureSelect: ((selection?: FigureSelection) => void) | undefined; onFigureSlotSelect: ((selection: FigureSelection) => void) | undefined; onTableSelect: ((selection?: TableSelection) => void) | undefined; onTableChange: ((selection: TableSelection, source: string) => void) | undefined; onSpellContextMenu(request: SpellContextRequest): void; onDetectedLanguage(language: string): void; onForwardSync(path: string, line: number, column?: number): void };
 
 function measurePreviewEditHeight(root: HTMLDivElement | null, id: string): number | undefined {
   if (!root) return undefined;
@@ -108,7 +111,7 @@ function registerDeleteMenuHandler(id: string, handler: (event: globalThis.Mouse
   };
 }
 interface BoundaryInsertion { targetId: string; position: number; side: "before" | "after" }
-interface PendingPreviewScroll { id: string; offset?: number; align: ScrollLogicalPosition; highlight?: "reference-target" | "relation-locate-highlight" | "custom-block-created-highlight"; nonce?: number }
+interface PendingPreviewScroll { fileId: string; id: string; offset?: number; align: ScrollLogicalPosition; highlight?: "reference-target" | "relation-locate-highlight" | "custom-block-created-highlight"; nonce?: number; highlightNonce?: number; relationNonce?: number }
 interface PreviewActions extends Pick<PreviewEditorServices, "setSelectedBlockIds" | "selectBlockWithModifiers" | "toggleCollapse" | "moveBlocks" | "copyBlocks" | "duplicateBlocks" | "pasteBlocks" | "disableBlocks" | "enableBlocks" | "deleteBlocks" | "removeEnvironment" | "onFigureSelect" | "onFigureSlotSelect" | "onTableSelect" | "onTableChange" | "onSpellContextMenu" | "onDetectedLanguage" | "onForwardSync"> {
   select(id: string): void;
   edit(id: string, offset?: number): void;
@@ -157,19 +160,17 @@ function previewDocumentSelection(root: HTMLElement, source: string, fileId: str
   return end > start ? { fileId, start, end, origin: "preview" } : undefined;
 }
 
-function highlightedText(value: string, query: SearchQuery, active: boolean, keyBase: number): ReactNode[] {
-  const pattern = searchPattern(query).expression;
-  if (!pattern || !value) return [<Fragment key={keyBase}>{value}</Fragment>];
-  const expression = new RegExp(pattern.source, pattern.flags);
+function highlightedText(value: string, query: InlineSearchQuery, active: boolean, keyBase: number, sourceOffset?: number): ReactNode[] {
+  const ranges = inlineMatchRanges(value, query, sourceOffset);
+  if (!ranges.length) return [<Fragment key={keyBase}>{value}</Fragment>];
   const result: ReactNode[] = [];
   let cursor = 0;
   let index = 0;
-  for (const match of value.matchAll(expression)) {
-    const start = match.index ?? 0;
+  for (const [start, end] of ranges) {
     if (start > cursor) result.push(<Fragment key={`${keyBase}:t:${index++}`}>{value.slice(cursor, start)}</Fragment>);
-    if (!match[0]) continue;
-    result.push(<mark className={active ? "preview-search-match active" : "preview-search-match"} key={`${keyBase}:m:${index++}`}>{match[0]}</mark>);
-    cursor = start + match[0].length;
+    const current = active && sourceOffset !== undefined && query.resolvedMatches?.some(match => match.id === query.activeMatchId && match.matchStart === sourceOffset + start);
+    result.push(<mark className={current ? "preview-search-match active" : "preview-search-match"} key={`${keyBase}:m:${index++}`}>{value.slice(start, end)}</mark>);
+    cursor = end;
   }
   if (cursor < value.length) result.push(<Fragment key={`${keyBase}:t:${index}`}>{value.slice(cursor)}</Fragment>);
   return result.length ? result : [<Fragment key={keyBase}>{value}</Fragment>];
@@ -179,18 +180,18 @@ function sourceMapped(node: ReactNode, start?: number, end?: number, atomic = fa
   return start === undefined || end === undefined ? node : <span data-preview-source-start={start} data-preview-source-end={end} data-preview-source-mode={atomic ? "atomic" : "text"}>{node}</span>;
 }
 
-function inlineLatex(value: string | undefined, mathContext: MathContext, searchQuery: SearchQuery = defaultInlineSearch, active = false, sourceStartOffset?: number): ReactNode[] {
+function inlineLatex(value: string | undefined, mathContext: MathContext, searchQuery: InlineSearchQuery = defaultInlineSearch, active = false, sourceStartOffset?: number): ReactNode[] {
   if (!value) return [];
   const map = (node: ReactNode, token: InlineSourceToken) => sourceMapped(node, sourceStartOffset === undefined ? undefined : token.contentStart, sourceStartOffset === undefined ? undefined : token.contentEnd, token.atomic);
   const render = (tokens: InlineSourceToken[]): ReactNode[] => tokens.map((token) => {
     let content: ReactNode;
-    if (token.kind === "text") content = map(highlightedText(token.value, searchQuery, active, token.start), token);
+    if (token.kind === "text") content = map(highlightedText(token.value, searchQuery, active, token.start, sourceStartOffset === undefined || token.contentEnd - token.contentStart !== token.value.length ? undefined : token.contentStart), token);
     else if (token.kind === "math") content = map(<MathRenderer expression={token.value} display={token.display ?? false} context={mathContext}/>, token);
     else if (token.kind === "format") {
       const children = render(token.children ?? []);
       content = token.command === "textbf" ? <strong>{children}</strong> : token.command === "texttt" ? <code>{children}</code> : token.command === "textit" || token.command === "emph" ? <em>{children}</em> : children;
     } else if (token.kind === "citation") content = map(<span className="preview-citation" title={"\\" + token.command}>[{token.value}]</span>, token);
-    else if (token.kind === "reference") content = map(<button type="button" className="preview-reference" data-reference={token.value} data-reference-source-start={sourceStartOffset === undefined ? undefined : token.start} data-reference-source-end={sourceStartOffset === undefined ? undefined : token.end} title={`\\${token.command} ﾂｷ Ctrl+click to jump`}>[{token.value}]</button>, token);
+    else if (token.kind === "reference") content = map(<button type="button" className="preview-reference" data-reference={token.value} data-reference-source-start={sourceStartOffset === undefined ? undefined : token.start} data-reference-source-end={sourceStartOffset === undefined ? undefined : token.end} title={`\\${token.command} ﾂｷ modifier-click to jump`}>[{token.value}]</button>, token);
     else content = <span className="preview-algorithm-command" data-command={token.command?.toUpperCase()}>{sourceMapped(<strong>{token.command?.toUpperCase()}</strong>, sourceStartOffset === undefined ? undefined : token.start, sourceStartOffset === undefined ? undefined : token.start + (token.command?.length ?? 0) + 1, true)}{token.children && <span className="preview-algorithm-argument">{render(token.children)}</span>}</span>;
     return <Fragment key={token.kind + ":" + token.start}>{content}</Fragment>;
   });
@@ -248,15 +249,6 @@ function nodeSource(node: PreviewNode, source: PreviewSourceReader): string {
 function labelOffset(source: string, label: string): number | undefined {
   const expression = /\\label\{([^}]+)\}/g;
   for (const match of source.matchAll(expression)) if (match[1] === label) return match.index ?? 0;
-  return undefined;
-}
-
-function nodeAtOffset(nodes: PreviewNode[], offset: number): PreviewNode | undefined {
-  for (const node of nodes) {
-    if (offset < node.source.startOffset || offset > node.source.endOffset) continue;
-    if (node.kind === "block") return nodeAtOffset(node.children, offset) ?? node;
-    return node;
-  }
   return undefined;
 }
 
@@ -325,6 +317,7 @@ function BlockEnvironmentSelector({ node, source, definition, definitions, disab
   const [open, setOpen] = useState(false);
   const [pendingIncompatible, setPendingIncompatible] = useState<EnvironmentDefinition>();
   const rootRef = useRef<HTMLDivElement>(null);
+
   const preferences = useSettings();
   const blockSource = nodeSource(node, source);
   const group = environmentConversionGroup(blockSource);
@@ -383,7 +376,7 @@ function LabelEditor({ label, auto, onCommit }: { label: string; auto: boolean; 
   return <button type="button" className={`preview-block-label${auto ? " auto" : ""}${label ? "" : " empty"}`} title={t(label ? (auto ? "preview.autoLabelHint" : "preview.editLabel") : "preview.addLabel")} onClick={(event) => { event.stopPropagation(); editingRef.current = true; setDraft(label); setEditing(true); }}>{label || t("preview.addLabel")}</button>;
 }
 
-function TitleEditor({ title, onCommit }: { title: string; onCommit(value: string): void }) {
+function TitleEditor({ title, onCommit, bracketed = false }: { title: string; onCommit(value: string): void; bracketed?: boolean }) {
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(title);
   const editingRef = useRef(false);
@@ -403,7 +396,29 @@ function TitleEditor({ title, onCommit }: { title: string; onCommit(value: strin
     if (event.key === "Enter") { event.preventDefault(); event.stopPropagation(); commit(); }
     if (event.key === "Escape") { event.preventDefault(); event.stopPropagation(); editingRef.current = false; setDraft(title); setEditing(false); }
   }}/>;
-  return <button type="button" className="preview-block-title" title={t("preview.editLabel")} onClick={(event) => { event.stopPropagation(); editingRef.current = true; setDraft(title); setEditing(true); }}>{title}</button>;
+  return <button type="button" className={`preview-block-title${bracketed ? " preview-block-options" : ""}`} title={t("preview.editLabel")} onClick={(event) => { event.stopPropagation(); editingRef.current = true; setDraft(title); setEditing(true); }}>{bracketed ? `[${title}]` : title}</button>;
+}
+
+function CaptionEditor({ node, source, services, onChange }: { node: StructuralBlock; source: string; services: PreviewEditorServices; onChange(value: string): void }) {
+  const [editing, setEditing] = useState<PreviewSourceField>();
+  const [notice, setNotice] = useState("");
+  const field = captionSourceField(source);
+  const isEditing = !!editing;
+  useEffect(() => {
+    if (!isEditing) return;
+    services.onFieldEditing(node.id, true);
+    return () => services.onFieldEditing(node.id, false);
+  }, [isEditing, node.id, services.onFieldEditing]);
+  if (!field && !editing) return null;
+  return <div className="preview-caption-field" data-preview-field onClick={event => event.stopPropagation()}>
+    {editing ? <PreviewLocalEditor {...services} value={editing.value} sourceStartLine={node.source.startLine + source.slice(0, editing.start).split("\n").length - 1} sourceStartOffset={node.source.startOffset + editing.start} onCancel={() => { setEditing(undefined); setNotice(""); }} onApply={value => {
+      if (!field || field.value !== editing.value) { setNotice(t("preview.fieldChanged")); return; }
+      const next = replaceSourceField(source, field, value);
+      if (next !== undefined && next !== source) onChange(next);
+      setEditing(undefined); setNotice("");
+    }}/> : <button type="button" className="preview-caption-text" onClick={() => { setNotice(""); setEditing(field); }}>{field!.body.value ? inlineLatex(field!.body.value, services.mathContext, services.searchQuery, false, node.source.startOffset + field!.body.start) : "\\caption{}"}</button>}
+    {notice && <small role="alert">{notice}</small>}
+  </div>;
 }
 
 function replaceHeadingTitle(node: StructuralBlock, source: string, title: string): string | undefined {
@@ -414,8 +429,9 @@ function replaceHeadingTitle(node: StructuralBlock, source: string, title: strin
   return `${match[1]}${title}${match[3]}${source.slice(match[0].length)}`;
 }
 
-function SpecializedContent({ node, source, services }: { node: StructuralBlock; source: PreviewSourceReader; services: PreviewEditorServices }) {
+function SpecializedContent({ node, source, services, applyEdit }: { node: StructuralBlock; source: PreviewSourceReader; services: PreviewEditorServices; applyEdit(node: PreviewNode, value: string): void }) {
   const definitionId = node.environmentId;
+  const captionContent = /^(figure(?:-star)?|custom:figure\*|table(?:-star)?|tabular(?:-star|x)?|longtable)$/.test(definitionId) && captionSourceField(nodeSource(node, source)) ? <CaptionEditor node={node} source={nodeSource(node, source)} services={services} onChange={value => applyEdit(node, value)}/> : undefined;
   if (/equation|align|gather|multline|display-math/.test(definitionId)) {
     const mathBody = mathBodySource(node, source);
     const environment = definitionId.replace(/-star$/, "");
@@ -427,10 +443,10 @@ function SpecializedContent({ node, source, services }: { node: StructuralBlock;
     const start = node.body.startOffset + raw.length - raw.trimStart().length;
     return <pre className="preview-code">{sourceMapped(raw.trim(), start, start + raw.trim().length)}</pre>;
   }
-  if (definitionId === "figure" || definitionId === "figure-star" || definitionId === "custom:figure*" || definitionId === "inline-image") return <FigurePreview source={nodeSource(node, source)} graphicPaths={services.graphicPaths} api={services.api} projectId={services.projectId} texPath={services.currentPath} onChooseSlot={(imageIndex) => services.onFigureSlotSelect?.({ fileId: services.currentPath, start: node.source.startOffset, end: node.source.endOffset, source: nodeSource(node, source), imageIndex })}/>;
+  if (definitionId === "figure" || definitionId === "figure-star" || definitionId === "custom:figure*" || definitionId === "inline-image") return <FigurePreview source={nodeSource(node, source)} captionContent={captionContent} graphicPaths={services.graphicPaths} api={services.api} projectId={services.projectId} texPath={services.currentPath} onChooseSlot={services.onFigureSlotSelect ? (imageIndex) => services.onFigureSlotSelect?.({ fileId: services.currentPath, start: node.source.startOffset, end: node.source.endOffset, source: nodeSource(node, source), imageIndex }) : undefined}/>;
   if (["table", "table-star", "tabular", "tabular-star", "tabularx", "longtable"].includes(definitionId)) {
     const selection = { fileId: services.currentPath, start: node.source.startOffset, end: node.source.endOffset, source: nodeSource(node, source), kind: "table" as const };
-    return <TablePreview source={selection.source} renderCell={(content) => inlineLatex(content, services.mathContext, services.searchQuery, false)} onSelect={(detail) => services.onTableSelect?.({ ...selection, ...detail })} onChange={(replacement) => services.onTableChange?.(selection, replacement)}/>;
+    return <TablePreview source={selection.source} captionContent={captionContent} renderCell={(content) => inlineLatex(content, services.mathContext, services.searchQuery, false)} onSelect={(detail) => services.onTableSelect?.({ ...selection, ...detail })} onChange={(replacement) => services.onTableChange?.(selection, replacement)}/>;
   }
   return null;
 }
@@ -491,9 +507,9 @@ function ContentRenderer({ node, source, editing, cursorOffset, boundary, beginE
   const directiveDisplay = directive?.display ?? (node.contentType === "spacer" ? "spacer" : "divider");
   const directiveContent = node.contentType === "directive" || node.contentType === "spacer";
   return <Fragment>
-    {insertion?.side === "before" && <LocalEditor value="" onApply={(value) => applyBoundary(insertion, value)} onDraftChange={(value) => services.onBoundaryDraftChange(insertion, value)} onCancel={cancelEdit} {...services}/>}
-    {editing ? <LocalEditor value={nodeSource(node, source)} sourceStartLine={node.source.startLine} initialCursorOffset={cursorOffset === undefined ? undefined : cursorOffset - node.source.startOffset} onApply={applyEdit} onDraftChange={onDraftChange} onCancel={cancelEdit} onInsertBefore={(draft) => requestBoundary(node, "before", draft)} onInsertAfter={(draft) => requestBoundary(node, "after", draft)} {...services}/> : <div className={`preview-content-region${virtualClass} ${filterClass} ${activeSearch ? "search-result-active" : ""}${directiveContent ? ` preview-directive preview-directive-${directiveDisplay}` : ""}`} style={directiveContent ? { "--directive-color": directive?.color ?? "#a0afbc" } as CSSProperties : undefined} title={directiveContent ? directive?.label : undefined} data-node-id={node.id} data-source-line={node.source.startLine} data-source-start-offset={node.source.startOffset} data-source-end-offset={node.source.endOffset} onClick={(event) => { event.stopPropagation(); if (window.getSelection()?.isCollapsed !== false) beginEdit(directiveContent ? node.source.startOffset : sourceOffsetAtPoint(event.currentTarget, event)); }}>{directiveContent ? <><span className="preview-directive-line"/><span className="preview-directive-label">{node.directiveId === "blank-line" ? "" : directive?.label ?? node.raw.trim()}</span><span className="preview-directive-line"/>{directiveDisplay === "placeholder" && <code>{node.raw.trim()}</code>}</> : inlineLatex(node.raw, services.mathContext, effectiveSearch, activeSearch, node.source.startOffset)}</div>}
-    {insertion?.side === "after" && <LocalEditor value="" onApply={(value) => applyBoundary(insertion, value)} onDraftChange={(value) => services.onBoundaryDraftChange(insertion, value)} onCancel={cancelEdit} {...services}/>}
+    {insertion?.side === "before" && <LocalEditor value="" sourceStartOffset={insertion.position} onApply={(value) => applyBoundary(insertion, value)} onDraftChange={(value) => services.onBoundaryDraftChange(insertion, value)} onCancel={cancelEdit} {...services}/>}
+    {editing ? <LocalEditor value={nodeSource(node, source)} sourceStartLine={node.source.startLine} sourceStartOffset={node.source.startOffset} initialCursorOffset={cursorOffset === undefined ? undefined : cursorOffset - node.source.startOffset} onApply={applyEdit} onDraftChange={onDraftChange} onCancel={cancelEdit} onInsertBefore={(draft) => requestBoundary(node, "before", draft)} onInsertAfter={(draft) => requestBoundary(node, "after", draft)} {...services}/> : <div className={`preview-content-region${virtualClass} ${filterClass} ${activeSearch ? "search-result-active" : ""}${directiveContent ? ` preview-directive preview-directive-${directiveDisplay}` : ""}`} style={directiveContent ? { "--directive-color": directive?.color ?? "#a0afbc" } as CSSProperties : undefined} title={directiveContent ? directive?.label : undefined} data-node-id={node.id} data-source-line={node.source.startLine} data-source-start-offset={node.source.startOffset} data-source-end-offset={node.source.endOffset} onClick={(event) => { event.stopPropagation(); if (window.getSelection()?.isCollapsed !== false) beginEdit(directiveContent ? node.source.startOffset : sourceOffsetAtPoint(event.currentTarget, event)); }}>{directiveContent ? <><span className="preview-directive-line"/><span className="preview-directive-label">{node.directiveId === "blank-line" ? "" : directive?.label ?? node.raw.trim()}</span><span className="preview-directive-line"/>{directiveDisplay === "placeholder" && <code>{node.raw.trim()}</code>}</> : inlineLatex(node.raw, services.mathContext, effectiveSearch, activeSearch, node.source.startOffset)}</div>}
+    {insertion?.side === "after" && <LocalEditor value="" sourceStartOffset={insertion.position} onApply={(value) => applyBoundary(insertion, value)} onDraftChange={(value) => services.onBoundaryDraftChange(insertion, value)} onCancel={cancelEdit} {...services}/>}
   </Fragment>;
 }
 
@@ -585,9 +601,11 @@ function BlockRenderer({ node, source, definitions, selectedId, editingId, curso
     return () => { window.document.removeEventListener("pointerdown", dismiss); window.document.removeEventListener("keydown", escape); };
   }, [deleteMenuOpen]);
   const blockSource = nodeSource(node, source);
+  const optionField = environmentOptionField(blockSource);
   const canRemoveEnvironment = node.origin === "latex" && unwrapLatexEnvironment(blockSource, node.environmentId) !== undefined;
+
   const preferences = useSettings();
-  const specialized = SpecializedContent({ node, source, services });
+  const specialized = SpecializedContent({ node, source, services, applyEdit });
   const specializedContent = emptyBlock && contentBlock
     ? <div className="preview-empty-block-placeholder" onClick={(event) => { event.stopPropagation(); edit(node.id); }}>{t("preview.emptyBlockHint")}</div>
     : emptyStructuralParagraph
@@ -659,14 +677,14 @@ function BlockRenderer({ node, source, definitions, selectedId, editingId, curso
     </section>;
   }
   return <Fragment>
-    {insertion?.side === "before" && <LocalEditor value="" onApply={(value) => applyBoundary(insertion, value)} onDraftChange={(value) => services.onBoundaryDraftChange(insertion, value)} onCancel={cancelEdit} {...services}/>}
-    <section className={`preview-block env-${family} ${filterClass} ${activeSearch ? "search-result-active" : ""} ${selected ? "selected" : ""} ${selected && services.selectedBlockIds.length > 1 ? "multi-selected" : ""} ${editing ? "editing" : ""} ${collapsed ? "block-collapsed" : ""} ${semanticId === services.relation?.focusId ? "relation-focus" : ""}`} data-preview-node-id={node.id} data-environment={node.environmentId} data-semantic-block-id={semanticId} data-source-line={node.source.startLine} data-source-start-offset={node.source.startOffset} data-source-end-offset={node.source.endOffset} data-drop-position={dropPosition} onDragOver={dragOver} onDragLeave={() => setDropPosition(undefined)} onDrop={drop} onClickCapture={(event) => { if (!(event.ctrlKey || event.metaKey || event.shiftKey) || editing) return; const target = event.target as Element; if (target.closest(".preview-block") !== event.currentTarget || target.closest("a, input, textarea, select, [contenteditable=true], .preview-local-editor, .structured-table, .preview-reference, .preview-block-header-actions, .preview-block-collapse, .preview-block-drag, .preview-environment-selector, .preview-block-footer-actions, .preview-block-footer-main, button:not(.preview-block-title):not(.preview-block-label)")) return; event.preventDefault(); event.stopPropagation(); services.selectBlockWithModifiers(node.id, { toggle: event.ctrlKey || event.metaKey, range: event.shiftKey }); }} onDoubleClickCapture={(event) => { const target = event.target as Element; if (target.closest(".preview-local-editor, .structured-table") || target.closest(".preview-block") !== event.currentTarget) return; event.preventDefault(); event.stopPropagation(); const figureBlock = node.environmentId === "figure" || node.environmentId === "figure-star" || node.environmentId === "custom:figure*" || node.environmentId === "inline-image"; if (figureBlock) { if (preferences.get("images").editor.defaultMode === "source") edit(node.id); else { select(node.id); services.onFigureSelect?.({ fileId: services.currentPath, start: node.source.startOffset, end: node.source.endOffset, source: nodeSource(node, source) }); } return; } services.onForwardSync(services.currentPath, node.source.startLine, 1); }} style={environmentBlockStyle(node.environmentId, family, definition)}>
+    {insertion?.side === "before" && <LocalEditor value="" sourceStartOffset={insertion.position} onApply={(value) => applyBoundary(insertion, value)} onDraftChange={(value) => services.onBoundaryDraftChange(insertion, value)} onCancel={cancelEdit} {...services}/>}
+    <section className={`preview-block env-${family} ${filterClass} ${activeSearch ? "search-result-active" : ""} ${selected ? "selected" : ""} ${selected && services.selectedBlockIds.length > 1 ? "multi-selected" : ""} ${editing ? "editing" : ""} ${collapsed ? "block-collapsed" : ""} ${semanticId === services.relation?.focusId ? "relation-focus" : ""}`} data-preview-node-id={node.id} data-environment={node.environmentId} data-semantic-block-id={semanticId} data-source-line={node.source.startLine} data-source-start-offset={node.source.startOffset} data-source-end-offset={node.source.endOffset} data-drop-position={dropPosition} onDragOver={dragOver} onDragLeave={() => setDropPosition(undefined)} onDrop={drop} onClickCapture={(event) => { if (!(event.ctrlKey || event.metaKey || event.shiftKey) || editing) return; const target = event.target as Element; if (target.closest(".preview-block") !== event.currentTarget || target.closest("a, input, textarea, select, [contenteditable=true], .preview-local-editor, .structured-table, .preview-reference, .preview-block-header-actions, .preview-block-collapse, .preview-block-drag, .preview-environment-selector, .preview-block-footer-actions, .preview-block-footer-main, button:not(.preview-block-title):not(.preview-block-label)")) return; event.preventDefault(); event.stopPropagation(); services.selectBlockWithModifiers(node.id, { toggle: event.ctrlKey || event.metaKey, range: event.shiftKey }); }} onDoubleClickCapture={(event) => { const target = event.target as Element; if (target.closest("[data-preview-field], button, input, .preview-local-editor, .structured-table, .figure-preview-image-choice, .figure-preview-empty-slot") || target.closest(".preview-block") !== event.currentTarget) return; event.preventDefault(); event.stopPropagation(); const figureBlock = node.environmentId === "figure" || node.environmentId === "figure-star" || node.environmentId === "custom:figure*" || node.environmentId === "inline-image"; if (figureBlock) { if (preferences.get("images").editor.defaultMode === "source") edit(node.id); else { select(node.id); services.onFigureSelect?.({ fileId: services.currentPath, start: node.source.startOffset, end: node.source.endOffset, source: nodeSource(node, source) }); } return; } services.onForwardSync(services.currentPath, node.source.startLine, 1); }} style={environmentBlockStyle(node.environmentId, family, definition)}>
     {(definition?.behavior.showHeader ?? true) && <div className="preview-block-header">
       {canCollapseBlock(node) && <button className="preview-block-collapse" title={t(collapsed ? "blockOperation.expand" : "blockOperation.collapse")} aria-expanded={!collapsed} onClick={(event) => { event.stopPropagation(); services.toggleCollapse([node.id]); }}>{collapsed ? "\u25B8" : "\u25BE"}</button>}
       <button className="preview-block-drag" draggable title={t("blockOperation.drag")} onDragStart={dragStart} onDragEnd={() => setDropPosition(undefined)}>{"\u22EE\u22EE"}</button>
       <div className="preview-block-header-main" onClick={selectFromHeader}>
         <BlockEnvironmentSelector node={node} source={source} definition={definition} definitions={definitions} disabled={editing} onChange={(value) => applyEdit(node, value)}/>
-        {node.title && (replaceHeadingTitle(node, blockSource, node.title) !== undefined ? <TitleEditor title={node.title} onCommit={applyTitle}/> : <strong>{node.title}</strong>)}
+        {optionField ? <TitleEditor title={optionField.value} bracketed onCommit={value => { const next = replaceSourceField(blockSource, optionField, value); if (next !== undefined) applyEdit(node, next); }}/> : node.title && (replaceHeadingTitle(node, blockSource, node.title) !== undefined ? <TitleEditor title={node.title} onCommit={applyTitle}/> : <strong>{node.title}</strong>)}
         {(definition?.behavior.showLabel ?? true) && <LabelEditor label={node.latexLabel ?? ""} auto={Boolean(node.autoLabel)} onCommit={applyLabel}/>}
       </div>
       {(singleSelected || (services.relation?.active && semanticId && services.selectedBlockIds.length === 1)) && <div className="preview-block-header-actions">
@@ -685,7 +703,8 @@ function BlockRenderer({ node, source, definitions, selectedId, editingId, curso
       <button className="preview-block-collapse" title={t(collapsed ? "blockOperation.expand" : "blockOperation.collapse")} aria-label={t(collapsed ? "blockOperation.expand" : "blockOperation.collapse")} aria-expanded={!collapsed} onClick={(event) => { event.stopPropagation(); services.toggleCollapse([node.id]); }}>{collapsed ? "笆ｸ" : "笆ｾ"}</button>
       <span>{environmentLabel(definition, node.environmentId)}</span>
     </div>}
-    {!collapsed && <div className="preview-block-body" onClickCapture={() => {
+    {!collapsed && <div className="preview-block-body" onClickCapture={(event) => {
+       if ((event.target as Element).closest("[data-preview-field]")) return;
        // Figure and table previews stop propagation for their own controls/cell editing.
        // Activate the surrounding block during capture so its boundary actions remain
        // available even when the specialized preview consumes the click afterwards.
@@ -703,7 +722,7 @@ function BlockRenderer({ node, source, definitions, selectedId, editingId, curso
        }
        if (contentBlock && (definition?.behavior.inlineEditable ?? true)) { event.stopPropagation(); edit(node.id, sourceOffsetAtPoint(event.currentTarget, event)); }
      }}>
-       {editing ? <LocalEditor value={nodeSource(node, source)} sourceStartLine={node.source.startLine} initialCursorOffset={cursorOffset === undefined ? undefined : cursorOffset - node.source.startOffset} mathDraft={isMathBlock(node)} onApply={(value) => applyEdit(node, value)} onCancel={cancelEdit} onInsertBefore={(draft) => requestBoundary(node, "before", draft)} onInsertAfter={(draft) => requestBoundary(node, "after", draft)} {...services}/> : specializedContent ?? <PreviewNodeList nodes={node.children} source={source} definitions={definitions} selectedId={selectedId} editingId={editingId} cursorOffset={cursorOffset} boundary={boundary} select={select} edit={contentBlock ? (_id, offset) => edit(node.id, offset) : edit} applyEdit={applyEdit} applyBoundary={applyBoundary} cancelEdit={cancelEdit} requestBoundary={requestBoundary} services={services}/> }
+       {editing ? <LocalEditor value={nodeSource(node, source)} sourceStartLine={node.source.startLine} sourceStartOffset={node.source.startOffset} initialCursorOffset={cursorOffset === undefined ? undefined : cursorOffset - node.source.startOffset} mathDraft={isMathBlock(node)} onApply={(value) => applyEdit(node, value)} onCancel={cancelEdit} onInsertBefore={(draft) => requestBoundary(node, "before", draft)} onInsertAfter={(draft) => requestBoundary(node, "after", draft)} {...services}/> : specializedContent ?? <PreviewNodeList nodes={node.children} source={source} definitions={definitions} selectedId={selectedId} editingId={editingId} cursorOffset={cursorOffset} boundary={boundary} select={select} edit={contentBlock ? (_id, offset) => edit(node.id, offset) : edit} applyEdit={applyEdit} applyBoundary={applyBoundary} cancelEdit={cancelEdit} requestBoundary={requestBoundary} services={services}/> }
     </div>}
     {!collapsed && <div className="preview-block-footer">
       <button className="preview-block-footer-main" title={environmentLabel(definition, node.environmentId)} onClick={(event) => { event.stopPropagation(); select(node.id); }}><span/></button>
@@ -718,7 +737,7 @@ function BlockRenderer({ node, source, definitions, selectedId, editingId, curso
       {canRemoveEnvironment && <button role="menuitem" onClick={() => { setDeleteMenuOpen(false); services.removeEnvironment(node.id); }}>{t("preview.removeEnvironment")}</button>}
       <button role="menuitem" className="danger" onClick={() => { setDeleteMenuOpen(false); services.deleteBlocks([node.id]); }}>{t("preview.deleteEntireBlock")}</button>
     </div>, document.body)}
-    {insertion?.side === "after" && <LocalEditor value="" onApply={(value) => applyBoundary(insertion, value)} onDraftChange={(value) => services.onBoundaryDraftChange(insertion, value)} onCancel={cancelEdit} {...services}/>}
+    {insertion?.side === "after" && <LocalEditor value="" sourceStartOffset={insertion.position} onApply={(value) => applyBoundary(insertion, value)} onDraftChange={(value) => services.onBoundaryDraftChange(insertion, value)} onCancel={cancelEdit} {...services}/>}
   </Fragment>;
 }
 
@@ -812,7 +831,8 @@ function PreviewPerformancePanel({ virtual, timing, total }: { virtual: VirtualP
   return <details className="preview-performance-panel" open={open} onToggle={(event) => setOpen(event.currentTarget.open)}><summary>Preview metrics</summary><div>Parse {timing.current.parseMs.toFixed(1)} ms ({timing.current.parseMode}) ﾂｷ Index {timing.current.indexMs.toFixed(1)} ms ﾂｷ React {timing.current.reactMs.toFixed(1)} ms</div><div>Direct {timing.current.directUpdates} ﾂｷ Local reparse {timing.current.localReparses} ﾂｷ Full fallback {timing.current.fullFallbacks}</div><div>Fallback reasons {Object.entries(timing.current.fallbackReasons).map(([reason, count]) => `${reason}: ${count}`).join(" ﾂｷ ") || "none"}</div><div>Visible {snapshot.visible} ﾂｷ Mounted {snapshot.mounted} / {total}</div><div>KaTeX {snapshot.math.calls - snapshot.math.hits} renders ﾂｷ cache {(snapshot.math.hitRate * 100).toFixed(0)}%</div><div>Height cache {(snapshot.heightHitRate * 100).toFixed(0)}%</div></details>;
 }
 
-export function PreviewPane({ filePath, source, sourceTransaction, definitions, mathContext = EMPTY_MATH_CONTEXT, searchQuery = defaultInlineSearch, filterQuery = defaultFilterQuery, activeSearchResult, highlightRange, locateRequest, restoreOffset, restoreScrollTop, onLocated, relation, onSourceChange, onSelectionChange, onSelectionContextMenu, onViewportAnchorChange, onClickSourcePosition, onJumpFromPosition, onInsertionAnchorChange, onFigureSelect, onFigureSlotSelect, onTableSelect, onTableChange, api, projectId, tree, onSpellContextMenu, onDetectedLanguage, onForwardSync }: { filePath?: string | undefined; source?: string | undefined; sourceTransaction?: PreviewSourceTransaction | undefined; definitions: EnvironmentDefinition[]; mathContext?: MathContext; searchQuery?: SearchQuery; filterQuery?: FilterQuery; activeSearchResult?: SearchResult | undefined; highlightRange?: { fileId: string; start: number; end: number; nonce: number } | undefined; locateRequest?: { fileId: string; offset: number; nonce: number } | undefined; restoreOffset?: number | undefined; restoreScrollTop?: number | undefined; onLocated?(nonce: number): void; relation?: PreviewRelationUi | undefined; onSourceChange(next: string, changes?: PreviewTextChange[]): void; onSelectionChange?(selection?: DocumentSelection): void; onSelectionContextMenu?(selection: DocumentSelection, x: number, y: number): void; onViewportAnchorChange?(anchor: { fileId: string; offset: number; scrollTop: number }): void; onClickSourcePosition?(anchor: { fileId: string; offset: number }): void; onJumpFromPosition?(anchor: { fileId: string; offset: number; targetOffset: number; linkText: string; targetLabel: string }): void; onInsertionAnchorChange?(anchor?: { fileId: string; offset: number }): void; onFigureSelect?(selection?: FigureSelection): void; onFigureSlotSelect?(selection: FigureSelection): void; onTableSelect?(selection?: TableSelection): void; onTableChange?(selection: TableSelection, source: string): void; api: EditorApi | undefined; projectId: string; tree: ProjectTreeNode[]; onSpellContextMenu(request: SpellContextRequest): void; onDetectedLanguage(language: string): void; onForwardSync(path: string, line: number, column?: number): void }) {
+export function PreviewPane({ filePath, source, sourceTransaction, definitions, mathContext = EMPTY_MATH_CONTEXT, searchQuery = defaultInlineSearch, searchResults, filterQuery = defaultFilterQuery, activeSearchResult, highlightRange, locateRequest, restoreOffset, restoreScrollTop, onLocated, onHighlightLocated, relation, onSourceChange, onSelectionChange, onSelectionContextMenu, onViewportAnchorChange, onClickSourcePosition, onJumpFromPosition, onInsertionAnchorChange, onFigureSelect, onFigureSlotSelect, onTableSelect, onTableChange, api, projectId, tree, getOpenDocuments, onSpellContextMenu, onDetectedLanguage, onForwardSync }: { getOpenDocuments?: (() => Array<{ path: string; content: string }>) | undefined; filePath?: string | undefined; source?: string | undefined; sourceTransaction?: PreviewSourceTransaction | undefined; definitions: EnvironmentDefinition[]; mathContext?: MathContext; searchQuery?: SearchQuery; searchResults?: SearchResult[]; filterQuery?: FilterQuery; activeSearchResult?: SearchResult | undefined; highlightRange?: { fileId: string; start: number; end: number; nonce: number } | undefined; locateRequest?: { fileId: string; offset: number; nonce: number } | undefined; restoreOffset?: number | undefined; restoreScrollTop?: number | undefined; onLocated?(nonce: number): void; onHighlightLocated?(nonce: number): void; relation?: PreviewRelationUi | undefined; onSourceChange(next: string, changes?: PreviewTextChange[]): void; onSelectionChange?(selection?: DocumentSelection): void; onSelectionContextMenu?(selection: DocumentSelection, x: number, y: number): void; onViewportAnchorChange?(anchor: { fileId: string; offset: number; scrollTop: number }): void; onClickSourcePosition?(anchor: { fileId: string; offset: number }): void; onJumpFromPosition?(anchor: { fileId: string; offset: number; targetOffset: number; linkText: string; targetLabel: string }): void; onInsertionAnchorChange?(anchor?: { fileId: string; offset: number }): void; onFigureSelect?(selection?: FigureSelection): void; onFigureSlotSelect?(selection: FigureSelection): void; onTableSelect?(selection?: TableSelection): void; onTableChange?(selection: TableSelection, source: string): void; api: EditorApi | undefined; projectId: string; tree: ProjectTreeNode[]; onSpellContextMenu(request: SpellContextRequest): void; onDetectedLanguage(language: string): void; onForwardSync(path: string, line: number, column?: number): void }) {
+  const inlineSearch = useMemo<InlineSearchQuery>(() => ({ ...searchQuery, activeMatchId: activeSearchResult?.id, ...(searchResults ? { resolvedMatches: searchResults.filter(result => result.fileId === filePath) } : {}) }), [searchQuery, searchResults, filePath, activeSearchResult?.id]);
   const preferences = useSettings();
   const referenceLinkModifier = preferences.get("referenceLinkModifier");
   const storedDirectives = preferences.get("previewDirectives");
@@ -855,9 +875,11 @@ export function PreviewPane({ filePath, source, sourceTransaction, definitions, 
   const [operationPreview, setOperationPreview] = useState<{ before: string; transaction: BlockSourceTransaction; action: "move" | "disable" | "delete" }>();
   const [forcedTargetId, setForcedTargetId] = useState<string>();
   const [pendingScroll, setPendingScroll] = useState<PendingPreviewScroll>();
-  const [pendingReferenceOffset, setPendingReferenceOffset] = useState<number>();
+  const navigationEvents = useMemo(() => new PreviewNavigationEvents(), [projectId]);
   const previewRootRef = useRef<HTMLDivElement | null>(null);
-  const virtual = useMemo(() => new VirtualPreviewController(), []);
+  // A new file gets a fresh controller before its rows measure themselves.
+  // Resetting the shared controller in a passive effect erased those measures.
+  const virtual = useMemo(() => new VirtualPreviewController(), [projectId, filePath]);
   const sourceValueRef = useRef(source ?? "");
   sourceValueRef.current = source ?? "";
   const sourceReader = useMemo<PreviewSourceReader>(() => ({ slice: (start, end) => sourceValueRef.current.slice(start, end) }), []);
@@ -955,13 +977,17 @@ export function PreviewPane({ filePath, source, sourceTransaction, definitions, 
     }
     return mapped;
   }, [renderIndex, relation?.active, relation?.locateRequest, relation?.transientToBlockId]);
+  const [fieldEditingIds, setFieldEditingIds] = useState<ReadonlySet<string>>(new Set());
+  const onFieldEditing = useCallback((id: string, active: boolean) => {
+    setFieldEditingIds(previous => { if (previous.has(id) === active) return previous; const next = new Set(previous); if (active) next.add(id); else next.delete(id); return next; });
+  }, []);
   const forcedIds = useMemo(() => {
     const ids = new Set<string>();
-    for (const id of [forcedTargetId, selectedId, editingId, boundary?.targetId, ...additionalSelectedIds]) {
+    for (const id of [forcedTargetId, selectedId, editingId, boundary?.targetId, ...additionalSelectedIds, ...fieldEditingIds]) {
       if (id) for (const ancestor of previewPath(renderIndex, id)) ids.add(ancestor);
     }
     return ids;
-  }, [renderIndex, forcedTargetId, selectedId, editingId, boundary?.targetId, additionalSelectedIds]);
+  }, [renderIndex, forcedTargetId, selectedId, editingId, boundary?.targetId, additionalSelectedIds, fieldEditingIds]);
   const updateJumpCursor = (target: Element | undefined, modifierHeld: boolean) => {
     const root = previewRootRef.current;
     const jump = modifierHeld && root?.contains(target ?? null) && document && source !== undefined
@@ -1044,7 +1070,13 @@ export function PreviewPane({ filePath, source, sourceTransaction, definitions, 
   useEffect(() => {
     onInsertionAnchorChange?.(boundary && filePath ? { fileId: filePath, offset: boundary.position } : undefined);
   }, [boundary, filePath, onInsertionAnchorChange]);
-  useEffect(() => { pendingBoundaryRef.current = undefined; pendingStructuralEditRef.current = undefined; pendingBlockSelectionRef.current = undefined; virtual.reset(); setForcedTargetId(undefined); setEditingId(undefined); setEditingCursorOffset(undefined); setEditingInitialHeight(undefined); setSelectedId(undefined); setAdditionalSelectedIds([]); setBlockToolbarPosition(undefined); setBoundary(undefined); setOperationPreview(undefined); setOperationNotice(undefined); }, [filePath, virtual]);
+  useEffect(() => {
+    pendingBoundaryRef.current = undefined; pendingStructuralEditRef.current = undefined; pendingBlockSelectionRef.current = undefined;
+    restoredFileRef.current = undefined; selectionAnchorRef.current = undefined; hoveredJumpElementRef.current = undefined;
+    marqueeGesture.current = undefined; setMarqueeRect(undefined); setPendingScroll(undefined);
+    setForcedTargetId(undefined); setEditingId(undefined); setEditingCursorOffset(undefined); setEditingInitialHeight(undefined);
+    setSelectedId(undefined); setAdditionalSelectedIds([]); setBlockToolbarPosition(undefined); setBoundary(undefined); setOperationPreview(undefined); setOperationNotice(undefined);
+  }, [projectId, filePath, virtual]);
   useEffect(() => () => virtual.disconnect(), [virtual]);
   useEffect(() => {
     const pendingSelection = pendingBlockSelectionRef.current;
@@ -1053,7 +1085,7 @@ export function PreviewPane({ filePath, source, sourceTransaction, definitions, 
       const roots = source === pendingSelection.source && document ? blocksInSelectionRanges(document.nodes, pendingSelection.ranges) : [];
       setSelectedId(roots[0]?.id);
       setAdditionalSelectedIds(roots.slice(1).map((block) => block.id));
-      if (roots[0]) setPendingScroll({ id: roots[0].id, align: "nearest" });
+      if (roots[0]) setPendingScroll({ fileId: pendingSelection.filePath, id: roots[0].id, align: "nearest" });
     }
     const pendingStructuralEdit = pendingStructuralEditRef.current;
     if (pendingStructuralEdit && document) {
@@ -1110,17 +1142,9 @@ export function PreviewPane({ filePath, source, sourceTransaction, definitions, 
     return () => registrations.forEach((dispose) => dispose());
   }, [selectedId, additionalSelectedIds, document, boundary, editingId]);
   useEffect(() => {
-    if (pendingReferenceOffset === undefined || !document) return;
-    const node = nodeAtOffset(document.nodes, pendingReferenceOffset);
-    if (!node) return;
-    revealCollapsedTargets([node.id]);
-    setForcedTargetId(node.id);
-    setPendingScroll({ id: node.id, offset: pendingReferenceOffset, align: "start", highlight: "reference-target" });
-    setPendingReferenceOffset(undefined);
-  }, [document, pendingReferenceOffset]);
-  useEffect(() => {
     if (!filePath || !document || !previewRootRef.current) return;
     const request = locateRequest?.fileId === filePath ? locateRequest : undefined;
+    if (request && !navigationEvents.consume("navigation", filePath, request.nonce)) return;
     if (!request && restoredFileRef.current === filePath) return;
     if (!request && restoreScrollTop !== undefined) {
       previewRootRef.current.scrollTop = restoreScrollTop;
@@ -1130,35 +1154,34 @@ export function PreviewPane({ filePath, source, sourceTransaction, definitions, 
     const offset = request?.offset ?? restoreOffset;
     if (offset === undefined) { previewRootRef.current.scrollTop = 0; restoredFileRef.current = filePath; return; }
     const node = nodeAtOffset(document.nodes, offset);
-    if (node) { if (request) revealCollapsedTargets([node.id]); setForcedTargetId(node.id); setPendingScroll({ id: node.id, offset, align: request ? "start" : "center", ...(request ? { nonce: request.nonce } : {}) }); }
+    if (node) { if (request) revealCollapsedTargets([node.id]); setForcedTargetId(node.id); setPendingScroll({ fileId: filePath, id: node.id, offset, align: request ? "start" : "center", ...(request ? { nonce: request.nonce } : {}) }); }
     restoredFileRef.current = filePath;
     if (request && !node) onLocated?.(request.nonce);
-  }, [filePath, document, locateRequest, restoreOffset, restoreScrollTop]);
+  }, [filePath, document, locateRequest, restoreOffset, restoreScrollTop, navigationEvents]);
+  // Search selection navigates through the host's explicit locateRequest.
+  // activeSearchResult is only a highlight, never a persistent scroll command.
   useEffect(() => {
-    if (!activeSearchResult || activeSearchResult.fileId !== filePath || !document) return;
-    const node = nodeAtOffset(document.nodes, activeSearchResult.matchStart);
-    if (!node) return;
-    revealCollapsedTargets([node.id]);
-    setForcedTargetId(node.id);
-    setPendingScroll({ id: node.id, offset: activeSearchResult.matchStart, align: "center" });
-  }, [activeSearchResult, filePath, document]);
-  useEffect(() => {
-    if (!highlightRange || highlightRange.fileId !== filePath || !document) return;
+    if (!filePath || !highlightRange || highlightRange.fileId !== filePath || !document) return;
+    if (source === undefined || highlightRange.end > source.length) return;
+    if (!navigationEvents.consume("highlight", filePath, highlightRange.nonce)) return;
+    if (locateRequest?.fileId === filePath) { onHighlightLocated?.(highlightRange.nonce); return; }
     const node = nodeAtOffset(document.nodes, highlightRange.start);
-    if (!node) return;
+    if (!node) { onHighlightLocated?.(highlightRange.nonce); return; }
     revealCollapsedTargets([node.id]);
     setForcedTargetId(node.id);
-    setPendingScroll({ id: node.id, offset: highlightRange.start, align: "center", highlight: "custom-block-created-highlight" });
-  }, [highlightRange, filePath, document]);
+    setPendingScroll({ fileId: filePath, id: node.id, offset: highlightRange.start, align: "center", highlight: "custom-block-created-highlight", highlightNonce: highlightRange.nonce });
+  }, [highlightRange, filePath, document, source, navigationEvents, locateRequest, onHighlightLocated]);
   useEffect(() => {
     const request = relation?.locateRequest;
-    if (!request) return;
+    if (!filePath || !request || request.fileId !== filePath) return;
+    if (locateRequest?.fileId === filePath) { navigationEvents.consume("relation", filePath, request.nonce); relation?.onLocated?.(request.nonce); return; }
     const entry = renderIndex.entries.find((candidate) => mappedRelationIds[candidate.id] === request.blockId);
     if (!entry) return;
+    if (!navigationEvents.consume("relation", filePath, request.nonce)) return;
     revealCollapsedTargets([entry.id]);
     setForcedTargetId(entry.id);
-    setPendingScroll({ id: entry.id, align: "center", highlight: "relation-locate-highlight" });
-  }, [relation?.locateRequest, renderIndex, mappedRelationIds]);
+    setPendingScroll({ fileId: filePath, id: entry.id, align: "center", highlight: "relation-locate-highlight", relationNonce: request.nonce });
+  }, [relation?.locateRequest, renderIndex, mappedRelationIds, filePath, navigationEvents, locateRequest]);
   useEffect(() => {
     if (!filterQuery.enabled || !filterEvaluation || !filePath || source === undefined) return;
     if (![filterQuery.blockTypes, filterQuery.locations, filterQuery.files, filterQuery.properties].some((items) => items.length > 0)) return;
@@ -1166,12 +1189,20 @@ export function PreviewPane({ filePath, source, sourceTransaction, definitions, 
   }, [filterQuery, filterEvaluation, filePath, source, renderIndex]);
   useEffect(() => {
     const root = previewRootRef.current;
-    if (!root || !pendingScroll) return;
+    if (!root || !pendingScroll || pendingScroll.fileId !== filePath) return;
+    if (!renderIndex.byId.has(pendingScroll.id)) {
+      if (pendingScroll.nonce !== undefined) onLocated?.(pendingScroll.nonce);
+      if (pendingScroll.highlightNonce !== undefined) onHighlightLocated?.(pendingScroll.highlightNonce);
+      if (pendingScroll.relationNonce !== undefined) relation?.onLocated?.(pendingScroll.relationNonce);
+      setPendingScroll(undefined); setForcedTargetId(undefined);
+      return;
+    }
+    const containsOffset = (element: HTMLElement) => previewSpanContains({ startOffset: Number(element.dataset.sourceStartOffset), endOffset: Number(element.dataset.sourceEndOffset) }, pendingScroll.offset!);
     const row = Array.from(root.querySelectorAll<HTMLElement>("[data-virtual-node-id]")).find((element) => element.dataset.virtualNodeId === pendingScroll.id)
-      ?? (pendingScroll.offset === undefined ? undefined : Array.from(root.querySelectorAll<HTMLElement>("[data-source-start-offset][data-source-end-offset]")).filter((element) => Number(element.dataset.sourceStartOffset) <= pendingScroll.offset! && pendingScroll.offset! <= Number(element.dataset.sourceEndOffset)).sort((a, b) => (Number(a.dataset.sourceEndOffset) - Number(a.dataset.sourceStartOffset)) - (Number(b.dataset.sourceEndOffset) - Number(b.dataset.sourceStartOffset)))[0]);
+      ?? (pendingScroll.offset === undefined ? undefined : Array.from(root.querySelectorAll<HTMLElement>("[data-source-start-offset][data-source-end-offset]")).filter(containsOffset).sort((a, b) => (Number(a.dataset.sourceEndOffset) - Number(a.dataset.sourceStartOffset)) - (Number(b.dataset.sourceEndOffset) - Number(b.dataset.sourceStartOffset)))[0]);
     if (!row) return;
     const target = pendingScroll.offset === undefined ? row.querySelector<HTMLElement>("[data-source-start-offset]") ?? row
-      : Array.from(row.querySelectorAll<HTMLElement>("[data-source-start-offset][data-source-end-offset]")).filter((element) => Number(element.dataset.sourceStartOffset) <= pendingScroll.offset! && pendingScroll.offset! <= Number(element.dataset.sourceEndOffset)).sort((a, b) => (Number(a.dataset.sourceEndOffset) - Number(a.dataset.sourceStartOffset)) - (Number(b.dataset.sourceEndOffset) - Number(b.dataset.sourceStartOffset)))[0] ?? row;
+      : Array.from(row.querySelectorAll<HTMLElement>("[data-source-start-offset][data-source-end-offset]")).filter(containsOffset).sort((a, b) => (Number(a.dataset.sourceEndOffset) - Number(a.dataset.sourceStartOffset)) - (Number(b.dataset.sourceEndOffset) - Number(b.dataset.sourceStartOffset)))[0] ?? row;
     target.scrollIntoView({ block: pendingScroll.align });
     if (pendingScroll.highlight) {
       target.classList.add(pendingScroll.highlight);
@@ -1179,6 +1210,8 @@ export function PreviewPane({ filePath, source, sourceTransaction, definitions, 
       window.setTimeout(() => target.classList.remove(className), 900);
     }
     if (pendingScroll.nonce !== undefined) onLocated?.(pendingScroll.nonce);
+    if (pendingScroll.highlightNonce !== undefined) onHighlightLocated?.(pendingScroll.highlightNonce);
+    if (pendingScroll.relationNonce !== undefined) relation?.onLocated?.(pendingScroll.relationNonce);
     setPendingScroll(undefined);
     const entry = renderIndex.byId.get(pendingScroll.id);
     const query = filterQuery.enabled ? filterEvaluation?.states.get(pendingScroll.id) ?? "match" : "match";
@@ -1186,7 +1219,7 @@ export function PreviewPane({ filePath, source, sourceTransaction, definitions, 
     const relationState = !relation?.active || !semanticId ? "match"
       : relation.matchIds.has(semanticId) ? "match" : relation.contextIds.has(semanticId) ? "context" : "unmatched";
     if (!entry || !["remove", "collapse"].includes(filterDisposition(combineFilterStates(query, relationState), filterQuery.viewMode))) setForcedTargetId(undefined);
-  }, [pendingScroll, forcedIds, onLocated, renderIndex, filterQuery, filterEvaluation, mappedRelationIds, relation]);
+  }, [pendingScroll, forcedIds, onLocated, onHighlightLocated, filePath, renderIndex, filterQuery, filterEvaluation, mappedRelationIds, relation]);
   useEffect(() => {
     const root = previewRootRef.current;
     if (!root || !filePath || !onViewportAnchorChange) return;
@@ -1327,7 +1360,7 @@ export function PreviewPane({ filePath, source, sourceTransaction, definitions, 
     });
     if (!nextId) return;
     setBlockSelection([nextId]);
-    setPendingScroll({ id: nextId, align: "nearest" });
+    if (filePath) setPendingScroll({ fileId: filePath, id: nextId, align: "nearest" });
   };
   useEffect(() => {
     const register = (id: "block.moveUp" | "block.moveDown" | "block.outdent" | "block.indent", direction: "up" | "down" | "outdent" | "indent") =>
@@ -1486,11 +1519,11 @@ export function PreviewPane({ filePath, source, sourceTransaction, definitions, 
     relationToggle: (id, x, y) => relation?.onToggle(id, x, y)
   };
   const services: PreviewEditorServices = {
-    nodeRanges, api, projectId, tree, currentPath: filePath, graphicPaths: stableGraphicPaths, definitions, directives: previewDirectives, mathContext, searchQuery,
+    nodeRanges, api, projectId, tree, getOpenDocuments, currentPath: filePath, graphicPaths: stableGraphicPaths, definitions, directives: previewDirectives, mathContext, searchQuery: inlineSearch,
     activeSearchResult: activeSearchResult?.fileId === filePath ? activeSearchResult : undefined,
     filterQuery, filterStates: filterEvaluation?.states ?? new Map(), visibilitySignatures,
     relation: relation ? { ...relation, transientToBlockId: mappedRelationIds, onFocus: actions.relationFocus, onToggle: actions.relationToggle } : undefined,
-    selectedBlockIds: selectedBlockIds(), collapsedBlockIds, virtual, virtualRoot: previewRootRef, forcedIds, ...(pendingScroll?.offset === undefined ? {} : { forceOffset: pendingScroll.offset }), initialHeight: editingId ? editingInitialHeight : undefined, setSelectedBlockIds: actions.setSelectedBlockIds, selectBlockWithModifiers: actions.selectBlockWithModifiers, toggleCollapse: actions.toggleCollapse, moveBlocks: actions.moveBlocks, copyBlocks: actions.copyBlocks, duplicateBlocks: actions.duplicateBlocks, pasteBlocks: actions.pasteBlocks, disableBlocks: actions.disableBlocks, enableBlocks: actions.enableBlocks, deleteBlocks: actions.deleteBlocks, removeEnvironment: actions.removeEnvironment, onBoundaryDraftChange: actions.onBoundaryDraftChange,
+    onFieldEditing, selectedBlockIds: selectedBlockIds(), collapsedBlockIds, virtual, virtualRoot: previewRootRef, forcedIds, ...(pendingScroll?.offset === undefined ? {} : { forceOffset: pendingScroll.offset }), initialHeight: editingId ? editingInitialHeight : undefined, setSelectedBlockIds: actions.setSelectedBlockIds, selectBlockWithModifiers: actions.selectBlockWithModifiers, toggleCollapse: actions.toggleCollapse, moveBlocks: actions.moveBlocks, copyBlocks: actions.copyBlocks, duplicateBlocks: actions.duplicateBlocks, pasteBlocks: actions.pasteBlocks, disableBlocks: actions.disableBlocks, enableBlocks: actions.enableBlocks, deleteBlocks: actions.deleteBlocks, removeEnvironment: actions.removeEnvironment, onBoundaryDraftChange: actions.onBoundaryDraftChange,
     onFigureSelect: actions.onFigureSelect, onFigureSlotSelect: actions.onFigureSlotSelect, onTableSelect: actions.onTableSelect, onTableChange: actions.onTableChange,
     onSpellContextMenu: actions.onSpellContextMenu, onDetectedLanguage: actions.onDetectedLanguage, onForwardSync: actions.onForwardSync
   };
@@ -1548,7 +1581,8 @@ export function PreviewPane({ filePath, source, sourceTransaction, definitions, 
       if (filePath && Number.isFinite(fromOffset) && Number.isFinite(sourceEnd) && sourceEnd > fromOffset) {
         onJumpFromPosition?.({ fileId: filePath, offset: fromOffset, targetOffset: jump.offset, linkText: source.slice(fromOffset, sourceEnd), targetLabel: jump.element.dataset.reference ?? "" });
       }
-      setPendingReferenceOffset(jump.offset);
+      revealCollapsedTargets([jump.node.id]);
+      setPendingScroll({ fileId: filePath, id: jump.node.id, offset: jump.offset, align: "start", highlight: "reference-target" });
       if (filePath) onClickSourcePosition?.({ fileId: filePath, offset: jump.offset });
       setForcedTargetId(jump.node.id);
       return;
@@ -1570,8 +1604,9 @@ export function PreviewPane({ filePath, source, sourceTransaction, definitions, 
     onSelectionChange?.(selection);
     return selection;
   };
-  const article = <article>{document?.title && <DocumentTitlePreview {...document.title} mathContext={mathContext} searchQuery={searchQuery}/>}<PreviewNodeList nodes={document?.nodes ?? []} source={sourceReader} definitions={definitions} selectedId={selectedId} editingId={editingId} cursorOffset={editingCursorOffset} boundary={boundary} select={actions.select} edit={actions.edit} applyEdit={actions.applyEdit} applyBoundary={actions.applyBoundary} cancelEdit={actions.cancelEdit} requestBoundary={actions.requestBoundary} services={services}/></article>;
+  const article = <article>{document?.title && <DocumentTitlePreview {...document.title} mathContext={mathContext} searchQuery={inlineSearch}/>}<PreviewNodeList nodes={document?.nodes ?? []} source={sourceReader} definitions={definitions} selectedId={selectedId} editingId={editingId} cursorOffset={editingCursorOffset} boundary={boundary} select={actions.select} edit={actions.edit} applyEdit={actions.applyEdit} applyBoundary={actions.applyBoundary} cancelEdit={actions.cancelEdit} requestBoundary={actions.requestBoundary} services={services}/></article>;
   return <div ref={previewRootRef} className={`structured-preview${marqueeRect ? " marquee-selecting" : ""}`} onPointerDown={startBlockMarquee} onPointerMove={moveBlockMarquee} onPointerLeave={() => { hoveredJumpElementRef.current = undefined; updateJumpCursor(undefined, false); }} onPointerUp={finishBlockMarquee} onPointerCancel={cancelBlockMarquee} onClickCapture={onPreviewClick} onMouseUp={() => emitSelection()} onKeyUp={() => emitSelection()} onContextMenu={(event) => {
+    if (event.target instanceof Element && event.target.closest("[data-preview-field]")) return;
     if (event.target instanceof Element && event.target.closest(".preview-block-delete")) return;
     const selectedIds = new Set(selectedBlockIds());
     let block = event.target instanceof Element ? event.target.closest(".preview-block[data-preview-node-id], .preview-block-disabled[data-preview-node-id]") : null;

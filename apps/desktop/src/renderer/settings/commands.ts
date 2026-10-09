@@ -5,7 +5,7 @@ export const commandCatalog = {
   "edit.redo": { label: "menu.redo", group: "editing", context: "workspace.editor", contextLabel: "command.context.source", defaultBinding: "Mod+Y", alternateDefaultBindings: ["Mod+Shift+Z"] },
   "file.save": { label: "menu.save", group: "files", context: "workspace", contextLabel: "command.context.global", defaultBinding: "Mod+S" },
   "file.saveAll": { label: "menu.saveAll", group: "files", context: "workspace", contextLabel: "command.context.global", defaultBinding: "Mod+Shift+S" },
-  "edit.find": { label: "menu.find", group: "search", context: "workspace.editor.source", contextLabel: "command.context.source", defaultBinding: "Mod+F" },
+  "edit.find": { label: "activity.search", group: "search", context: "workspace", contextLabel: "shortcut.context.workspace", defaultBinding: "Mod+F" },
   "edit.replace": { label: "menu.replace", group: "search", context: "workspace.editor.source", contextLabel: "command.context.source", defaultBinding: "Mod+H" },
   "navigation.back": { label: "command.navigationBack", group: "navigation", context: "workspace", contextLabel: "command.context.global", defaultBinding: "Mod+B" },
   "navigation.forward": { label: "command.navigationForward", group: "navigation", context: "workspace", contextLabel: "command.context.global", defaultBinding: "Mod+R" },

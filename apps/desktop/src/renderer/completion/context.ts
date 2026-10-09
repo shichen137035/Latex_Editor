@@ -1,5 +1,6 @@
 /** The deterministic completion modes supported by v0.2.5. */
 import { parseMathNodes } from "../math/MathNodeLocator.js";
+import { maskLatexComments } from "@latex-editor/editor-core/latex-source";
 
 export type CompletionMode = "command" | "environment" | "reference" | "citation" | "tex-file" | "image-file" | "bib-file" | "document-word" | "math-symbol" | "unknown";
 
@@ -35,34 +36,47 @@ export function analyzeCompletionContext(model: LineModel, position: CursorPosit
   const line = model.getLineContent(position.lineNumber);
   const before = line.slice(0, Math.max(0, position.column - 1));
 
-  const fileMatch = /\\(input|include|includegraphics|bibliography|addbibresource)\{([^{}]*)$/.exec(before);
+  let commentStart = -1;
+  for (let index = 0; index < before.length; index += 1) {
+    if (before[index] === "\\") index += 1;
+    else if (before[index] === "%") { commentStart = index; break; }
+  }
+  if (commentStart >= 0) return { mode: "unknown", prefix: "", startColumn: position.column };
+  // Semantic arguments often wrap onto another line. Keep replacement ranges
+  // on the cursor's line while recognizing the open command above it.
+  const offset = model.getOffsetAt?.(position);
+  const preceding = offset !== undefined && model.getValue ? model.getValue().slice(Math.max(0, offset - 8192), offset) : before;
+  const semanticBefore = maskLatexComments(preceding);
+  const currentLine = (value: string) => value.slice(value.lastIndexOf("\n") + 1).trimStart();
+  const fileMatch = /(?<!\\)\\(input|include|includegraphics|bibliography|addbibresource)\*?\s*(?:\[[^\]]*\]\s*)*\{([^{}]*)$/.exec(semanticBefore);
   if (fileMatch) {
     const command = fileMatch[1];
     const mode: CompletionMode = command === "includegraphics" ? "image-file" : command === "bibliography" || command === "addbibresource" ? "bib-file" : "tex-file";
-    return tokenContext(mode, command, before, fileMatch[2] ?? "");
+    const body = fileMatch[2] ?? "";
+    return tokenContext(mode, command, before, command === "bibliography" ? currentLine(body.slice(body.lastIndexOf(",") + 1)) : currentLine(body));
   }
 
-  const citationMatch = /\\([A-Za-z]*cite[A-Za-z]*)\{([^{}]*)$/.exec(before);
+  const citationMatch = /(?<!\\)\\([A-Za-z]*cite[A-Za-z]*)\*?\s*(?:\[[^\]]*\]\s*)*\{([^{}]*)$/.exec(semanticBefore);
   if (citationMatch) {
     const segment = citationMatch[2] ?? "";
     const comma = segment.lastIndexOf(",");
     const afterComma = comma >= 0 ? segment.slice(comma + 1) : segment;
-    const prefix = afterComma.trimStart();
+    const prefix = currentLine(afterComma);
     return tokenContext("citation", citationMatch[1], before, prefix);
   }
 
-  const referenceMatch = /\\(eqref|autoref|ref)\{([^{}]*)$/.exec(before);
+  const referenceMatch = /(?<!\\)\\(eqref|autoref|ref|cref|Cref|pageref|nameref)\*?\s*\{([^{}]*)$/.exec(semanticBefore);
   if (referenceMatch) {
     const segment = referenceMatch[2] ?? "";
     const comma = segment.lastIndexOf(",");
     const afterComma = comma >= 0 ? segment.slice(comma + 1) : segment;
-    return tokenContext("reference", referenceMatch[1], before, afterComma.trimStart());
+    return tokenContext("reference", referenceMatch[1], before, currentLine(afterComma));
   }
 
-  const environmentMatch = /\\begin\{([^{}]*)$/.exec(before);
+  const environmentMatch = /(?<!\\)\\begin\s*\{([^{}]*)$/.exec(before);
   if (environmentMatch) return tokenContext("environment", "begin", before, environmentMatch[1] ?? "");
 
-  const commandMatch = /\\([A-Za-z@]*)$/.exec(before);
+  const commandMatch = /(?<!\\)\\([A-Za-z@]*)$/.exec(before);
   if (commandMatch) return tokenContext("command", undefined, before, commandMatch[1] ?? "");
 
   return { mode: "unknown", prefix: "", startColumn: position.column };

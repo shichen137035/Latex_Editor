@@ -6,6 +6,21 @@ function options(choice: "save" | "discard" | "cancel") {
 }
 
 describe("application exit with unsaved project changes", () => {
+  it("commits local drafts before navigation without writing dirty project files", () => {
+    const registry = new UnsavedChangesRegistry();
+    let draftDirty = true;
+    const save = vi.fn();
+    registry.register({ hasChanges: () => true, save });
+    expect(registry.hasDraftChanges()).toBe(false);
+    const commit = vi.fn(() => { draftDirty = false; });
+    registry.register({ hasChanges: () => draftDirty, commit });
+    expect(registry.hasDraftChanges()).toBe(true);
+    registry.commitDrafts((operation) => operation());
+    expect(commit).toHaveBeenCalledOnce();
+    expect(save).not.toHaveBeenCalled();
+    expect(registry.hasDraftChanges()).toBe(false);
+    expect(registry.hasChanges()).toBe(true);
+  });
   it("closes without prompting when nothing is modified", async () => {
     const registry = new UnsavedChangesRegistry(), ui = options("cancel");
     registry.register({ hasChanges: () => false });

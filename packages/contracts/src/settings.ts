@@ -79,7 +79,7 @@ export interface TablePreferences {
 }
 export interface WheelAccelerationPreferences {
   enabled: boolean;
-  /** Additional multiplier gained by each rapid, same-direction wheel event (1-10). */
+  /** Boost strength after sustained, large same-direction scrolling (1-10). */
   strength: number;
   /** Maximum scroll multiplier, including the native base speed (2-8). */
   maxMultiplier: number;
@@ -90,7 +90,7 @@ export const defaultWheelAccelerationPreferences: WheelAccelerationPreferences =
   enabled: true,
   strength: 4,
   maxMultiplier: 6,
-  decayMs: 500
+  decayMs: 250
 };
 export const defaultTablePreferences: TablePreferences = {
   defaultStyle: "booktabs-three-line",

@@ -12,7 +12,6 @@ import type { TableInsertChoice } from "../table/TableInsertDialog.js";
 import type { TableSelection } from "../table/model.js";
 import { addLatexPackage, tableInsertion, uniqueTableLabel } from "../table/insert.js";
 import type { EditorTab } from "./fileActions.js";
-import { relativeAssetPath } from "./layout.js";
 
 export type ImageDialogState = { kind: "insert" } | { kind: "replace"; selection: FigureSelection; imageIndex: number };
 
@@ -25,6 +24,7 @@ interface DocumentInsertionOptions {
   project: Project;
   store: SettingsReader;
   activeTab: EditorTab | undefined;
+  getActiveTab?(): EditorTab | undefined;
   sourceEditorVisible: boolean;
   editorRef: MutableRefObject<Parameters<OnMount>[0] | null>;
   previewInsertionAnchor: MutableRefObject<{ fileId: string; offset: number } | undefined>;
@@ -65,23 +65,23 @@ export function createDocumentInsertions(options: DocumentInsertionOptions) {
     if (!api || !activeTab || !paths.length) return;
     const imported = await api.images.import(project.id, paths, store.get("images").defaultDirectory);
     await refreshTree();
-    const relativePaths = imported.filter((item) => item.kind === "file" && /\.(?:png|jpe?g|webp|svg|pdf)$/i.test(item.relativePath)).map((item) => relativeAssetPath(activeTab.path, item.relativePath));
+    const relativePaths = imported.filter((item) => item.kind === "file" && /\.(?:png|jpe?g|webp|svg|pdf)$/i.test(item.relativePath)).map((item) => item.relativePath);
     if (!relativePaths.length) return;
     insertImageSnippets(type === "figure" && relativePaths.length > 1 ? [multiImageInsertion(relativePaths, store.get("images"))] : relativePaths.map((path) => imageInsertion(path, store.get("images"), type)), requestedAnchor);
   };
   const chooseImagePath = async (choice: Extract<ImageInsertChoice, { kind: "project" | "local" }>): Promise<string | undefined> => {
     if (!api || !activeTab) return undefined;
-    if (choice.kind === "project") return relativeAssetPath(activeTab.path, choice.path);
+    if (choice.kind === "project") return choice.path;
     const picked = await api.images.pick(false);
     if (!picked.length) return undefined;
     const [imported] = await api.images.import(project.id, picked, store.get("images").defaultDirectory);
     if (!imported || imported.kind !== "file") return undefined;
     await refreshTree();
-    return relativeAssetPath(activeTab.path, imported.relativePath);
+    return imported.relativePath;
   };
   const applyImageChoice = async (choice: ImageInsertChoice) => {
     const dialog = imageDialog;
-    if (!activeTab || !dialog) return;
+    if (!activeTab || !dialog || !project.writable) return;
     if (dialog.kind === "insert") {
       if (choice.kind === "empty") insertImageSnippets([emptyFigureInsertion(store.get("images"))]);
       else if (choice.kind === "multi") insertImageSnippets([emptyMultiImageInsertion(choice.rows, choice.columns, store.get("images"))]);
@@ -94,10 +94,16 @@ export function createDocumentInsertions(options: DocumentInsertionOptions) {
     }
     if (choice.kind !== "project" && choice.kind !== "local") return;
     const path = await chooseImagePath(choice);
-    if (!path || activeTab.path !== dialog.selection.fileId) { setImageDialog(undefined); return; }
+    const current = options.getActiveTab ? options.getActiveTab() : activeTab;
+    if (!path || !current || current.path !== dialog.selection.fileId) { setImageDialog(undefined); return; }
+    const start = dialog.selection.start;
+    if (current.content.slice(start, dialog.selection.end) !== dialog.selection.source) {
+      setImageDialog(undefined);
+      throw new Error("The figure changed while choosing an image. Select the image again.");
+    }
     const replacement = patchFigureSource(dialog.selection.source, { imageIndex: dialog.imageIndex, sourcePath: path });
-    setEditorContent(activeTab.content.slice(0, dialog.selection.start) + replacement + activeTab.content.slice(dialog.selection.end));
-    setFigureSelection({ ...dialog.selection, source: replacement, end: dialog.selection.start + replacement.length, imageIndex: dialog.imageIndex });
+    setEditorContent(current.content.slice(0, start) + replacement + current.content.slice(start + dialog.selection.source.length));
+    setFigureSelection({ ...dialog.selection, start, source: replacement, end: start + replacement.length, imageIndex: dialog.imageIndex });
     setImageDialog(undefined);
   };
   const applyPreviewTableChange = (selection: TableSelection, replacement: string) => {

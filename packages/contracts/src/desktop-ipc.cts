@@ -273,6 +273,8 @@ const event = <Args extends unknown[]>(channel: string): EventEndpoint<Args> => 
 /** Notifications in each direction are separate from invoke requests. */
 export const desktopEvents = {
   toRenderer: {
+    projectUpdate: event<[project: Project]>("projects:update"),
+    compileUpdate: event<[update: { projectId: string; origin: "ai-workspace"; result: CompileResult & { pdfDataUrl?: string } }]>("compile:update"),
     closeRequested: event<[requestId: string]>("window:close-requested"),
     aiUpdate: event<[update: { kind: "conversation" | "changes" | "approval"; payload: AIConversation | AIChangeSet | AIApprovalRequest }]>("ai:update"),
     aiStatus: event<[status: AIStatus]>("ai:status"),
@@ -290,7 +292,9 @@ export type DesktopInvokeApi = {
   }
 };
 /** Renderer surface includes explicit subscriptions and Electron's local File helper. */
-export type DesktopApi = Omit<DesktopInvokeApi, "lifecycle" | "ai" | "files" | "relations"> & {
+export type DesktopApi = Omit<DesktopInvokeApi, "lifecycle" | "ai" | "files" | "relations" | "compile" | "projects"> & {
+  projects: DesktopInvokeApi["projects"] & { onUpdate(listener: NonNullable<typeof desktopEvents.toRenderer.projectUpdate.signature>): () => void };
+  compile: DesktopInvokeApi["compile"] & { onUpdate(listener: NonNullable<typeof desktopEvents.toRenderer.compileUpdate.signature>): () => void };
   relations: DesktopInvokeApi["relations"] & { onUpdate(listener: NonNullable<typeof desktopEvents.toRenderer.relationUpdate.signature>): () => void };
   lifecycle: DesktopInvokeApi["lifecycle"] & {
     onCloseRequested(listener: NonNullable<typeof desktopEvents.toRenderer.closeRequested.signature>): () => void;

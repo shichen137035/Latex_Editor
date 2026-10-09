@@ -42,7 +42,7 @@ export interface FilterEvaluation {
   ranges: Array<[number, number]>;
 }
 
-export interface LocationOption { id: string; title: string; depth: number }
+export interface LocationOption { id: string; title: string; depth: number; fileId?: string }
 export interface FilterOptions { blockTypes: string[]; locations: LocationOption[]; files: string[] }
 export interface FilterDocument { fileId: string; source: string; nodes: PreviewNode[] }
 

@@ -1,13 +1,15 @@
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { createWriteStream, existsSync, readdirSync } from "node:fs";
-import { access, mkdir, readFile, realpath, stat } from "node:fs/promises";
+import { access, copyFile, mkdir, readFile, readdir, realpath, rm, stat } from "node:fs/promises";
 import { basename, dirname, extname, isAbsolute, relative, resolve, sep } from "node:path";
 import {
   AppError, type CompileInput, type CompileResult, type CompilerProfile, type Project, type ToolchainStatus, type LatexToolchain, type ToolStatus
 } from "@latex-editor/contracts";
 import { parseLatexDiagnostics } from "@latex-editor/diagnostics";
 import type { Clock, IdGenerator } from "@latex-editor/domain";
+import { findSyncTexData, syncTexDirectories } from "./synctex-data.js";
+export { findSyncTexData, syncTexDirectories, type SyncTexData } from "./synctex-data.js";
 
 const maximumTailLength = 64 * 1024;
 const maximumTimeoutMs = 300_000;
@@ -214,6 +216,7 @@ export class LatexmkCompilerService {
   readonly #clock: Clock;
   readonly #ids: IdGenerator;
   readonly #active = new Map<string, ActiveCompilation>();
+  readonly #rootQueues = new Map<string, Promise<unknown>>();
 
   constructor(dependencies: {
     projects: CompilerProjectPort;
@@ -300,6 +303,15 @@ export class LatexmkCompilerService {
   }
 
   async #compileAtRoot(root: string, mainFile: string, input: { engine?: CompileInput["engine"]; timeoutMs?: number }): Promise<CompileResult> {
+    const key = await realpath(root);
+    const previous = this.#rootQueues.get(key) ?? Promise.resolve();
+    const next = previous.catch(() => undefined).then(() => this.#runAtRoot(root, mainFile, input));
+    this.#rootQueues.set(key, next);
+    try { return await next; }
+    finally { if (this.#rootQueues.get(key) === next) this.#rootQueues.delete(key); }
+  }
+
+  async #runAtRoot(root: string, mainFile: string, input: { engine?: CompileInput["engine"]; timeoutMs?: number }): Promise<CompileResult> {
     // Reject shell escape even if a profile was edited outside the resource manager.
 
     const profile = this.#profiles.getCompilerProfile();
@@ -321,10 +333,14 @@ export class LatexmkCompilerService {
     const logStream = createWriteStream(logPath, { encoding: "utf8", flags: "w" });
     const logFinished = new Promise<void>((done) => logStream.once("finish", () => done()));
     const engineFlag = input.engine === "xelatex" ? "-xelatex" : input.engine === "lualatex" ? "-lualatex" : "-pdf";
-    const args = profile.arguments.filter((arg) => !["-pdf", "-xelatex", "-lualatex"].includes(arg));
+    const args = profile.arguments.filter((arg) => !["-pdf", "-xelatex", "-lualatex"].includes(arg) && !/^--?synctex=/i.test(arg));
     if (!args.some((arg) => arg.toLowerCase() === "-file-line-error")) args.push("-file-line-error");
     if (!args.some((arg) => arg.toLowerCase().startsWith("-interaction="))) args.push("-interaction=nonstopmode");
-    if (!args.some((arg) => arg.toLowerCase().startsWith("-synctex="))) args.push("-synctex=1");
+    args.push("-synctex=1");
+    const expectedPdf = resolve(root, `${basename(mainFile, extname(mainFile))}.pdf`);
+    // latexmk does not track missing SyncTeX output as a reason to rerun TeX.
+    // -g preserves bibliography/aux files while regenerating this build result.
+    if (existsSync(expectedPdf) && (await findSyncTexData(expectedPdf, syncTexDirectories(root, mainFile, args))).state !== "ready" && !args.includes("-g") && !args.includes("-gg")) args.push("-g");
     if (!args.some((arg) => arg.toLowerCase() === "-recorder")) args.push("-recorder");
     args.push(engineFlag, mainFile);
     const environment = profileEnvironment(profile.executable);
@@ -371,14 +387,25 @@ export class LatexmkCompilerService {
     let pdfExists = true;
     try { await access(pdfPath); } catch { pdfExists = false; }
     const status = active.requestedState ?? (exitCode === 0 && pdfExists ? "succeeded" : "failed");
+    const pdfArtifactPath = status === "succeeded" ? resolve(buildLogDirectory, `${compilationId}.pdf`) : undefined;
+    if (pdfArtifactPath) await copyFile(pdfPath, pdfArtifactPath);
+    // Preview artifacts are transient; bound their disk footprint independently of logs.
+    if (pdfArtifactPath) {
+      const candidates = (await readdir(buildLogDirectory)).filter(name => /^[0-9a-f-]{36}\.pdf$/i.test(name));
+      const artifacts = await Promise.all(candidates.map(async name => ({ path: resolve(buildLogDirectory, name), modified: (await stat(resolve(buildLogDirectory, name))).mtimeMs })));
+      const older = artifacts.filter(item => item.path !== pdfArtifactPath).sort((a, b) => b.modified - a.modified).slice(7);
+      await Promise.all(older.map(item => rm(item.path, { force: true })));
+    }
     const rawLog = await readFile(logPath, "utf8");
     const processDiagnostics = parseLatexDiagnostics(rawLog, root, mainFile);
     const sourcePath = resolve(root, mainFile);
     const jobName = basename(sourcePath, extname(sourcePath));
-    const jobDirectory = dirname(sourcePath);
     const componentLogs = await Promise.all([".log", ".blg"].map(async (extension) => {
-      try { return await readFile(resolve(jobDirectory, `${jobName}${extension}`), "utf8"); }
-      catch (error) { if ((error as NodeJS.ErrnoException).code === "ENOENT") return ""; throw error; }
+      for (const directory of [...new Set([root, dirname(sourcePath)])]) {
+        try { return await readFile(resolve(directory, `${jobName}${extension}`), "utf8"); }
+        catch (error) { if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error; }
+      }
+      return "";
     }));
     const hasFinalToolLogs = componentLogs.some(Boolean);
     const recorderInputs = await readRecorderInputs(root, mainFile, args);
@@ -403,6 +430,7 @@ export class LatexmkCompilerService {
       durationMs: Math.max(0, finished.getTime() - started.getTime()),
       mainFile,
       ...(pdfExists ? { pdfPath } : {}),
+      ...(pdfArtifactPath ? { pdfArtifactPath } : {}),
       logPath,
       diagnostics,
       ...(recorderInputs.length ? { recorderInputs } : {}),

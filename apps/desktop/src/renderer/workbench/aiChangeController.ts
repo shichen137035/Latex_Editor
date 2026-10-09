@@ -27,6 +27,7 @@ interface AIChangeControllerOptions {
   refreshTree(): Promise<ProjectTreeNode[] | undefined>;
   openFile(path: string): Promise<void>;
   changeDocument(path: string, content: string, typing?: boolean, edits?: BlockTextEdit[], record?: boolean, captureLargeDelete?: boolean): void;
+  onSourcesChanged?(): void;
 }
 
 export function createAIChangeController(options: AIChangeControllerOptions) {
@@ -124,6 +125,7 @@ export function createAIChangeController(options: AIChangeControllerOptions) {
       }
       else await api.ai.resolveChangeSet(changes.id, Object.fromEntries([...ids].map(id => [id, "rejected" as const])), false);
       if (changedOnDisk.length) await refreshTree();
+      if (changes.files.some(file => /\.(?:tex|bib|sty|cls|ltx|dtx|ins|def|fd)$/i.test(file.path) && file.hunks.some(hunk => ids.has(hunk.id)))) options.onSourcesChanged?.();
       return { appliedIds: apply ? [...ids].filter(id => !staleStructureIds.includes(id)) : [], staleStructureIds };
     };
     const next = aiOperationQueue.current.then(run).catch(async (reason: unknown) => {

@@ -24,6 +24,7 @@ interface ProjectSessionOptions {
   flushDocuments?(): Promise<void>;
   releaseDocuments?(): Promise<void>;
   onSaveError?(message: string): void;
+  onSaved?(path: string, content: string): void;
 }
 
 export function createProjectSessionController(options: ProjectSessionOptions) {
@@ -38,6 +39,7 @@ export function createProjectSessionController(options: ProjectSessionOptions) {
       for (const tab of pending) {
         await options.api.files.write(options.project.id, tab.path, tab.content);
         options.savedContents.current.set(tab.path, tab.content);
+        options.onSaved?.(tab.path, tab.content);
         options.tabsRef.current = options.tabsRef.current.map((value) => value.path === tab.path && value.content === tab.content ? { ...value, dirty: false } : value);
         flush(() => options.setTabs(options.tabsRef.current));
       }

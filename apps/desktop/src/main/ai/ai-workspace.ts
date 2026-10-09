@@ -427,7 +427,7 @@ export class AIWorkspaceService {
           this.#activeByThread.set(threadId, active); this.#cancelingThreads.set(taskId, active);
         },
         dynamicTools: [...blockTools.dynamicTools, ...relationTools.dynamicTools, ...resources.dynamicTools,
-          { name: "texweave_compile", description: "Compile the TeXWeave AI working copy with its configured LaTeX engine and return diagnostics. Do not run a compiler from a shell.", inputSchema: { type: "object", properties: { mainFile: { type: "string", description: "Optional project-relative main .tex file." } }, additionalProperties: false } },
+          { name: "texweave_compile", description: "Compile the TeXWeave AI working copy with its configured LaTeX engine, show its PDF in project preview and return diagnostics. Accepted source edits automatically rebuild the real project. Do not run a compiler from a shell.", inputSchema: { type: "object", properties: { mainFile: { type: "string", description: "Optional project-relative main .tex file." } }, additionalProperties: false } },
           { name: "texweave_set_main_file", description: "Change the project's configured main TeX file. The selected file must already exist in the project, and the user must approve the change.", inputSchema: { type: "object", properties: { path: { type: "string", description: "Project-relative path to an existing .tex file." } }, required: ["path"], additionalProperties: false } }
         ],
         toolHandlers: {
@@ -693,6 +693,7 @@ export class AIWorkspaceService {
       return [
         `TeXWeave compile ${result.status}; engine run exited ${result.exitCode ?? "without an exit code"} in ${result.durationMs} ms.`,
         `Main file: ${result.mainFile}`,
+        ...(result.status === "succeeded" && result.pdfPath ? ["The AI working-copy PDF is shown in project preview. Accepting source edits automatically rebuilds the real project; a separate manual compile is not required."] : []),
         `Project graphics copied before this compile: ${resources.copied.length ? resources.copied.join(", ") : "none"}${resources.failures.length ? `; resource failures: ${resources.failures.map(item => `${item.path}: ${item.reason}`).join("; ")}` : ""}`,
         dependencies.unresolved.length ? `Graphic references not resolved statically (search texweave_list_project_files before claiming they are missing):\n${dependencies.unresolved.join("\n")}` : "All statically referenced project graphics were present in the project file list or working copy.",
         recorderSummary,

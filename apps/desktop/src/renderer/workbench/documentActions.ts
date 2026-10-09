@@ -2,6 +2,7 @@ import type { CompileResult, Project, ProjectTreeNode } from "@latex-editor/cont
 import type { Dispatch, SetStateAction } from "react";
 import { t } from "../i18n/index.js";
 import { projectFilePaths, type PersistedLayout } from "./layout.js";
+export interface CompileGuard { busy: boolean; alive: boolean; }
 
 type BottomTab = "problems" | "output" | "compileLog";
 interface DocumentActionsOptions {
@@ -10,6 +11,10 @@ interface DocumentActionsOptions {
   activePath: string | undefined;
   tree: ProjectTreeNode[];
   compileState: "idle" | "running";
+  guard?: CompileGuard;
+  isCurrent?(mainFile: string): boolean;
+  onIdle?(): void;
+  onPdfReady?(result: CompileResult): void;
   saveActive(): Promise<void>;
   saveAll(): Promise<void>;
   setCompileState: Dispatch<SetStateAction<"idle" | "running">>;
@@ -21,33 +26,41 @@ interface DocumentActionsOptions {
 }
 
 export function createDocumentActions(options: DocumentActionsOptions) {
+  const alive = () => options.guard?.alive !== false;
+  const current = (mainFile: string) => alive() && options.isCurrent?.(mainFile) !== false;
   const resolveMainTexFile = () => options.project.mainFile
     ?? (options.activePath?.toLocaleLowerCase().endsWith(".tex") ? options.activePath : undefined)
     ?? projectFilePaths(options.tree).find((path) => path.toLocaleLowerCase().endsWith(".tex"));
 
   const compile = async () => {
-    if (!options.api || options.compileState === "running") return;
+    if (!options.api || options.compileState === "running" || options.guard?.busy || options.guard?.alive === false) return;
     const mainFile = resolveMainTexFile();
     if (!mainFile) {
       options.setCompileResult({ compilationId: "ui-error", status: "failed", exitCode: null, startedAt: new Date().toISOString(), finishedAt: new Date().toISOString(), durationMs: 0, mainFile: "", diagnostics: [{ severity: "error", source: "system", message: "No LaTeX main file is configured." }], stdoutTail: "", stderrTail: "" });
       options.setBottomTab("problems");
+      options.setBottomVisible(true);
       return;
     }
-    await options.saveActive();
+    if (options.guard) options.guard.busy = true;
     options.setCompileState("running");
     try {
+      await options.saveAll();
+      if (!current(mainFile)) return;
       const result = await options.api.compile.run(options.project.id, mainFile);
+      if (!current(mainFile)) return;
       options.setCompileResult(result);
-      options.setPdfDataUrl(result.pdfDataUrl);
+      if (result.status === "succeeded" && result.pdfDataUrl) { options.setPdfDataUrl(result.pdfDataUrl); options.onPdfReady?.(result); }
       options.setLayout((value) => ({ ...value, rightPane: "pdf" }));
       options.setBottomTab(result.diagnostics.length ? "problems" : "compileLog");
-      options.setBottomVisible(false);
+      options.setBottomVisible(result.status !== "succeeded");
     } catch (reason) {
+      if (!current(mainFile)) return;
       options.setCompileResult({ compilationId: "ui-error", status: "failed", exitCode: null, startedAt: new Date().toISOString(), finishedAt: new Date().toISOString(), durationMs: 0, mainFile, diagnostics: [{ severity: "error", source: "system", message: reason instanceof Error ? reason.message : String(reason) }], stdoutTail: "", stderrTail: "" });
       options.setBottomTab("problems");
-      options.setBottomVisible(false);
+      options.setBottomVisible(true);
     } finally {
-      options.setCompileState("idle");
+      if (options.guard) options.guard.busy = false;
+      if (alive()) { options.setCompileState("idle"); options.onIdle?.(); }
     }
   };
 
@@ -72,13 +85,15 @@ export function createDocumentActions(options: DocumentActionsOptions) {
   };
 
   const exportPdf = async () => {
-    if (!options.api || options.compileState === "running") return;
+    if (!options.api || options.compileState === "running" || options.guard?.busy || options.guard?.alive === false) return;
     const mainFile = resolveMainTexFile();
     if (!mainFile) { window.alert(t("export.noMainTex")); return; }
+    if (options.guard) options.guard.busy = true;
     options.setCompileState("running");
     try {
       await options.saveAll();
       const result = await options.api.exports.pdf(options.project.id, mainFile);
+      if (!current(mainFile)) return;
       if (result.status === "cancelled") return;
       options.setCompileResult(result.compilation);
       if (result.status === "failed") {
@@ -89,12 +104,13 @@ export function createDocumentActions(options: DocumentActionsOptions) {
         return;
       }
       options.setPdfDataUrl(result.pdfDataUrl);
+      options.onPdfReady?.(result.compilation);
       options.setLayout((value) => ({ ...value, rightPane: "pdf" }));
       options.setBottomTab(result.compilation.diagnostics.length ? "problems" : "compileLog");
       options.setBottomVisible(false);
       window.alert(t("export.saved", { path: result.path }));
     } catch (error) { window.alert(error instanceof Error ? error.message : String(error)); }
-    finally { options.setCompileState("idle"); }
+    finally { if (options.guard) options.guard.busy = false; if (alive()) { options.setCompileState("idle"); options.onIdle?.(); } }
   };
 
   return { compile, resolveMainTexFile, exportSourceArchive, exportMainTex, exportPdf };

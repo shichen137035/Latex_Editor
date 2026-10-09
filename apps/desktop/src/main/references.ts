@@ -67,7 +67,8 @@ export class ReferenceLibraryRepository {
   }
 
   async saveEntry(input: Partial<ReferenceLibraryEntry> & Pick<ReferenceLibraryEntry, "citationKey" | "entryType" | "fields">): Promise<ReferenceLibraryEntry> {
-    const { citationKeyIdentity } = await import("@latex-editor/editor-core/bibtex");
+    const { citationKeyIdentity, isValidCitationKey } = await import("@latex-editor/editor-core/bibtex");
+    if (!isValidCitationKey(input.citationKey)) throw new Error("Invalid citation key.");
     const timestamp = now();
     const keyedRows = this.db.prepare("SELECT id, citation_key, deleted_at FROM library_entries").all() as Array<{ id: string; citation_key: string; deleted_at?: string | null }>;
     const identity = citationKeyIdentity(input.citationKey);
@@ -143,7 +144,15 @@ export class ReferenceLibraryRepository {
     return { id: tag.id, name: tag.name, ...(tag.color ? { color: tag.color } : {}) };
   }
   removeTag(id: string): void { this.db.prepare("DELETE FROM tags WHERE id = ?").run(id); }
-  setProjectLink(link: ProjectReferenceLink): void { this.db.prepare("INSERT INTO project_references (project_id, entry_id, citation_key, mode, target_bib_path, last_snapshot) VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT(project_id, entry_id) DO UPDATE SET citation_key = excluded.citation_key, mode = excluded.mode, target_bib_path = excluded.target_bib_path, last_snapshot = excluded.last_snapshot").run(link.projectId, link.libraryEntryId, link.citationKeyInProject, link.mode, link.targetBibPath ?? null, link.lastSnapshot ?? null); }
+  setProjectLink(link: ProjectReferenceLink): void {
+    const entry = this.db.prepare("SELECT id FROM library_entries WHERE id = ? AND deleted_at IS NULL").get(link.libraryEntryId);
+    if (!entry) throw new Error("Reference was not found in the library.");
+    if (!link.citationKeyInProject.trim() || /[\s,{}()\\%#]/.test(link.citationKeyInProject)) throw new Error("Invalid project citation key.");
+    const conflict = this.db.prepare("SELECT entry_id FROM project_references WHERE project_id = ? AND citation_key = ? COLLATE NOCASE AND entry_id != ?")
+      .get(link.projectId, link.citationKeyInProject, link.libraryEntryId);
+    if (conflict) throw new Error(`Citation key already linked in this project: ${link.citationKeyInProject}`);
+    this.db.prepare("INSERT INTO project_references (project_id, entry_id, citation_key, mode, target_bib_path, last_snapshot) VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT(project_id, entry_id) DO UPDATE SET citation_key = excluded.citation_key, mode = excluded.mode, target_bib_path = excluded.target_bib_path, last_snapshot = excluded.last_snapshot").run(link.projectId, link.libraryEntryId, link.citationKeyInProject, link.mode, link.targetBibPath ?? null, link.lastSnapshot ?? null);
+  }
   removeProjectLink(projectId: string, entryId: string): void { this.db.prepare("DELETE FROM project_references WHERE project_id = ? AND entry_id = ?").run(projectId, entryId); }
   close(): void { this.db.close(); }
 }

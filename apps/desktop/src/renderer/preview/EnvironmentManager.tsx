@@ -1,4 +1,4 @@
-import { useEffect, useState, type CSSProperties, type ReactNode } from "react";
+import { useEffect, useMemo, useState, type CSSProperties, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import { t, type MessageKey } from "../i18n/index.js";
 import { ColorTokenInput } from "./ColorTokenInput.js";
@@ -7,6 +7,7 @@ import { environmentBlockStyle } from "./environment-block-style.js";
 import { environmentAccent } from "./environment-colors.js";
 import type { EnvironmentDefinition, EnvironmentMatchRule } from "./types.js";
 import "./environment-manager.css";
+import { environmentTitleTypography, titleFontChoices, titleNumericFields, validTitleNumber, type TitleNumericField } from "./environment-typography.js";
 
 const families: EnvironmentDefinition["family"][] = ["section", "theorem", "definition", "proof", "equation", "remark", "example", "figure", "table", "list", "quote", "code", "virtual", "generic"];
 const matchKinds: EnvironmentMatchRule["kind"][] = ["latex-environment", "command", "display-math", "virtual-block", "custom-pattern"];
@@ -54,6 +55,22 @@ function Toggle({ checked, onChange, label }: { checked: boolean; onChange(value
   return <label className="environment-toggle"><input type="checkbox" checked={checked} onChange={(event) => onChange(event.target.checked)}/><span aria-hidden="true"/><em>{label}</em></label>;
 }
 
+function TitleNumberField({ field, value, onChange }: { field: TitleNumericField; value: number; onChange(value: number): void }) {
+  const [draft, setDraft] = useState(String(value));
+  useEffect(() => setDraft(String(value)), [value]);
+  const commit = () => {
+    const number = draft.trim() ? Number(draft) : value;
+    const { min, max } = titleNumericFields[field];
+    const next = Number.isFinite(number) ? Math.min(max, Math.max(min, number)) : value;
+    setDraft(String(next)); if (next !== value) onChange(next);
+  };
+  return <input name={field} type="number" {...titleNumericFields[field]} value={draft} onChange={event => {
+    setDraft(event.target.value);
+    const number = Number(event.target.value);
+    if (event.target.value.trim() && validTitleNumber(field, number)) onChange(number);
+  }} onBlur={commit} onKeyDown={event => { if (event.key === "Enter") { event.preventDefault(); commit(); } }}/>;
+}
+
 function SamplePreviewBlock({ definition, selected }: { definition: EnvironmentDefinition; selected: boolean }) {
   const family = definition.family;
   const accent = environmentAccent(definition.id, definition);
@@ -84,6 +101,7 @@ function EnvironmentSamplePreview({ definition, onClose }: { definition: Environ
 
 function DefinitionEditor({ definition, definitions, onChange, onSelect }: { definition: EnvironmentDefinition; definitions: EnvironmentDefinition[]; onChange(next: EnvironmentDefinition[]): void; onSelect(id: string): void }) {
   const [sampleOpen, setSampleOpen] = useState(false);
+  const typography = environmentTitleTypography(definition.id, definition.family, definition);
   const replace = (next: EnvironmentDefinition) => onChange(definitions.map((item) => item.id === definition.id ? next : item));
   const update = <K extends keyof EnvironmentDefinition>(key: K, value: EnvironmentDefinition[K]) => replace({ ...definition, [key]: value });
   const addDuplicate = () => { const copy = duplicateDefinition(definition, definitions); onChange([...definitions, copy]); onSelect(copy.id); };
@@ -101,6 +119,17 @@ function DefinitionEditor({ definition, definitions, onChange, onSelect }: { def
       <label><span>{t("environment.label")}</span><input value={definition.label ?? environmentDisplayName(definition)} onChange={(event) => update("label", event.target.value)}/></label>
       <label><span>{t("environment.family")}</span><select value={definition.family} onChange={(event) => update("family", event.target.value as EnvironmentDefinition["family"])}>{families.map((family) => <option key={family} value={family}>{t(`environment.family.${family}` as MessageKey)}</option>)}</select></label>
     </div></section>
+    <section className="environment-form-section"><h3>{t("environment.typography")}</h3><div className="environment-form-grid typography-grid">
+      <label className="wide"><span>{t("environment.style.titleFontFamily")}</span><select name="titleFontFamily" value={typography.titleFontFamily} onChange={event => replace({ ...definition, style: { ...definition.style, titleFontFamily: event.target.value } })}>
+        {!titleFontChoices.includes(typography.titleFontFamily) && <option value={typography.titleFontFamily}>{typography.titleFontFamily}</option>}
+        {titleFontChoices.map((value, index) => <option key={value} value={value}>{[t("environment.font.labelStyle"), "DM Sans", "Segoe UI", "Georgia"][index]}</option>)}
+      </select></label>
+      {(["titleFontSize", "titleLineHeight", "titleLetterSpacing"] as const).map(field => <label key={field}><span>{t(`environment.style.${field}`)}</span><TitleNumberField key={`${definition.id}:${field}`} field={field} value={typography[field]} onChange={value => replace({ ...definition, style: { ...definition.style, [field]: value } })}/></label>)}
+      <label><span>{t("environment.style.titleFontWeight")}</span><select name="titleFontWeight" value={typography.titleFontWeight} onChange={event => replace({ ...definition, style: { ...definition.style, titleFontWeight: Number(event.target.value) } })}>
+        {![400, 500, 600, 700, 800].includes(typography.titleFontWeight) && <option value={typography.titleFontWeight}>{typography.titleFontWeight}</option>}
+        {[400, 500, 600, 700, 800].map(weight => <option key={weight} value={weight}>{t(`environment.font.weight${weight}` as MessageKey)}</option>)}
+      </select></label>
+    </div></section>
     <section className="environment-form-section"><h3>{t("environment.blockSource")}</h3><div className="environment-form-grid">
       <label><span>{t("environment.sourceType")}</span><select value={definition.match.kind} onChange={(event) => update("match", matchFrom(event.target.value as EnvironmentMatchRule["kind"], ""))}>{matchKinds.map((kind) => <option value={kind} key={kind}>{t(`environment.match.${kind}` as MessageKey)}</option>)}</select></label>
       {definition.match.kind !== "display-math" && <label className="wide"><span>{definition.match.kind === "custom-pattern" ? t("environment.pattern") : t("environment.matchValue")}</span><input value={matchValue(definition.match)} onChange={(event) => update("match", matchFrom(definition.match.kind, event.target.value))} placeholder={definition.match.kind === "custom-pattern" ? String.raw`\\begin\{note\}[\s\S]*?\\end\{note\}` : t("environment.matchValuePlaceholder")}/></label>}
@@ -117,7 +146,8 @@ function DefinitionEditor({ definition, definitions, onChange, onSelect }: { def
 export function EnvironmentManager({ definitions, onChange, toolbarTarget }: { definitions: EnvironmentDefinition[]; onChange(next: EnvironmentDefinition[]): void; toolbarTarget?: HTMLElement | null }) {
   const [selectedId, setSelectedId] = useState(definitions[0]?.id ?? "");
   const [mode, setMode] = useState<"gui" | "xml">("gui");
-  const [xml, setXml] = useState(() => serializeEnvironments(definitions));
+  const serializedXml = useMemo(() => serializeEnvironments(definitions), [definitions]);
+  const [xml, setXml] = useState(serializedXml);
   const [xmlError, setXmlError] = useState<string>();
   const [query, setQuery] = useState("");
   const [sourceFilter, setSourceFilter] = useState<EnvironmentMatchRule["kind"] | "all">("all");
@@ -133,7 +163,9 @@ export function EnvironmentManager({ definitions, onChange, toolbarTarget }: { d
     { title: t("environment.builtIn"), items: filteredDefinitions.filter((item) => item.builtIn) },
     { title: t("environment.customGroup"), items: filteredDefinitions.filter((item) => !item.builtIn) }
   ];
-  useEffect(() => { if (mode === "xml") setXml(serializeEnvironments(definitions)); }, [definitions, mode]);
+  // Settings may rebuild the array on unrelated workbench renders. Only a
+  // content change should refresh XML, so it cannot erase an in-progress edit.
+  useEffect(() => { if (mode === "xml") setXml(serializedXml); }, [serializedXml, mode]);
   const add = () => { const definition = createCustomEnvironment(definitions); onChange([...definitions, definition]); setSelectedId(definition.id); setQuery(""); setSourceFilter("all"); setFamilyFilter("all"); setMode("gui"); };
   const applyXml = () => {
     try { const parsed = parseEnvironmentXml(xml); onChange(parsed); setSelectedId(parsed[0]?.id ?? ""); setXmlError(undefined); }

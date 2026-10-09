@@ -103,6 +103,7 @@ export const errorCodes = [
   "PATH_OUTSIDE_PROJECT", "INVALID_RELATIVE_PATH", "FILE_NOT_FOUND", "FILE_ALREADY_EXISTS", "INVALID_IMPORT_SOURCE", "INVALID_MOVE_TARGET", "DOCUMENT_VERSION_CONFLICT", "UNSAVED_DOCUMENT",
   "UNSUPPORTED_ENCODING", "EXTERNAL_MODIFICATION_CONFLICT", "UNSAVED_CHANGES", "REVISION_CONFLICT",
   "MAIN_FILE_NOT_SET", "TOOLCHAIN_NOT_FOUND", "COMPILATION_FAILED", "COMPILATION_TIMEOUT",
+  "SYNCTEX_DATA_MISSING", "SYNCTEX_DATA_STALE", "SYNCTEX_NO_MATCH",
   "COMPILATION_CANCELLED", "RESOURCE_SCHEMA_INVALID", "RESOURCE_VERSION_UNSUPPORTED", "SNAPSHOT_NOT_FOUND",
   "SNAPSHOT_CORRUPTED", "SNAPSHOT_STORAGE_FULL", "RESTORE_CONFIRMATION_REQUIRED",
   "DELETE_CONFIRMATION_MISMATCH", "UNSAFE_DELETE_TARGET",
@@ -250,6 +251,8 @@ export interface CompileResult {
   durationMs: number;
   mainFile: string;
   pdfPath?: string;
+  /** Immutable PDF from this successful run, so a later build cannot overwrite its preview. */
+  pdfArtifactPath?: string;
   logPath?: string;
   diagnostics: Diagnostic[];
   /** Project-relative files read by the TeX engine, recorded from its .fls file when available. */
@@ -264,7 +267,7 @@ export type PdfExportResult =
   | { status: "exported"; path: string; compilation: CompileResult; pdfDataUrl: string };
 
 /** Coordinates returned by SyncTeX use PDF points measured from the page's top-left. */
-export interface SyncTexPdfPosition { page: number; x: number; y: number }
+export interface SyncTexPdfPosition { page: number; x: number; y: number; }
 export interface SyncTexSourcePosition { file: string; line: number; column: number }
 
 export interface ToolchainStatus { available: boolean; executable: string; version?: string; error?: string }

@@ -14,7 +14,7 @@ type ReasoningEffort = NonNullable<ModelInfo["defaultReasoningEffort"]>;
 export async function createTeXWeaveCompileTool(handler: (arguments_: { mainFile?: string }) => Promise<string>): Promise<Tool<Record<string, unknown>>> {
   const { defineTool } = await import("@github/copilot-sdk");
   return defineTool<Record<string, unknown>>("texweave_compile", {
-    description: "Compile the current TeXWeave AI working copy with the project's configured LaTeX compiler. Returns status and diagnostics. Use this instead of running a LaTeX compiler in a shell.",
+    description: "Compile the current TeXWeave AI working copy with the project's configured LaTeX compiler, show its PDF in project preview, and return status and diagnostics. Accepted source edits automatically rebuild the real project. Use this instead of running a LaTeX compiler in a shell.",
     parameters: { type: "object", properties: { mainFile: { type: "string", description: "Optional project-relative main .tex path; defaults to the project's configured main file." } }, additionalProperties: false },
     skipPermission: true,
     handler: (input) => handler(typeof input.mainFile === "string" ? { mainFile: input.mainFile } : {})
