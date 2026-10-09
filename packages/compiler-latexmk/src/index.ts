@@ -1,3 +1,4 @@
+import { consolidateProjectMetadata } from "@latex-editor/filesystem-node";
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { createWriteStream, existsSync, readdirSync } from "node:fs";
@@ -268,6 +269,7 @@ export class LatexmkCompilerService {
     const mainFile = input.mainFile ?? project.mainFile;
     if (mainFile === undefined) throw new AppError("MAIN_FILE_NOT_SET", "No LaTeX main file is configured");
     await this.#files.resolveFilePath(project.id, mainFile, true);
+    await consolidateProjectMetadata(project.canonicalPath);
     const outputDirectory = documentOutputDirectory(project.canonicalPath, mainFile, project.mainFile);
     if (outputDirectory !== project.canonicalPath) await this.#files.resolveFilePath(project.id, relative(project.canonicalPath, outputDirectory), false);
     return this.#compileAtRoot(project.canonicalPath, mainFile, { ...input, outputDirectory });
@@ -298,7 +300,7 @@ export class LatexmkCompilerService {
 
   async readLog(projectId: string, compilationId: string): Promise<string> {
     if (!/^[0-9a-f-]{36}$/i.test(compilationId)) throw new AppError("INVALID_RELATIVE_PATH", "Invalid compilation id");
-    const logPath = await this.#files.resolveFilePath(projectId, `.latex-editor/build/${compilationId}.log`, true);
+    const logPath = await this.#files.resolveFilePath(projectId, `.texweave/build/${compilationId}.log`, true);
     const metadata = await stat(logPath);
     if (!metadata.isFile()) throw new AppError("FILE_NOT_FOUND", "Compilation log is unavailable");
     if (metadata.size > maximumReadableLogBytes) throw new AppError("RESOURCE_SCHEMA_INVALID", "Compilation log is larger than the 32 MB viewing limit");
@@ -330,7 +332,7 @@ export class LatexmkCompilerService {
 
     const compilationId = this.#ids.next();
     const started = this.#clock.now();
-    const buildLogDirectory = resolve(root, ".latex-editor", "build");
+    const buildLogDirectory = resolve(root, ".texweave", "build");
     await mkdir(buildLogDirectory, { recursive: true });
     const logPath = resolve(buildLogDirectory, `${compilationId}.log`);
     const logStream = createWriteStream(logPath, { encoding: "utf8", flags: "w" });

@@ -1,6 +1,7 @@
 import { settings } from "./service.js";
 
 export const commandCatalog = {
+  "directory.search": { label: "command.directorySearch", group: "search", context: "directory", contextLabel: "shortcut.context.directory", defaultBinding: "Mod+K" },
   "edit.undo": { label: "menu.undo", group: "editing", context: "workspace.editor", contextLabel: "command.context.source", defaultBinding: "Mod+Z" },
   "edit.redo": { label: "menu.redo", group: "editing", context: "workspace.editor", contextLabel: "command.context.source", defaultBinding: "Mod+Y", alternateDefaultBindings: ["Mod+Shift+Z"] },
   "file.save": { label: "menu.save", group: "files", context: "workspace", contextLabel: "command.context.global", defaultBinding: "Mod+S" },
@@ -45,7 +46,7 @@ export const commandDescriptions: Record<CommandId, string> = Object.fromEntries
 
 export const shortcutGroups: ShortcutGroupId[] = ["general", "navigation", "editing", "blocks", "search", "build", "files", "ai"];
 export const contextTree: ReadonlyArray<{ id: string; parent?: string }> = [
-  { id: "global" }, { id: "workspace", parent: "global" }, { id: "workspace.editor", parent: "workspace" },
+  { id: "global" }, { id: "directory", parent: "global" }, { id: "workspace", parent: "global" }, { id: "workspace.editor", parent: "workspace" },
   { id: "workspace.editor.source", parent: "workspace.editor" }, { id: "workspace.editor.source.text", parent: "workspace.editor.source" },
   { id: "workspace.editor.preview", parent: "workspace.editor" }, { id: "workspace.editor.preview.block-selected", parent: "workspace.editor.preview" },
   { id: "workspace.editor.preview.block-edit", parent: "workspace.editor.preview" }, { id: "workspace.editor.relation", parent: "workspace.editor" },
@@ -218,6 +219,7 @@ function activeContextPath(event: KeyboardEvent): string {
   if (target === document.body && document.querySelector('[role="dialog"][aria-modal="true"]')) return "dialog";
   if (target?.closest(".settings-shortcut-manager")) return "manager.shortcut-manager";
   if (target?.closest("[role=dialog]")) return "dialog";
+  if (target?.closest(".project-directory-v044") || (target === document.body && document.querySelector(".project-directory-v044"))) return "directory";
   if (target?.closest(".preview-local-editor, .monaco-editor")) {
     if (target.closest(".preview-local-editor")) return "workspace.editor.preview.block-edit";
     return "workspace.editor.source.text";

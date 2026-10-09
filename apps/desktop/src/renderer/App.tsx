@@ -1,11 +1,17 @@
-import { styleResourceName, styleResourceDescription } from "./i18n/displayNames.js";
-import { useEffect, useMemo, useRef, useState, type CSSProperties, type Dispatch, type ReactNode, type SetStateAction } from "react";
+import { ProjectStyleResourcePicker } from "./directory/ProjectStyleResourcePicker.js";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type Dispatch, type ReactNode, type SetStateAction } from "react";
 import type { Project, StyleResource } from "@latex-editor/contracts";
-import { t } from "./i18n/index.js";
+import { t, getLocale } from "./i18n/index.js";
+import { formatProjectBytes, useProjectDirectorySizes } from "./useProjectDirectorySizes.js";
+import { DirectoryIcon, DirectoryCheckbox } from "./directory/DirectoryIcon.js";
+import { DirectorySortMenu } from "./directory/DirectorySortMenu.js";
+import { DirectoryPagination } from "./directory/DirectoryPagination.js";
+import { projectPage } from "./directory/pagination.js";
+import { DirectoryActionMenu } from "./directory/DirectoryActionMenu.js";
 import { Workbench } from "./workbench/Workbench.js";
 import { useSettings, settings } from "./settings/service.js";
 import { SettingsDialog } from "./settings/SettingsDialog.js";
-import { commands, installShortcuts } from "./settings/commands.js";
+import { commands, installShortcuts, commandBindings, displayBinding } from "./settings/commands.js";
 import { DEFAULT_ENVIRONMENTS, includeNewBuiltInEnvironments } from "./preview/environments.js";
 import type { EnvironmentDefinition } from "./preview/types.js";
 import { ThemeRuntime } from "./themes/runtime.js";
@@ -30,7 +36,7 @@ function SearchIcon() { return <Icon size={18}><circle cx="10.8" cy="10.8" r="6.
 function ChevronIcon() { return <Icon size={16}><path d="m6 9 6 6 6-6"/></Icon>; }
 
 type DirectoryTab = "all" | "pinned" | "favorites" | "recent";
-type DirectorySort = "lastOpened" | "name" | "dateAdded";
+type DirectorySort = "lastOpened" | "name" | "dateAdded" | "size";
 type DirectoryPreferences = { tab: DirectoryTab; sort: DirectorySort; direction: "asc" | "desc"; density: "compact" | "comfortable" };
 const defaultDirectoryPreferences: DirectoryPreferences = { tab: "all", sort: "lastOpened", direction: "desc", density: "compact" };
 function directoryMetadata(project: Project): { displayName: string; isFavorite: boolean; isPinned: boolean; avatarLetter: string; avatarColor: ProjectAvatarColor } {
@@ -59,59 +65,19 @@ function formatLastOpened(project: Project): string {
   return new Date().toDateString() === date.toDateString() ? `${t("project.today")}, ${time}` : date.toLocaleString([], { dateStyle: "short", timeStyle: "short" });
 }
 
-function ProjectStyleResourcePicker({ styleResources, baseResource, setBaseResource, extraResources, setExtraResources }: {
-  styleResources: StyleResource[];
-  baseResource: string;
-  setBaseResource(value: string): void;
-  extraResources: string[];
-  setExtraResources: Dispatch<SetStateAction<string[]>>;
-}) {
-  const [resourceToAdd, setResourceToAdd] = useState("");
-  const presets = styleResources.filter((resource) => resource.source === "built-in");
-  const customResources = styleResources.filter((resource) => resource.source === "user");
-  const selectedPreset = presets.find((resource) => resource.id === baseResource);
-  const selectedResources = customResources.filter((resource) => extraResources.includes(resource.id));
-
-  const addSelectedResource = () => {
-    if (!resourceToAdd || extraResources.includes(resourceToAdd)) return;
-    setExtraResources((current) => [...current, resourceToAdd]);
-    setResourceToAdd("");
-  };
-
-  return <fieldset className="resource-picker">
-    <legend>{t("resource.choose")}</legend>
-    <p>{t("resource.chooseHint")}</p>
-    <div className="resource-picker-fields">
-      <label className="resource-picker-control"><span>{t("resource.builtIn")}</span>
-        <select value={baseResource} onChange={(event) => setBaseResource(event.target.value)}>
-          {presets.map((resource) => <option key={resource.id} value={resource.id}>{styleResourceName(resource)}</option>)}
-        </select>
-        {selectedPreset?.description && <small className="resource-picker-description">{styleResourceDescription(selectedPreset)}</small>}
-      </label>
-      <div className="resource-picker-control"><label htmlFor="project-extra-style">{t("resource.myResources")}</label>
-        <div className="resource-picker-add"><select id="project-extra-style" value={resourceToAdd} onChange={(event) => setResourceToAdd(event.target.value)}>
-          <option value="">{t("resource.chooseCustom")}</option>
-          {customResources.map((resource) => <option key={resource.id} value={resource.id} disabled={extraResources.includes(resource.id)}>{styleResourceName(resource)}</option>)}
-        </select><button type="button" aria-label={t("resource.addToProject")} title={t("resource.addToProject")} disabled={!resourceToAdd} onClick={addSelectedResource}>＋</button></div>
-        {customResources.length === 0 && <small className="resource-picker-description">{t("resource.none")}</small>}
-      </div>
-    </div>
-    {selectedResources.length > 0 && <div className="resource-picker-selected" role="group" aria-label={t("resource.myResources")}>
-      {selectedResources.map((resource) => <span className="resource-picker-chip" key={resource.id} title={resource.description ?? resource.name}><span>{resource.name}</span><button type="button" aria-label={`${t("resource.removeFromProject")}: ${resource.name}`} onClick={() => setExtraResources((current) => current.filter((id) => id !== resource.id))}>×</button></span>)}
-    </div>}
-  </fieldset>;
-}
-
 function ProjectDirectory({ projects, onProjectsChange, onOpen, onOpenLibrary, styleResources, onRefreshResources }: { projects: Project[]; onProjectsChange: Dispatch<SetStateAction<Project[]>>; onOpen(project: Project): void; onOpenLibrary(): void; styleResources: StyleResource[]; onRefreshResources(): Promise<void> }) {
   useSettings();
   useEffect(() => commands.register("settings.open", { execute: () => setSettingsOpen(true) }), []);
   const [query, setQuery] = useState("");
+  const [removalProjects, setRemovalProjects] = useState<Project[]>([]);
+  const [removing, setRemoving] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
   const [workspaceMenuOpen, setWorkspaceMenuOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [createOpen, setCreateOpen] = useState(false);
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const [menuProjectId, setMenuProjectId] = useState<string>();
+  const [menuPoint, setMenuPoint] = useState({ x: 0, y: 0 });
   const [preferences, setPreferences] = useState<DirectoryPreferences>(() => {
     try { return { ...defaultDirectoryPreferences, ...JSON.parse(localStorage.getItem("texweave.projectDirectory.v1") ?? "{}") as Partial<DirectoryPreferences> }; }
     catch { return defaultDirectoryPreferences; }
@@ -124,6 +90,18 @@ function ProjectDirectory({ projects, onProjectsChange, onOpen, onOpenLibrary, s
   const [error, setError] = useState<string>();
   const [appVersion, setAppVersion] = useState("");
   const api = window.latexEditor;
+  const [pageState, setPageState] = useState({ context: "", index: 0 });
+  const directoryListRef = useRef<HTMLDivElement>(null);
+  const [scrollbarWidth, setScrollbarWidth] = useState(0);
+  useLayoutEffect(() => {
+    const list = directoryListRef.current;
+    if (!list) return;
+    const measure = () => setScrollbarWidth(Math.max(0, list.offsetWidth - list.clientWidth));
+    measure();
+    const observer = new ResizeObserver(measure);
+    observer.observe(list);
+    return () => observer.disconnect();
+  }, []);
   useEffect(() => {
     let cancelled = false;
     void api!.app.info().then(info => { if (!cancelled) setAppVersion(`v${info.version}`); })
@@ -170,11 +148,8 @@ function ProjectDirectory({ projects, onProjectsChange, onOpen, onOpenLibrary, s
       setAvatarAssignmentRevision((revision) => revision + 1);
     });
   }, [api, avatarAssignmentRevision, onProjectsChange, projects]);
-  useEffect(() => {
-    const listener = (event: KeyboardEvent) => { if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "k") { event.preventDefault(); searchRef.current?.focus(); searchRef.current?.select(); } };
-    document.addEventListener("keydown", listener);
-    return () => document.removeEventListener("keydown", listener);
-  }, []);
+  useEffect(() => commands.register("directory.search", { execute: () => { searchRef.current?.focus(); searchRef.current?.select(); } }), []);
+  const sortSizes = useProjectDirectorySizes(preferences.sort === "size" ? projects : [], api);
   const filtered = useMemo(() => {
     const needle = query.trim().toLocaleLowerCase();
     const visible = projects.filter((project) => {
@@ -189,6 +164,12 @@ function ProjectDirectory({ projects, onProjectsChange, onOpen, onOpenLibrary, s
       if (preferences.tab === "all" && directoryMetadata(a).isPinned !== directoryMetadata(b).isPinned) return directoryMetadata(a).isPinned ? -1 : 1;
       let compare = 0;
       if (preferences.sort === "name") compare = directoryMetadata(a).displayName.localeCompare(directoryMetadata(b).displayName, undefined, { sensitivity: "base" });
+      else if (preferences.sort === "size") {
+        const left = sortSizes[a.id], right = sortSizes[b.id];
+        if (!left && right) return 1;
+        if (left && !right) return -1;
+        compare = (left?.bytes ?? 0) - (right?.bytes ?? 0);
+      }
       else if (preferences.sort === "dateAdded") compare = a.registeredAt.localeCompare(b.registeredAt);
       else {
         if (!a.lastOpenedAt && b.lastOpenedAt) return 1;
@@ -197,16 +178,26 @@ function ProjectDirectory({ projects, onProjectsChange, onOpen, onOpenLibrary, s
       }
       return compare === 0 ? a.id.localeCompare(b.id) : compare * direction;
     });
-  }, [projects, query, preferences]);
+  }, [projects, query, preferences, sortSizes]);
+  const pageContext = JSON.stringify([query.trim().toLocaleLowerCase(), preferences.tab, preferences.sort, preferences.direction]);
+  const page = projectPage(filtered.length, pageState.context === pageContext ? pageState.index : 0);
+  const visibleProjects = useMemo(() => filtered.slice(page.start, page.end), [filtered, page.start, page.end]);
+  const pageSizes = useProjectDirectorySizes(preferences.sort === "size" ? [] : visibleProjects, api);
+  const projectSizes = preferences.sort === "size" ? sortSizes : pageSizes;
+  useEffect(() => {
+    if (pageState.context !== pageContext || pageState.index !== page.index) setPageState({ context: pageContext, index: page.index });
+  }, [pageContext, page.index, pageState.context, pageState.index]);
+  useLayoutEffect(() => { directoryListRef.current?.scrollTo(0, 0); }, [pageContext, page.index]);
+  const changePage = (index: number) => { setPageState({ context: pageContext, index }); setSelectedIds([]); setMenuProjectId(undefined); };
   const counts = useMemo(() => ({ all: projects.length, pinned: projects.filter((project) => directoryMetadata(project).isPinned).length, favorites: projects.filter((project) => directoryMetadata(project).isFavorite).length, recent: projects.filter((project) => !!project.lastOpenedAt).length }), [projects]);
-  useEffect(() => { setSelectedIds((ids) => ids.filter((id) => filtered.some((project) => project.id === id))); }, [filtered]);
+  useEffect(() => { setSelectedIds((ids) => ids.filter((id) => visibleProjects.some((project) => project.id === id))); }, [visibleProjects]);
   useEffect(() => {
     if (!menuOpen && !workspaceMenuOpen && !menuProjectId) return;
     const closeWhenOutside = (event: MouseEvent) => {
       const target = event.target instanceof Element ? event.target : undefined;
       if (!target?.closest(".directory-new-control")) setMenuOpen(false);
       if (!target?.closest(".directory-workspace-button, .workspace-popover")) setWorkspaceMenuOpen(false);
-      if (!target?.closest(".directory-row-menu")) setMenuProjectId(undefined);
+      if (!target?.closest(".directory-row-menu, .project-action-menu")) setMenuProjectId(undefined);
     };
     document.addEventListener("mousedown", closeWhenOutside);
     return () => document.removeEventListener("mousedown", closeWhenOutside);
@@ -233,10 +224,20 @@ function ProjectDirectory({ projects, onProjectsChange, onOpen, onOpenLibrary, s
   const updateMany = async (patch: { isFavorite?: boolean; isPinned?: boolean }) => {
     for (const id of selectedIds) { const project = projects.find((item) => item.id === id); if (project) await updateEntry(project, patch); }
   };
-  const removeFromList = async (project: Project) => {
-    if (!api || !window.confirm(t("directory.confirmRemove", { name: directoryMetadata(project).displayName }))) return;
-    try { await api.projects.removeFromDirectory(project.id); onProjectsChange(projects.filter((item) => item.id !== project.id)); setSelectedIds((ids) => ids.filter((id) => id !== project.id)); }
-    catch (reason) { setError(reason instanceof Error ? reason.message : String(reason)); }
+  const removeFromList = async (project: Project) => { setRemovalProjects([project]); };
+  const applyRemoval = async (retention: "all" | "versions" | "none") => {
+    if (!api || removing) return;
+    setError(undefined);
+    setRemoving(true);
+    try {
+      for (const project of removalProjects) {
+        await api.projects.removeFromDirectory(project.id, retention);
+        onProjectsChange(current => current.filter(item => item.id !== project.id));
+        setSelectedIds(current => current.filter(id => id !== project.id));
+        setRemovalProjects(current => current.filter(item => item.id !== project.id));
+      }
+    } catch (reason) { setError(reason instanceof Error ? reason.message : String(reason)); }
+    finally { setRemoving(false); }
   };
   const deleteFromDisk = async (project: Project) => {
     if (!api || !window.confirm(t("directory.confirmDelete", { name: directoryMetadata(project).displayName, path: project.canonicalPath }))) return;
@@ -256,7 +257,7 @@ function ProjectDirectory({ projects, onProjectsChange, onOpen, onOpenLibrary, s
     if (project.missing) { setError(t("directory.locationMissingDetail", { path: project.canonicalPath })); return; }
     onOpen(project);
   };
-  const openProjectMenu = (project: Project) => setMenuProjectId((current) => current === project.id ? undefined : project.id);
+  const openProjectMenu = (project: Project, point: { x: number; y: number }) => { setMenuPoint(point); setMenuProjectId(current => current === project.id ? undefined : project.id); };
   const performProjectMenuAction = async (action: string, project: Project) => {
     setMenuProjectId(undefined);
     if (action === "open") openProjectEntry(project);
@@ -268,12 +269,7 @@ function ProjectDirectory({ projects, onProjectsChange, onOpen, onOpenLibrary, s
     else if (action === "remove") await removeFromList(project);
     else if (action === "delete") await deleteFromDisk(project);
   };
-  const removeSelected = async () => {
-    const selected = projects.filter((project) => selectedIds.includes(project.id));
-    if (!api || !selected.length || !window.confirm(t("directory.confirmBulkRemove", { count: selected.length }))) return;
-    for (const project of selected) { try { await api.projects.removeFromDirectory(project.id); } catch (reason) { setError(reason instanceof Error ? reason.message : String(reason)); return; } }
-    onProjectsChange(projects.filter((project) => !selectedIds.includes(project.id))); setSelectedIds([]);
-  };
+  const removeSelected = async () => { setRemovalProjects(projects.filter(project => selectedIds.includes(project.id))); };
   const deleteSelected = async () => {
     const selected = projects.filter((project) => selectedIds.includes(project.id));
     if (!api || !selected.length || !window.confirm(t("directory.confirmBulkDelete", { count: selected.length, paths: selected.map((project) => project.canonicalPath).join("\n") }))) return;
@@ -283,41 +279,59 @@ function ProjectDirectory({ projects, onProjectsChange, onOpen, onOpenLibrary, s
 
   return <div className="app-shell project-directory-v044"><header className="directory-topbar">
     <div className="brand-lockup compact"><div className="brand-mark"><WeaveLogo size={28}/></div><div className="brand-name">{t("app.name")}</div></div>
-    <label className="directory-global-search"><SearchIcon/><input ref={searchRef} value={query} onChange={(event) => setQuery(event.target.value)} placeholder={t("directory.search")}/><kbd>Ctrl K</kbd></label>
     <div className="directory-actions">
       <div className="directory-popover-anchor"><button className="connection-pill directory-workspace-button" onClick={() => setWorkspaceMenuOpen((open) => !open)}><span className="status-dot"/>{t("project.local")}<ChevronIcon/></button>{workspaceMenuOpen && <div className="directory-popover workspace-popover"><div className="workspace-popover-local"><strong>{t("project.local")}</strong><small>{t("directory.localCount", { count: projects.length })}</small><span>{t("directory.localWorkspaceHint")}</span></div><div className="workspace-popover-divider"/><div className="workspace-popover-cloud" aria-disabled="true"><span><i className="workspace-popover-cloud-dot" aria-hidden="true"/><strong>{t("project.cloud")}</strong></span><small>{t("directory.workspaceComingSoon")}</small></div></div>}</div>
       <div className="directory-popover-anchor directory-new-control"><button className="primary-button directory-new-main" onClick={() => setCreateOpen(true)}><PlusIcon/>{t("project.new")}</button><button className="primary-button directory-new-toggle" aria-label={t("directory.moreCreateOptions")} onClick={() => setMenuOpen((open) => !open)}><ChevronIcon/></button>{menuOpen && <div className="new-menu directory-popover"><button onClick={() => { setCreateOpen(true); setMenuOpen(false); }}><span className="menu-icon"><PlusIcon/></span><span><strong>{t("project.new")}</strong><small>{t("directory.createNewHint")}</small></span></button><button onClick={() => void registerFolder()}><span className="menu-icon"><FolderIcon/></span><span><strong>{t("project.openFolder")}</strong><small>{t("directory.openFolderHint")}</small></span></button></div>}</div>
       <button className="secondary-button directory-import" onClick={() => void registerFolder()}><FolderIcon/>{t("directory.import")}</button>
-      <button className="icon-button directory-library" onClick={onOpenLibrary} title={t("activity.library")} aria-label={t("activity.library")}>◈</button>
+      <button className="icon-button directory-library" onClick={onOpenLibrary} title={t("activity.library")} aria-label={t("activity.library")}><DirectoryIcon name="library"/></button>
       <button className="icon-button" onClick={() => setSettingsOpen(true)} title={t("activity.settings")} aria-label={t("activity.settings")}><GearIcon/></button>
     </div>
   </header>
   <main className="directory-main">
-    <section className="directory-heading"><div><h1>{t("directory.projects")}</h1><p>{t("directory.localCount", { count: projects.length })}</p></div></section>
+    <section className="directory-heading"><div><h1>{t("directory.projects")}</h1><p>{t("directory.localCount", { count: projects.length })}</p></div><label className="directory-global-search"><SearchIcon/><input ref={searchRef} value={query} onChange={(event) => setQuery(event.target.value)} placeholder={t("directory.search")}/>{commandBindings("directory.search")[0] && <kbd>{displayBinding(commandBindings("directory.search")[0]!)}</kbd>}</label></section>
     <section className="directory-controls"><nav className="directory-tabs" aria-label={t("directory.projectFilters")}>
       {(["all", "pinned", "favorites", "recent"] as const).map((tab) => <button key={tab} className={preferences.tab === tab ? "active" : ""} onClick={() => { setPreferences((value) => ({ ...value, tab })); setSelectedIds([]); }}><span>{t(`directory.tab.${tab}`)}</span><small>{counts[tab]}</small></button>)}
-    </nav><div className="directory-view-controls"><label><span>↕</span><select aria-label={t("directory.sort")} value={preferences.sort} onChange={(event) => setPreferences((value) => ({ ...value, sort: event.target.value as DirectorySort }))}><option value="lastOpened">{t("directory.sort.lastOpened")}</option><option value="name">{t("directory.sort.name")}</option><option value="dateAdded">{t("directory.sort.dateAdded")}</option></select></label><button className="directory-direction" title={preferences.direction === "desc" ? t("directory.descending") : t("directory.ascending")} aria-label={preferences.direction === "desc" ? t("directory.descending") : t("directory.ascending")} onClick={() => setPreferences((value) => ({ ...value, direction: value.direction === "desc" ? "asc" : "desc" }))}>{preferences.direction === "desc" ? "↓" : "↑"}</button><div className="density-switch"><button className={preferences.density === "compact" ? "active" : ""} title={t("directory.compact")} onClick={() => setPreferences((value) => ({ ...value, density: "compact" }))}>☰</button><button className={preferences.density === "comfortable" ? "active" : ""} title={t("directory.comfortable")} onClick={() => setPreferences((value) => ({ ...value, density: "comfortable" }))}>▤</button></div></div></section>
-    {selectedIds.length > 0 && <div className="directory-bulk-bar"><strong>{t("directory.selected", { count: selectedIds.length })}</strong><button onClick={() => void updateMany({ isPinned: !projects.filter((project) => selectedIds.includes(project.id)).every((project) => directoryMetadata(project).isPinned) })}>{t("directory.pin")}</button><button onClick={() => void updateMany({ isFavorite: !projects.filter((project) => selectedIds.includes(project.id)).every((project) => directoryMetadata(project).isFavorite) })}>{t("directory.favorite")}</button><button onClick={() => void removeSelected()}>{t("directory.removeFromList")}</button><button className="danger" disabled={projects.some((project) => selectedIds.includes(project.id) && project.missing)} onClick={() => void deleteSelected()}>{t("directory.deleteFromDisk")}</button><button className="bulk-clear" onClick={() => setSelectedIds([])}>{t("common.close")}</button></div>}
+    </nav><div className="directory-view-controls"><DirectorySortMenu value={preferences.sort} onChange={(sort) => { setPreferences((value) => ({ ...value, sort })); setSelectedIds([]); }}/><button className="directory-direction" title={preferences.direction === "desc" ? t("directory.descending") : t("directory.ascending")} aria-label={preferences.direction === "desc" ? t("directory.descending") : t("directory.ascending")} onClick={() => setPreferences((value) => ({ ...value, direction: value.direction === "desc" ? "asc" : "desc" }))}><DirectoryIcon name={preferences.direction === "desc" ? "descending" : "ascending"}/></button><div className="density-switch"><button className={preferences.density === "compact" ? "active" : ""} title={t("directory.compact")} onClick={() => setPreferences((value) => ({ ...value, density: "compact" }))}><DirectoryIcon name="compact"/></button><button className={preferences.density === "comfortable" ? "active" : ""} title={t("directory.comfortable")} onClick={() => setPreferences((value) => ({ ...value, density: "comfortable" }))}><DirectoryIcon name="comfortable"/></button></div></div></section>
+    {selectedIds.length > 0 && <div className="directory-bulk-bar"><strong>{t("directory.selected", { count: selectedIds.length })}</strong><button onClick={() => void updateMany({ isPinned: !projects.filter((project) => selectedIds.includes(project.id)).every((project) => directoryMetadata(project).isPinned) })}><DirectoryIcon name="pin"/>{t("directory.pin")}</button><button onClick={() => void updateMany({ isFavorite: !projects.filter((project) => selectedIds.includes(project.id)).every((project) => directoryMetadata(project).isFavorite) })}><DirectoryIcon name="favorite"/>{t("directory.favorite")}</button><button onClick={() => void removeSelected()}><DirectoryIcon name="remove"/>{t("directory.removeFromList")}</button><button className="danger" disabled={projects.some((project) => selectedIds.includes(project.id) && project.missing)} onClick={() => void deleteSelected()}><DirectoryIcon name="delete"/>{t("directory.deleteFromDisk")}</button><button className="bulk-clear" onClick={() => setSelectedIds([])}><DirectoryIcon name="close"/>{t("common.close")}</button></div>}
     {error && <div className="inline-error directory-error">{error}<button onClick={() => setError(undefined)}>{t("common.close")}</button></div>}
-    <section className={`directory-table-card density-${preferences.density}`}>
-      <div className="directory-table-head"><label className="directory-check"><input type="checkbox" aria-label={t("directory.selectAll")} checked={filtered.length > 0 && filtered.every((project) => selectedIds.includes(project.id))} onChange={(event) => setSelectedIds(event.target.checked ? filtered.map((project) => project.id) : [])}/></label><span>{t("project.name")}</span><span>{t("directory.mainFile")}</span><span>{t("project.location")}</span><span>{t("directory.lastOpened")}</span><span aria-label={t("directory.favorite")}>☆</span><span aria-label={t("directory.pin")}>⌖</span><span/></div>
-      <div className="directory-project-list" onKeyDown={(event) => { if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "a") { event.preventDefault(); setSelectedIds(filtered.map((project) => project.id)); } else if (event.key === "Delete" && selectedIds.length) { event.preventDefault(); void removeSelected(); } else if (event.key === "Escape") { setSelectedIds([]); setMenuProjectId(undefined); } }}>
-        {filtered.map((project) => { const meta = directoryMetadata(project); const avatarColor = projectAvatarPalette.find((color) => color.foreground === meta.avatarColor) ?? projectAvatarPalette[0]; const selected = selectedIds.includes(project.id); return <div role="row" tabIndex={0} aria-selected={selected} className={`directory-project-row ${selected ? "selected" : ""} ${project.missing ? "missing" : ""}`} key={project.id} onClick={(event) => { if (!(event.target instanceof Element) || !event.target.closest("button, input, .project-action-menu")) openProjectEntry(project); }} onContextMenu={(event) => { event.preventDefault(); if (!selected) setSelectedIds([project.id]); setMenuProjectId(project.id); }} onKeyDown={(event) => { if (event.key === "Enter") { event.preventDefault(); openProjectEntry(project); } }}>
-          <label className="directory-check" onClick={(event) => event.stopPropagation()}><input type="checkbox" aria-label={t("directory.selectProject", { name: meta.displayName })} checked={selected} onChange={(event) => setSelectedIds((ids) => event.target.checked ? [...new Set([...ids, project.id])] : ids.filter((id) => id !== project.id))}/></label>
+    <section className={`directory-table-card density-${preferences.density}`} style={{ "--directory-scrollbar-width": `${scrollbarWidth}px` } as CSSProperties}>
+      <div className="directory-board" aria-hidden="true"><div className="directory-board-grid"/><div className="directory-board-mark"><WeaveLogo size={230}/><span>TeXWeave</span></div></div>
+      <div className="directory-table-head"><DirectoryCheckbox label={t("directory.selectPage")} checked={visibleProjects.length > 0 && visibleProjects.every((project) => selectedIds.includes(project.id))} onChange={checked => setSelectedIds(checked ? visibleProjects.map(project => project.id) : [])}/><span>{t("project.name")}</span><span>{t("directory.projectSize")}</span><span>{t("project.location")}</span><span>{t("directory.lastOpened")}</span><span aria-label={t("directory.favorite")}><DirectoryIcon name="favorite"/></span><span aria-label={t("directory.pin")}><DirectoryIcon name="pin"/></span><span/></div>
+      <div ref={directoryListRef} className="directory-project-list" onKeyDown={(event) => { if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "a") { event.preventDefault(); setSelectedIds(visibleProjects.map((project) => project.id)); } else if (event.key === "Delete" && selectedIds.length) { event.preventDefault(); void removeSelected(); } else if (event.key === "Escape") { setSelectedIds([]); setMenuProjectId(undefined); } }}>
+        {visibleProjects.map((project) => { const meta = directoryMetadata(project); const avatarColor = projectAvatarPalette.find((color) => color.foreground === meta.avatarColor) ?? projectAvatarPalette[0]; const selected = selectedIds.includes(project.id); return <div role="row" tabIndex={0} aria-selected={selected} className={`directory-project-row ${selected ? "selected" : ""} ${meta.isPinned ? "pinned" : ""} ${project.missing ? "missing" : ""}`} key={project.id} onClick={(event) => { if (!(event.target instanceof Element) || !event.target.closest("button, input, .project-action-menu")) openProjectEntry(project); }} onContextMenu={(event) => { event.preventDefault(); if (!selected) setSelectedIds([project.id]); setMenuPoint({ x: event.clientX, y: event.clientY }); setMenuProjectId(project.id); }} onKeyDown={(event) => { if (event.key === "Enter" && event.target === event.currentTarget) { event.preventDefault(); openProjectEntry(project); } }}>
+          <DirectoryCheckbox label={t("directory.selectProject", { name: meta.displayName })} checked={selected} onChange={checked => setSelectedIds(ids => checked ? [...new Set([...ids, project.id])] : ids.filter(id => id !== project.id))}/>
           <span className="directory-project-name"><span className="directory-avatar" style={{ "--directory-avatar-foreground": avatarColor.foreground, "--directory-avatar-background": avatarColor.background } as CSSProperties}>{meta.avatarLetter}</span><span className="directory-name-text"><strong title={meta.displayName}>{meta.displayName}</strong><small>{project.missing ? t("directory.locationMissing") : project.mainFileMissing ? t("directory.mainFileMissing") : project.mainFile ?? t("directory.noMainFile")}</small></span></span>
-          <span className={`directory-main-file ${project.mainFileMissing ? "missing-main" : project.mainFile ? "" : "muted"}`} title={project.mainFile ?? ""}>{project.mainFile ? <><span className="directory-file-icon">{project.mainFileMissing ? "!" : "Tₓ"}</span>{project.mainFile}</> : t("directory.notSet")}</span>
+          <span className={`directory-project-size${!projectSizes[project.id] ? " muted" : ""}`} title={project.missing ? t("directory.locationMissing") : projectSizes[project.id] ? t(projectSizes[project.id]!.partial ? "directory.sizePartialHint" : "directory.sizeHint", { bytes: projectSizes[project.id]!.bytes.toLocaleString(getLocale()), count: projectSizes[project.id]!.fileCount }) : projectSizes[project.id] === null ? t("directory.sizeUnavailable") : t("directory.sizeCalculating")}>
+            {project.missing || projectSizes[project.id] === null ? "—" : projectSizes[project.id] ? <><strong>{projectSizes[project.id]!.partial ? "≥ " : ""}{formatProjectBytes(projectSizes[project.id]!.bytes, getLocale())}</strong><small>{t(projectSizes[project.id]!.fileCount === 1 ? "directory.fileCountOne" : "directory.fileCount", { count: projectSizes[project.id]!.fileCount })}</small></> : <span className="directory-size-loading" aria-label={t("directory.sizeCalculating")}>···</span>}
+          </span>
           <span className="directory-location" title={project.canonicalPath}><FolderIcon/><span>{project.canonicalPath}</span></span>
           <span className="directory-last-opened">{formatLastOpened(project)}</span>
-          <button className={`directory-state-button favorite ${meta.isFavorite ? "active" : ""}`} title={meta.isFavorite ? t("directory.removeFavorite") : t("directory.addFavorite")} aria-label={meta.isFavorite ? t("directory.removeFavorite") : t("directory.addFavorite")} onClick={(event) => { event.stopPropagation(); void updateEntry(project, { isFavorite: !meta.isFavorite }); }}>{meta.isFavorite ? "★" : "☆"}</button>
-          <button className={`directory-state-button pin ${meta.isPinned ? "active" : ""}`} title={meta.isPinned ? t("directory.unpin") : t("directory.pin")} aria-label={meta.isPinned ? t("directory.unpin") : t("directory.pin")} onClick={(event) => { event.stopPropagation(); void updateEntry(project, { isPinned: !meta.isPinned }); }}>{meta.isPinned ? "📌" : "⌖"}</button>
-          <div className="directory-row-menu directory-popover-anchor"><button className="directory-more" aria-label={t("directory.moreActions")} onClick={(event) => { event.stopPropagation(); openProjectMenu(project); }}>⋯</button>{menuProjectId === project.id && <div className="project-action-menu directory-popover" onClick={(event) => event.stopPropagation()}><button disabled={project.missing} onClick={() => void performProjectMenuAction("open", project)}>{t("directory.open")}</button>{project.missing && <button onClick={() => void locateProject(project)}>{t("directory.locate")}</button>}<button disabled={project.missing} onClick={() => void performProjectMenuAction("reveal", project)}>{t("directory.reveal")}</button><button onClick={() => void performProjectMenuAction("copy", project)}>{t("directory.copyPath")}</button><button onClick={() => void performProjectMenuAction("rename", project)}>{t("directory.renameDisplayName")}</button><button onClick={() => void performProjectMenuAction("favorite", project)}>{meta.isFavorite ? t("directory.removeFavorite") : t("directory.addFavorite")}</button><button onClick={() => void performProjectMenuAction("pin", project)}>{meta.isPinned ? t("directory.unpin") : t("directory.pin")}</button><button onClick={() => void performProjectMenuAction("remove", project)}>{t("directory.removeFromList")}</button><button className="danger" disabled={project.missing} onClick={() => void performProjectMenuAction("delete", project)}>{t("directory.deleteFromDisk")}</button></div>}</div>
+          <button className={`directory-state-button favorite ${meta.isFavorite ? "active" : ""}`} title={meta.isFavorite ? t("directory.removeFavorite") : t("directory.addFavorite")} aria-label={meta.isFavorite ? t("directory.removeFavorite") : t("directory.addFavorite")} onClick={(event) => { event.stopPropagation(); void updateEntry(project, { isFavorite: !meta.isFavorite }); }}><DirectoryIcon name="favorite"/></button>
+          <button className={`directory-state-button pin ${meta.isPinned ? "active" : ""}`} title={meta.isPinned ? t("directory.unpin") : t("directory.pin")} aria-label={meta.isPinned ? t("directory.unpin") : t("directory.pin")} onClick={(event) => { event.stopPropagation(); void updateEntry(project, { isPinned: !meta.isPinned }); }}><DirectoryIcon name="pin"/></button>
+          <div className="directory-row-menu directory-popover-anchor"><button className="directory-more" aria-label={t("directory.moreActions")} onClick={(event) => { event.stopPropagation(); const rect = event.currentTarget.getBoundingClientRect(); openProjectMenu(project, { x: rect.right - 200, y: rect.bottom + 6 }); }}><DirectoryIcon name="more"/></button>{menuProjectId === project.id && <DirectoryActionMenu point={menuPoint} onClose={() => setMenuProjectId(undefined)}><button disabled={project.missing} onClick={() => void performProjectMenuAction("open", project)}><DirectoryIcon name="open"/>{t("directory.open")}</button>{project.missing && <button onClick={() => void locateProject(project)}><DirectoryIcon name="locate"/>{t("directory.locate")}</button>}<button disabled={project.missing} onClick={() => void performProjectMenuAction("reveal", project)}><DirectoryIcon name="folder"/>{t("directory.reveal")}</button><button onClick={() => void performProjectMenuAction("copy", project)}><DirectoryIcon name="copy"/>{t("directory.copyPath")}</button><button onClick={() => void performProjectMenuAction("rename", project)}><DirectoryIcon name="rename"/>{t("directory.renameDisplayName")}</button><button onClick={() => void performProjectMenuAction("favorite", project)}><DirectoryIcon name="favorite"/>{meta.isFavorite ? t("directory.removeFavorite") : t("directory.addFavorite")}</button><button onClick={() => void performProjectMenuAction("pin", project)}><DirectoryIcon name="pin"/>{meta.isPinned ? t("directory.unpin") : t("directory.pin")}</button><button onClick={() => void performProjectMenuAction("remove", project)}><DirectoryIcon name="remove"/>{t("directory.removeFromList")}</button><button className="danger" disabled={project.missing} onClick={() => void performProjectMenuAction("delete", project)}><DirectoryIcon name="delete"/>{t("directory.deleteFromDisk")}</button></DirectoryActionMenu>}</div>
         </div>; })}
         {filtered.length === 0 && <div className="directory-empty"><div className="empty-icon"><FolderIcon/></div><strong>{query ? t("directory.noSearchResults") : projects.length ? t("directory.noFilterResults") : t("project.empty")}</strong><span>{projects.length === 0 ? t("project.emptyHint") : t("directory.emptyHint")}</span>{projects.length === 0 && <div><button className="primary-button" onClick={() => setCreateOpen(true)}><PlusIcon/>{t("project.new")}</button><button className="secondary-button" onClick={() => void registerFolder()}><FolderIcon/>{t("project.openFolder")}</button></div>}</div>}
       </div>
-      <footer className="directory-result-count">{t("directory.showingResults", { shown: filtered.length, total: projects.length })}</footer>
+      <footer className="directory-result-count"><span title={t("directory.localCount", { count: projects.length })}>{t("directory.pageResults", { from: filtered.length ? page.start + 1 : 0, to: page.end, count: filtered.length })}</span><DirectoryPagination index={page.index} count={page.count} onPage={changePage}/></footer>
     </section>
     <footer className="dashboard-footer directory-footer"><span><span className="status-dot"/>{t("project.savedLocally")}</span><span>{t("app.name")} <span data-app-version={appVersion}>{appVersion}</span></span></footer>
   </main>
+  {removalProjects.length > 0 && <div className="modal-backdrop"><section className="modal-card project-removal-card" role="dialog" aria-modal="true" aria-label={t("directory.removeDataTitle")} onKeyDown={(event) => {
+      if (event.key === "Escape" && !removing) { event.stopPropagation(); setRemovalProjects([]); }
+      if (event.key === "Tab") {
+        const items = Array.from(event.currentTarget.querySelectorAll<HTMLButtonElement>("button:not(:disabled)"));
+        const first = items[0], last = items.at(-1);
+        if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last?.focus(); }
+        else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first?.focus(); }
+      }
+    }}>
+    <div className="modal-heading"><h2>{t("directory.removeDataTitle")}</h2><button className="close-button" disabled={removing} aria-label={t("common.close")} onClick={() => setRemovalProjects([])}>×</button></div>
+    <p>{t("directory.removeDataHint")}</p>
+    {error && <div className="inline-error">{error}</div>}
+    <div className="project-removal-names">{removalProjects.map(project => <span key={project.id}>{directoryMetadata(project).displayName}</span>)}</div>
+    <div className="project-removal-options">{(["all", "versions", "none"] as const).map(retention => <button key={retention} autoFocus={retention === "all"} disabled={removing} onClick={() => void applyRemoval(retention)}><strong>{t("directory.removeData." + retention)}</strong><small>{t("directory.removeData." + retention + "Hint")}</small></button>)}</div>
+    <div className="modal-actions"><button className="secondary-button" disabled={removing} onClick={() => setRemovalProjects([])}>{t("project.cancel")}</button></div>
+  </section></div>}
   {createOpen && <div className="modal-backdrop"><section className="modal-card project-creation-card"><div className="modal-heading"><div><p className="eyebrow">{t("common.projectSetup")}</p><h2>{t("project.createTitle")}</h2></div><button className="close-button" onClick={() => setCreateOpen(false)}>×</button></div><label className="field-label">{t("project.name")}<input autoFocus value={name} onChange={(event) => setName(event.target.value)}/></label><label className="field-label">{t("project.parent")}<div className="path-input"><input value={parentPath} onChange={(event) => setParentPath(event.target.value)}/><button onClick={() => void chooseFolder()}><FolderIcon/>{t("project.browse")}</button></div></label><ProjectStyleResourcePicker styleResources={styleResources} baseResource={baseResource} setBaseResource={setBaseResource} extraResources={extraResources} setExtraResources={setExtraResources}/><div className="modal-actions"><button className="secondary-button" onClick={() => setCreateOpen(false)}>{t("project.cancel")}</button><button className="primary-button" disabled={busy} onClick={() => void createProject()}>{t(busy ? "project.creating" : "project.create")}</button></div></section></div>}
     {settingsOpen && <SettingsDialog onClose={() => { setSettingsOpen(false); void onRefreshResources(); }}/>} 
 

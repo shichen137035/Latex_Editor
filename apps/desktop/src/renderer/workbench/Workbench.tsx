@@ -1,3 +1,4 @@
+import { startSnapshotTimer } from "./snapshotTimer.js";
 import { DiffEditor, Editor, type OnMount } from "@monaco-editor/react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal, flushSync } from "react-dom";
@@ -509,15 +510,15 @@ export function Workbench({ project, projects, environments, onHome, onSwitch, o
     completionController, navigationHistory, editHistory, setTabs, setTree, setActivePath, setSaveState,
     setNavigationRequest, setBlockSnapshot
   });
+  const snapshotOpenedAt = useRef(performance.now());
+  const historyPreferences = store.get("history");
   useEffect(() => {
-    if (!api) return;
-    const timer = window.setInterval(() => {
-      if (!settings.get("history").autoSnapshot) return;
+    if (!api || !historyPreferences.autoSnapshot) return;
+    return startSnapshotTimer(snapshotOpenedAt.current, historyPreferences.intervalMinutes * 60_000, async () => {
       const overrides = tabsRef.current.filter((tab) => tab.dirty).map((tab) => ({ path: tab.path, content: tab.content }));
-      void api.history.snapshot(project.id, "interval", undefined, overrides).catch(() => undefined);
-    }, 60_000);
-    return () => window.clearInterval(timer);
-  }, [api, project.id]);
+      await api.history.snapshot(project.id, "interval", undefined, overrides);
+    });
+  }, [api, project.id, historyPreferences.autoSnapshot, historyPreferences.intervalMinutes]);
   useUnsavedChanges({ hasChanges: () => tabs.some((tab) => tab.dirty), save: () => saveTabs(true, flushSync) });
   const highlightCreatedBlock = (block: SemanticBlock) => {
     if (!block.fileId || !block.range) return;
@@ -640,7 +641,7 @@ export function Workbench({ project, projects, environments, onHome, onSwitch, o
       const replaced = replayDirection === "undo" ? operation.patch.inserted : operation.patch.removed;
       const restored = replayDirection === "undo" ? operation.patch.removed : operation.patch.inserted;
       flushSync(() => {
-        changeDocument(operation.fileId, next, false, [{ start: operation.patch.start, end: operation.patch.start + replaced.length, newLength: restored.length }], false);
+        changeDocument(operation.fileId, next, false, [{ start: operation.patch.start, end: operation.patch.start + replaced.length, newLength: restored.length }], false, false);
         setActivePath(operation.fileId);
       });
       const offset = operation.patch.start;

@@ -7,7 +7,7 @@ export function documentOutputDirectory(root: string, mainFile: string, projectM
   const same = process.platform === "win32" ? path.toLowerCase() === primary.toLowerCase() : path === primary;
   if (same) return root;
   const identity = mainFile.replaceAll("\\", "/").replace(/^\.\//, "");
-  return resolve(root, ".latex-editor/build/targets", createHash("sha256").update(identity).digest("hex").slice(0, 16));
+  return resolve(root, ".texweave/build/targets", createHash("sha256").update(identity).digest("hex").slice(0, 16));
 }
 
 export function targetOutputArguments(args: string[], directory: string): string[] {

@@ -1,4 +1,5 @@
 import { createHash, randomUUID } from "node:crypto";
+export { consolidateProjectMetadata } from "./project-metadata.js";
 import { constants } from "node:fs";
 import { access, cp, lstat, mkdir, open, readdir, readFile, realpath, rename, rm, stat, writeFile } from "node:fs/promises";
 import { basename, dirname, isAbsolute, parse, relative, resolve, sep } from "node:path";

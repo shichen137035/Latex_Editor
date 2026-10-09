@@ -22,7 +22,7 @@ export async function findSyncTexData(pdfPath: string, directories: string[] = [
 }
 
 export function syncTexDirectories(root: string, mainFile?: string, args: string[] = []): string[] {
-  const directories = [root, ...(mainFile ? [dirname(resolve(root, mainFile))] : []), resolve(root, "build"), resolve(root, "out"), resolve(root, ".latex-editor/build")];
+  const directories = [root, ...(mainFile ? [dirname(resolve(root, mainFile))] : []), resolve(root, "build"), resolve(root, "out"), resolve(root, ".texweave/build")];
   const flags = ["-outdir", "--outdir", "-output-directory", "--output-directory", "-auxdir", "--auxdir", "-aux-directory", "--aux-directory"];
   for (let index = 0; index < args.length; index++) {
     const argument = args[index]!, flag = flags.find(flag => argument.toLowerCase().startsWith(flag + "="));

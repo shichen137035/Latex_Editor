@@ -2,6 +2,7 @@ import { createHash, randomUUID } from "node:crypto";
 import { DatabaseSync } from "node:sqlite";
 import { mkdir, readFile, readdir, realpath, rename, rm, stat, writeFile } from "node:fs/promises";
 import { dirname, isAbsolute, join, relative, sep } from "node:path";
+import { historyStructureContent } from "./history-content.js";
 import type { HistoryFileChange, HistoryPreferences, Project, ProjectHistoryDetails, ProjectHistoryEntry, ProjectHistoryStorage, ProjectHistoryType, SnapshotReason } from "@latex-editor/contracts" with { "resolution-mode": "import" };
 
 type Manifest = Record<string, string>;
@@ -114,8 +115,9 @@ export class ProjectHistoryService {
   private objectPath(store: Store, id: string): string { return join(store.historyRoot, "objects", id); }
   private manifestPath(store: Store, id: string): string { return join(store.historyRoot, "manifests", `${id}.json`); }
 
-  private async capture(store: Store, overrides: Array<{ path: string; content: string }> = []): Promise<{ id: string; files: Manifest }> {
+  private async capture(store: Store, overrides: Array<{ path: string; content: string }> = [], persist = true): Promise<{ id: string; files: Manifest; structureContent?: string }> {
     const files: Manifest = Object.create(null) as Manifest;
+    let structureContent: string | undefined;
     const overrideMap = new Map(overrides.map((entry) => [validateRelativePath(entry.path), entry.content]));
     for (const path of overrideMap.keys()) if (!shouldKeep(path)) throw new Error("Cannot snapshot an excluded project file");
     const indexed = store.db.prepare("SELECT size, mtime_ns, ctime_ns, hash FROM file_index WHERE path = ?");
@@ -125,7 +127,8 @@ export class ProjectHistoryService {
       if (override !== undefined) {
         const content = Buffer.from(override, "utf8");
         const id = hash(content);
-        await writeOnce(this.objectPath(store, id), content);
+        if (persist) await writeOnce(this.objectPath(store, id), content);
+        if (file.path === ".texweave/structure.json") structureContent = content.toString("utf8");
         files[file.path] = id;
         overrideMap.delete(file.path);
         continue;
@@ -139,7 +142,8 @@ export class ProjectHistoryService {
       }
       const content = await readFile(file.absolute);
       const id = hash(content);
-      await writeOnce(this.objectPath(store, id), content);
+      if (persist) await writeOnce(this.objectPath(store, id), content);
+      if (file.path === ".texweave/structure.json") structureContent = content.toString("utf8");
       update.run(file.path, size, mtime, ctime, id);
       files[file.path] = id;
     }
@@ -147,13 +151,14 @@ export class ProjectHistoryService {
       await safeProjectPath(store.root, path, false);
       const bytes = Buffer.from(content, "utf8");
       const id = hash(bytes);
-      await writeOnce(this.objectPath(store, id), bytes);
+      if (persist) await writeOnce(this.objectPath(store, id), bytes);
+      if (path === ".texweave/structure.json") structureContent = content;
       files[path] = id;
     }
     const serialized = JSON.stringify(Object.fromEntries(Object.entries(files).sort(([a], [b]) => a.localeCompare(b))));
     const id = hash(serialized);
-    await writeOnce(this.manifestPath(store, id), serialized);
-    return { id, files };
+    if (persist) await writeOnce(this.manifestPath(store, id), serialized);
+    return { id, files, ...(structureContent !== undefined ? { structureContent } : {}) };
   }
 
   private async manifest(store: Store, id: string): Promise<Manifest> {
@@ -182,16 +187,35 @@ export class ProjectHistoryService {
   }
 
   private async snapshotInStore(store: Store, reason: SnapshotReason, description: string | undefined, config: HistoryPreferences, overrides?: Array<{ path: string; content: string }>): Promise<ProjectHistoryEntry | undefined> {
-    if (reason === "interval" && !config.autoSnapshot) return undefined;
-    const latest = this.rows(store).find((row) => row.type === "snapshot");
-    if (reason === "interval" && latest && Date.now() - Date.parse(latest.created_at) < config.intervalMinutes * 60_000) return undefined;
-    const captured = await this.capture(store, overrides);
-    if (reason === "interval" && latest?.manifest_id === captured.id) return undefined;
+    if ((reason === "interval" || reason === "project-close") && !config.autoSnapshot) return undefined;
+    if (reason === "pre-delete" && !config.beforeLargeDelete) return undefined;
+    if (reason === "pre-restore" && !config.beforeRestore) return undefined;
+    const routine = reason === "interval" || reason === "project-close";
+    let captured = await this.capture(store, overrides, !routine);
+    const previous = this.rows(store)[0];
+    if (reason !== "manual" && reason !== "pre-restore" && previous) {
+      if (previous.manifest_id === captured.id) return undefined;
+      if (routine && await this.sameRoutineContent(store, await this.manifest(store, previous.manifest_id), captured.files, captured.structureContent)) return undefined;
+    }
+    // Do not leave unreferenced megabyte-sized index objects for skipped checks.
+    if (routine) captured = await this.capture(store, overrides);
     const entry = this.add(store, { type: "snapshot", manifestId: captured.id, fileCount: Object.keys(captured.files).length, reason, ...(description ? { title: description.trim().slice(0, 200) } : {}) });
     // A restore must not evict either its source snapshot or its undo point.
     // Retention runs on the next routine snapshot or explicit optimization.
     if (reason !== "pre-restore") this.prune(store, config);
     return entry;
+  }
+
+  private async sameRoutineContent(store: Store, before: Manifest, after: Manifest, structureContent?: string): Promise<boolean> {
+    const structurePath = ".texweave/structure.json";
+    for (const path of new Set([...Object.keys(before), ...Object.keys(after)])) {
+      if (before[path] === after[path]) continue;
+      if (path !== structurePath) return false;
+      const read = async (id: string | undefined) => id ? historyStructureContent(await readFile(this.objectPath(store, id), "utf8")) : undefined;
+      const afterContent = structureContent === undefined ? await read(after[path]) : historyStructureContent(structureContent);
+      if (await read(before[path]) !== afterContent) return false;
+    }
+    return true;
   }
 
   private prune(store: Store, config: HistoryPreferences): void {
@@ -336,6 +360,27 @@ export class ProjectHistoryService {
   }
 
   storage(projectId: string): Promise<ProjectHistoryStorage> { return this.run(projectId, (store) => this.storageInStore(store)); }
+
+  async waitForIdle(projectId: string): Promise<void> {
+    await this.pending.get(projectId);
+  }
+
+  retainVersions(projectId: string): Promise<void> {
+    return this.run(projectId, async (store) => {
+      const manifests = new Set(this.rows(store).filter(row => row.type === "version").map(row => row.manifest_id));
+      const objects = new Set<string>();
+      // Validate retained manifests before deleting any history entries or objects.
+      for (const id of manifests) for (const objectId of Object.values(await this.manifest(store, id))) objects.add(objectId);
+      store.db.exec("DELETE FROM entries WHERE type <> 'version'; UPDATE entries SET parent_history_id = NULL WHERE parent_history_id NOT IN (SELECT id FROM entries); DELETE FROM file_index;");
+      for (const [folder, keep, suffix] of [["manifests", manifests, ".json"], ["objects", objects, ""]] as const) {
+        try { for (const name of await readdir(join(store.historyRoot, folder))) {
+          const id = suffix ? name.replace(/\.json$/, "") : name;
+          if (!keep.has(id) && /^[a-f0-9]{64}$/.test(id)) await rm(join(store.historyRoot, folder, name));
+        } } catch (error) { if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error; }
+      }
+      store.db.exec("PRAGMA wal_checkpoint(TRUNCATE); VACUUM;");
+    });
+  }
 
   optimize(projectId: string): Promise<ProjectHistoryStorage> {
     return this.run(projectId, async (store) => {

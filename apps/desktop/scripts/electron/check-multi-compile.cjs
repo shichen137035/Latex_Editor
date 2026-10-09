@@ -65,7 +65,7 @@ async function run() {
   assert.equal(await evaluate('document.querySelector(".pdf-origin-label").textContent'), 'supplement/main.tex');
   assert.equal(await evaluate('document.querySelectorAll(".pdf-page").length'), 3);
   const primaryPdf = await readFile(join(project.canonicalPath, 'main.pdf'));
-  const targetsRoot = join(project.canonicalPath, '.latex-editor/build/targets');
+  const targetsRoot = join(project.canonicalPath, '.texweave/build/targets');
   const [target] = await readdir(targetsRoot);
   const secondaryPdf = join(targetsRoot, target, 'main.pdf');
   assert.notDeepEqual(await readFile(secondaryPdf), primaryPdf);
@@ -88,7 +88,7 @@ async function run() {
   });
   await evaluate(`(() => { const page = document.querySelector('.pdf-page'), rect = page.getBoundingClientRect(); page.dispatchEvent(new MouseEvent('dblclick', {bubbles:true,clientX:rect.left+150,clientY:rect.top+150})); })()`);
   for (let i = 0; i < 100 && !reversePdf; i++) await delay(50);
-  assert.equal(reversePdf, '.latex-editor/build/targets/' + target + '/main.pdf');
+  assert.equal(reversePdf, '.texweave/build/targets/' + target + '/main.pdf');
   console.log('PASS PDF reverse navigation addresses the displayed secondary output');
 
   await evaluate(`(() => { const root = document.querySelector('.pdf-viewer'), page = root.querySelector('[data-page="3"]'); root.scrollTop += page.getBoundingClientRect().top - root.getBoundingClientRect().top + page.clientHeight * .2; })()`);

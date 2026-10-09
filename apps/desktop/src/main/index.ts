@@ -1,4 +1,5 @@
 import { registerBlockGraphIpc } from "./block-graph-ipc.js";
+import { removeProjectData } from "./project-removal-data.js";
 import { registerStructureIpc } from "./structure-ipc.js";
 import { registerWorkingDocumentIpc } from "./working-document-ipc.js";
 import { registerRelationIpc } from "./relation-ipc.js";
@@ -33,6 +34,7 @@ import { registerHistoryIpc } from "./history-ipc.js";
 import { installRendererSecurity, resolveRendererTarget } from "./renderer-security.js";
 import { translateNative } from "./i18n.js";
 import { readAppInfo } from "./app-info.js";
+import { projectDirectorySize } from "./project-directory-size.js";
 
 let context: DesktopContext | undefined;
 let settings: SettingsRepository;
@@ -367,6 +369,10 @@ function registerIpcHandlers(): void {
       catch { return { ...project, mainFileMissing: true }; }
     }));
   });
+  handleIpc(desktopInvoke.projects.size, async (_event, projectId) => {
+    if (!context) throw new Error(nativeText("native.contextNotReady"));
+    return projectDirectorySize(context.projects.getProject(projectId).canonicalPath);
+  });
   handleIpc(desktopInvoke.projects.updateDirectoryEntry, (_event, projectId, patch) => {
     if (!context) throw new Error(nativeText("native.contextNotReady"));
     const project = context.registry.get(projectId);
@@ -403,10 +409,20 @@ function registerIpcHandlers(): void {
     context.registry.update(updated);
     return updated;
   });
-  handleIpc(desktopInvoke.projects.removeFromDirectory, async (_event, projectId) => {
+  handleIpc(desktopInvoke.projects.removeFromDirectory, async (_event, projectId, retention = "all") => {
     if (!context) throw new Error(nativeText("native.contextNotReady"));
-    const result = await context.projects.remove({ projectId, mode: "registryOnly" });
+    if (!["all", "versions", "none"].includes(retention)) throw new Error("Invalid project data retention option");
+    const project = context.projects.getProject(projectId);
+    if (!project.missing) {
+      const { consolidateProjectMetadata } = await import("@latex-editor/filesystem-node");
+      await consolidateProjectMetadata(project.canonicalPath);
+    }
     await context.blockGraph.reclaimProjectCaches(projectId, { kind: "project-removed" });
+    if (retention !== "all" && !project.missing) {
+      await context.history.waitForIdle(projectId);
+      await removeProjectData(project.canonicalPath, projectId, retention, context.history);
+    }
+    const result = await context.projects.remove({ projectId, mode: "registryOnly" });
     return result;
   });
   handleIpc(desktopInvoke.projects.relocateInDirectory, async (_event, projectId, folderPath) => {
@@ -468,6 +484,8 @@ function registerIpcHandlers(): void {
   });
   handleIpc(desktopInvoke.projects.open, async (_event, projectId) => {
     if (context === undefined) throw new Error(nativeText("native.contextNotReady"));
+    const { consolidateProjectMetadata } = await import("@latex-editor/filesystem-node");
+    await consolidateProjectMetadata(context.projects.getProject(projectId).canonicalPath);
     return context.projects.openProject(projectId);
   });
   handleIpc(desktopInvoke.files.tree, async (_event, projectId) => {

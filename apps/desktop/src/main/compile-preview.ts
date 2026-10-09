@@ -16,7 +16,7 @@ export async function publishWorkspaceCompilation(projectId: string, result: Com
   emit: (update: { projectId: string; origin: "ai-workspace"; result: CompileResult & { pdfDataUrl?: string } }) => void
 ) {
   if (result.logPath) {
-    const destination = await files.resolveFilePath(projectId, `.latex-editor/build/${result.compilationId}.log`, false);
+    const destination = await files.resolveFilePath(projectId, `.texweave/build/${result.compilationId}.log`, false);
     await mkdir(dirname(destination), { recursive: true });
     await copyFile(result.logPath, destination);
     result = { ...result, logPath: destination };

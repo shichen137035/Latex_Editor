@@ -11,7 +11,7 @@ export function isSearchableProjectFile(path: string): boolean {
 }
 export function isSearchableProjectPath(path: string): boolean {
   return !/(?:^|[/\\])(?:\.git|\.latex-editor|node_modules)(?:[/\\]|$)/i.test(path)
-    && !/(?:^|[/\\])\.texweave[/\\](?:history|cache|ai-attachments)(?:[/\\]|$)/i.test(path);
+    && !/(?:^|[/\\])\.texweave[/\\](?:history|cache|build|ai-attachments)(?:[/\\]|$)/i.test(path);
 }
 export type FilterDocument = SearchDocument & { preview: PreviewDocument };
 export function searchFileRanges(documents: SearchDocument[], parsed: FilterDocument[], query: FilterQuery): Map<string, Array<[number, number]>> | undefined {

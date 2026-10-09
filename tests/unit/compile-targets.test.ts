@@ -12,7 +12,7 @@ describe("multiple document compilation", () => {
     expect(pdfFileForSource("nested\\other.TEX")).toBe("other.pdf");
   });
   it("uses only project PDFs for synchronization", () => {
-    expect(projectPdfFile("D:\\Project", "d:\\project\\.latex-editor\\build\\targets\\abc\\main.pdf")).toBe(".latex-editor/build/targets/abc/main.pdf");
+    expect(projectPdfFile("D:\\Project", "d:\\project\\.texweave\\build\\targets\\abc\\main.pdf")).toBe(".texweave/build/targets/abc/main.pdf");
     expect(projectPdfFile("/project", "/project/main.pdf")).toBe("main.pdf");
     expect(projectPdfFile("/project", "/project2/main.pdf")).toBeUndefined();
     expect(projectPdfFile("/project", "/project/../scratch/main.pdf")).toBeUndefined();
@@ -26,7 +26,7 @@ describe("multiple document compilation", () => {
     const second = documentOutputDirectory(root, "b/main.tex", "main.tex");
     expect(first).not.toBe(second);
     expect(first).toBe(documentOutputDirectory(root, "a\\main.tex", "main.tex"));
-    expect(first.startsWith(resolve(root, ".latex-editor/build/targets"))).toBe(true);
+    expect(first.startsWith(resolve(root, ".texweave/build/targets"))).toBe(true);
   });
   it("overrides only output directories while retaining compiler flags", () => {
     expect(targetOutputArguments(["-interaction=nonstopmode", "-outdir=old", "-auxdir", "aux", "--output-directory", "other", "-synctex=1"], "target with spaces")).toEqual(["-interaction=nonstopmode", "-synctex=1", "-outdir=target with spaces"]);

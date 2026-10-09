@@ -79,7 +79,7 @@ function modifierKeyLabel(modifier: Modifier) {
   return "Shift";
 }
 const contextLabelKeys: Record<string, string> = { "global": "command.context.global", "workspace": "shortcut.context.workspace", "workspace.editor": "shortcut.context.editor", "workspace.editor.source": "command.context.source", "workspace.editor.source.text": "command.context.source", "workspace.editor.preview": "shortcut.context.preview", "workspace.editor.preview.block-selected": "command.context.previewBlock", "workspace.editor.preview.block-edit": "command.context.previewDraft", "workspace.editor.relation": "shortcut.context.relation", "workspace.file-tree": "shortcut.context.fileTree", "workspace.search": "shortcut.context.search", "dialog": "shortcut.context.dialog", "manager.shortcut-manager": "shortcut.context.shortcutManager" };
-function contextLabel(context: string) { return t(contextLabelKeys[context] ?? context); }
+function contextLabel(context: string) { return t(context === "directory" ? "shortcut.context.directory" : contextLabelKeys[context] ?? context); }
 
 export function ShortcutManager({ store, scope }: { store: ReturnType<typeof useSettings>; scope: Scope }) {
   const [groupFilter, setGroupFilter] = useState<string>("all");

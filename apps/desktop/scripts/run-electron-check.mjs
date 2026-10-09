@@ -14,6 +14,7 @@ const checks = new Map([
   ["source-editor", { script: "electron/check-source-editor.cjs" }],
   ["auto-save", { script: "electron/check-auto-save.cjs" }],
   ["document-title", { script: "electron/check-document-title.cjs" }],
+  ["project-directory", { script: "electron/check-project-directory.cjs" }],
   ["search-filter", { script: "electron/check-search-filter.cjs" }],
   ["environment-typography", { script: "electron/check-environment-typography.cjs" }],
   ["image-completion", { script: "electron/check-image-completion.cjs" }],

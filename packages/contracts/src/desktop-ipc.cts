@@ -16,6 +16,7 @@ type ProjectScoped<F extends (...args: never[]) => Promise<unknown>> = (projectI
 export type UnsavedDialogLabels = { title: string; message: string; detail: string; buttons: [string, string, string] };
 export type UnsavedDialogChoice = "save" | "discard" | "cancel";
 export interface DesktopAppInfo { version: string }
+export interface ProjectDirectorySize { bytes: number; fileCount: number; partial: boolean }
 
 /** Desktop transport contract. Existing public method and wire names remain stable. */
 export const desktopInvoke = {
@@ -171,13 +172,14 @@ export const desktopInvoke = {
   },
   projects: {
     list: invoke<() => Promise<Project[]>>("projects:list"),
+    size: invoke<(projectId: string) => Promise<ProjectDirectorySize>>("projects:size"),
     create: invoke<(input: { name: string; parentPath: string; styleResourceIds?: string[] }) => Promise<Project>>("projects:create"),
     register: invoke<(folderPath: string) => Promise<Project>>("projects:register"),
     open: invoke<(projectId: string) => Promise<Project>>("projects:open"),
     setMainFile: invoke<(projectId: string, relativePath: string) => Promise<Project>>("projects:set-main-file"),
     relocateInDirectory: invoke<(projectId: string, folderPath: string) => Promise<Project>>("projects:directory-relocate"),
     updateDirectoryEntry: invoke<(projectId: string, patch: { displayName?: string; isFavorite?: boolean; isPinned?: boolean; avatarLetter?: string; avatarColor?: string }) => Promise<Project>>("projects:directory-update"),
-    removeFromDirectory: invoke<(projectId: string) => Promise<unknown>>("projects:directory-remove"),
+    removeFromDirectory: invoke<(projectId: string, retention?: "all" | "versions" | "none") => Promise<unknown>>("projects:directory-remove"),
     deleteToRecycleBin: invoke<(projectId: string, confirmedPath: string) => Promise<boolean>>("projects:directory-delete"),
     revealInFileManager: invoke<(projectId: string) => Promise<void>>("projects:directory-reveal"),
     copyProjectPath: invoke<(projectId: string) => Promise<void>>("projects:directory-copy-path"),

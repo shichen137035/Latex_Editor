@@ -84,6 +84,8 @@ async function run() {
 
   await click('.history-heading button[title="Snapshot settings"]');
   await until('Array.from(document.querySelectorAll(".preferences-dialog [data-setting]")).some(element => element.dataset.setting === "history.autoSnapshot")', "snapshot settings");
+  await evaluate('document.querySelectorAll(".settings-level-switch button")[1].click()');
+  await until('Array.from(document.querySelectorAll("[data-setting]")).some(element => element.dataset.setting === "history.intervalMinutes")', "advanced snapshot interval");
   assert.equal(await evaluate('Array.from(document.querySelectorAll("[data-setting]")).find(element => element.dataset.setting === "history.intervalMinutes")?.value'), "10");
   console.log("PASS snapshot settings are available");
   console.log("Test artifacts:", root);
