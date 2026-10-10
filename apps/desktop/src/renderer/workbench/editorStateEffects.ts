@@ -1,8 +1,9 @@
-import { useEffect, useLayoutEffect, type Dispatch, type MutableRefObject, type SetStateAction } from "react";
+import { useEffect, useLayoutEffect, useRef, type Dispatch, type MutableRefObject, type SetStateAction } from "react";
 import type { OnMount } from "@monaco-editor/react";
 import type { SearchResponse, SearchResult } from "../search/types.js";
 import { sourcePositionAtOffset } from "./layout.js";
 import type { NavigationRequest } from "./navigationController.js";
+import { SourceModelContentGuard } from "../editor/SourceModelContentGuard.js";
 
 interface EditorStateEffectsOptions {
   editorRef: MutableRefObject<Parameters<OnMount>[0] | null>;
@@ -23,6 +24,7 @@ interface EditorStateEffectsOptions {
 }
 
 export function useEditorStateEffects(options: EditorStateEffectsOptions): void {
+  const contentGuard = useRef(new SourceModelContentGuard());
   useLayoutEffect(() => {
     if (!options.sourceEditorVisible || options.sourceModelPath.current !== options.activePath) options.sourceModelPath.current = undefined;
   }, [options.sourceEditorVisible, options.activePath]);
@@ -39,7 +41,7 @@ export function useEditorStateEffects(options: EditorStateEffectsOptions): void 
     const applyWhenReady = () => {
       const editor = options.editorRef.current;
       const model = editor?.getModel();
-      if (!editor || !editor.getDomNode()?.isConnected || !model || model.getValue().replace(/\r\n?/g, "\n") !== options.activeTab!.content.replace(/\r\n?/g, "\n")) {
+      if (!editor || !editor.getDomNode()?.isConnected || !model || !contentGuard.current.matches(model, options.activeTab!.content)) {
         if (attempts++ < 20) frame = requestAnimationFrame(applyWhenReady);
         return;
       }

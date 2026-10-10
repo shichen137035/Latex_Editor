@@ -5,7 +5,7 @@ import type { ContentProperty, FilterEvaluation, FilterGroupId, FilterOptions, F
 
 const sectionTypes = new Set(["chapter", "section", "subsection", "subsubsection", "paragraph"]);
 
-function blockType(node: PreviewNode): string { return node.kind === "content" ? "paragraph" : node.environmentId.replace(/-star$/, ""); }
+function blockType(node: PreviewNode): string { return node.kind === "content" ? `content:${node.contentType}` : node.environmentId.replace(/-star$/, ""); }
 function propertyMatches(property: ContentProperty, raw: string): boolean {
   if (property === "hasMath") return /(?<!\\)\$|(?<!\\)\\[([]|(?<!\\)\\begin\s*\{(?:equation|align|gather|multline|displaymath|math|eqnarray)\*?\}/.test(raw);
   if (property === "hasCitation") return /(?<!\\)\\[A-Za-z]*cite[A-Za-z]*\*?\s*(?:\[[^\]]*\]\s*)*\{/.test(raw);
@@ -48,7 +48,7 @@ export class FilterEngine {
     const unmatched = new Set<string>();
     const hasConditions = query.blockTypes.length + query.locations.length + query.files.length + query.properties.length > 0;
     const locationIds = locationIndex(nodes, fileId).ids;
-    const visit = (node: PreviewNode, locations: string[], inheritedMatch = false): boolean => {
+    const visit = (node: PreviewNode, locations: string[], inheritedMatch = false, inheritedTypeExclusion = false): boolean => {
       const locationId = locationIds.get(node.id);
       const nextLocations = locationId ? [...locations, locationId] : locations;
       const raw = maskLatexComments(source.slice(node.source.startOffset, node.source.endOffset));
@@ -62,11 +62,12 @@ export class FilterEngine {
       // An included structural block owns the content below it. Keep that
       // subtree visible even when its child blocks have another type; the
       // filter is selecting the containing block and its contents together.
-      // Do not inherit an exclude rule, otherwise excluding one child type
-      // would accidentally make that child visible through its parent.
+      // Inclusion grants visibility; type exclusions instead deny the whole
+      // subtree and must never be overridden by a matching ancestor.
       const ownsContent = ownMatch && node.kind === "block" && query.blockTypes.length > 0 && query.groupModes.blockType !== "exclude" && query.blockTypes.includes(blockType(node));
+      const typeExcluded = query.enabled && (inheritedTypeExclusion || query.blockTypes.length > 0 && query.groupModes.blockType === "exclude" && query.blockTypes.includes(blockType(node)));
       const excluded = query.enabled && (
-        query.blockTypes.length > 0 && query.groupModes.blockType === "exclude" && query.blockTypes.includes(blockType(node)) ||
+        typeExcluded ||
         query.locations.length > 0 && query.groupModes.location === "exclude" && query.locations.some(id => nextLocations.includes(id)) ||
         !fileMatchesFilter(fileId, query) ||
         query.properties.length > 0 && query.groupModes.properties === "exclude" && query.properties.every(property => propertyMatches(property, raw))
@@ -74,7 +75,7 @@ export class FilterEngine {
       const direct = !excluded && (inheritedMatch || ownMatch);
       if (direct) matches.add(node.id);
       let descendantMatch = false;
-      if (node.kind === "block") for (const child of node.children) descendantMatch = visit(child, nextLocations, !excluded && (inheritedMatch || ownsContent)) || descendantMatch;
+      if (node.kind === "block") for (const child of node.children) descendantMatch = visit(child, nextLocations, !excluded && (inheritedMatch || ownsContent), typeExcluded) || descendantMatch;
       if (!direct && descendantMatch) context.add(node.id);
       return direct || descendantMatch;
     };

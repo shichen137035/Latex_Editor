@@ -36,7 +36,7 @@ async function run() {
   await until('!!document.querySelector(".directory-project-row")', "project directory");
   await click(".directory-project-row");
   await until('!!document.querySelector(".workbench")', "workbench");
-  await click('.activity-bar button[title="History"]');
+  await click('.activity-bar button[title^="History"]');
   await until('!!document.querySelector(".project-history-panel")', "history sidebar");
   await click(".history-create button:first-child");
   await until('!!document.querySelector(".history-modal")', "version editor");
@@ -50,7 +50,7 @@ async function run() {
   console.log("PASS version creation through History sidebar");
 
   await evaluate(`window.latexEditor.files.write(${JSON.stringify(project.id)}, "main.tex", "second\\n")`);
-  await click('.history-heading button[title="Create snapshot"]');
+  await click('.history-toolbar-target button[title="Create snapshot"]');
   await until('document.querySelectorAll(".history-entry").length >= 2', "manual snapshot");
   await click('.history-entry .history-dot.version');
   await until('!!document.querySelector(".history-details .history-file")', "version comparison");
@@ -82,7 +82,7 @@ async function run() {
   await until(`window.latexEditor.files.read(${JSON.stringify(project.id)}, "main.tex").then(file => file.content === "second\\n")`, "selected-file restore");
   console.log("PASS metadata-only promotion and selected-file restore");
 
-  await click('.history-heading button[title="Snapshot settings"]');
+  await click('.history-toolbar-target button[title="Snapshot settings"]');
   await until('Array.from(document.querySelectorAll(".preferences-dialog [data-setting]")).some(element => element.dataset.setting === "history.autoSnapshot")', "snapshot settings");
   await evaluate('document.querySelectorAll(".settings-level-switch button")[1].click()');
   await until('Array.from(document.querySelectorAll("[data-setting]")).some(element => element.dataset.setting === "history.intervalMinutes")', "advanced snapshot interval");

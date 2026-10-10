@@ -1,7 +1,7 @@
 import { t } from "../i18n/index.js";
 import "./color-token-input.css";
 
-function normalizePickerColor(value: string): string {
+export function normalizePickerColor(value: string): string {
   let color = value.trim();
   const variable = color.match(/^var\((--[\w-]+)(?:\s*,\s*([^)]*))?\)$/);
   if (variable) color = variable[1] && typeof document !== "undefined" ? getComputedStyle(document.documentElement).getPropertyValue(variable[1]).trim() || variable[2] || "" : variable[2] || "";

@@ -3,6 +3,10 @@
 .history-heading strong { flex:1; font-size:12px; letter-spacing:.08em; text-transform:uppercase; }
 .history-heading > button:first-of-type { margin-left:auto; }.history-heading button, .history-storage button { padding:4px 7px; border-radius:5px; color:var(--color-primary); }
 .history-heading button:hover, .history-storage button:hover { background:var(--color-bg-hover); }
+.history-toolbar-target, .history-toolbar-actions { display: flex; align-items: center; gap: 2px; }
+.history-toolbar-actions button { width: 27px; height: 27px; display: grid; place-items: center; padding: 0; border-radius: 6px; color: var(--color-text-secondary); }
+.history-toolbar-actions button:hover:not(:disabled) { background: var(--color-bg-hover); color: var(--color-primary); }
+.history-toolbar-actions button:disabled { opacity: .35; cursor: not-allowed; }
 .history-create { display:flex; gap:7px; padding:10px; }
 .history-create button { flex:1; padding:8px 5px; border:1px solid var(--color-border); border-radius:7px; background:var(--color-bg-panel); color:var(--color-primary); font-size:11px; }
 .history-create button:first-child { background:var(--color-primary); color:#fff; border-color:var(--color-primary); }

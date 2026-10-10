@@ -84,6 +84,7 @@ function ProjectDirectory({ projects, onProjectsChange, onOpen, onOpenLibrary, s
   });
   const [name, setName] = useState("");
   const [parentPath, setParentPath] = useState("");
+  useEffect(() => { if (createOpen) setParentPath(settings.global("defaultProjectDirectory")); }, [createOpen]);
   const [baseResource, setBaseResource] = useState("default");
   const [extraResources, setExtraResources] = useState<string[]>([]);
   const [busy, setBusy] = useState(false);

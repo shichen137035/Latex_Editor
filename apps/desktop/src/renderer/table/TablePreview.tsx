@@ -49,6 +49,7 @@ export function TablePreview({ source, renderCell, onChange, onSelect, captionCo
   currentSource.current = source;
   const drag = useRef<Point | undefined>(undefined);
   const dragged = useRef(false);
+  const pointerBlurDraft = useRef<Draft | undefined>(undefined);
   const input = useRef<HTMLTextAreaElement>(null);
   const shell = useRef<HTMLElement>(null);
   const [notice, setNotice] = useState("");
@@ -78,12 +79,19 @@ export function TablePreview({ source, renderCell, onChange, onSelect, captionCo
     onChange(next);
   };
   const commit = () => publish(flush());
+  const commitRef = useRef(commit);
+  commitRef.current = commit;
   useUnsavedChanges({ hasChanges: () => !!draft.current && patchTableSource(currentSource.current, { cell: { ...draft.current, content: draft.current.value } }) !== currentSource.current, commit });
   useEffect(() => {
     input.current?.focus();
   }, [editing?.row, editing?.column]);
   useEffect(() => {
-    const release = () => { drag.current = undefined; };
+    const release = () => {
+      drag.current = undefined;
+      const pending = pointerBlurDraft.current;
+      pointerBlurDraft.current = undefined;
+      if (pending) window.setTimeout(() => { if (draft.current === pending) commitRef.current(); }, 0);
+    };
     window.addEventListener("pointerup", release);
     window.addEventListener("pointercancel", release);
     return () => { window.removeEventListener("pointerup", release); window.removeEventListener("pointercancel", release); };
@@ -144,8 +152,7 @@ export function TablePreview({ source, renderCell, onChange, onSelect, captionCo
       <button disabled={!full || !area} onClick={() => area && run(value => insertTableColumn(value, area.right, true))}>{t("ui.TablePreview.column_right")}</button>
       <button disabled={!full || !area || table.tabular.columns.length <= 1} onClick={() => area && run(value => deleteTableColumn(value, area.left))}>{t("ui.TableInspector.delete_column")}</button>
       <button disabled={!full || !area || merged || (area.top === area.bottom && area.left === area.right)} onClick={() => area && run(value => mergeTableCells(value, area.top, area.left, area.bottom, area.right))}>{t("ui.TablePreview.merge")}</button>
-      <button disabled={!full || !area || !merged} onClick={() => area && run(value => splitTableCells(value, area.top, area.left, area.bottom, area.right))}>{t("ui.TablePreview.split")}</button>
-      {!expanded && configuration.behavior.allowExpandedEditor && <button type="button" onClick={open}>{t("table.expand")}</button>}
+      <button title={t("table.splitHint")} disabled={!full || !area || !merged} onClick={() => area && run(value => splitTableCells(value, area.top, area.left, area.bottom, area.right))}>{t("ui.TablePreview.split")}</button>
     </div>;
   const content = <figure ref={shell} style={previewSizingStyle(configuration.sizing)} className={`structured-table style-${table.tabular.style} alignment-${table.alignment}${expanded ? " table-expanded" : ""}`}
     onClick={event => event.stopPropagation()} onDoubleClick={event => event.stopPropagation()}>
@@ -160,8 +167,8 @@ export function TablePreview({ source, renderCell, onChange, onSelect, captionCo
         onPointerDown={event => {
           if (event.button !== 0 || (event.target as Element).closest("textarea,button")) return;
           if (cellScrollbarHit(event)) return;
+          pointerBlurDraft.current = draft.current;
           event.preventDefault(); event.stopPropagation();
-          commit();
           dragged.current = event.shiftKey && !!selection;
           const anchor = event.shiftKey && selection ? selection.anchor : { row: cell.row, column: cell.column };
           drag.current = event.shiftKey ? undefined : anchor;
@@ -173,9 +180,10 @@ export function TablePreview({ source, renderCell, onChange, onSelect, captionCo
           event.stopPropagation();
           if (cellScrollbarHit(event)) return;
           if (dragged.current) return;
-          if (!configuration.behavior.inlineEditable) return;
+          if (!configuration.behavior.inlineEditable) { commit(); return; }
           if (onEditSource) { commit(); onEditSource(); return; }
-          if (table.tabular.editableLevel === "source-only") return;
+          if (table.tabular.editableLevel === "source-only") { commit(); return; }
+          commit();
           setSelection(cellRange(cell));
           edit({ row: cell.row, column: cell.column, value: cell.content });
           setSelectionDetail({ kind: "cell", row: cell.row, column: cell.column });
@@ -185,7 +193,11 @@ export function TablePreview({ source, renderCell, onChange, onSelect, captionCo
           ? <textarea ref={input} autoFocus wrap="off" rows={Math.min(5, Math.max(2, editing.value.split("\n").length))} aria-label={t("ui.TablePreview.row_column", { value1: cell.row + 1, value2: cell.column + 1 })} value={editing.value}
             onClick={event => event.stopPropagation()} onPointerDown={event => event.stopPropagation()}
             onChange={event => edit({ ...editing, value: event.target.value })}
-            onBlur={() => { if (draft.current?.row === cell.row && draft.current.column === cell.column) commit(); }}
+            onBlur={() => {
+              const current = draft.current;
+              if (pointerBlurDraft.current === current) return;
+              if (current?.row === cell.row && current.column === cell.column) commit();
+            }}
             onKeyDown={event => {
               event.stopPropagation();
               if (event.nativeEvent.isComposing) return;

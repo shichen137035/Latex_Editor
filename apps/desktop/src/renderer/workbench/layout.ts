@@ -8,6 +8,8 @@ export interface PersistedLayout {
   splitRatio: number;
   bottomPanelHeight: number;
   sidebarVisible: boolean;
+  filesCollapsed?: boolean;
+  outlineCollapsed?: boolean;
   mode: "single" | "split";
   singlePane: PaneType;
   leftPane: "source" | "preview";
@@ -16,7 +18,7 @@ export interface PersistedLayout {
 
 export const defaultLayout: PersistedLayout = {
   sidebarWidth: 280, fileTreeHeight: 330, splitRatio: 52, bottomPanelHeight: 220,
-  sidebarVisible: true, mode: "split", singlePane: "source", leftPane: "source", rightPane: "pdf"
+  sidebarVisible: true, filesCollapsed: false, outlineCollapsed: false, mode: "split", singlePane: "source", leftPane: "source", rightPane: "pdf"
 };
 
 export function restoreLayout(): PersistedLayout {
@@ -29,6 +31,8 @@ export function restoreLayout(): PersistedLayout {
     splitRatio: number(stored.splitRatio, defaultLayout.splitRatio, 28, 72),
     bottomPanelHeight: number(stored.bottomPanelHeight, defaultLayout.bottomPanelHeight, 120, 420),
     sidebarVisible: typeof stored.sidebarVisible === "boolean" ? stored.sidebarVisible : defaultLayout.sidebarVisible,
+    filesCollapsed: typeof stored.filesCollapsed === "boolean" ? stored.filesCollapsed : false,
+    outlineCollapsed: typeof stored.outlineCollapsed === "boolean" ? stored.outlineCollapsed : false,
     mode: stored.mode === "single" || stored.mode === "split" ? stored.mode : defaultLayout.mode,
     singlePane: stored.singlePane === "source" || stored.singlePane === "preview" || stored.singlePane === "pdf" ? stored.singlePane : defaultLayout.singlePane,
     leftPane: stored.leftPane === "source" || stored.leftPane === "preview" ? stored.leftPane : defaultLayout.leftPane,

@@ -1,5 +1,7 @@
 /** 稳定的机器可读错误码；CLI/未来 IPC 不应依赖本地化 message。 */
 export * from "./settings.js";
+export * from "./theme-colors.js";
+export * from "./settings-presets.js";
 export * from "./spellcheck.js";
 export * from "./block-graph.js";
 export * from "./document-structure.js";
@@ -166,6 +168,17 @@ export interface ProjectTreeNode {
   relativePath: string;
   kind: "file" | "directory" | "symlink";
   children?: ProjectTreeNode[];
+}
+
+export interface ProjectPdfDocument {
+  /** TeX path for compiled documents; PDF path for standalone PDF resources. */
+  id: string;
+  pdfFile: string;
+  syncFile?: string;
+  sourceFile?: string;
+  /** Root source and its static input/include files. */
+  sourceFiles: string[];
+  available: boolean;
 }
 
 export type ImagePreviewError = "FILE_NOT_FOUND" | "UNSUPPORTED_FORMAT" | "FAILED_TO_DECODE" | "PDF_RENDER_FAILED" | "PERMISSION_DENIED" | "PATH_OUTSIDE_PROJECT";

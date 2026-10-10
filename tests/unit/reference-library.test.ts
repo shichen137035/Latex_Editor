@@ -6,6 +6,25 @@ import { citationKeyIdentity, citationOccurrences, isValidCitationKey, parseBibt
 import { ReferenceLibraryRepository } from "../../apps/desktop/src/main/references.js";
 
 describe("reference library", () => {
+  it("updates tags independently, keeping BibTeX, fields and favorites intact", async () => {
+    const root = await mkdtemp(join(tmpdir(), "texweave-reference-tags-"));
+    const repository = new ReferenceLibraryRepository(root);
+    try {
+      await repository.initialize();
+      const source = "@book{paper, title={Original}}";
+      const entry = await repository.saveEntry({ citationKey: "paper", entryType: "book", fields: { title: "Original" }, rawBibtex: source, favorite: true });
+      const tag = repository.createTag("Methods");
+      const updated = repository.setEntryTags(entry.id, [" methods ", "Methods", "New tag"]);
+      expect(updated.tags.sort()).toEqual([tag.name, "New tag"].sort());
+      expect(updated.fields).toEqual(entry.fields);
+      expect(updated.rawBibtex).toBe(source);
+      expect(updated.favorite).toBe(true);
+      expect(repository.snapshot().tags.map(item => item.name)).toContain("New tag");
+      expect(repository.setEntryTags(entry.id, []).tags).toEqual([]);
+      expect(repository.snapshot().tags).toHaveLength(2);
+      expect(() => repository.setEntryTags("missing", ["X"])).toThrow("not found");
+    } finally { repository.close(); await rm(root, { recursive: true, force: true }); }
+  });
   it("rejects invalid library keys, missing link targets, and conflicting project aliases", async () => {
     const root = await mkdtemp(join(tmpdir(), "texweave-reference-links-"));
     const repository = new ReferenceLibraryRepository(root);

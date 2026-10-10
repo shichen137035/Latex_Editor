@@ -35,6 +35,20 @@ export const settings = {
     } catch (reason) { error = reason instanceof Error ? reason.message : String(reason); publish(); }
   },
   reset(key: PreferenceKey, scope: "global" | "project" = "global") { return settings.set(key, undefined, scope); },
+  async applyPreset(id: string, scope: "global" | "project" = "global") {
+    try {
+      const target = scope === "project" ? projectId : undefined;
+      if (scope === "project" && !target) throw new Error(t("ui.service.no_active_project"));
+      const next = await window.latexEditor!.settings.applyPreset(id, target);
+      snapshot = target ? next : { ...snapshot, global: next.global, ...(next.toolchain ? { toolchain: next.toolchain } : {}) };
+      error = ""; publish();
+      window.dispatchEvent(new Event("texweave-themes-changed"));
+    } catch (reason) {
+      await settings.load(projectId);
+      error = reason instanceof Error ? reason.message : String(reason); publish();
+      throw reason;
+    }
+  },
   async detect(manual?: "directory" | "executable") {
     try {
       const toolchain = await window.latexEditor!.settings.detectToolchain(manual);

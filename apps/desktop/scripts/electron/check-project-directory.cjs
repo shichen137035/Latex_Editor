@@ -23,7 +23,8 @@ async function until(script, label) {
     if (await evaluate(script)) return;
     await delay(50);
   }
-  throw new Error(`Timed out: ${label}`);
+  const diagnostics = label === 'native page scrolling' ? await evaluate(`(() => { const list=document.querySelector('.directory-project-list'), rect=list.getBoundingClientRect(); return {viewport:[innerWidth,innerHeight],scrollTop:list.scrollTop,scrollHeight:list.scrollHeight,clientHeight:list.clientHeight,rect:{x:rect.x,y:rect.y,width:rect.width,height:rect.height},rows:list.querySelectorAll('.directory-project-row').length,lastWheel:window.__lastWheel}; })()`) : undefined;
+  throw new Error(`Timed out: ${label}${diagnostics ? `\nDiagnostics: ${JSON.stringify(diagnostics)}` : ''}`);
 }
 async function register(name, index) {
   const folder = join(folders, name); mkdirSync(folder);
@@ -45,9 +46,10 @@ async function geometry() {
   return evaluate(`(() => {
     const list=document.querySelector('.directory-project-list'), head=document.querySelector('.directory-table-head'), row=list.querySelector('.directory-project-row');
     const rect=element=>element.getBoundingClientRect();
+    const search=rect(document.querySelector('.directory-global-search')), workspace=rect(document.querySelector('.directory-workspace-button'));
     return { overflow: list.scrollWidth-list.clientWidth, outer: document.documentElement.scrollHeight-window.innerHeight,
       aligned: Math.abs(rect(head.children[2]).x-rect(row.children[2]).x), headerFont: parseFloat(getComputedStyle(head).fontSize),
-      rowHeight: rect(row).height, topbarOverlap: rect(document.querySelector('.directory-global-search')).right > rect(document.querySelector('.directory-workspace-button')).left,
+      rowHeight: rect(row).height, topbarOverlap: search.left < workspace.right && search.right > workspace.left && search.top < workspace.bottom && search.bottom > workspace.top,
       background: getComputedStyle(document.querySelector('.directory-board')).pointerEvents };
   })()`);
 }
@@ -70,9 +72,12 @@ async function run() {
   assert.equal(await evaluate('document.querySelectorAll(".directory-project-row").length'), 10);
   assert.equal(await evaluate('document.querySelectorAll(".directory-pagination button[aria-current=page]")[0].textContent'), '1');
   assert.equal(await evaluate('document.querySelector(".directory-page-previous").disabled'), true);
+  page.setContentSize(1280, 600); await delay(150);
   const point = await evaluate(`(() => { const r=document.querySelector('.directory-project-list').getBoundingClientRect();return {x:Math.round(r.right-45),y:Math.round(r.top+r.height/2)}; })()`);
   const headerTop = await evaluate('document.querySelector(".directory-table-head").getBoundingClientRect().top');
-  for (let i=0;i<12;i++) { page.webContents.sendInputEvent({type:'mouseWheel',...point,deltaY:-400,deltaX:0,canScroll:true}); await delay(25); }
+  await evaluate('window.__lastWheel = null; document.addEventListener("wheel", event => { window.__lastWheel = {deltaY:event.deltaY,defaultPrevented:event.defaultPrevented,target:event.target?.className,isTrusted:event.isTrusted}; }, true)');
+  page.focus(); page.webContents.sendInputEvent({type:'mouseMove',...point});
+  for (let i=0;i<12;i++) { page.webContents.sendInputEvent({type:'mouseWheel',...point,deltaY:-110,deltaX:0}); await delay(25); }
   await until('document.querySelector(".directory-project-list").scrollTop > 0', 'native page scrolling');
   assert.equal(await evaluate('document.querySelector(".directory-table-head").getBoundingClientRect().top'), headerTop);
   measurements = await geometry(); assert.ok(measurements.aligned < 2); assert.ok(measurements.outer < 2); assert.ok(measurements.overflow < 2);
@@ -92,7 +97,9 @@ async function run() {
   await until('document.querySelectorAll(".directory-project-row.selected").length === 3', 'page-scoped select all');
   assert.equal(await evaluate('document.querySelectorAll(".directory-project-row .directory-icon-selected").length'), 3);
   await capture('home-selected.png');
-  await evaluate(`window.confirm=()=>true;Array.from(document.querySelectorAll('.directory-bulk-bar button')).find(button=>button.textContent.includes('Remove from list')).click()`);
+  await evaluate(`Array.from(document.querySelectorAll('.directory-bulk-bar button')).find(button=>button.textContent.includes('Remove from list')).click()`);
+  await until('document.querySelectorAll(".project-removal-options button").length === 3', 'bulk removal retention choices');
+  await evaluate('document.querySelector(".project-removal-options button").click()');
   await until('document.querySelector(".directory-pagination [aria-current=page]").textContent === "6" && document.querySelectorAll(".directory-project-row").length === 10', 'last-page removal clamps pagination');
   await evaluate('document.querySelector(".directory-page-previous").click()');
   await until('document.querySelector(".directory-pagination [aria-current=page]").textContent === "5"', 'previous page');
@@ -113,8 +120,10 @@ async function run() {
   await until('document.querySelectorAll(".directory-project-row").length === 0', 'empty recent filter');
   await evaluate('document.querySelectorAll(".directory-tabs button")[0].click()');
   await until('document.querySelectorAll(".directory-project-row").length === 10', 'all projects');
-  await evaluate(`document.querySelector('.directory-view-controls select').value='name';document.querySelector('.directory-view-controls select').dispatchEvent(new Event('change',{bubbles:true}))`);
-  await until('document.querySelector(".directory-view-controls select").value === "name"', 'sort selection');
+  await evaluate('document.querySelector(".directory-sort-trigger").click()');
+  await until('!!document.querySelector(".directory-sort-options [role=menuitemradio]")', 'sort options');
+  await evaluate(`Array.from(document.querySelectorAll('.directory-sort-options [role=menuitemradio]')).find(button => button.textContent.trim() === 'Name').click()`);
+  await until('document.querySelector(".directory-sort-trigger")?.textContent.includes("Name")', 'sort selection');
   const name = await evaluate('document.querySelector(".directory-project-row .directory-name-text strong").textContent');
   await evaluate('document.querySelector(".directory-direction").click()');
   await until(`document.querySelector('.directory-project-row .directory-name-text strong').textContent === ${JSON.stringify(name)}`, 'pinned project remains first when sorting');

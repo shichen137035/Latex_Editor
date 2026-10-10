@@ -1,15 +1,12 @@
 import type { CSSProperties } from "react";
-import { environmentAccent } from "./environment-colors.js";
+import { environmentColorRoles } from "./environment-colors.js";
+import { semanticForeground } from "../themes/semanticColors.js";
 import type { EnvironmentDefinition } from "./types.js";
 import { environmentTitleTypography } from "./environment-typography.js";
 import { environmentPreview, previewSizingStyle } from "./environment-preview.js";
 
-function cssValue(value: string | undefined, fallback: string): string {
-  return value ? (value.startsWith("--") ? `var(${value})` : value) : `var(${fallback})`;
-}
-
 export function environmentBlockStyle(environmentId: string, family: string, definition?: EnvironmentDefinition): CSSProperties {
-  const accent = environmentAccent(environmentId, definition);
+  const colors = environmentColorRoles(environmentId, definition);
   const typography = environmentTitleTypography(environmentId, family, definition);
   return {
     ...previewSizingStyle(environmentPreview(environmentId, definition).sizing),
@@ -18,15 +15,12 @@ export function environmentBlockStyle(environmentId: string, family: string, def
     "--preview-title-weight": typography.titleFontWeight,
     "--preview-title-leading": typography.titleLineHeight,
     "--preview-title-spacing": `${typography.titleLetterSpacing}em`,
-    "--block-accent": accent,
-    "--block-fill": cssValue(definition?.style.fillToken, "--env-generic-fill"),
-    "--block-border": cssValue(definition?.style.borderToken, "--env-border-default"),
-    "--block-selected-border": cssValue(definition?.style.selectedBorderToken, "--env-border-selected"),
-    "--block-label-bg": definition?.style.labelBackgroundToken === `--env-${family}-label-bg`
-      ? `color-mix(in srgb, ${accent} 10%, var(--color-bg-panel))`
-      : cssValue(definition?.style.labelBackgroundToken, "--env-generic-label-bg"),
-    "--block-label-text": definition?.style.labelTextToken === `--env-${family}-label-text`
-      ? accent
-      : cssValue(definition?.style.labelTextToken, "--env-generic-label-text")
+    "--block-accent": colors.accent,
+    "--block-fill": colors.fill,
+    "--block-border": colors.border,
+    "--block-selected-border": colors.selectedBorder,
+    "--block-label-bg": colors.labelBackground,
+    "--block-label-text": colors.labelText,
+    "--block-content-text": definition?.style.colorMode === "fixed" ? semanticForeground(colors.fill) : "var(--color-text-primary)"
   } as CSSProperties;
 }

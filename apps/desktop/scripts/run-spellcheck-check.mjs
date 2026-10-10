@@ -13,7 +13,10 @@ const projects = resolve(root, "projects");
 app.setPath("userData", resolve(root, "user-data"));
 const delay = (ms) => new Promise((done) => setTimeout(done, ms));
 let page;
-const evaluate = (source) => page.webContents.executeJavaScript(source, true);
+const evaluate = async (source) => {
+  try { return await page.webContents.executeJavaScript(source, true); }
+  catch (error) { console.error("Renderer operation:", source); throw error; }
+};
 
 async function until(source, label, attempts = 120) {
   for (let attempt = 0; attempt < attempts; attempt += 1) {
@@ -24,7 +27,7 @@ async function until(source, label, attempts = 120) {
 }
 
 async function click(selector, button = "left") {
-  const point = await evaluate(`(() => { const el = document.querySelector(${JSON.stringify(selector)}); if (!el) throw new Error("Missing selector: ${selector}"); const rect = el.getBoundingClientRect(); return { x: Math.round(rect.x + rect.width / 2), y: Math.round(rect.y + rect.height / 2) }; })()`);
+  const point = await evaluate(`(() => { const selector = ${JSON.stringify(selector)}; const el = document.querySelector(selector); if (!el) throw new Error("Missing selector: " + selector); el.scrollIntoView({block:"center"}); const rect = el.getBoundingClientRect(); return { x: Math.round(rect.x + rect.width / 2), y: Math.round(rect.y + rect.height / 2) }; })()`);
   page.webContents.sendInputEvent({ type: "mouseDown", ...point, button, clickCount: 1 });
   page.webContents.sendInputEvent({ type: "mouseUp", ...point, button, clickCount: 1 });
   await delay(150);
@@ -52,8 +55,8 @@ async function run() {
   const project = await evaluate(`window.latexEditor.projects.create({name:"spellcheck-test",parentPath:${JSON.stringify(projects)}})`);
   await evaluate(`window.latexEditor.files.write(${JSON.stringify(project.id)}, "main.tex", ${JSON.stringify("\\documentclass{article}\n\\begin{document}\nThis is a recieve test.\n\\end{document}\n")})`);
   await page.webContents.reload();
-  await until("!!document.querySelector('.project-row')", "project directory");
-  await click(".project-row");
+  await until("!!document.querySelector('.directory-project-row')", "project directory");
+  await click(".directory-project-row");
   await until("!!document.querySelector('.editor-surface .monaco-editor')", "source editor");
   await click(".editor-surface .monaco-editor");
   page.webContents.sendInputEvent({ type: "keyDown", keyCode: "A", modifiers: ["control"] });
@@ -77,7 +80,7 @@ async function run() {
   assert.equal(style.color, "rgb(212, 76, 85)");
   console.log("Underline style:", style);
   await writeFile(resolve(root, "source-spelling.png"), (await page.webContents.capturePage()).toPNG());
-  await click(".spell-context-menu button:nth-last-child(2)");
+  await evaluate('Array.from(document.querySelectorAll(".spell-context-menu button")).find(button => button.textContent === "Ignore").click()');
   await until("!document.querySelector('.spell-error')", "Ignore removes underline");
   console.log("PASS Ignore removes the underline");
 
@@ -88,7 +91,7 @@ async function run() {
   await until("!!document.querySelector('.spell-error')", "custom word underline");
   await click(".spell-error", "right");
   await until("!!document.querySelector('.spell-context-menu')", "custom word menu");
-  await click(".spell-context-menu button:last-child");
+  await evaluate('Array.from(document.querySelectorAll(".spell-context-menu button")).find(button => button.textContent === "Add to dictionary").click()');
   await until("!document.querySelector('.spell-error')", "dictionary removes underline");
   assert.ok((await evaluate("window.latexEditor.spellcheck.dictionaryWords()")).includes("texweavescientificword"));
   const { OfflineSpellCheckService } = require("../dist/main/spellcheck.js");
@@ -106,8 +109,11 @@ async function run() {
   await until("!!document.querySelector('.preview-content-region')", "Visual preview");
   await click(".preview-content-region");
   await until("!!document.querySelector('.preview-local-editor .monaco-editor')", "inline source editor");
+  await evaluate('new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))');
+  await evaluate('document.querySelector(".preview-local-editor .monaco-editor textarea").focus()');
   page.webContents.sendInputEvent({type:"keyDown",keyCode:"A",modifiers:["control"]});
   page.webContents.sendInputEvent({type:"keyUp",keyCode:"A",modifiers:["control"]});
+  await delay(100);
   await page.webContents.insertText("This is a recieve and mispelled test.");
   await until("!!document.querySelector('.preview-local-editor .spell-error')", "Visual inline underline");
   assert.equal(await evaluate("document.querySelector('.preview-local-editor .spell-error').textContent"), "mispelled", "Ignore persists when switching to Visual");
@@ -121,14 +127,20 @@ async function run() {
   assert.ok(await evaluate("document.querySelector('.preview-local-editor .view-lines').textContent.includes('misspelled')"));
   console.log("PASS Visual inline editing shows underline and applies correction");
 
-  await click('.activity-bar button[title="Settings"]');
+  page.webContents.sendInputEvent({ type: "keyDown", keyCode: ",", modifiers: ["control"] });
+  page.webContents.sendInputEvent({ type: "keyUp", keyCode: ",", modifiers: ["control"] });
+  await delay(100);
   await until("!!document.querySelector('.preferences-dialog')", "settings");
-  await click('[data-section="spellcheck"]');
-  await until("document.querySelector('.spellcheck-settings').textContent.includes('Hunspell (nspell)')", "provider settings");
+  await click('[data-section="editor"]');
+  await click('.settings-manager-entry-open[aria-label="Dictionary manager"]');
+  await until("document.querySelector('.spellcheck-settings')?.textContent.includes('Hunspell (nspell)')", "provider settings");
   assert.ok(await evaluate("document.querySelector('.spellcheck-settings').textContent.includes('en-GB')"));
-  await click('.preferences-dialog > header > button');
-  await click('.spell-status-control > button');
-  await click('.spell-status-menu button:last-child');
+  await click('.settings-manager-return');
+  await until('!!document.querySelector(".settings-dialog-header")', "settings home");
+  await click('.settings-close');
+  await evaluate('document.querySelector(".spell-status-control > button").click()');
+  await until('!!document.querySelector(".spell-status-menu")', "spell mode menu");
+  await evaluate('document.querySelector(".spell-status-menu button:last-child").click()');
   await until("document.querySelector('.spell-status-control > button').textContent.includes('Off')", "disable control");
   assert.deepEqual(await evaluate("window.latexEditor.spellcheck.checkWords(['recieve'], 'en-US')"), []);
   assert.equal(await evaluate("document.querySelectorAll('.spell-error').length"), 0);

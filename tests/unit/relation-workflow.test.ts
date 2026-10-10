@@ -74,7 +74,7 @@ describe("v0.3.4 relation workflow projection", () => {
     const lemma = DEFAULT_ENVIRONMENTS.find(environment => environment.id === "lemma")!;
     expect(environmentAccent("theorem", theorem)).not.toBe(environmentAccent("lemma", lemma));
     expect(environmentAccent("custom:lemma*", lemma)).toBe(environmentAccent("lemma", lemma));
-    expect(environmentAccent("lemma", { ...lemma, style: { ...lemma.style, accentToken: "#123456" } })).toBe("#123456");
+    expect(environmentAccent("lemma", { ...lemma, style: { ...lemma.style, colorMode: "fixed", accentToken: "#123456" } })).toBe("#123456");
     const custom = environmentAccent("project-note");
     environmentAccent("other-note");
     expect(environmentAccent("project-note")).toBe(custom);

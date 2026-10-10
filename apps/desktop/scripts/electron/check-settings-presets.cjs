@@ -1,0 +1,110 @@
+const { app, BrowserWindow, dialog } = require('electron');
+const { mkdtempSync, writeFileSync, readFileSync } = require('node:fs');
+const { tmpdir } = require('node:os');
+const { join } = require('node:path');
+const assert = require('node:assert/strict');
+const root = mkdtempSync(join(tmpdir(), 'texweave-presets-ui-'));
+app.setPath('userData', join(root, 'profile'));
+const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
+let page;
+const errors = [];
+app.on('web-contents-created', (_event, contents) => contents.on('console-message', ({ level, message }) => {
+  if ((level === 'error' || level === 3) && !message.includes('Canceled: Canceled')) errors.push(message);
+}));
+const evaluate = script => page.webContents.executeJavaScript(script, true);
+async function until(script, name) {
+  for (let i = 0; i < 150; i++) { assert.deepEqual(errors, []); if (await evaluate(script)) return; await delay(50); }
+  throw new Error(`Timed out: ${name}`);
+}
+async function settings() {
+  page.focus();
+  page.webContents.sendInputEvent({ type: 'keyDown', keyCode: ',', modifiers: ['control'] });
+  page.webContents.sendInputEvent({ type: 'keyUp', keyCode: ',', modifiers: ['control'] });
+  await until('!!document.querySelector(".preferences-body")', 'settings');
+  await evaluate('document.querySelectorAll(".settings-level-switch button")[1].click()');
+  await until('!!document.querySelector(".settings-presets-entry")', 'advanced preset entry');
+  await evaluate('document.querySelector(".settings-presets-entry").click()');
+  await until('!!document.querySelector(".settings-preset-dialog")', 'preset settings');
+}
+async function name(value) {
+  await evaluate(`(() => { const input = document.querySelector('.settings-presets-fields input'); Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set.call(input, ${JSON.stringify(value)}); input.dispatchEvent(new Event('input', {bubbles:true})); })()`);
+}
+async function run() {
+  while (!BrowserWindow.getAllWindows().length) await delay(50);
+  page = BrowserWindow.getAllWindows()[0];
+  await until('!!window.latexEditor && !!document.querySelector(".project-directory-v044")', 'home');
+  await settings(); await name('Writing');
+  await evaluate('document.querySelectorAll(".settings-presets-actions button")[0].click()');
+  await until('document.querySelector(".settings-presets [role=status]")?.textContent.includes("Writing") && !document.querySelector(".settings-presets-actions button").disabled', 'save preset');
+  const [preset] = await evaluate('window.latexEditor.settings.listPresets()');
+  assert.equal(preset.name, 'Writing');
+  const exportedPath = join(root, 'preset.json');
+  dialog.showSaveDialog = async () => ({ canceled: false, filePath: exportedPath });
+  dialog.showOpenDialog = async () => ({ canceled: false, filePaths: [exportedPath] });
+  await evaluate('document.querySelectorAll(".settings-presets-actions button")[4].click()');
+  await until('document.querySelector(".settings-presets [role=status]")?.textContent.includes("exported")', 'export JSON');
+  assert.equal(JSON.parse(readFileSync(exportedPath, 'utf8')).kind, 'settings');
+  await evaluate('document.querySelector(".settings-preset-dialog > header button").click(); document.querySelector(".settings-dialog-header .settings-close").click()');
+  await evaluate('window.latexEditor.settings.set("theme","dark")');
+  await evaluate('window.latexEditor.settings.set("fontSize",24)');
+  page.reload();
+  await until('document.documentElement.dataset.theme === "dark" && !!document.querySelector(".project-directory-v044")', 'dark home');
+  await settings();
+  await until('document.querySelectorAll(".settings-presets-fields select option").length === 2', 'saved presets loaded');
+  await evaluate(`(() => { const select = document.querySelector('.settings-presets-fields select'); select.value = ${JSON.stringify(preset.id)}; select.dispatchEvent(new Event('change', {bubbles:true})); })()`);
+  await until('!document.querySelectorAll(".settings-presets-actions button")[1].disabled', 'load enabled');
+  await evaluate('document.querySelectorAll(".settings-presets-actions button")[1].click()');
+  await until('document.documentElement.dataset.theme === "light" && document.querySelector(".settings-presets [role=status]")?.textContent.includes("Loaded")', 'preset applies live');
+  assert.equal((await evaluate('window.latexEditor.settings.get()')).global.fontSize, 15);
+  await delay(250);
+  writeFileSync(join(root, 'settings.png'), (await page.webContents.capturePage()).toPNG());
+  await name('Review');
+  await evaluate('window.confirm = () => true; document.querySelectorAll(".settings-presets-actions button")[2].click()');
+  await until('document.querySelector(".settings-presets [role=status]")?.textContent.includes("Review")', 'update name and preset');
+  assert.deepEqual((await evaluate('window.latexEditor.settings.listPresets()')).map(item => item.name), ['Review']);
+  await until('!document.querySelectorAll(".settings-presets-actions button")[3].disabled', 'delete enabled');
+  await evaluate('document.querySelectorAll(".settings-presets-actions button")[3].click()');
+  await until('document.querySelectorAll(".settings-presets-fields select option").length === 1', 'delete preset');
+  assert.deepEqual(await evaluate('window.latexEditor.settings.listPresets()'), []);
+  assert.equal(await evaluate('document.documentElement.dataset.theme'), 'light');
+  await evaluate('document.querySelectorAll(".settings-presets-actions button")[5].click()');
+  await until('document.querySelectorAll(".settings-presets-fields select option").length === 2', 'import exported JSON');
+  assert.equal((await evaluate('window.latexEditor.settings.listPresets()'))[0].name, 'Writing');
+  await evaluate('document.querySelector(".settings-preset-dialog > header button").click()');
+  await evaluate(`document.querySelector('[data-section="appearance"]').click()`);
+  await evaluate('document.querySelector(".settings-manager-entry-open").click()');
+  await until('!!document.querySelector(".manager-presets-button")', 'manager preset entry');
+  await evaluate('document.querySelector(".manager-presets-button").click()');
+  await until('document.querySelectorAll(".settings-presets-fields select option").length === 1', 'theme preset list is independent');
+  await evaluate('document.querySelectorAll(".settings-presets-actions button")[5].click()');
+  await until('document.querySelector(".settings-presets [role=alert]")?.textContent.includes("another manager")', 'wrong manager JSON rejected');
+  await name('Theme mode');
+  await evaluate('document.querySelectorAll(".settings-presets-actions button")[0].click()');
+  await until('document.querySelector(".settings-presets [role=status]")?.textContent.includes("Theme mode")', 'independent manager preset saved');
+  await until('!document.querySelectorAll(".settings-presets-actions button")[4].disabled', 'manager export enabled');
+  await evaluate('document.querySelectorAll(".settings-presets-actions button")[4].click()');
+  await until('document.querySelector(".settings-presets [role=status]")?.textContent.includes("exported")', 'manager JSON exported');
+  const themeDocument = JSON.parse(readFileSync(exportedPath, 'utf8'));
+  assert.equal(themeDocument.kind, 'themes');
+  assert.deepEqual(Object.keys(themeDocument.preferences), ['theme', 'themeColorProfiles']);
+  await evaluate('document.querySelector(".settings-preset-dialog > header button").click(); document.querySelector(".settings-manager-return").click()');
+  await evaluate(`document.querySelector('[data-section="projectBuild"]').click()`);
+  await evaluate(`document.querySelector('[aria-label="Block environment manager"]').click()`);
+  await until('document.querySelectorAll(".environment-manager-mode button").length === 2', 'block toolbar');
+  assert.equal(await evaluate('document.querySelectorAll(".settings-manager-dialog-header .settings-close").length'), 0);
+  assert.ok(await evaluate(`(() => { const header = document.querySelector('.settings-manager-dialog-header'); const centers = Array.from(header.children).map(item => { const r = item.getBoundingClientRect(); return (r.top + r.bottom) / 2; }); return Math.max(...centers) - Math.min(...centers) < 2; })()`), 'toolbar controls stay on one line');
+  assert.equal(await evaluate('getComputedStyle(document.querySelector(".environment-manager-mode button.active")).color'), 'rgb(255, 255, 255)');
+  await evaluate('document.querySelectorAll(".environment-manager-mode button")[1].click()');
+  assert.equal(await evaluate('document.querySelectorAll(".environment-manager-mode button")[1].getAttribute("aria-pressed")'), 'true');
+  await delay(150);
+  writeFileSync(join(root, 'block-toolbar.png'), (await page.webContents.capturePage()).toPNG());
+  await evaluate('document.querySelector(".settings-manager-return").click()');
+  await evaluate(`document.querySelector('[aria-label="Style resource manager"]').click()`);
+  await until('!!document.querySelector(".style-resources-page")', 'style manager');
+  assert.ok(await evaluate('document.querySelector(".manager-presets-button").disabled'));
+  assert.equal(await evaluate('document.querySelectorAll(".settings-manager-dialog-header h1").length'), 1);
+  assert.deepEqual(errors, []);
+  console.log('PASS preset dialogs and JSON isolation; single-row manager headers, selected mode colors and resource preset placeholder');
+  console.log(`Artifacts: ${root}`);
+}
+app.whenReady().then(() => { require('../../dist/main/index.js'); run().then(() => app.exit(0)).catch(error => { console.error(error); console.error(`Artifacts: ${root}`); app.exit(1); }); });

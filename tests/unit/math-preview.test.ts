@@ -25,6 +25,15 @@ describe("v0.3.1 project math context", () => {
 });
 
 describe("v0.3.1 math node index", () => {
+  it("indexes thousands of formulas while suppressing nested math ranges", () => {
+    const formula = "\\[\\begin{aligned}x&=y\\end{aligned}\\]\n";
+    const source = formula.repeat(10_000);
+    const nodes = parseMathNodes(source);
+    expect(nodes).toHaveLength(10_000);
+    expect(nodes[0]?.kind).toBe("display-bracket");
+    expect(nodes.at(-1)?.end).toBe(source.length - 1);
+  });
+
   it("ignores commented delimiters, including closing delimiters inside active math", () => {
     expect(parseMathNodes(String.raw`% \[x=y\]
 % \begin{equation}x=y\end{equation}`)).toEqual([]);

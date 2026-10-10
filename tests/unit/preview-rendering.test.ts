@@ -7,6 +7,41 @@ import { MathRenderService } from "../../apps/desktop/src/renderer/math/MathRend
 import { MathMacroRegistry } from "../../apps/desktop/src/renderer/math/MathMacroRegistry.js";
 
 describe("v0.6.1 preview render model", () => {
+  it("recognizes balanced section titles and keeps nested references out of the body", () => {
+    const title = String.raw`Proof of Theorem~\ref{thm:identification}`;
+    const source = `\\section{${title}}\nProof body.\n\\subsection*[Short]{A \\textbf{nested {title}}}\nNext body.`;
+    const entries = buildPreviewRenderIndex(parsePreview(source, "main.tex", DEFAULT_ENVIRONMENTS).nodes).entries;
+    const section = entries.find(entry => entry.node.kind === "block" && entry.node.environmentId === "section")?.node;
+    expect(section?.kind).toBe("block");
+    if (!section || section.kind !== "block") throw new Error("Missing section");
+    expect(section.title).toBe(title);
+    expect(section.semanticKind).toBe("structural");
+    expect(section.body.startOffset).toBe(source.indexOf("\nProof body."));
+    expect(section.children.some(node => node.kind === "block" && node.title === String.raw`A \textbf{nested {title}}`)).toBe(true);
+  });
+
+  it("does not create sections from commented, escaped or macro-contained commands", () => {
+    const source = String.raw`% \section{Ignored}
+\newcommand{\fake}{\section{Macro}}
+\\section{Escaped}
+\section{Real \emph{heading}}`;
+    const entries = buildPreviewRenderIndex(parsePreview(source, "main.tex", DEFAULT_ENVIRONMENTS).nodes).entries;
+    const sections = entries.filter(entry => entry.node.kind === "block" && entry.node.environmentId === "section");
+    expect(sections.map(entry => entry.node.kind === "block" ? entry.node.title : "")).toEqual([String.raw`Real \emph{heading}`]);
+  });
+
+  it("treats paragraph headings as structural while keeping their prose independently editable", () => {
+    const source = "\\section{Section}\n\\paragraph{Heading}\nFirst body paragraph.\n\nSecond body paragraph.\n\\begin{theorem}Nested theorem.\\end{theorem}";
+    const document = parsePreview(source, "main.tex", DEFAULT_ENVIRONMENTS);
+    const entries = buildPreviewRenderIndex(document.nodes).entries;
+    const heading = entries.find((entry) => entry.node.kind === "block" && entry.node.environmentId === "paragraph")?.node;
+    expect(heading?.kind).toBe("block");
+    if (!heading || heading.kind !== "block") throw new Error("Missing paragraph heading");
+    expect(heading.semanticKind).toBe("structural");
+    expect(heading.children.filter((node) => node.kind === "content" && node.contentType === "paragraph")).toHaveLength(2);
+    expect(heading.children.some((node) => node.kind === "block" && node.environmentId === "theorem")).toBe(true);
+  });
+
   it("keeps a block's visual identity after an earlier insertion and reuses unchanged subtrees", () => {
     const firstSource = "\\begin{document}\n\\section{One}\nFirst paragraph.\n\\section{Two}\\label{sec:two}\nSecond paragraph.\n\\end{document}";
     const shiftedSource = firstSource.replace("\\section{One}", "\\section{One}\nExtra opening paragraph.");

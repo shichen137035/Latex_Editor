@@ -52,7 +52,7 @@ async function run() {
   await evaluate('document.querySelector(".directory-project-row").click()');
   await until('!!document.querySelector(".preview-content-region")', "Visual preview");
   page.focus();
-  await evaluate(`document.querySelector('.activity-bar button[title="Library"]').click()`);
+  await evaluate(`document.querySelector('.activity-bar button[title^="Library"]').click()`);
   await until('document.querySelector(".project-reference-browser")?.textContent.includes("Local only book") && document.querySelector(".project-reference-browser")?.textContent.includes("Nested paper")', "project bib entries");
   await setInput('.project-reference-browser input', 'Bob');
   await until('document.querySelectorAll(".project-reference-browser .reference-quick-entry").length === 1', "search all project files");

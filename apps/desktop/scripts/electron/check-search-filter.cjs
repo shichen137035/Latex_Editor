@@ -61,6 +61,64 @@ async function run() {
   assert.ok(await evaluate('!!document.querySelector(".structured-preview")'));
   console.log('PASS real worker search and first-result navigation in Visual mode');
 
+  assert.ok(await evaluate('!document.querySelector(".filter-switch input").checked'));
+  await evaluate('document.querySelector(".sidebar-heading .search-section-collapse").click()');
+  assert.ok(await evaluate('document.querySelector(".advanced-search-main").dataset.sectionCollapsed === "true" && document.querySelector(".advanced-search-input").offsetHeight === 0'));
+  await press('F', ['control']);
+  await until('document.querySelector(".advanced-search-input").offsetHeight > 0', 'search shortcut expands collapsed search');
+  assert.equal(await evaluate('document.querySelector(".advanced-search-input").value'), 'needle');
+  await evaluate('document.querySelector(".filter-panel .search-section-collapse").click()');
+  assert.ok(await evaluate('document.querySelector(".filter-groups").offsetHeight === 0 && !document.querySelector(".filter-switch input").checked'));
+  const filterAtBottom = `(() => { const panel = document.querySelector('.advanced-search-panel').getBoundingClientRect(); const header = document.querySelector('.filter-panel > header').getBoundingClientRect(); return header.height >= 38 && Math.abs(header.bottom - panel.bottom) < 2; })()`;
+  assert.ok(await evaluate(filterAtBottom), 'collapsed filter header stays visible at the bottom');
+  await evaluate('document.querySelector(".sidebar-heading .search-section-collapse").click()');
+  assert.ok(await evaluate(filterAtBottom), 'filter can be expanded even when both sections are collapsed');
+  await evaluate('document.querySelector(".sidebar-heading .search-section-collapse").click()');
+  await evaluate('document.querySelector(".filter-panel .search-section-collapse").click()');
+  assert.ok(await evaluate('document.querySelector(".filter-groups").offsetHeight > 0'), 'filter expands again');
+  console.log('PASS disabled filter default and independent search/filter collapse without losing state');
+
+  const narrowLayout = await evaluate(`(async () => {
+    const sidebar = document.querySelector('.sidebar'), width = sidebar.style.width;
+    const title = document.querySelector('.filter-panel > header > strong'), text = title.textContent;
+    sidebar.style.width = '210px'; title.textContent = 'A deliberately long translated filter title';
+    await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+    const headers = Array.from(sidebar.querySelectorAll('.sidebar-heading'));
+    const controlsFit = headers.every(header => {
+      const box = header.getBoundingClientRect();
+      return Array.from(header.querySelectorAll('button, .filter-switch')).every(control => {
+        const rect = control.getBoundingClientRect();
+        return rect.width > 0 && rect.left >= box.left && rect.right <= box.right;
+      });
+    });
+    const groupControlsFit = Array.from(sidebar.querySelectorAll('.filter-group-mode')).every(control => control.getBoundingClientRect().right <= sidebar.getBoundingClientRect().right);
+    const search = document.querySelector('.advanced-search-main').getBoundingClientRect();
+    const filter = document.querySelector('.filter-panel').getBoundingClientRect();
+    const result = { controlsFit, groupControlsFit, titleTruncated: title.scrollWidth > title.clientWidth, seam: filter.top - search.bottom };
+    sidebar.style.width = width; title.textContent = text;
+    return result;
+  })()`);
+  assert.ok(narrowLayout.controlsFit, 'heading controls stay within a narrow sidebar');
+  assert.ok(narrowLayout.groupControlsFit, 'filter mode buttons stay attached to the right edge');
+  assert.ok(narrowLayout.titleTruncated, 'long titles yield to controls');
+  assert.ok(narrowLayout.seam <= 1.5, 'search and filter share a single thin seam');
+  console.log('PASS narrow sidebar controls, title priority and compact search/filter seam');
+
+  assert.equal(await evaluate('document.querySelectorAll(".filter-group-search input").length'), 4);
+  await setInput('.filter-group-search input', 'EQUATION');
+  await until(`${group('Block Type')}.open && ${group('Block Type')}.querySelectorAll('.filter-choice').length === 1`, 'case-insensitive candidate search opens choices');
+  await clickChoice('Block Type', 'Equation');
+  await setInput('.filter-group-search input', 'section');
+  assert.ok(await evaluate(`${group('Block Type')}.querySelector('summary small').textContent.includes('Equation')`));
+  await setInput('.filter-group-search input', '');
+  await until(`${group('Block Type')}.querySelector('.filter-choice input:checked') !== null`, 'search keeps selected conditions');
+  await clickChoice('Block Type', 'Equation');
+  await setInput('.filter-group-search input', 'EQUATION');
+  await evaluate(`${group('Block Type')}.querySelector('summary strong').click()`);
+  await until(`${group('Block Type')}.open && ${group('Block Type')}.querySelectorAll('.filter-choice').length > 1 && ${group('Block Type')}.querySelector('.filter-group-search input').value === ''`, 'header click reveals all options');
+  await count(4);
+  console.log('PASS default filter search, case-insensitive candidates, selection retention and full option disclosure');
+
   await evaluate('document.querySelector(".filter-switch input").click()'); await count(4);
   await clickChoice('Document Location', 'Two · main.tex'); await count(1);
   await until('Array.from(document.querySelectorAll(".structured-preview .preview-block")).some(el => el.classList.contains("filter-unmatched"))', "Visual location filter matches renderer nodes");

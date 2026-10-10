@@ -1,8 +1,11 @@
+import { buildOutline } from "./outline.js";
+import { readWorkspacePosition, writeWorkspacePosition } from "./workspacePosition.js";
 import { startSnapshotTimer } from "./snapshotTimer.js";
 import { DiffEditor, Editor, type OnMount } from "@monaco-editor/react";
+import type * as Monaco from "monaco-editor";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal, flushSync } from "react-dom";
-import type { AIChangeSet, BlockGraphSnapshot, BlockId, BlockTextEdit, CompileResult, Diagnostic, Project, ProjectTreeNode, SemanticBlock, SpellCheckStatus, StructuralHistoryState, SyncTexPdfPosition } from "@latex-editor/contracts";
+import type { AIChangeSet, BlockGraphSnapshot, BlockId, BlockTextEdit, CompileResult, Diagnostic, Project, ProjectTreeNode, SemanticBlock, SpellCheckStatus, StructuralHistoryState } from "@latex-editor/contracts";
 import toolbarActions from "../resources/toolbar-actions.json" with { type: "json" };
 import { t, type MessageKey } from "../i18n/index.js";
 import { PreviewPane } from "../preview/PreviewPane.js";
@@ -10,7 +13,7 @@ import { releaseFigurePreviewCache } from "../figure/FigurePreview.js";
 import { createPreviewTransaction, type PreviewSourceTransaction, type PreviewTextChange } from "../preview/incremental.js";
 import { SettingsDialog, type SettingsSection } from "../settings/SettingsDialog.js";
 import { useSettings, settings } from "../settings/service.js";
-import { bindings, commands, displayBinding } from "../settings/commands.js";
+import { bindings, commandBindings, commands, displayBinding, type CommandId } from "../settings/commands.js";
 import { EnvironmentQuickAction } from "../preview/EnvironmentPicker.js";
 import { addCommandLabel, nextAutomaticLabel } from "../preview/labels.js";
 import { unsavedChanges, useUnsavedChanges } from "../lifecycle/unsavedChanges.js";
@@ -38,7 +41,6 @@ import { TableInsertDialog } from "../table/TableInsertDialog.js";
 import { TableInspector } from "../table/TableInspector.js";
 import type { TableSelection } from "../table/model.js";
 import { ReferenceLibraryPanel } from "../references/ReferenceLibraryPanel.js";
-import type { PdfViewState } from "../pdf/PdfViewer.js";
 import { AutomaticCompileScheduler } from "./AutomaticCompileScheduler.js";
 import { citationInsertionOffset, citationText, insertPreviewCitation } from "../references/citationInsertion.js";
 import { BibtexPreviewPane } from "../references/BibtexPreviewPane.js";
@@ -58,13 +60,14 @@ import { emptyBlockSnapshot, useRelationController } from "./relationController.
 import { createDocumentInsertions, type ImageDialogState } from "./documentInsertions.js";
 import { createDocumentActions } from "./documentActions.js";
 import { CompileResultPicker } from "./CompileResultPicker.js";
-import { pdfFileForSource, projectPdfFile } from "./compileTargets.js";
+import { usePdfDocuments } from "./usePdfDocuments.js";
 import { useSearchController } from "./searchController.js";
 import { useWorkingDocuments } from "./workingDocuments.js";
 import { OutlineList } from "./OutlineList.js";
 import { createUserBlockController, type BoundaryRepairPrompt } from "./userBlockController.js";
 
 type SidebarMode = "files" | "search" | "library" | "ai" | "history" | "relations" | "help";
+const sidebarCommands: Record<SidebarMode, CommandId> = { files: "sidebar.files", search: "sidebar.search", library: "sidebar.library", ai: "ai.open", history: "sidebar.history", relations: "sidebar.relations", help: "sidebar.help" };
 type BottomTab = "problems" | "output" | "compileLog";
 type MenuName = "file" | "edit" | "view" | "history" | "projects";
 
@@ -131,21 +134,9 @@ export function Workbench({ project, projects, environments, onHome, onSwitch, o
   const [compileLogView, setCompileLogView] = useState<{ compilationId: string; text: string; loading: boolean; error?: string }>();
   const [navigationRequest, setNavigationRequest] = useState<NavigationRequest>();
   const [editorMountVersion, setEditorMountVersion] = useState(0);
-  const [pdfDataUrl, setPdfDataUrl] = useState<string>();
-  const [pdfOrigin, setPdfOrigin] = useState<"project" | "ai-workspace">("project");
-  const [pdfSourceFile, setPdfSourceFile] = useState(project.mainFile);
-  const [pdfFile, setPdfFile] = useState(pdfFileForSource(project.mainFile));
-  const pdfOriginRef = useRef(pdfOrigin);
-  pdfOriginRef.current = pdfOrigin;
-  const pdfViewStates = useRef(new Map<string, { current: PdfViewState | undefined }>());
-  const pdfViewState = useMemo(() => {
-    const key = `${project.id}:${pdfSourceFile ?? ""}`;
-    let state = pdfViewStates.current.get(key);
-    if (!state) { state = { current: undefined }; pdfViewStates.current.set(key, state); }
-    return state;
-  }, [project.id, pdfSourceFile]);
-  const pdfReadSequence = useRef(0);
-  const latestCompileStarted = useRef(0);
+  const pdfDocuments = usePdfDocuments({ api, project, tree, activePath, follow: store.get("pdfFollowActiveTex") });
+  const { pdfDataUrl, setPdfDataUrl, pdfOrigin, pdfSourceFile, pdfFile, pdfOriginRef, pdfViewState, pdfTarget, setPdfTarget } = pdfDocuments;
+  const pdfDocumentsRef = useRef(pdfDocuments); pdfDocumentsRef.current = pdfDocuments;
   const compileGuard = useRef({ busy: false, alive: true });
   const projectMainRef = useRef(project.mainFile);
   projectMainRef.current = project.mainFile;
@@ -156,7 +147,6 @@ export function Workbench({ project, projects, environments, onHome, onSwitch, o
     autoCompiler.current = new AutomaticCompileScheduler({ canRun: () => !compileGuard.current.busy, compile: () => compileRef.current(), onError: error => setBlockNotice(String(error)) });
     return () => { compileGuard.current.alive = false; autoCompiler.current?.dispose(); };
   }, []);
-  const [pdfTarget, setPdfTarget] = useState<(SyncTexPdfPosition & { requestId: number })>();
   const [bottomVisible, setBottomVisible] = useState(false);
   const [bottomTab, setBottomTab] = useState<BottomTab>("problems");
   const [cursor, setCursor] = useState({ line: 1, column: 1 });
@@ -190,8 +180,10 @@ export function Workbench({ project, projects, environments, onHome, onSwitch, o
   const aiAutoAttempts = useRef(new Set<string>());
   const treeRefreshSequence = useRef(0);
   const previewViewportAnchor = useRef<{ fileId: string; offset: number } | undefined>(undefined);
-  const previewPositions = useRef(new Map<string, { offset: number; scrollTop: number }>());
-  const sourcePositions = useRef(new Map<string, { offset: number; scrollTop: number }>());
+  const restoredWorkspace = useMemo(() => readWorkspacePosition(project.id, project.canonicalPath), [project.id, project.canonicalPath]);
+  const workspaceReady = useRef(false);
+  const previewPositions = useRef(new Map(restoredWorkspace.preview));
+  const sourcePositions = useRef(new Map(restoredWorkspace.source));
   const sourceModelPath = useRef<string | undefined>(undefined);
   const sourceRestoredFor = useRef<string | undefined>(undefined);
   const navigationNonce = useRef(0);
@@ -299,6 +291,11 @@ export function Workbench({ project, projects, environments, onHome, onSwitch, o
     const timer = setTimeout(() => { void settings.set("layout", { ...layout }, "project"); }, 300);
     return () => clearTimeout(timer);
   }, [layout]);
+  useEffect(() => () => {
+    // The debounced save is cancelled on unmount; persist the last pane
+    // visibility and collapse choices with the explicit project ID.
+    void api?.settings.set("layout", { ...layoutRef.current }, project.id);
+  }, [api, project.id]);
   useEffect(() => {
     if (!api) return;
     void api.spellcheck.status().then((status) => { if (status) setSpellStatus(status); });
@@ -424,36 +421,46 @@ export function Workbench({ project, projects, environments, onHome, onSwitch, o
     referenceMouseListener.current?.dispose();
     symbolPairingListener.current?.dispose();
   }, [project.id]);
-  useEffect(() => {
-    const sequence = ++pdfReadSequence.current; navigationNonce.current += 1;
-    setPdfDataUrl(undefined);
-    setPdfOrigin("project"); setPdfSourceFile(project.mainFile); setPdfFile(pdfFileForSource(project.mainFile)); setPdfTarget(undefined); setCompileResults([]); setCompileResult(undefined);
-    latestCompileStarted.current = 0;
-    if (!api || !project.mainFile) return;
-    const extensionIndex = project.mainFile.toLocaleLowerCase().lastIndexOf(".tex");
-    if (extensionIndex < 0) return;
-    const pdfPath = project.mainFile.split(/[\\/]/).at(-1)!.replace(/\.tex$/i, ".pdf");
-    void api.files.readPdf(project.id, pdfPath).then((dataUrl) => {
-      if (dataUrl && sequence === pdfReadSequence.current && compileGuard.current.alive) setPdfDataUrl(dataUrl);
-    }).catch(() => undefined);
-  }, [project.id, project.mainFile]);
+  useEffect(() => { navigationNonce.current += 1; }, [pdfFile, pdfOrigin]);
+  useEffect(() => { setCompileResults([]); setCompileResult(undefined); }, [project.id, project.mainFile]);
   useEffect(() => api?.compile.onUpdate(update => {
-    if (update.projectId !== project.id || update.result.mainFile !== projectMainRef.current || compileGuard.current.busy) return;
-    const started = Date.parse(update.result.startedAt) || 0;
-    if (started < latestCompileStarted.current) return;
-    latestCompileStarted.current = started;
+    if (update.projectId !== project.id || compileGuard.current.busy) return;
     setCompileResult(update.result);
-    setCompileResults([update.result]);
-    if (update.result.status === "succeeded" && update.result.pdfDataUrl) {
-      pdfReadSequence.current += 1; navigationNonce.current += 1;
-      setPdfDataUrl(update.result.pdfDataUrl); setPdfOrigin("ai-workspace"); setPdfTarget(undefined);
-      setPdfSourceFile(update.result.mainFile); setPdfFile(undefined);
+    setCompileResults(values => [...values.filter(value => value.mainFile !== update.result.mainFile), update.result]);
+    if (pdfDocumentsRef.current.adopt(update.result, "ai-workspace")) {
+      navigationNonce.current += 1;
       setLayout(value => ({ ...value, rightPane: "pdf" }));
     }
     setBottomTab(update.result.diagnostics.length ? "problems" : "compileLog");
     if (update.result.status !== "succeeded") setBottomVisible(true);
   }), [api, project.id]);
-  useEffect(() => { if (project.mainFile) void openFile(project.mainFile); }, [project.id]);
+  useEffect(() => {
+    let live = true;
+    const restore = async () => {
+      const initial = restoredWorkspace.activePath ?? project.mainFile;
+      if (initial) await openFile(initial);
+      if (live && !tabsRef.current.length && project.mainFile && initial !== project.mainFile) await openFile(project.mainFile);
+      if (live) workspaceReady.current = true;
+    };
+    void restore();
+    return () => { live = false; };
+  }, [project.id]);
+  useEffect(() => {
+    const persist = () => {
+      if (!workspaceReady.current) return;
+      const path = activePathRef.current, editor = editorRef.current, model = editor?.getModel();
+      if (path && model && sourceModelPath.current === path) {
+        const position = editor!.getPosition();
+        if (position) sourcePositions.current.set(path, { offset: model.getOffsetAt(position), scrollTop: editor!.getScrollTop() });
+      }
+      writeWorkspacePosition(project.id, project.canonicalPath, { ...(path ? { activePath: path } : {}), source: [...sourcePositions.current], preview: [...previewPositions.current] });
+    };
+    const timer = window.setInterval(persist, 1000);
+    const stopCloseListener = api?.lifecycle.onCloseRequested(() => persist());
+    window.addEventListener("pagehide", persist);
+    window.addEventListener("beforeunload", persist);
+    return () => { persist(); stopCloseListener?.(); window.clearInterval(timer); window.removeEventListener("pagehide", persist); window.removeEventListener("beforeunload", persist); };
+  }, [project.id, project.canonicalPath]);
 
   const rememberPreviewPosition = () => {
     const path = activePathRef.current;
@@ -496,12 +503,12 @@ export function Workbench({ project, projects, environments, onHome, onSwitch, o
     onSaved: (path, content) => updateSavedSearchDocument(path, content)
   });
   const { compile, exportSourceArchive, exportMainTex, exportPdf } = createDocumentActions({
-    api, project, activePath, tree, compileState, saveActive,
+    api, project, activePath: pdfDocuments.sourceTarget ?? activePath, tree, compileState, saveActive,
     saveAll: async () => { unsavedChanges.commitDrafts(flushSync); await saveAll(); },
     guard: compileGuard.current, isCurrent: mainFile => !projectMainRef.current || mainFile === projectMainRef.current,
     onIdle: () => autoCompiler.current?.idle(),
-    onPdfReady: result => { pdfReadSequence.current += 1; navigationNonce.current += 1; latestCompileStarted.current = Date.parse(result.startedAt) || 0; setPdfOrigin("project"); setPdfSourceFile(result.mainFile); setPdfFile(result.pdfPath ? projectPdfFile(project.canonicalPath, result.pdfPath) : pdfFileForSource(result.mainFile)); setPdfTarget(undefined); },
-    onCompileBatch: setCompileResults,
+    onPdfReady: result => { navigationNonce.current += 1; return pdfDocuments.onPdfReady(result); },
+    onCompileBatch: results => { setCompileResults(results); pdfDocuments.recordResults(results); },
     setCompileState, setCompileResult, setPdfDataUrl, setLayout, setBottomTab, setBottomVisible
   });
   compileRef.current = compile;
@@ -511,6 +518,9 @@ export function Workbench({ project, projects, environments, onHome, onSwitch, o
     setNavigationRequest, setBlockSnapshot
   });
   const snapshotOpenedAt = useRef(performance.now());
+  const [historyToolbarTarget, setHistoryToolbarTarget] = useState<HTMLSpanElement | null>(null);
+  const [searchToolbarTarget, setSearchToolbarTarget] = useState<HTMLElement | null>(null);
+  const [libraryToolbarTarget, setLibraryToolbarTarget] = useState<HTMLSpanElement | null>(null);
   const historyPreferences = store.get("history");
   useEffect(() => {
     if (!api || !historyPreferences.autoSnapshot) return;
@@ -570,7 +580,7 @@ export function Workbench({ project, projects, environments, onHome, onSwitch, o
       commands.register("edit.find", { execute: () => { setSidebarMode("search"); setLayout((value) => ({ ...value, sidebarVisible: true })); setSearchFocusRequest((value) => value + 1); } }),
       commands.register("edit.replace", { execute: () => editorRef.current?.trigger("command", "editor.action.startFindReplaceAction", null), when: () => !!document.querySelector(".editor-surface .monaco-editor") }),
       commands.register("settings.open", { execute: () => { setSettingsInitial("general"); setSettingsOpen(true); } }),
-      commands.register("ai.open", { execute: () => { setSidebarMode("ai"); setLayout((value) => ({ ...value, sidebarVisible: true })); } }),
+      ...Object.entries(sidebarCommands).map(([mode, id]) => commands.register(id, { execute: () => selectActivity(mode as SidebarMode) })),
       commands.register("block.createFromSelection", { execute: () => createUserBlockFromSelection().catch((error: unknown) => setBlockNotice(error instanceof Error ? error.message : String(error))) })
     ];
     return () => registrations.forEach((dispose) => dispose());
@@ -803,18 +813,7 @@ export function Workbench({ project, projects, environments, onHome, onSwitch, o
     setDetectedSpellLanguage, setSpellContextMenu
   });
 
-  const outline = useMemo(() => {
-    if (!activeTab) return [];
-    const result: Array<{ title: string; level: number; line: number }> = [];
-    const expression = /\\(chapter|section|subsection|subsubsection|paragraph)\*?\{([^}]*)\}/g;
-    for (const match of activeTab.content.matchAll(expression)) {
-      const command = match[1] ?? "section";
-      const level = command === "chapter" ? 0 : command === "section" ? 1 : command === "subsection" ? 2 : command === "subsubsection" ? 3 : 4;
-      const before = activeTab.content.slice(0, match.index ?? 0);
-      result.push({ title: match[2] ?? "", level, line: before.split("\n").length });
-    }
-    return result;
-  }, [activeTab]);
+  const outline = useMemo(() => buildOutline(activeTab?.content ?? ""), [activeTab?.content]);
 
   const navigateToOutline = (line: number) => { if (activePath) void navigateTo(activePath, { line }); };
   const openAIFileReference = async (path: string, line?: number) => {
@@ -909,6 +908,7 @@ export function Workbench({ project, projects, environments, onHome, onSwitch, o
     resizeCleanup.current = cleanup;
   };
 
+  const activityTitle = (mode: SidebarMode) => { const shortcut = commandBindings(sidebarCommands[mode]).map(displayBinding).join(" / "); return `${t(`activity.${mode}` as MessageKey)}${shortcut ? ` (${shortcut})` : ""}`; };
   const selectActivity = (mode: SidebarMode) => { if (mode === "relations") setInspectorBlock(undefined); if (sidebarMode === mode && layout.sidebarVisible) setLayout((value) => ({ ...value, sidebarVisible: false })); else { setSidebarMode(mode); setLayout((value) => ({ ...value, sidebarVisible: true })); } };
   const configureSpell = async (mode: "auto" | "manual" | "disabled", language: string) => {
     if (mode === "manual") await settings.set("spellCheckLanguage", language);
@@ -961,7 +961,9 @@ export function Workbench({ project, projects, environments, onHome, onSwitch, o
   const isBibFile = activeTab?.path.toLocaleLowerCase().endsWith(".bib") ?? false;
   const editorQuickActions = isBibFile ? [] : quickActions;
   const sourceTabs = <div className="editor-tabs">{tabs.map((tab) => <button className={tab.path === activePath ? "active" : ""} key={tab.path} onClick={() => { navigationHistory.current.clear(); rememberPreviewPosition(); fileOpenSequence.current += 1; setAiDiffFile(undefined); setNavigationRequest(undefined); setActivePath(tab.path); }}><span>{tab.path.split("/").at(-1)}</span>{tab.dirty && <i/>}<span className="tab-close" title={t("editor.closeTab")} onClick={(event) => { event.stopPropagation(); closeTab(tab.path); }}><Icon name="close"/></span></button>)}</div>;
-  const sourceEditor = <div className="editor-surface" onDragOver={(event) => { if (event.dataTransfer.types.includes("Files")) event.preventDefault(); }} onDrop={dropImages}>{aiReviewFile ? <div className="ai-inline-diff"><div className="ai-inline-diff-heading"><strong>{t("ai.inlineDiffTitle")}</strong><span>{aiReviewFile.path}</span><button className="ai-diff-close" onClick={() => setAiDiffFile(undefined)}>{t("ai.closeDiff")}</button></div><DiffEditor height="calc(100% - 34px)" language={aiReviewFile.path.endsWith(".bib") ? "bibtex" : aiReviewFile.path.endsWith(".json") ? "json" : "latex"} original={aiReviewContent?.original ?? ""} modified={aiReviewContent?.modified ?? ""} theme={editorThemeName(store.get("theme"))} options={{ readOnly: true, originalEditable: false, renderSideBySide: true, automaticLayout: true, minimap: { enabled: false }, fontSize: store.get("fontSize"), lineHeight: Math.round(store.get("fontSize") * 1.5), wordWrap: store.get("wordWrap") ? "on" : "off", scrollBeyondLastLine: false }} /></div> : activeTab ? <Editor height="100%" language={activeTab.path.endsWith(".bib") ? "bibtex" : activeTab.path.endsWith(".json") ? "json" : "latex"} value={activeTab.content} onChange={(value, event) => setEditorContent(value ?? "", event.changes.map((change) => ({ start: change.rangeOffset, end: change.rangeOffset + change.rangeLength, newLength: change.text.length })), event.changes.map((change) => ({ from: change.rangeOffset, to: change.rangeOffset + change.rangeLength, insertedText: change.text })))} onMount={onEditorMount} theme={editorThemeName(store.get("theme"))} options={{ readOnly: !project.writable, minimap: { enabled: true }, fontSize: store.get("fontSize"), tabSize: store.get("tabSize"), lineHeight: Math.round(store.get("fontSize") * 1.5), wordWrap: store.get("wordWrap") ? "on" : "off", quickSuggestions: { other: true, comments: true, strings: true }, suggestOnTriggerCharacters: true, autoClosingBrackets: "never", autoClosingQuotes: "always", autoSurround: "never", automaticLayout: true, padding: { top: 14 }, renderWhitespace: "selection", scrollBeyondLastLine: false }} /> : <div className="editor-empty"><Logo/><p>{t("editor.noFile")}</p></div>}</div>;
+  const sourceFontSize = store.get("fontSize"), sourceTabSize = store.get("tabSize"), sourceWordWrap = store.get("wordWrap"), sourceMinimap = store.get("sourceMinimap");
+  const sourceEditorOptions = useMemo<Monaco.editor.IStandaloneEditorConstructionOptions>(() => ({ readOnly: !project.writable, minimap: { enabled: sourceMinimap }, fontSize: sourceFontSize, tabSize: sourceTabSize, lineHeight: Math.round(sourceFontSize * 1.5), wordWrap: sourceWordWrap ? "on" : "off", quickSuggestions: { other: true, comments: true, strings: true }, suggestOnTriggerCharacters: true, autoClosingBrackets: "never", autoClosingQuotes: "always", autoSurround: "never", automaticLayout: true, padding: { top: 14 }, renderWhitespace: "selection", scrollBeyondLastLine: false  }), [project.writable, sourceFontSize, sourceTabSize, sourceWordWrap, sourceMinimap]);
+  const sourceEditor = <div className="editor-surface" onDragOver={(event) => { if (event.dataTransfer.types.includes("Files")) event.preventDefault(); }} onDrop={dropImages}>{aiReviewFile ? <div className="ai-inline-diff"><div className="ai-inline-diff-heading"><strong>{t("ai.inlineDiffTitle")}</strong><span>{aiReviewFile.path}</span><button className="ai-diff-close" onClick={() => setAiDiffFile(undefined)}>{t("ai.closeDiff")}</button></div><DiffEditor height="calc(100% - 34px)" language={aiReviewFile.path.endsWith(".bib") ? "bibtex" : aiReviewFile.path.endsWith(".json") ? "json" : "latex"} original={aiReviewContent?.original ?? ""} modified={aiReviewContent?.modified ?? ""} theme={editorThemeName(store.get("theme"))} options={{ readOnly: true, originalEditable: false, renderSideBySide: true, automaticLayout: true, minimap: { enabled: store.get("sourceMinimap") }, fontSize: store.get("fontSize"), lineHeight: Math.round(store.get("fontSize") * 1.5), wordWrap: store.get("wordWrap") ? "on" : "off", scrollBeyondLastLine: false }} /></div> : activeTab ? <Editor height="100%" language={activeTab.path.endsWith(".bib") ? "bibtex" : activeTab.path.endsWith(".json") ? "json" : "latex"} value={activeTab.content} onChange={(value, event) => setEditorContent(value ?? "", event.changes.map((change) => ({ start: change.rangeOffset, end: change.rangeOffset + change.rangeLength, newLength: change.text.length })), event.changes.map((change) => ({ from: change.rangeOffset, to: change.rangeOffset + change.rangeLength, insertedText: change.text })))} onMount={onEditorMount} theme={editorThemeName(store.get("theme"))} options={sourceEditorOptions} /> : <div className="editor-empty"><Logo/><p>{t("editor.noFile")}</p></div>}</div>;
   const sourceToolbar = <div className="latex-toolbar">{editorQuickActions}<div className="toolbar-spacer"/>{viewSwitch("source", layout.mode === "single")}</div>;
   const previewToolbar = <div className="latex-toolbar">{editorQuickActions}<div className="toolbar-spacer"/>{viewSwitch("preview", layout.mode === "single")}</div>;
   const enginePicker = <label className="engine-picker" title={t("settings.engine")}><span>{t("build.engine")}</span><select aria-label={t("settings.engine")} value={store.get("engine")} onChange={(event) => void store.set("engine", event.target.value as "pdflatex" | "xelatex" | "lualatex", "project")}><option value="pdflatex">pdfLaTeX</option><option value="xelatex">XeLaTeX</option><option value="lualatex">LuaLaTeX</option></select></label>;
@@ -981,8 +983,8 @@ export function Workbench({ project, projects, environments, onHome, onSwitch, o
   }} /> : <PreviewPane {...anchoredPreviewProps}/>;
   const previewContent = <section className="work-pane" onDragOver={(event) => { if (event.dataTransfer.types.includes("Files")) event.preventDefault(); }} onDrop={dropImages}>{sourceTabs}{bibPreview}</section>;
   const previewPane = <section className="work-pane" onDragOver={(event) => { if (event.dataTransfer.types.includes("Files")) event.preventDefault(); }} onDrop={dropImages}>{sourceTabs}{previewToolbar}{bibPreview}</section>;
-  const secondaryContent = <section className="work-pane output-pane"><Placeholder type={layout.rightPane} key={`${project.id}:${pdfSourceFile}`} pdfViewState={pdfViewState} pdfLabel={pdfOrigin === "ai-workspace" ? t("pdf.aiPreview") : pdfSourceFile} pdfDataUrl={pdfDataUrl} pdfTarget={pdfTarget} onPdfInteract={() => setPdfTarget(undefined)} onPdfDoubleClick={(page, x, y) => void reverseSyncFromPdf(page, x, y)}/></section>;
-  const singlePane = layout.singlePane === "source" ? sourcePane : layout.singlePane === "preview" ? previewPane : <section className="work-pane single-output"><div className="output-toolbar"><div className="view-switch"><button onClick={() => setLayout((value) => ({ ...value, singlePane: "source" }))}>{t("menu.code")}</button><button onClick={() => setLayout((value) => ({ ...value, singlePane: "preview" }))}>{t("menu.visual")}</button><button className="active">{t("menu.pdf")}</button></div><div className="toolbar-spacer"/><button className="compile-button" onClick={() => { commands.execute("latex.compile"); }}><Icon name="play"/>{t("build.compile")}</button></div><Placeholder type="pdf" key={`${project.id}:${pdfSourceFile}`} pdfViewState={pdfViewState} pdfLabel={pdfOrigin === "ai-workspace" ? t("pdf.aiPreview") : pdfSourceFile} pdfDataUrl={pdfDataUrl} pdfTarget={pdfTarget} onPdfInteract={() => setPdfTarget(undefined)} onPdfDoubleClick={(page, x, y) => void reverseSyncFromPdf(page, x, y)}/></section>;
+  const secondaryContent = <section className="work-pane output-pane"><Placeholder type={layout.rightPane} key={`${project.id}:${pdfSourceFile}`} pdfLinkDestination={pdfDocuments.pdfLinkDestination} onPdfLink={href => { if (!pdfDocuments.openPdfLink(href)) setBlockNotice(t("pdf.localLinkUnavailable")); }} pdfDocuments={pdfDocuments.documents} pdfSelectedId={pdfDocuments.selectedId} onPdfSelect={pdfDocuments.selectPdf} pdfViewState={pdfViewState} pdfLabel={pdfOrigin === "ai-workspace" ? t("pdf.aiPreview") : pdfSourceFile} pdfDataUrl={pdfDataUrl} pdfTarget={pdfTarget} onPdfInteract={() => setPdfTarget(undefined)} onPdfDoubleClick={(page, x, y) => void reverseSyncFromPdf(page, x, y)}/></section>;
+  const singlePane = layout.singlePane === "source" ? sourcePane : layout.singlePane === "preview" ? previewPane : <section className="work-pane single-output"><div className="output-toolbar"><div className="view-switch"><button onClick={() => setLayout((value) => ({ ...value, singlePane: "source" }))}>{t("menu.code")}</button><button onClick={() => setLayout((value) => ({ ...value, singlePane: "preview" }))}>{t("menu.visual")}</button><button className="active">{t("menu.pdf")}</button></div><div className="toolbar-spacer"/><button className="compile-button" onClick={() => { commands.execute("latex.compile"); }}><Icon name="play"/>{t("build.compile")}</button></div><Placeholder type="pdf" key={`${project.id}:${pdfSourceFile}`} pdfLinkDestination={pdfDocuments.pdfLinkDestination} onPdfLink={href => { if (!pdfDocuments.openPdfLink(href)) setBlockNotice(t("pdf.localLinkUnavailable")); }} pdfDocuments={pdfDocuments.documents} pdfSelectedId={pdfDocuments.selectedId} onPdfSelect={pdfDocuments.selectPdf} pdfViewState={pdfViewState} pdfLabel={pdfOrigin === "ai-workspace" ? t("pdf.aiPreview") : pdfSourceFile} pdfDataUrl={pdfDataUrl} pdfTarget={pdfTarget} onPdfInteract={() => setPdfTarget(undefined)} onPdfDoubleClick={(page, x, y) => void reverseSyncFromPdf(page, x, y)}/></section>;
   const splitLeftContent = layout.leftPane === "preview" ? previewContent : sourcePaneContent;
   const splitToolbar = <div className="split-toolbar"><div className="split-toolbar-left latex-toolbar">{editorQuickActions}<div className="toolbar-spacer"/>{viewSwitch(layout.leftPane)}</div><div className="split-toolbar-right">{outputToolbar}</div></div>;
 
@@ -1000,24 +1002,27 @@ export function Workbench({ project, projects, environments, onHome, onSwitch, o
     <header className="workbench-topbar" ref={workbenchRef}><button className="logo-button" onClick={leaveProject} title={t("project.directory")}><Logo/><span>{t("app.name")}</span></button><nav className="app-menus">{(["file", "edit", "view", "history"] as const).map((menu) => <div className="menu-anchor" key={menu}><button onMouseDown={(event) => { if (menu === "edit") event.preventDefault(); }} onClick={() => setActiveMenu(activeMenu === menu ? undefined : menu)}>{t(`menu.${menu}` as MessageKey)}</button>{activeMenu === menu && <Menu items={menuItems(menu)} onClose={() => setActiveMenu(undefined)}/>}</div>)}</nav><div className="project-switcher menu-anchor"><button onClick={() => setActiveMenu(activeMenu === "projects" ? undefined : "projects")}><strong>{project.name}</strong><Icon name="chevron"/></button>{activeMenu === "projects" && <div className="menu-popover project-menu">{projects.map((item) => <button key={item.id} onClick={() => { setActiveMenu(undefined); switchProject(item); }}><span>{item.name}</span>{item.id === project.id && <b>✓</b>}</button>)}<div className="menu-divider"/><button onClick={() => { setActiveMenu(undefined); leaveProject(); }}>{t("project.directory")}</button></div>}</div><button className={`save-status ${saveState}`} onClick={() => { commands.execute("file.save"); }}><Icon name="save"/>{t(`save.${saveState}` as MessageKey)}</button></header>
     <div className="workbench-body">
       <aside className="activity-bar">
-        <div>{(["files", "search", "library", "ai", "history", "relations"] as const).map((mode) => <button key={mode} className={layout.sidebarVisible && sidebarMode === mode ? "active" : ""} title={t(`activity.${mode}` as MessageKey)} onClick={() => selectActivity(mode)}><Icon name={mode}/><span>{t(`activity.${mode}` as MessageKey)}</span></button>)}</div>
-        <div><button className={settingsOpen ? "active" : ""} title={t("activity.settings")} onClick={() => commands.execute("settings.open")}><Icon name="settings"/><span>{t("activity.settings")}</span></button><button className={layout.sidebarVisible && sidebarMode === "help" ? "active" : ""} title={t("activity.help")} onClick={() => selectActivity("help")}><Icon name="help"/><span>{t("activity.help")}</span></button></div>
+        <div>{(["files", "search", "library", "ai", "history", "relations"] as const).map((mode) => <button key={mode} className={layout.sidebarVisible && sidebarMode === mode ? "active" : ""} title={activityTitle(mode)} onClick={() => commands.execute(sidebarCommands[mode])}><Icon name={mode}/><span>{t(`activity.${mode}` as MessageKey)}</span></button>)}</div>
+        <div><button className={settingsOpen ? "active" : ""} title={t("activity.settings")} onClick={() => commands.execute("settings.open")}><Icon name="settings"/><span>{t("activity.settings")}</span></button><button className={layout.sidebarVisible && sidebarMode === "help" ? "active" : ""} title={activityTitle("help")} onClick={() => commands.execute(sidebarCommands.help)}><Icon name="help"/><span>{t("activity.help")}</span></button></div>
       </aside>
       {layout.sidebarVisible && <><aside className="sidebar" style={{ width: layout.sidebarWidth }}>
         <div className="sidebar-heading">
           <strong>{t(sidebarMode === "files" ? "sidebar.files" : sidebarMode === "search" ? "sidebar.search" : `activity.${sidebarMode}` as MessageKey)}</strong>
           <div>
-            {sidebarMode === "files" && <><button onClick={() => void createEntry(false, "")} title={t("files.newFile")}><Icon name="plus"/></button><button onClick={() => { void refreshTree().catch((error: unknown) => setBlockNotice(error instanceof Error ? error.message : String(error))); }} title={t("sidebar.refresh")}><Icon name="refresh"/></button></>}
+            {sidebarMode === "search" && <span ref={setSearchToolbarTarget} className="library-toolbar-target"/>}
+            {sidebarMode === "library" && <span ref={setLibraryToolbarTarget} className="library-toolbar-target"/>}
+            {sidebarMode === "history" && <span ref={setHistoryToolbarTarget} className="history-toolbar-target"/>}
+            {sidebarMode === "files" && <><button className="sidebar-section-toggle" aria-expanded={!layout.filesCollapsed} title={`${t(layout.filesCollapsed ? "blockOperation.expand" : "blockOperation.collapse")}: ${t("sidebar.files")}`} aria-label={`${t(layout.filesCollapsed ? "blockOperation.expand" : "blockOperation.collapse")}: ${t("sidebar.files")}`} onClick={() => setLayout(value => ({ ...value, filesCollapsed: !value.filesCollapsed }))}><Icon name="chevron"/></button><button onClick={() => void createEntry(false, "")} title={t("files.newFile")}><Icon name="plus"/></button><button onClick={() => { void refreshTree().catch((error: unknown) => setBlockNotice(error instanceof Error ? error.message : String(error))); }} title={t("sidebar.refresh")}><Icon name="refresh"/></button></>}
             {sidebarMode === "relations" && <button className="relation-back" disabled={!relationFocusHistory.length} onClick={relationBack} title={t("relation.back")} aria-label={t("relation.back")}><Icon name="back"/></button>}
             <button className="sidebar-collapse-button" onClick={() => setLayout((value) => ({ ...value, sidebarVisible: false }))} title={t("sidebar.collapse")} aria-label={t("sidebar.collapse")}>‹</button>
           </div>
         </div>
-        {sidebarMode === "files" && <><div className="tree-section" style={{ height: layout.fileTreeHeight }} onDragOver={(event) => { if (event.dataTransfer.types.includes("Files")) event.preventDefault(); }} onDrop={dropImagesToProject}><div className="tree-sort-controls"><label><span>{t("sidebar.sortBy")}</span><select aria-label={t("sidebar.sortBy")} value={treeSortBy} onChange={(event) => setTreeSortBy(event.target.value as "type" | "name")}><option value="type">{t("sidebar.sortType")}</option><option value="name">{t("sidebar.sortName")}</option></select></label><button type="button" title={t(treeSortDirection === "asc" ? "sidebar.sortAscending" : "sidebar.sortDescending")} aria-label={t("sidebar.reverseSort")} onClick={() => setTreeSortDirection((value) => value === "asc" ? "desc" : "asc")}>{treeSortDirection === "asc" ? "\u2191" : "\u2193"}</button></div><input className="sidebar-input" value={treeFilter} onChange={(event) => setTreeFilter(event.target.value)} placeholder={t("sidebar.fileSearch")}/><Tree key={project.id} projectId={project.id} nodes={tree} activePath={activePath} mainFile={project.mainFile} filter={treeFilter} hideBuildArtifacts={store.get("hideBuildArtifacts")} sortBy={treeSortBy} sortDirection={treeSortDirection} canMove={project.writable} onOpen={(path) => { navigationHistory.current.clear(); setNavigationRequest(undefined); void openFile(path); }} onMove={(sourcePath, destinationDirectory) => void moveEntry(sourcePath, destinationDirectory)}/></div><div className="horizontal-resizer" onPointerDown={(event) => startResize("tree", event)}/><div className="outline-section"><div className="outline-heading"><strong>{t("sidebar.outline")}</strong></div><OutlineList key={`${project.id}:${activePath ?? ""}`} projectId={project.id} filePath={activePath ?? ""} items={outline} onNavigate={navigateToOutline}/></div></>}
+        {sidebarMode === "files" && <><div className="tree-section" data-section-collapsed={Boolean(layout.filesCollapsed)} style={{ height: layout.outlineCollapsed ? undefined : layout.fileTreeHeight, flex: layout.outlineCollapsed ? 1 : undefined }} onDragOver={(event) => { if (event.dataTransfer.types.includes("Files")) event.preventDefault(); }} onDrop={dropImagesToProject}><div className="tree-file-controls"><input className="sidebar-input" value={treeFilter} onChange={(event) => setTreeFilter(event.target.value)} placeholder={t("sidebar.fileSearch")}/><div className="tree-sort-controls"><label><span>{t("sidebar.sortBy")}</span><select aria-label={t("sidebar.sortBy")} value={treeSortBy} onChange={(event) => setTreeSortBy(event.target.value as "type" | "name")}><option value="type">{t("sidebar.sortType")}</option><option value="name">{t("sidebar.sortName")}</option></select></label><button type="button" title={t(treeSortDirection === "asc" ? "sidebar.sortAscending" : "sidebar.sortDescending")} aria-label={t("sidebar.reverseSort")} onClick={() => setTreeSortDirection((value) => value === "asc" ? "desc" : "asc")}>{treeSortDirection === "asc" ? "\u2191" : "\u2193"}</button></div></div><Tree key={project.id} projectId={project.id} nodes={tree} activePath={activePath} mainFile={project.mainFile} filter={treeFilter} hideBuildArtifacts={store.get("hideBuildArtifacts")} sortBy={treeSortBy} sortDirection={treeSortDirection} canMove={project.writable} onOpen={(path) => { navigationHistory.current.clear(); setNavigationRequest(undefined); void openFile(path); }} onMove={(sourcePath, destinationDirectory) => void moveEntry(sourcePath, destinationDirectory)}/></div>{!layout.filesCollapsed && !layout.outlineCollapsed && <div className="horizontal-resizer" onPointerDown={(event) => startResize("tree", event)}/>}<div className="outline-section" data-section-collapsed={Boolean(layout.outlineCollapsed)}><div className="outline-heading"><strong>{t("sidebar.outline")}</strong><button className="sidebar-section-toggle" aria-expanded={!layout.outlineCollapsed} title={t(layout.outlineCollapsed ? "blockOperation.expand" : "blockOperation.collapse")} aria-label={`${t(layout.outlineCollapsed ? "blockOperation.expand" : "blockOperation.collapse")}: ${t("sidebar.outline")}`} onClick={() => setLayout(value => ({ ...value, outlineCollapsed: !value.outlineCollapsed }))}><Icon name="chevron"/></button></div><OutlineList key={`${project.id}:${activePath ?? ""}`} projectId={project.id} filePath={activePath ?? ""} items={outline} onNavigate={navigateToOutline}/></div></>}
         {sidebarMode === "relations" && <RelationBrowser snapshot={blockSnapshot ?? emptyBlockSnapshot} definitions={previewEnvironments} selectedId={relationSelectedId} scope={currentRelationScope} documentFiltered={relationDocumentFiltered} onDocumentFiltered={setRelationDocumentFiltered} onSelect={setRelationSelectedId} focusId={relationFocusId} direction={relationDirection} depth={relationDepth} filters={relationFilters} viewMode={filterQuery.viewMode} onFocus={focusRelationBlock} onLocate={(id) => void locateRelationBlock(id)} onDirection={setRelationDirection} onDepth={setRelationDepth} onFilters={setRelationFilters} onToggleRelation={(id, event) => toggleRelation(id, event.clientX, event.clientY)}/>}
-        {sidebarMode === "search" && <AdvancedSearchPanel focusRequest={searchFocusRequest} searching={searching} busy={replacing} ready={searchReady} canReplace={project.writable} notice={searchNotice} query={searchQuery} response={searchResponse} activeResultId={activeSearchResult?.id} replacement={replacement} replaceOpen={replaceOpen} filter={filterQuery} options={filterOptions} visibleGroups={store.get("visibleFilterGroups") as FilterGroupId[]} setQuery={setSearchQuery} setReplacement={setReplacement} setReplaceOpen={setReplaceOpen} setFilter={setFilterQuery} selectResult={(result) => void selectSearchResult(result)} replaceCurrent={() => void replaceCurrentSearchResult()} replaceAll={() => void replaceAllSearchResults()}/>}
-        {sidebarMode === "library" && <ReferenceLibraryPanel key={project.id} project={project} documents={searchDocuments} canCite={project.writable && !!activePath && /\.tex$/i.test(activePath)} onOpenReference={(path, offset) => void navigateTo(path, { offset })} onWriteBibliography={writeLinkedBibliography} onOpenLibrary={onOpenLibrary} onCite={citeReference}/>}
+        {sidebarMode === "search" && <AdvancedSearchPanel toolbarTarget={searchToolbarTarget} focusRequest={searchFocusRequest} searching={searching} busy={replacing} ready={searchReady} canReplace={project.writable} notice={searchNotice} query={searchQuery} response={searchResponse} activeResultId={activeSearchResult?.id} replacement={replacement} replaceOpen={replaceOpen} filter={filterQuery} options={filterOptions} visibleGroups={store.get("visibleFilterGroups") as FilterGroupId[]} setQuery={setSearchQuery} setReplacement={setReplacement} setReplaceOpen={setReplaceOpen} setFilter={setFilterQuery} selectResult={(result) => void selectSearchResult(result)} replaceCurrent={() => void replaceCurrentSearchResult()} replaceAll={() => void replaceAllSearchResults()}/>}
+        {sidebarMode === "library" && <ReferenceLibraryPanel toolbarTarget={libraryToolbarTarget} key={project.id} project={project} documents={searchDocuments} canCite={project.writable && !!activePath && /\.tex$/i.test(activePath)} onOpenReference={(path, offset) => void navigateTo(path, { offset })} onWriteBibliography={writeLinkedBibliography} onOpenLibrary={onOpenLibrary} onCite={citeReference}/>}
         {sidebarMode === "ai" && <AIView projectId={project.id} projectRoot={project.canonicalPath} mathContext={mathContext} overrides={tabs.map(({ path, content }) => ({ path, content }))} {...(activeTab ? { currentFile: activeTab.path, currentFileContent: activeTab.content } : {})} {...(creationSelection && activeTab && creationSelection.fileId === activeTab.path ? { selectedText: activeTab.content.slice(creationSelection.start, creationSelection.end) } : {})} onApplyChanges={applyAIChanges} onUndoChanges={undoAIChanges} onViewChanges={viewAIChanges} onOpenFile={(path, line) => { void navigateTo(path, line ? { line, column: 1 } : {}).catch((reason: unknown) => setBlockNotice(String(reason))); }} onReviewChanges={setAiReviewChanges} onOpenSettings={() => { setSettingsInitial("ai"); setSettingsOpen(true); }}/>}
-        {sidebarMode === "history" && <ProjectHistoryPanel projectId={project.id} onBeforeCapture={() => saveTabs(true)} onRestored={refreshAfterHistoryRestore} onOpenSettings={() => { setSettingsInitial("history"); setSettingsOpen(true); }}/>}
+        {sidebarMode === "history" && <ProjectHistoryPanel toolbarTarget={historyToolbarTarget} projectId={project.id} onBeforeCapture={() => saveTabs(true)} onRestored={refreshAfterHistoryRestore} onOpenSettings={() => { setSettingsInitial("history"); setSettingsOpen(true); }}/>}
         {sidebarMode === "help" && <div className="generic-sidebar help-sidebar"><button onClick={() => { setSettingsInitial("shortcuts"); setSettingsOpen(true); }}>{t("settings.manager.shortcuts")}</button><button onClick={() => commands.execute("settings.open")}>{t("activity.settings")}</button></div>}
       </aside><div className="vertical-resizer" onPointerDown={(event) => startResize("sidebar", event)}/></>}
       <main className="workspace"><div className="workspace-main">{layout.mode === "single" ? singlePane : <><div className="split-toolbar-row">{splitToolbar}</div><div className="split-layout"><div style={{ width: `${layout.splitRatio}%` }}>{splitLeftContent}</div><div className="split-resizer" onPointerDown={(event) => startResize("split", event)}/><div style={{ width: `${100 - layout.splitRatio}%` }}>{secondaryContent}</div></div></>}</div>{bottomVisible && <><div className="bottom-resizer" onPointerDown={(event) => startResize("bottom", event)}/><section className="bottom-panel" style={{ height: layout.bottomPanelHeight }}><div className="bottom-tabs">{(["problems", "output", "compileLog"] as const).map((tab) => <button className={bottomTab === tab ? "active" : ""} key={tab} onClick={() => setBottomTab(tab)}>{t(`panel.${tab}` as MessageKey)}{tab === "problems" && diagnostics.length > 0 && <span>{diagnostics.length}</span>}</button>)}{bottomTab === "compileLog" && <CompileResultPicker results={compileResults} selected={compileResult} onSelect={setCompileResult}/>}<button className="panel-close" onClick={() => setBottomVisible(false)} title={t("common.close")}><Icon name="close"/></button></div><div className="panel-content">{bottomTab === "problems" && (diagnostics.length ? <div className="diagnostic-groups">{diagnosticGroups.map(([category, items]) => <section className="diagnostic-group" key={category}><h3>{category} <span>{items.length}</span></h3>{items.map((diagnostic, index) => <DiagnosticRow diagnostic={diagnostic} onOpen={() => void openDiagnostic(diagnostic)} key={`${diagnostic.message}-${index}`}/>)}</section>)}</div> : <p>{t("panel.noProblems")}</p>)}{bottomTab === "compileLog" && (compileResult ? <><div className="compile-log-status" aria-live="polite">{compileLogView?.compilationId === compileResult.compilationId && compileLogView.loading ? t("panel.loadingLog") : compileLogView?.compilationId === compileResult.compilationId && compileLogView.error ? `${t("panel.logUnavailable")} ${compileLogView.error}` : compileResult.logPath ? compileResult.logPath : ""}</div><pre>{compileLogView?.compilationId === compileResult.compilationId ? compileLogView.text : `${compileResult.stdoutTail}\n${compileResult.stderrTail}`}</pre></> : <p>{t("panel.noOutput")}</p>)}{bottomTab === "output" && <p>{t("panel.noOutput")}</p>}</div></section></>}</main>

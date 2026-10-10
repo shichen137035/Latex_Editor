@@ -1,4 +1,6 @@
+import { validThemeColorProfiles, type ThemeColorProfiles } from "./theme-colors.js";
 import { defaultHistoryPreferences, type HistoryPreferences } from "./history.js";
+import type { SettingsPresetKind } from "./settings-presets.js";
 
 /** Shared settings contract. Machine paths and keyboard preferences are global only. */
 export type DependencyStatus = "unknown" | "checking" | "ready" | "limited" | "missing" | "broken" | "installing" | "restart-required";
@@ -108,6 +110,7 @@ export interface PreviewDirectiveDefinition {
   labels?: Record<string, string>;
   display: "divider" | "placeholder" | "spacer";
   color: string;
+  colorMode?: "adaptive" | "fixed";
   /** Ownership within implicit chapter/section scopes; paired environments retain their source wrappers. */
   placement?: "nested" | "trailing" | "independent";
 }
@@ -150,13 +153,14 @@ export function includeNewBuiltInDirectives(saved: PreviewDirectiveDefinition[])
     ...saved.filter((item) => !item.builtIn && item.match.kind === "command" && !defaultPreviewDirectives.some((builtIn) => builtIn.id === item.id))];
 }
 export interface PreferenceValues {
-  locale: "en" | "ja" | "zh-CN" | "zh-TW" | "ko" | "fr";
+  locale: "en" | "ja" | "zh-CN" | "zh-TW" | "ko" | "fr" | "kk";
   fixedBlockNameLanguage: boolean;
   blockNameLanguage: PreferenceValues["locale"];
   /** Built-in ids are light/dark; custom ids are provided by the theme catalog. */
   theme: string;
   /** Empty means the application-local themes directory. */
   themeDirectory: string;
+  themeColorProfiles: ThemeColorProfiles;
   /** Optional absolute path to codex.exe; empty means resolve `codex` from PATH. */
   aiCodexExecutable: string;
   /** Empty delegates model selection to the installed Codex account's default. */
@@ -172,6 +176,8 @@ export interface PreferenceValues {
   fontSize: number;
   tabSize: number;
   wordWrap: boolean;
+  sourceMinimap: boolean;
+  pdfFollowActiveTex: boolean;
   autoSave: "off" | "afterDelay";
   autoSaveDelaySeconds: number;
   hideBuildArtifacts: boolean;
@@ -192,6 +198,7 @@ export interface PreferenceValues {
   sidePanelDisplay: "overlay" | "push";
   wheelAcceleration: WheelAccelerationPreferences;
   lastProject: string;
+  defaultProjectDirectory: string;
   engine: "pdflatex" | "xelatex" | "lualatex";
   keybindings: Record<string, string>;
   environments: unknown[];
@@ -203,22 +210,24 @@ export interface PreferenceValues {
 }
 export type PreferenceKey = keyof PreferenceValues;
 export const preferenceDefaults: PreferenceValues = {
-  fixedBlockNameLanguage: true, blockNameLanguage: "en",
-  locale: "en", theme: "light", themeDirectory: "", aiCodexExecutable: "", aiModel: "", aiCopilotModel: "", aiReasoningEffort: "", aiCopilotReasoningEffort: "", aiDefaultMode: "chat", aiPermissionMode: "auto", aiIncludeCurrentFile: false, fontSize: 15, tabSize: 2, wordWrap: true,
+  fixedBlockNameLanguage: true, blockNameLanguage: "en", pdfFollowActiveTex: true,
+  locale: "en", theme: "light", themeDirectory: "", themeColorProfiles: {}, aiCodexExecutable: "", aiModel: "", aiCopilotModel: "", aiReasoningEffort: "", aiCopilotReasoningEffort: "", aiDefaultMode: "chat", aiPermissionMode: "auto", aiIncludeCurrentFile: false, fontSize: 15, tabSize: 2, wordWrap: true, sourceMinimap: true,
   autoSave: "off", autoSaveDelaySeconds: 3, hideBuildArtifacts: true, documentWordCompletion: true, autoPairSymbols: true, mathPreviewOnHover: false, showPreviewMetrics: false, autoEnvironmentLabels: true, confirmPreviewEdits: true, warnIncompatibleEnvironmentConversion: true, visibleFilterGroups: ["blockType", "location", "file", "properties"], referenceLinkModifier: "ctrl", spellCheckMode: "auto", spellCheckLanguage: "en-US", spellCheckActiveLanguages: ["en-US"], maximize: true, restoreProject: false,
-  lastProject: "", engine: "pdflatex", keybindings: {}, environments: [], previewDirectives: defaultPreviewDirectives, layout: {}, sidePanelDisplay: "overlay", wheelAcceleration: defaultWheelAccelerationPreferences, images: defaultImagePreferences, tables: defaultTablePreferences, history: defaultHistoryPreferences
+  lastProject: "", defaultProjectDirectory: "", engine: "pdflatex", keybindings: {}, environments: [], previewDirectives: defaultPreviewDirectives, layout: {}, sidePanelDisplay: "overlay", wheelAcceleration: defaultWheelAccelerationPreferences, images: defaultImagePreferences, tables: defaultTablePreferences, history: defaultHistoryPreferences
 };
 // Project overrides inherit from global preferences; machine-wide paths and workspace UI stay global.
-export const projectPreferenceKeys: PreferenceKey[] = ["fontSize", "tabSize", "wordWrap", "autoSave", "autoSaveDelaySeconds", "autoPairSymbols", "mathPreviewOnHover", "confirmPreviewEdits", "engine", "environments", "previewDirectives", "layout", "images", "tables", "history", "keybindings"];
+export const projectPreferenceKeys: PreferenceKey[] = ["fontSize", "tabSize", "wordWrap", "sourceMinimap", "pdfFollowActiveTex", "autoSave", "autoSaveDelaySeconds", "autoPairSymbols", "mathPreviewOnHover", "confirmPreviewEdits", "engine", "environments", "previewDirectives", "layout", "images", "tables", "history", "keybindings"];
 export interface SettingsSnapshot { global: Partial<PreferenceValues>; project: Partial<PreferenceValues>; toolchain?: LatexToolchain }
+export interface SettingsPreset { id: string; name: string; updatedAt: string; kind: SettingsPresetKind }
 export function validLocalizedNames(value: unknown): boolean {
   return value === undefined || !!value && typeof value === "object" && !Array.isArray(value)
     && Object.entries(value).every(([locale, name]) => !!locale.trim() && typeof name === "string");
 }
 export function validPreference(key: string, value: unknown): boolean {
   switch (key) {
-    case "locale": case "blockNameLanguage": return ["en", "ja", "zh-CN", "zh-TW", "ko", "fr"].includes(String(value));
+    case "locale": case "blockNameLanguage": return ["en", "ja", "zh-CN", "zh-TW", "ko", "fr", "kk"].includes(String(value));
     case "fixedBlockNameLanguage": return typeof value === "boolean";
+    case "themeColorProfiles": return validThemeColorProfiles(value);
     case "theme": return typeof value === "string" && /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/.test(value);
     case "engine": return ["pdflatex", "xelatex", "lualatex"].includes(String(value));
     case "spellCheckMode": return value === "auto" || value === "manual" || value === "disabled";
@@ -236,11 +245,12 @@ export function validPreference(key: string, value: unknown): boolean {
     case "tabSize": return typeof value === "number" && [2, 4, 8].includes(value);
     case "autoSave": return value === "off" || value === "afterDelay";
     case "autoSaveDelaySeconds": return typeof value === "number" && Number.isInteger(value) && value >= 1 && value <= 3600;
-    case "wordWrap": case "hideBuildArtifacts": case "documentWordCompletion": case "autoPairSymbols": case "mathPreviewOnHover": case "showPreviewMetrics": case "autoEnvironmentLabels": case "confirmPreviewEdits": case "warnIncompatibleEnvironmentConversion": case "maximize": case "restoreProject": case "aiIncludeCurrentFile": return typeof value === "boolean";
+    case "pdfFollowActiveTex": case "wordWrap": case "sourceMinimap": case "hideBuildArtifacts": case "documentWordCompletion": case "autoPairSymbols": case "mathPreviewOnHover": case "showPreviewMetrics": case "autoEnvironmentLabels": case "confirmPreviewEdits": case "warnIncompatibleEnvironmentConversion": case "maximize": case "restoreProject": case "aiIncludeCurrentFile": return typeof value === "boolean";
     case "aiDefaultMode": return value === "chat" || value === "codex";
     case "aiPermissionMode": return value === "ask" || value === "auto" || value === "full";
     case "referenceLinkModifier": return value === "ctrl" || value === "alt" || value === "shift" || value === "meta";
     case "spellCheckActiveLanguages": return Array.isArray(value) && value.every((item) => typeof item === "string" && /^[A-Za-z]{2,3}(?:[-_][A-Za-z0-9]{2,8})?$/.test(item));
+    case "defaultProjectDirectory": return typeof value === "string" && value.length <= 4096 && !value.includes("\0");
     case "themeDirectory": case "aiCodexExecutable": case "lastProject": return typeof value === "string";
     case "aiModel": case "aiCopilotModel": return typeof value === "string" && value.length <= 160;
     case "aiReasoningEffort": case "aiCopilotReasoningEffort": return typeof value === "string" && (value === "" || /^[a-z][a-z0-9_-]{0,31}$/.test(value));
@@ -249,7 +259,10 @@ export function validPreference(key: string, value: unknown): boolean {
     case "environments": return Array.isArray(value) && value.every((entry) => {
       if (!entry || typeof entry !== "object") return false;
       const e = entry as Record<string, unknown>;
+      const style = e.style as Record<string, unknown> | undefined;
       return typeof e.id === "string" && typeof e.enabled === "boolean" && typeof e.labelKey === "string" && typeof e.family === "string" && !!e.match && !!e.style && !!e.behavior
+        && (style?.colorMode === undefined || style.colorMode === "adaptive" || style.colorMode === "fixed")
+        && (style?.baseColor === undefined || typeof style.baseColor === "string")
         && validLocalizedNames(e.labels);
     });
     case "previewDirectives": return Array.isArray(value) && value.length <= 256 && value.every((entry) => {
@@ -261,6 +274,7 @@ export function validPreference(key: string, value: unknown): boolean {
         && validLocalizedNames(item.labels)
         && ["divider", "placeholder", "spacer"].includes(String(item.display))
         && (item.placement === undefined || ["nested", "trailing", "independent"].includes(item.placement))
+        && (item.colorMode === undefined || item.colorMode === "adaptive" || item.colorMode === "fixed")
         && typeof item.color === "string" && /^#[0-9a-fA-F]{6}$/.test(item.color)
         && !!item.match && (item.match.kind === "blank-line" || item.match.kind === "command" && /^[A-Za-z@]+$/.test(item.match.name));
     }) && new Set((value as PreviewDirectiveDefinition[]).map((entry) => entry.id)).size === value.length;

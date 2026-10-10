@@ -1,0 +1,95 @@
+:root[data-theme="tech-light"] {
+  color-scheme: light;
+  --color-bg-app: #edf5fb;
+  --color-bg-app-top: #f8fcff;
+  --color-bg-app-bottom: #e8f3fc;
+  --color-bg-panel: #ffffff;
+  --color-bg-toolbar: #f8fcff;
+  --color-bg-subtle: #edf6fb;
+  --color-bg-hover: #e3f3fb;
+  --color-primary: #087fbd;
+  --color-primary-strong: #075f9b;
+  --color-accent: #16b9d0;
+  --color-link: #075f9b;
+  --color-link-hover: #078fc6;
+  --color-text-primary: #17344d;
+  --color-text-secondary: #607f99;
+  --color-text-muted: #8ba5b8;
+  --color-border: #cfe0eb;
+  --color-border-strong: #a9c7d9;
+  --color-status-bg: #075f9b;
+  --color-status-text: #f2fbff;
+  --shadow-panel: 0 8px 24px rgba(19, 82, 119, .11), 0 2px 6px rgba(19, 82, 119, .06);
+  --semantic-chroma-scale: 1.04;
+  --semantic-fill-mix: .05;
+  --semantic-label-mix: .12;
+  --semantic-border-mix: .28;
+  --env-border-default: rgba(43, 115, 153, .15);
+  --env-border-hover: rgba(22, 153, 189, .38);
+  --env-border-selected: #159fc6;
+  background:
+    radial-gradient(ellipse at 8% 0%, rgba(51, 177, 222, .09), transparent 32%),
+    linear-gradient(180deg, var(--color-bg-app-top), var(--color-bg-app) 55%, var(--color-bg-app-bottom));
+}
+
+:root[data-theme="tech-light"] body,
+:root[data-theme="tech-light"] .app-shell {
+  background: transparent;
+}
+
+:root[data-theme="tech-light"] .workbench-topbar {
+  box-shadow: 0 3px 16px rgba(16, 108, 155, .12);
+}
+
+:root[data-theme="tech-light"] .activity-bar button.active,
+:root[data-theme="tech-light"] .sidebar-heading,
+:root[data-theme="tech-light"] .outline-heading {
+  box-shadow: inset 3px 0 0 rgba(16, 159, 198, .6);
+}
+
+:root[data-theme="tech-light"] .work-pane,
+:root[data-theme="tech-light"] .sidebar,
+:root[data-theme="tech-light"] .settings-panel,
+:root[data-theme="tech-light"] .modal-card,
+:root[data-theme="tech-light"] .project-card,
+:root[data-theme="tech-light"] .project-row,
+:root[data-theme="tech-light"] .environment-dialog,
+:root[data-theme="tech-light"] .table-editor-dialog {
+  box-shadow: var(--shadow-panel);
+}
+
+:root[data-theme="tech-light"] button:focus-visible,
+:root[data-theme="tech-light"] input:focus-visible,
+:root[data-theme="tech-light"] select:focus-visible,
+:root[data-theme="tech-light"] textarea:focus-visible {
+  outline: 2px solid rgba(19, 163, 205, .82);
+  outline-offset: 2px;
+  box-shadow: 0 0 0 4px rgba(33, 177, 218, .13), 0 0 18px rgba(33, 177, 218, .12);
+}
+
+:root[data-theme="tech-light"] .compile-button,
+:root[data-theme="tech-light"] .primary-button {
+  box-shadow: 0 5px 16px rgba(5, 137, 190, .23);
+}
+
+:root[data-theme="tech-light"] .compile-button:hover,
+:root[data-theme="tech-light"] .primary-button:hover {
+  box-shadow: 0 7px 20px rgba(5, 137, 190, .3), 0 0 18px rgba(30, 190, 222, .14);
+}
+
+:root[data-theme="tech-light"] .pane-placeholder {
+  background:
+    radial-gradient(ellipse at 50% 42%, rgba(28, 183, 218, .13), transparent 38%),
+    linear-gradient(150deg, #fbfdff, #f0f8fd);
+}
+
+:root[data-theme="tech-light"] .directory-board {
+  background:
+    radial-gradient(ellipse at 78% 70%, rgba(25, 166, 211, .1), transparent 38%),
+    linear-gradient(150deg, #fbfdff 12%, #eff7fc);
+}
+
+:root[data-theme="tech-light"] .directory-board-grid {
+  opacity: .16;
+  background-size: 56px 56px;
+}

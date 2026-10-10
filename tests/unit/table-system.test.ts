@@ -40,6 +40,19 @@ describe("v0.4.2 table system", () => {
     }
   });
 
+  it("splits a merged cell even when the selection intersects only its lower-right area", () => {
+    const source = tableInsertion({ rows: 3, columns: 3, style: "grid", headerRow: false, addCaption: false, addLabel: false }, defaultTablePreferences).text;
+    const merged = mergeTableCells(source, 0, 0, 1, 1);
+    const withContent = patchTableSource(merged, { cell: { row: 0, column: 0, content: "Preserved" } });
+    const split = splitTableCells(withContent, 1, 1, 1, 1);
+    expect(split).not.toBe(withContent);
+    const table = parseTable(split)!;
+    expect(table.tabular.cells[0]).toMatchObject({ content: "Preserved", colSpan: 1, rowSpan: 1 });
+    expect(table.tabular.diagnostics).toEqual([]);
+    expect(table.tabular.rows.every(row => row.cells.length === 3)).toBe(true);
+    expect(splitTableCells(source, 1, 1, 1, 1)).toBe(source);
+  });
+
   it("keeps a merged cell editable while rows and columns are inserted and deleted", () => {
     let source = tableInsertion({ rows: 3, columns: 3, style: "grid", headerRow: false, addCaption: false, addLabel: false }, defaultTablePreferences).text;
     source = mergeTableCells(source, 0, 0, 1, 1);

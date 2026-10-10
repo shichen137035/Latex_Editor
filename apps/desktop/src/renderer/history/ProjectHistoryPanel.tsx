@@ -14,11 +14,12 @@ const label = (entry: ProjectHistoryEntry) => entry.type === "version" ? `${t("h
 const date = (value: string) => new Intl.DateTimeFormat(settings.get("locale"), { dateStyle: "medium", timeStyle: "short" }).format(new Date(value));
 const size = (bytes: number) => bytes < 1024 ? `${bytes} B` : bytes < 1024 * 1024 ? `${(bytes / 1024).toFixed(1)} KB` : `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 
-export function ProjectHistoryPanel({ projectId, onBeforeCapture, onRestored, onOpenSettings }: {
+export function ProjectHistoryPanel({ projectId, onBeforeCapture, onRestored, onOpenSettings, toolbarTarget }: {
   projectId: string;
   onBeforeCapture(): Promise<void>;
   onRestored(paths: string[]): Promise<void>;
   onOpenSettings(): void;
+  toolbarTarget?: HTMLElement | null;
 }) {
   const api = window.latexEditor!.history;
   const [entries, setEntries] = useState<ProjectHistoryEntry[]>([]);
@@ -94,8 +95,13 @@ export function ProjectHistoryPanel({ projectId, onBeforeCapture, onRestored, on
     setDialog({ kind: "compare", path: change.path, ...(historical !== undefined ? { historical } : {}), ...(current !== undefined ? { current } : {}) });
   });
 
+  const toolbar = <div className="history-toolbar-actions">
+    <button onClick={() => void run(async () => { await onBeforeCapture(); await api.snapshot(projectId, "manual"); })} disabled={busy} title={t("history.createSnapshot")} aria-label={t("history.createSnapshot")}>＋</button>
+    <button onClick={() => { if (window.confirm(t("history.clearSnapshotsConfirm", { count: entries.filter(entry => entry.type === "snapshot").length }))) void run(() => api.clearSnapshots(projectId)); }} disabled={busy || !entries.some(entry => entry.type === "snapshot")} title={t("history.clearSnapshots")} aria-label={t("history.clearSnapshots")}><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" aria-hidden="true"><path d="M3 6h18M9 6V3h6v3M5 6l1 15h12l1-15M10 10v7M14 10v7"/></svg></button>
+    <button onClick={onOpenSettings} title={t("history.settings")} aria-label={t("history.settings")}>⚙</button>
+  </div>;
   return <section className="project-history-panel" aria-label={t("history.title")}>
-    <header className="history-heading"><button onClick={() => void run(async () => { await onBeforeCapture(); await api.snapshot(projectId, "manual"); })} disabled={busy} title={t("history.createSnapshot")}>＋</button><button onClick={onOpenSettings} title={t("history.settings")}>⚙</button></header>
+    {toolbarTarget ? createPortal(toolbar, toolbarTarget) : <header className="history-heading">{toolbar}</header>}
     <div className="history-create"><button onClick={() => openForm("version")} disabled={busy}>{t("history.createVersion")}</button><button onClick={() => openForm("temporary")} disabled={busy}>{t("history.createTemporary")}</button></div>
     <div className="history-filters"><select aria-label={t("history.filter")} value={filter} onChange={(event) => setFilter(event.target.value as Filter)}><option value="all">{t("history.all")}</option><option value="version">{t("history.versions")}</option><option value="snapshot">{t("history.snapshots")}</option><option value="temporary">{t("history.temporarySaves")}</option></select><input aria-label={t("history.search")} placeholder={t("history.search")} value={query} onChange={(event) => setQuery(event.target.value)}/></div>
     <div className="history-scroll"><div className="history-current">● {t("history.current")}</div>{visible.length ? visible.map((entry) => <button key={entry.id} data-history-id={entry.id} className={`history-entry ${entry.id === selectedId ? "selected" : ""}`} onClick={() => setSelectedId(entry.id)}><span className={`history-dot ${entry.type}`}>●</span><span><strong>{label(entry)}</strong>{entry.type === "version" && entry.title && <small>{entry.title}</small>}{entry.reason && <small>{t(`history.reason.${entry.reason}`)}</small>}<time>{date(entry.createdAt)}</time></span></button>) : <p className="history-empty">{t("history.empty")}</p>}

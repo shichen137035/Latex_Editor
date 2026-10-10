@@ -55,8 +55,11 @@ async function run() {
   await until(`document.querySelector('[data-app-version]')?.textContent === ${JSON.stringify("v" + expectedVersion)}`, 'home version from root package');
   assert.equal((await evaluate('window.latexEditor.app.info()')).version, expectedVersion);
   await evaluate(`document.querySelector('.directory-new-main').click()`);
-  await until('!!document.querySelector(".resource-picker select")', 'new project presets');
-  assert.deepEqual(await evaluate('Array.from(document.querySelector(".resource-picker select").options).map(option => option.textContent)'), ['默认', '空白', '精简']);
+  await until('!!document.querySelector(".style-picker-entry")', 'new project style selector');
+  await evaluate('document.querySelector(".style-picker-entry").click()');
+  await until('!!document.querySelector(".style-selector")', 'style selector dialog');
+  assert.deepEqual(await evaluate('Array.from(document.querySelectorAll(".style-selector-item strong")).map(option => option.textContent)'), ['默认', '空白', '精简']);
+  await evaluate('document.querySelector(".style-selector footer button").click()');
   await evaluate(`document.querySelector('.project-creation-card .close-button').click()`);
   await evaluate(`document.querySelector('.directory-project-row').click()`); page.focus();
   await until(`document.querySelector('.structured-preview [data-environment="theorem"]')?.textContent.includes('Theorem')`, 'fixed English names by default');
@@ -156,7 +159,7 @@ async function run() {
   dialog.showSaveDialog = async (...args) => { saveOptions = args.at(-1); return { canceled: true }; };
   await evaluate(`window.latexEditor.exports.mainTex(${id},'main.tex')`);
   assert.equal(saveOptions.title, '导出主 TeX 文件'); assert.equal(saveOptions.filters[0].name, 'TeX 源文件');
-  await evaluate(`document.querySelector('.activity-bar button[title="文献库"]').click()`);
+  await evaluate(`document.querySelector('.activity-bar button[title^="文献库"]').click()`);
   await until('!!document.querySelector(".reference-quick-panel")', 'reference tool');
   assert.ok(await evaluate(`document.querySelector('.reference-quick-panel').textContent.includes('当前项目')`));
   console.log('PASS native export labels and project reference tools are localized');

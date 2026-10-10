@@ -1,6 +1,6 @@
 import { catalogs, getLocale, t } from "../i18n/index.js";
 import { environmentName, environmentNames } from "../i18n/displayNames.js";
-import { cloneEnvironmentDefinitions, DEFAULT_ENVIRONMENTS, environmentOptionBrackets } from "./environments.js";
+import { cloneEnvironmentDefinitions, DEFAULT_ENVIRONMENTS, DEFAULT_ENVIRONMENT_STYLE, environmentOptionBrackets } from "./environments.js";
 import type { EnvironmentDefinition, EnvironmentMatchRule } from "./types.js";
 import { settings } from "../settings/service.js";
 import { environmentTitleTypography, titleNumericFields, validTitleNumber, type TitleNumericField } from "./environment-typography.js";
@@ -38,14 +38,7 @@ export function createCustomEnvironment(existing: EnvironmentDefinition[]): Envi
     labelKey: "",
     labels: { [getLocale()]: t("ui.environmentConfig.custom", { value1: suffix }) },
     family: "generic",
-    style: {
-      accentToken: "#2f84c5",
-      fillToken: "transparent",
-      labelBackgroundToken: "#edf7fd",
-      labelTextToken: "#246893",
-      borderToken: "rgba(70, 95, 120, 0.10)",
-      selectedBorderToken: "#2f6bb2"
-    },
+    style: { ...DEFAULT_ENVIRONMENT_STYLE, baseColor: "--env-section-base" },
     behavior: { inlineEditable: true, allowChildren: true, showHeader: true, showLabel: true, showOptionBrackets: environmentOptionBrackets() }
   };
 }
@@ -93,7 +86,7 @@ export function serializeEnvironments(definitions: EnvironmentDefinition[]): str
     const names = Object.entries(definition.labels ?? {}).map(([locale, name]) => `    <name locale="${escapeXml(locale)}" value="${escapeXml(name)}" />`).join("\n");
     return `  <environment id="${escapeXml(definition.id)}" enabled="${definition.enabled}" builtIn="${definition.builtIn}" family="${definition.family}" label="${escapeXml(definition.label ?? "")}" labelKey="${escapeXml(definition.labelKey)}">
 ${names ? names + "\n" : ""}    <match type="${definition.match.kind}" value="${escapeXml(matchValue(definition.match))}" />
-    <style accentToken="${escapeXml(definition.style.accentToken)}" fillToken="${escapeXml(definition.style.fillToken)}" borderToken="${escapeXml(definition.style.borderToken)}" selectedBorderToken="${escapeXml(definition.style.selectedBorderToken)}" labelBackgroundToken="${escapeXml(definition.style.labelBackgroundToken)}" labelTextToken="${escapeXml(definition.style.labelTextToken)}" ${titleAttributes} ${previewAttributes} />
+    <style colorMode="${definition.style.colorMode ?? "adaptive"}" baseColor="${escapeXml(definition.style.baseColor ?? definition.style.accentToken)}" accentToken="${escapeXml(definition.style.accentToken)}" fillToken="${escapeXml(definition.style.fillToken)}" borderToken="${escapeXml(definition.style.borderToken)}" selectedBorderToken="${escapeXml(definition.style.selectedBorderToken)}" labelBackgroundToken="${escapeXml(definition.style.labelBackgroundToken)}" labelTextToken="${escapeXml(definition.style.labelTextToken)}" ${titleAttributes} ${previewAttributes} />
     <behavior ${behaviorAttributes} />
   </environment>`;
   });
@@ -141,16 +134,30 @@ export function parseEnvironmentXml(xml: string): EnvironmentDefinition[] {
       typography[field] = value;
     }
     const titleFontFamily = styleElement.getAttribute("titleFontFamily")?.trim();
+    const colorMode = styleElement.getAttribute("colorMode") ?? "adaptive";
+    if (colorMode !== "adaptive" && colorMode !== "fixed") throw new Error(t("ui.environmentConfig.invalid_for_environment", { value1: "colorMode", value2: id }));
     const showOptionBrackets = behaviorElement.getAttribute("showOptionBrackets");
     if (showOptionBrackets !== null && showOptionBrackets !== "true" && showOptionBrackets !== "false") throw new Error(t("ui.environmentConfig.invalid_showoptionbrackets_for_environment", { value1: id }));
     const previewBehavior: Partial<EnvironmentBehavior> = {};
-    for (const key of ["showCaption", "captionEditable", "allowExpandedEditor", "expandedToolbar"] as const) {
+    for (const key of ["showCaption", "captionEditable", "allowExpandedEditor", "expandedToolbar", "listItemEditing", "listShowCount"] as const) {
       const raw = behaviorElement.getAttribute(key);
       if (raw === null) continue;
       if (raw !== "true" && raw !== "false") throw new Error(t("ui.environmentConfig.invalid_for_environment", { value1: key, value2: id }));
       previewBehavior[key] = raw === "true";
     }
     for (const [key, choices] of [["renderer", previewRenderers], ["imageClickAction", imageClickActions], ["tableToolbar", tableToolbarModes]] as const) {
+      const raw = behaviorElement.getAttribute(key);
+      if (raw === null) continue;
+      if (!(choices as readonly string[]).includes(raw)) throw new Error(t("ui.environmentConfig.invalid_for_environment", { value1: key, value2: id }));
+      Object.assign(previewBehavior, { [key]: raw });
+    }
+    for (const [key, pattern] of [["blockHandler", /^[a-zA-Z0-9._-]*$/], ["listItemCommand", /^[A-Za-z@]+$/]] as const) {
+      const raw = behaviorElement.getAttribute(key);
+      if (raw === null) continue;
+      if (!pattern.test(raw)) throw new Error(t("ui.environmentConfig.invalid_for_environment", { value1: key, value2: id }));
+      Object.assign(previewBehavior, { [key]: raw });
+    }
+    for (const [key, choices] of [["listStyle", ["ordered", "unordered", "description"]], ["listMarker", ["decimal", "lower-alpha", "lower-roman", "disc", "circle", "square", "none"]]] as const) {
       const raw = behaviorElement.getAttribute(key);
       if (raw === null) continue;
       if (!(choices as readonly string[]).includes(raw)) throw new Error(t("ui.environmentConfig.invalid_for_environment", { value1: key, value2: id }));
@@ -176,6 +183,8 @@ export function parseEnvironmentXml(xml: string): EnvironmentDefinition[] {
         ...typography,
         ...previewSizing,
         ...(titleFontFamily ? { titleFontFamily } : {}),
+        colorMode,
+        ...(styleElement.getAttribute("baseColor") ? { baseColor: styleElement.getAttribute("baseColor")! } : {}),
         accentToken: styleElement.getAttribute("accentToken") || "--env-generic-accent",
         fillToken: styleElement.getAttribute("fillToken") || "transparent",
         borderToken: styleElement.getAttribute("borderToken") || "--env-border-default",

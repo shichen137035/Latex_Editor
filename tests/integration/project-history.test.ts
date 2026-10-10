@@ -25,6 +25,22 @@ async function setup() {
 }
 
 describe("project history", () => {
+  it("clears all snapshots while preserving versions, temporary saves and their objects", async () => {
+    const { root, service } = await setup();
+    const version = await service.createVersion("paper", { versionNumber: "1.0", title: "Baseline" });
+    await writeFile(join(root, "main.tex"), "temporary text");
+    const temporary = await service.createTemporary("paper", { title: "Draft" });
+    await writeFile(join(root, "main.tex"), "snapshot-only text");
+    await service.snapshot("paper", "manual");
+    await service.snapshot("paper", "pre-restore");
+    await service.clearSnapshots("paper");
+    expect((await service.list("paper")).map(entry => entry.type).sort()).toEqual(["temporary", "version"]);
+    expect(await service.readText("paper", version.id, "main.tex")).toBe("first");
+    expect(await service.readText("paper", temporary.id, "main.tex")).toBe("temporary text");
+    expect((await service.storage("paper")).snapshots).toBe(0);
+    expect(await readFile(join(root, "main.tex"), "utf8")).toBe("snapshot-only text");
+    await service.clearSnapshots("paper");
+  });
   it("keeps restorable formal versions only when removing directory metadata", async () => {
     const { root, service } = await setup();
     const version = await service.createVersion("paper", { versionNumber: "1.0", title: "Baseline" });

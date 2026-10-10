@@ -2,6 +2,11 @@
 .environment-badge { display: inline-flex; align-items: center; width: fit-content; max-width: 110px; padding: 3px 8px; border: 1px solid color-mix(in srgb, var(--environment-accent) 20%, transparent); border-radius: 6px; color: color-mix(in srgb, var(--environment-accent) 76%, var(--color-text-primary)); background: color-mix(in srgb, var(--environment-accent) 9%, var(--color-bg-panel)); font-size: 10px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .relation-browser .relation-browser-head { gap: 10px; padding: 10px 12px 12px; flex: 0 1 auto; min-height: 170px; max-height: 55%; overflow: auto; background: linear-gradient(135deg, color-mix(in srgb, var(--color-primary) 3%, var(--color-bg-panel)), var(--color-bg-panel)); }
 .relation-browser-head h3 { margin: 0; font-size: 12px; font-weight: 700; }
+.relation-browser .relation-browser-head { min-height: 0; gap: 8px; padding: 8px 10px; }
+.relation-browser .relation-scope-controls { grid-template-columns: minmax(0, 1fr) 60px; gap: 8px; }
+.relation-browser .relation-scope-field > span { display: none; }
+.relation-browser .relation-scope-field > select { width: 100%; }
+.relation-browser .relation-document-toggle { grid-column: 1 / -1; }
 .relation-back { height: 21px; padding: 0; color: var(--color-text-secondary); font-size: 11px; }
 .relation-focus-summary { min-width: 0; display: grid; gap: 5px; }
 .relation-focus-summary > span { color: var(--color-text-secondary); font-size: 11px; }
@@ -106,3 +111,5 @@
 @media (max-height: 720px) { .relation-browser .relation-browser-head { gap: 7px; } .relation-selection-card { padding: 8px; } .relation-open-graph { min-height: 43px; } .relation-open-graph small { display: none; } }
 @media (max-width: 1180px) { .relation-inspector { top: calc(var(--topbar-height) + 39px); } }
 @media (prefers-reduced-motion: reduce) { .relation-toggle-track, .relation-toggle-track::after { transition: none; } }
+
+.environment-badge { color: var(--environment-label-text, var(--environment-accent)); background: var(--environment-label-bg, transparent); border-color: var(--environment-border, var(--environment-accent)); }

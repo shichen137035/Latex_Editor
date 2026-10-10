@@ -1,5 +1,6 @@
 :root[data-theme="dark"], [data-theme="dark"] {
   color-scheme: dark;
+  --semantic-chroma-scale: .9; --semantic-fill-mix: .06; --semantic-label-mix: .14; --semantic-border-mix: .3;
   --color-bg-app: #111a24; --color-bg-app-top: #1a2939; --color-bg-app-bottom: #101821; --color-bg-panel: #182432; --color-bg-toolbar: #1c2a3a; --color-bg-subtle: #213144; --color-bg-hover: #294259;
   --color-primary: #6abcf2; --color-primary-strong: #9bd6ff; --color-accent: #59d2df;
   --color-text-primary: #e0eaf3; --color-text-secondary: #afc2d4; --color-text-muted: #829db4;
@@ -7,10 +8,5 @@
   --color-success: #61d6a5; --color-warning: #efbd68; --color-error: #ff8590;
   --color-status-bg: #294a63; --color-status-text: #e7f5ff;
   --env-border-default: #a8c4da22; --env-border-hover: #a8c4da55; --env-border-selected: #68b5f5;
-  --env-section-accent: #7db9ff; --env-theorem-accent: #89b9ff; --env-definition-accent: #67d7db; --env-proof-accent: #82d9a6;
-  --env-equation-accent: #b6cddd; --env-remark-accent: #e5bd7e; --env-example-accent: #7bcee8; --env-figure-accent: #7bcee8; --env-table-accent: #84cbd5;
-  --env-list-accent: #a9bdce; --env-quote-accent: #b6bfcc; --env-code-accent: #a1c4e1; --env-virtual-accent: #edb589; --env-generic-accent: #b2c6d8;
   --shadow-panel: 0 8px 28px #0005;
-  --env-lemma-accent: #5cd1b7; --env-proposition-accent: #f3b174; --env-corollary-accent: #c1a0f3;
-  --env-assumption-accent: #ed93ba; --env-subsection-accent: #a0bdf2; --env-subsubsection-accent: #baa9eb;
 }

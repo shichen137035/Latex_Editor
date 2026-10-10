@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { cp, mkdir, readFile, readdir, rename, rm, writeFile } from "node:fs/promises";
-import { basename, extname, join, relative, resolve, sep } from "node:path";
+import { basename, dirname, extname, join, relative, resolve, sep } from "node:path";
 import type { ResourceFileKind, StyleResource, StyleResourceFile } from "@latex-editor/contracts" with { "resolution-mode": "import" };
 
 type StoredFile = Omit<StyleResourceFile, "content">;
@@ -50,6 +50,26 @@ export class StyleResourceRepository {
   }
 
   async initialize(): Promise<void> { await mkdir(this.#userRoot, { recursive: true }); }
+
+  async importPresetResources(packs: Array<{ name: string; files: Array<{ targetPath: string; content: string }> }>): Promise<void> {
+    for (const pack of packs) {
+      const same = (await this.list()).find(item => item.source === "user" && item.name === pack.name);
+      const current = same ? await this.getResource(same.id) : undefined;
+      if (current && current.files.length === pack.files.length && pack.files.every(file => current.files.some(old => old.targetPath === file.targetPath && old.content === file.content))) continue;
+      const resource = await this.createResource(pack.name), root = join(this.#userRoot, resource.id);
+      try {
+        const files: StoredFile[] = [];
+        for (const file of pack.files) {
+          const target = safeRelative(file.targetPath);
+          if (!supportedExtensions.has(extname(target).toLowerCase())) throw new Error("settingsPresets.invalidFile");
+          await mkdir(dirname(join(root, target)), { recursive: true });
+          await writeFile(join(root, target), file.content, "utf8");
+          files.push({ sourcePath: target, targetPath: target, kind: kindFor(target) });
+        }
+        await this.#writeManifest(root, { ...resource, files, ...(defaultMainStyle(files) ? { mainStyle: defaultMainStyle(files)! } : {}) });
+      } catch (reason) { await rm(root, { recursive: true, force: true }); throw reason; }
+    }
+  }
 
   async list(): Promise<StyleResource[]> {
     const [builtIns, users] = await Promise.all([this.#listRoot(this.#builtInRoot, "built-in"), this.#listRoot(this.#userRoot, "user")]);

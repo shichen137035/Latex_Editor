@@ -43,6 +43,40 @@ describe("real latexmk compilation", () => {
     expect(result.diagnostics.some((item) => item.severity === "error" && item.line !== undefined)).toBe(true);
   }, 150_000);
 
+  it("builds mutual xr-hyper references and republishes changed secondary labels", async context => {
+    if (!(await compiler.detectToolchain()).available) context.skip();
+    const project = await fixtureProject("compile-success"), root = project.canonicalPath;
+    await mkdir(resolve(root, "supplement"));
+    await writeFile(resolve(root, "main.tex"), String.raw`\documentclass{article}
+\usepackage{xr-hyper}
+\usepackage{hyperref}
+\externaldocument[S-]{supplement/notes}[supplement/notes.pdf]
+\begin{document}
+\section{Primary}\label{sec:primary}
+See section \ref{S-sec:notes}.
+\typeout{XR-NUMBER=\getrefnumber{S-sec:notes}}
+\end{document}`);
+    const notes = String.raw`\documentclass{article}
+\usepackage{xr-hyper}
+\usepackage{hyperref}
+\externaldocument[M-]{main}[../main.pdf]
+\begin{document}
+\section{Notes}\label{sec:notes}
+See primary section \ref{M-sec:primary}.
+\end{document}`;
+    await writeFile(resolve(root, "supplement/notes.tex"), notes);
+    const first = await compiler.compile({ projectId: project.id, timeoutMs: 120_000 });
+    expect(first.status, first.stdoutTail + first.stderrTail).toBe("succeeded");
+    expect(await readFile(resolve(root, "main.log"), "utf8")).toContain("XR-NUMBER=1");
+    expect(await readFile(resolve(root, "supplement/notes.aux"), "utf8")).toContain("sec:notes");
+    expect(existsSync(resolve(root, "supplement/notes.pdf"))).toBe(true);
+    await writeFile(resolve(root, "supplement/notes.tex"), notes.replace("\\section{Notes}", "\\section{Preface}\n\\section{Notes}"));
+    const updated = await compiler.compile({ projectId: project.id, timeoutMs: 120_000 });
+    expect(updated.status, updated.stdoutTail + updated.stderrTail).toBe("succeeded");
+    expect(await readFile(resolve(root, "main.log"), "utf8")).toContain("XR-NUMBER=2");
+    expect(updated.diagnostics.some(item => item.category === "reference" && /undefined/i.test(item.message))).toBe(false);
+  }, 150_000);
+
   it("compiles an independent nested document without overwriting same-named main artifacts", async context => {
     if (!(await compiler.detectToolchain()).available) context.skip();
     const project = await fixtureProject("compile-success"), root = project.canonicalPath;

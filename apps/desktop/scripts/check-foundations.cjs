@@ -9,36 +9,43 @@ app.setPath("userData", resolve(root, "user"));
 const delay = (ms) => new Promise((done) => setTimeout(done, ms));
 let page;
 const js = (code) => page.webContents.executeJavaScript(code, true);
-async function until(code, label) {
-  for (let i = 0; i < 150; i++) { if (await js(code)) return; await delay(100); }
-  throw new Error(`Timeout: ${label}\n${await js('document.body.innerText.slice(0,1500)')}`);
+async function until(code, label, attempts = 150) {
+  for (let i = 0; i < attempts; i++) { if (await js(code)) return; await delay(100); }
+  const details = label === 'conflict' ? await js(`JSON.stringify({capture:document.querySelector('[data-shortcut-capture]')?.value,focus:document.activeElement?.outerHTML?.slice(0,240),alerts:Array.from(document.querySelectorAll('.shortcut-inline-recorder [role]')).map(node=>({role:node.getAttribute('role'),text:node.textContent})),recorder:document.querySelector('.shortcut-inline-recorder')?.innerText})`) : '';
+  throw new Error(`Timeout: ${label}\n${details}\n${await js('document.body.innerText.slice(0,1500)')}`);
 }
-const click = (selector) => js(`document.querySelector(${JSON.stringify(selector)}).click()`);
+const click = async (selector) => {
+  if (!await js(`!!document.querySelector(${JSON.stringify(selector)})`)) throw new Error(`Missing click target: ${selector}\n${await js('document.body.innerText.slice(0,1000)')}`);
+  await js(`document.querySelector(${JSON.stringify(selector)}).click()`);
+};
 const select = (selector, value) => js(`(() => { const el=document.querySelector(${JSON.stringify(selector)}); el.value=${JSON.stringify(value)}; el.dispatchEvent(new Event('change',{bubbles:true})); })()`);
 function key(keyCode, modifiers) { page.webContents.sendInputEvent({type:"keyDown",keyCode,modifiers}); page.webContents.sendInputEvent({type:"keyUp",keyCode,modifiers}); }
 async function run() {
   for (let i = 0; i < 150 && !BrowserWindow.getAllWindows().length; i++) await delay(100);
   page = BrowserWindow.getAllWindows()[0];
   assert.ok(page);
-  await until('!!document.querySelector(".topbar")', "directory");
-  await click('.topbar .icon-button');
-  await click('[data-section="language"]');
-  await select('[data-setting="locale"]', 'ja');
+  await until('!!document.querySelector(".directory-topbar")', "directory");
+  await click('.directory-actions > .icon-button:last-child');
+  await click('[data-section="general"]');
+  await select('[data-setting="locale"] select', 'ja');
   await until('document.querySelector(".preferences-dialog h1").textContent === "設定"', 'live Japanese');
   await click('[data-section="appearance"]');
   await until('Array.from(document.querySelectorAll("[data-setting=theme] option")).some((option) => option.value === "dark")', 'theme choices');
   await select('[data-setting="theme"]', 'dark');
   await until('document.documentElement.dataset.theme === "dark"', 'dark theme');
   page.reload();
-  await until('!!document.querySelector(".topbar") && document.documentElement.lang === "ja" && document.documentElement.dataset.theme === "dark"', 'persisted locale/theme');
+  await until('!!document.querySelector(".directory-topbar") && document.documentElement.lang === "ja" && document.documentElement.dataset.theme === "dark"', 'persisted locale/theme');
   console.log('PASS live Japanese, dark theme and persistence across renderer reload');
-  await click('.topbar .icon-button');
-  await click('[data-section="styleResources"]');
+  await click('.directory-actions > .icon-button:last-child');
+  await click('[data-section="projectBuild"]');
+  await js('document.querySelectorAll(".settings-level-switch button")[1].click()');
+  await until('!!document.querySelector(".settings-manager-entry-open[aria-label=\\"Style resource manager\\"]")', 'advanced project managers');
+  await click('.settings-manager-entry-open[aria-label="Style resource manager"]');
   await until('document.querySelector(".style-resources-page")', 'style resource settings');
   const resources = await js('window.latexEditor.styleResources.list()');
   assert.ok(resources.some((item) => item.id === 'empty' && item.source === 'built-in'));
   assert.ok(resources.some((item) => item.id === 'default' && item.files.some((file) => file.targetPath === 'texweave.sty')));
-  await click('.preferences-dialog > header > button');
+  await click('.settings-manager-return');
   const project = await js(`window.latexEditor.projects.create({name:'foundation-a',parentPath:${JSON.stringify(resolve(root,"projects"))},styleResourceIds:['default']})`);
   const emptyProject = await js(`window.latexEditor.projects.create({name:'foundation-empty',parentPath:${JSON.stringify(resolve(root,"projects"))},styleResourceIds:['empty']})`);
   assert.ok(existsSync(resolve(project.canonicalPath, 'texweave.sty')));
@@ -73,32 +80,46 @@ async function run() {
   assert.equal(manual.available,true);
   await js("window.latexEditor.settings.set('locale','en')");
   page.reload();
-  await until('document.querySelectorAll(".project-row").length >= 4','projects');
-  await click('.project-row');
+  await until('document.querySelectorAll(".directory-project-row").length >= 4','projects');
+  await click('.directory-project-row');
   await until('!!document.querySelector(".editor-surface .monaco-editor")','editor');
   await until('!Array.from(document.querySelectorAll(".tree-row")).some((row) => row.dataset.path === ".texweave")','hidden TeXWeave metadata');
   key(',', ['control']);
   await until('!!document.querySelector(".preferences-dialog")','general settings open');
   await click('[data-section="general"]');
   assert.ok(await js('!!document.querySelector("[data-setting=hideBuildArtifacts]")'));
-  await click('.preferences-dialog > header > button');
+  await click('.settings-close');
   const workbenchTheme = await js(`(() => { const root=getComputedStyle(document.documentElement); const pick=(selector,property='backgroundColor')=>getComputedStyle(document.querySelector(selector))[property]; return { theme:document.documentElement.dataset.theme, activity:pick('.activity-bar'), sidebar:pick('.sidebar'), toolbar:pick('.latex-toolbar'), token:root.getPropertyValue('--color-bg-toolbar').trim(), active:pick('.tree-row.active') }; })()`);
   assert.equal(workbenchTheme.theme, 'dark');
   console.log('PASS dark theme persists on the directory shell');
   key(',', ['control']);
   await until('!!document.querySelector(".preferences-dialog")','shortcut settings open');
-  await click('[data-section="shortcuts"]');
-  await click('[data-command="latex.compile"]');
-  key('S',['control']);
-  await until('!!document.querySelector(".shortcut-capture [role=alert]")','conflict');
-  key('Escape',[]);
-  await click('[data-command="latex.compile"]');
+  await click('[data-section="editor"]');
+  await click('.settings-manager-entry-open[aria-label="Shortcut manager"]');
+  await js(`Array.from(document.querySelectorAll('.shortcut-map-function')).find(item => item.querySelector('.shortcut-map-function-name strong')?.textContent.trim() === 'Compile').querySelector('.shortcut-map-function-select').click()`);
+  await until('!!document.querySelector("[data-shortcut-capture]")', 'shortcut capture input');
+  await delay(120);
+  await js('document.querySelector("[data-shortcut-capture]").focus()');
+  key('A',['control','shift']);
+  await delay(100);
+  await until('!!document.querySelector(".shortcut-inline-recorder [role=alert]")','conflict');
+  await js(`Array.from(document.querySelectorAll('.shortcut-inline-recorder-actions button')).find(button => button.textContent.trim() === 'Cancel').click()`);
+  await until('!document.querySelector("[data-shortcut-capture]")', 'cancel conflict capture');
+  await js(`Array.from(document.querySelectorAll('.shortcut-map-function')).find(item => item.querySelector('.shortcut-map-function-name strong')?.textContent.trim() === 'Compile').querySelector('.shortcut-map-function-select').click()`);
+  await until('!!document.querySelector("[data-shortcut-capture]")', 'shortcut recapture input');
+  await delay(120);
+  await js('document.querySelector("[data-shortcut-capture]").focus()');
   key('L',['control','shift']);
-  await until('!document.querySelector(".shortcut-capture")','rebind');
+  await until('document.querySelector("[data-shortcut-capture]")?.value.includes("Ctrl+Shift+L")', 'replacement shortcut preview');
+  await js(`Array.from(document.querySelectorAll('.shortcut-inline-recorder-actions button')).find(button => button.textContent.trim() === 'Use this shortcut').click()`);
+  await until('!document.querySelector("[data-shortcut-capture]")','rebind');
   assert.equal((await js('window.latexEditor.settings.get()')).global.keybindings['latex.compile'],'Mod+Shift+L');
-  await click('.preferences-dialog > header > button');
+  await click('.settings-manager-return');
+  await click('.settings-close');
   key('L',['control','shift']);
-  await until('document.querySelector(".status-bar").textContent.includes("Last compile succeeded")','rebound compilation');
+  // This is the first full TeX compilation in a fresh app profile and may need
+  // longer while MiKTeX loads the project's starter packages on a cold cache.
+  await until('document.querySelector(".status-bar").textContent.includes("Last compile succeeded")','rebound compilation', 600);
   console.log('PASS shortcut conflict, live rebinding and actual compilation');
   console.log('Artifacts:', root);
 }

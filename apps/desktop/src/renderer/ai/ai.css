@@ -207,6 +207,14 @@
 .ai-mode-switch button { border: 0; background: transparent; }
 .ai-account-line { min-height: 25px; }
 .ai-account-line .ai-status-dot { flex: 0 0 7px; width: 7px; height: 7px; margin: 0 4px; }
+.ai-conversation-heading { gap: 6px; padding: 8px 10px; border-bottom: 1px solid var(--color-border); }
+.ai-provider-account-row { display: flex; align-items: center; min-width: 0; gap: 8px; }
+.ai-provider-account-row .ai-mode-switch { flex: 1 1 130px; min-width: 115px; }
+.ai-provider-account-row .ai-mode-switch button { min-height: 25px; font-size: 10px; }
+.ai-provider-account-row .ai-account-line { flex: 0 1 auto; min-width: 0; gap: 4px; }
+.ai-provider-account-row .ai-account-name { max-width: 85px; font-size: 10px; }
+.ai-settings-icon { width: 25px; height: 25px; padding: 0; display: grid; place-items: center; }
+@container ai-sidebar (max-width: 330px) { .ai-provider-account-row .ai-account-name { display: none; } }
 .ai-sidebar .ai-quiet-action { border: 0; min-width: 0; flex: 0 0 auto; }
 .ai-sign-out { display: grid; place-items: center; width: 25px; height: 25px; padding: 0; }
 .ai-permission-picker { position: relative; min-width: 0; }

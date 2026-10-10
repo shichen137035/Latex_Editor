@@ -1,11 +1,11 @@
 import { useEffect, useRef, useState, type DragEvent as ReactDragEvent, type MouseEvent, type MutableRefObject } from "react";
-import type { Diagnostic, ProjectTreeNode, SyncTexPdfPosition } from "@latex-editor/contracts";
+import type { Diagnostic, ProjectPdfDocument, ProjectTreeNode, SyncTexPdfPosition } from "@latex-editor/contracts";
 import { t } from "../i18n/index.js";
 import { settings } from "../settings/service.js";
 import { readExpandedFileTree, writeExpandedFileTree } from "../collapseState.js";
 import { languageName } from "../i18n/displayNames.js";
 import type { SpellContextRequest } from "../spellcheck/SpellCheckController.js";
-import { PdfViewer, type PdfViewState } from "../pdf/PdfViewer.js";
+import { PdfViewer, type PdfViewState, type PdfLinkDestination } from "../pdf/PdfViewer.js";
 
 export type FileContext = { x: number; y: number; path?: string; kind?: ProjectTreeNode["kind"] };
 export type WorkbenchMenuItem = { label: string; disabled?: boolean; action?: () => void; divider?: boolean };
@@ -253,9 +253,14 @@ export function Tree({ projectId, nodes, activePath, mainFile, filter, hideBuild
     }}
   >{renderNodes(nodes, 0)}</div>;
 }
-export function Placeholder({ type, pdfDataUrl, pdfTarget, pdfViewState, pdfLabel, onPdfDoubleClick, onPdfInteract }: { pdfViewState?: MutableRefObject<PdfViewState | undefined> | undefined; pdfLabel?: string | undefined; type: "preview" | "pdf"; pdfDataUrl?: string | undefined; pdfTarget?: SyncTexPdfPosition | undefined; onPdfDoubleClick?(page: number, x: number, y: number): void; onPdfInteract?(): void }) {
-  if (type === "pdf" && pdfDataUrl) return <PdfViewer viewState={pdfViewState} label={pdfLabel} dataUrl={pdfDataUrl} target={pdfTarget} onReverse={(page, x, y) => onPdfDoubleClick?.(page, x, y)} onInteract={() => onPdfInteract?.()}/>;
-  return <div className="pane-placeholder"><div className="placeholder-orbit"><Logo /></div><h2>{t(type === "preview" ? "placeholder.previewTitle" : "placeholder.pdfTitle")}</h2><p>{t(type === "preview" ? "placeholder.preview" : "placeholder.pdf")}</p></div>;
+export function Placeholder({ type, pdfDataUrl, pdfTarget, pdfViewState, pdfLabel, pdfDocuments, pdfSelectedId, pdfLinkDestination, onPdfLink, onPdfSelect, onPdfDoubleClick, onPdfInteract }: { pdfViewState?: MutableRefObject<PdfViewState | undefined> | undefined; pdfLabel?: string | undefined; pdfLinkDestination?: PdfLinkDestination | undefined; onPdfLink?(href: string): void; pdfDocuments?: ProjectPdfDocument[]; pdfSelectedId?: string | undefined; onPdfSelect?(id: string): void; type: "preview" | "pdf"; pdfDataUrl?: string | undefined; pdfTarget?: SyncTexPdfPosition | undefined; onPdfDoubleClick?(page: number, x: number, y: number): void; onPdfInteract?(): void }) {
+  const picker = pdfDocuments && <select className="pdf-document-select" aria-label={t("pdf.chooseDocument")} title={t("pdf.chooseDocument")} disabled={!pdfDocuments.length} value={pdfSelectedId ?? ""} onChange={event => onPdfSelect?.(event.target.value)}>
+    {!pdfDocuments.length && <option value="">{t("pdf.loading")}</option>}
+    {pdfDocuments.map(doc => <option value={doc.id} key={doc.id}>{doc.sourceFile?.replace(/\.tex$/i, ".pdf") ?? doc.pdfFile}{doc.available ? "" : ` · ${t("pdf.notCompiled")}`}</option>)}
+  </select>;
+  if (type === "pdf" && pdfDataUrl) return <PdfViewer destination={pdfLinkDestination} onPdfLink={onPdfLink} toolbar={picker} viewState={pdfViewState} label={pdfLabel} dataUrl={pdfDataUrl} target={pdfTarget} onReverse={(page, x, y) => onPdfDoubleClick?.(page, x, y)} onInteract={() => onPdfInteract?.()}/>;
+  const empty = <div className="pane-placeholder"><div className="placeholder-orbit"><Logo /></div><h2>{t(type === "preview" ? "placeholder.previewTitle" : "placeholder.pdfTitle")}</h2><p>{t(type === "preview" ? "placeholder.preview" : "placeholder.pdf")}</p></div>;
+  return type === "pdf" && picker ? <div className="pdf-document"><div className="pdf-zoom-toolbar">{picker}</div>{empty}</div> : empty;
 }
 
 export function EntryNameInput({ message, fallback, finish }: { message: string; fallback: string; finish(value?: string): void }) {

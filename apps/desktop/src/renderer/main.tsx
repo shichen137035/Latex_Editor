@@ -14,6 +14,7 @@ import "./themes/dark.css";
 import "./themes/tokens.css";
 import "./project-directory.css";
 import "./relations/relations.css";
+import "./themes/tech-light.css";
 
 // Keep the editor fully local. The default Monaco React loader uses a CDN,
 // which would violate TeXWeave's offline-first desktop requirement.
@@ -44,6 +45,17 @@ monaco.editor.defineTheme("texweave-dark", {
     { token: "string.math", foreground: "B9DFF0" }
   ],
   colors: { "editor.background": "#182432" }
+});
+monaco.editor.defineTheme("texweave-tech-light", {
+  base: "vs",
+  inherit: true,
+  rules: [
+    { token: "delimiter.math", foreground: "087EBA", fontStyle: "bold" },
+    { token: "keyword.math", foreground: "6848B8" },
+    { token: "number.math", foreground: "A05A00" },
+    { token: "string.math", foreground: "176B85" }
+  ],
+  colors: { "editor.background": "#F8FCFF" }
 });
 monaco.languages.register({ id: "latex" });
 monaco.languages.setMonarchTokensProvider("latex", {

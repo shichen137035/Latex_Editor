@@ -1,3 +1,4 @@
+import { createPortal } from "react-dom";
 import { t } from "../i18n/index.js";
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { Project, ProjectTreeNode, ReferenceLibraryEntry, ReferenceLibrarySnapshot } from "@latex-editor/contracts";
@@ -13,7 +14,7 @@ function flatten(nodes: ProjectTreeNode[], result: ProjectTreeNode[] = []): Proj
 
 const PAGE_SIZE = 5;
 
-export function ReferenceLibraryPanel({ project, documents, canCite, onOpenReference, onWriteBibliography, onOpenLibrary, onCite }: {
+export function ReferenceLibraryPanel({ project, documents, canCite, onOpenReference, onWriteBibliography, onOpenLibrary, onCite, toolbarTarget }: {
   project: Project;
   documents: ReferenceDocument[];
   canCite: boolean;
@@ -21,6 +22,7 @@ export function ReferenceLibraryPanel({ project, documents, canCite, onOpenRefer
   onWriteBibliography(path: string, content: string): Promise<void>;
   onOpenLibrary(): void;
   onCite(key: string): void;
+  toolbarTarget?: HTMLElement | null;
 }) {
   const api = window.latexEditor;
   const [snapshot, setSnapshot] = useState<ReferenceLibrarySnapshot>();
@@ -113,17 +115,17 @@ export function ReferenceLibraryPanel({ project, documents, canCite, onOpenRefer
 
   const shownEntries = view === "find" && hasSearchFilter ? results.slice(0, visibleCount) : [];
 
+  const toolbar = <div className="reference-quick-navigation"><button onClick={() => void reload().catch(error => setNotice(String(error)))} aria-label={t("ui.ReferenceLibraryPanel.refresh_reference_library")} title={t("ui.ReferenceLibraryPanel.refresh_reference_library")}>↻</button><button onClick={onOpenLibrary} aria-label={t("ui.ReferenceLibraryPanel.open_the_full_reference_library")} title={t("ui.ReferenceLibraryPanel.open_the_full_reference_library")}>↗</button></div>;
   return <section className="reference-quick-panel">
-    <header className="reference-quick-header">
-      <div className="reference-quick-title"><span className="reference-quick-mark">R</span><div><strong>{t("ui.ReferenceLibraryPanel.project_references")}</strong><small>{project.name}</small></div></div>
-      <div className="reference-quick-navigation"><button onClick={() => void reload().catch(error => setNotice(String(error)))} aria-label={t("ui.ReferenceLibraryPanel.refresh_reference_library")} title={t("ui.ReferenceLibraryPanel.refresh_reference_library")}>↻</button><button onClick={onOpenLibrary} title={t("ui.ReferenceLibraryPanel.open_the_full_reference_library")}>{t("ui.ReferenceLibraryPanel.full_library")}</button></div>
+    {toolbarTarget && createPortal(toolbar, toolbarTarget)}
+    <header className="reference-quick-header reference-quick-compact-header">
+      <div className="reference-quick-tabs" role="tablist" aria-label={t("ui.ReferenceLibraryPanel.project_references")}>
+        <button role="tab" aria-selected={view === "find"} className={view === "find" ? "active" : ""} onClick={() => setView("find")}>{t("ui.ReferenceLibraryPanel.find_in_library")}</button>
+        <button role="tab" aria-selected={view === "project"} className={view === "project" ? "active" : ""} onClick={() => setView("project")}>{t("ui.ReferenceLibraryPanel.in_this_project")}<span>{projectIndex.entries.length}</span></button>
+      </div>
+      {!toolbarTarget && toolbar}
+
     </header>
-
-    <div className="reference-quick-tabs" role="tablist" aria-label={t("ui.ReferenceLibraryPanel.project_references")}>
-      <button role="tab" aria-selected={view === "find"} className={view === "find" ? "active" : ""} onClick={() => setView("find")}>{t("ui.ReferenceLibraryPanel.find_in_library")}</button>
-      <button role="tab" aria-selected={view === "project"} className={view === "project" ? "active" : ""} onClick={() => setView("project")}>{t("ui.ReferenceLibraryPanel.in_this_project")}<span>{projectIndex.entries.length}</span></button>
-    </div>
-
     {view === "find" && <div className="reference-quick-filters">
       <input value={query} onChange={(event) => setQuery(event.target.value)} placeholder={t("ui.ProjectReferencesPanel.search_title_author_key")} aria-label={t("ui.ReferenceLibraryPanel.search_references")}/>
       <div className="reference-quick-filter-row">

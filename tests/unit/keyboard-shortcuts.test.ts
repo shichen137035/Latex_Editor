@@ -30,6 +30,19 @@ describe("v0.6.2.3 shortcut conflict model", () => {
     expect(conflicts).toMatchObject([{ kind: "direct", commandId: "block.insertAfter" }]);
   });
 
+  it("exposes configurable sidebar shortcuts and resolves shifted physical digits", () => {
+    const ids: CommandId[] = ["sidebar.files", "sidebar.search", "sidebar.library", "ai.open", "sidebar.history", "sidebar.relations", "sidebar.help"];
+    ids.forEach((id, index) => {
+      const digit = index + 1, stroke = `Mod+Shift+${digit}`;
+      expect(commandBindings(id, "global")).toContain(stroke);
+      expect(analyzeBindingConflicts(id, stroke, withBindings())).toEqual([]);
+      expect(resolveBindingSequence(stroke, "global", "workspace.editor.source.text").commandId).toBe(id);
+      expect(resolveBindingSequence(stroke, "global", "dialog").commandId).toBeUndefined();
+      expect(eventBinding({ key: "!@#$%^&"[index], code: `Digit${digit}`, ctrlKey: true, metaKey: false, altKey: false, shiftKey: true } as KeyboardEvent)).toBe(stroke);
+    });
+    expect(commandBindings("ai.open", "global")).toContain("Mod+Shift+A");
+  });
+
   it("rejects a complete shortcut that is also a chord prefix", () => {
     const conflicts = analyzeBindingConflicts("block.insertBefore", "Mod+K", withBindings({ "block.insertAfter": "Mod+K, Mod+C" }));
     expect(conflicts).toMatchObject([{ kind: "prefix", commandId: "block.insertAfter" }]);

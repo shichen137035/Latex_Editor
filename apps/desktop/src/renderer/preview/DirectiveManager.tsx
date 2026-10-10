@@ -1,7 +1,8 @@
+import { directiveColorStyle } from "./directive-colors.js";
 import { directiveName, directiveNames } from "../i18n/displayNames.js";
 import { LocalizedNameInput } from "../i18n/LocalizedNameInput.js";
 import { mergeDirectiveEdit } from "./environmentEdits.js";
-import { useEffect, useRef, useState, type CSSProperties } from "react";
+import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { defaultPreviewDirectives, type PreviewDirectiveDefinition } from "@latex-editor/contracts";
 import { getLocale, t } from "../i18n/index.js";
@@ -97,9 +98,9 @@ export function DirectiveManager({ definitions, onChange, toolbarTarget }: {
         <label><span>{t("directive.source")}</span><input value={selected.match.kind === "command" ? draftName : t("directive.blankLine")} disabled={selected.builtIn || selected.match.kind === "blank-line"} onChange={(event) => setDraftName(event.target.value)} onBlur={commitName} onKeyDown={(event) => { if (event.key === "Enter") event.currentTarget.blur(); }}/>{nameError && <small className="directive-error">{nameError}</small>}</label>
         <label><span>{t("directive.display")}</span><select value={selected.display} onChange={(event) => update({ ...selected, display: event.target.value as PreviewDirectiveDefinition["display"] })}><option value="divider">{t("directive.divider")}</option><option value="placeholder">{t("directive.placeholder")}</option><option value="spacer">{t("directive.spacer")}</option></select></label>
         <label><span>{t("directive.placement")}</span><select value={selected.placement ?? "nested"} onChange={(event) => update({ ...selected, placement: event.target.value as NonNullable<PreviewDirectiveDefinition["placement"]> })}><option value="nested">{t("directive.nested")}</option><option value="trailing">{t("directive.trailing")}</option><option value="independent">{t("directive.independent")}</option></select><small>{t("directive.scopeHint")}</small></label>
-        <label><span>{t("directive.color")}</span><input type="color" value={selected.color} onChange={(event) => update({ ...selected, color: event.target.value })}/></label>
+        <label><span>{t("colors.mode")}</span><select value={selected.colorMode ?? "adaptive"} onChange={event => update({ ...selected, colorMode: event.target.value as "adaptive" | "fixed" })}><option value="adaptive">{t("colors.adaptive")}</option><option value="fixed">{t("colors.fixed")}</option></select></label><label><span>{t("directive.color")}</span><input type="color" value={selected.color} onChange={(event) => update({ ...selected, color: event.target.value })}/></label>
       </div>
-      <div className="directive-sample"><small>{t("directive.sample")}</small><div className={`preview-content-region preview-directive preview-directive-${selected.display}`} style={{ "--directive-color": selected.color } as CSSProperties}><span className="preview-directive-line"/><span className="preview-directive-label">{selected.match.kind === "blank-line" ? "" : directiveName(selected)}</span><span className="preview-directive-line"/>{selected.display === "placeholder" && <code>{sampleSource(selected)}</code>}</div></div>
+      <div className="directive-sample"><small>{t("directive.sample")}</small><div className={`preview-content-region preview-directive preview-directive-${selected.display}`} style={directiveColorStyle(selected)}><span className="preview-directive-line"/><span className="preview-directive-label">{selected.match.kind === "blank-line" ? "" : directiveName(selected)}</span><span className="preview-directive-line"/>{selected.display === "placeholder" && <code>{sampleSource(selected)}</code>}</div></div>
       <div className="directive-editor-actions">{selected.builtIn
         ? <button type="button" onClick={() => { const original = defaultPreviewDirectives.find((item) => item.id === selected.id); if (original) update(original, true); }}>{t("directive.reset")}</button>
         : <button type="button" className="danger" onClick={() => { onChange(definitions.filter((item) => item.id !== selected.id)); setSelectedId(definitions.find((item) => item.id !== selected.id)?.id ?? ""); }}>{t("directive.delete")}</button>}

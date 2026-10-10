@@ -21,6 +21,7 @@ async function until(source) {
 async function click(selector, modifiers = []) {
   const point = await evaluate(`(() => { const e=document.querySelector(${JSON.stringify(selector)}); if(!e) throw Error("Missing element"); e.scrollIntoView({block:"center"}); const r=e.getBoundingClientRect(); return {x:Math.round(r.x+r.width/2),y:Math.round(r.y+r.height/2)}; })()`);
   page.webContents.sendInputEvent({ type:"mouseDown", ...point, button:"left", clickCount:1, modifiers });
+  await delay(40);
   page.webContents.sendInputEvent({ type:"mouseUp", ...point, button:"left", clickCount:1, modifiers });
   await delay(120);
 }
@@ -55,8 +56,8 @@ async function run() {
   const project = await evaluate(`window.latexEditor.projects.create({name:"table-test",parentPath:${JSON.stringify(projects)}})`);
   await evaluate(`window.latexEditor.files.write(${JSON.stringify(project.id)},"main.tex",${JSON.stringify(source)})`);
   page.webContents.reload();
-  await until('!!document.querySelector(".project-row")');
-  await click(".project-row");
+  await until('!!document.querySelector(".directory-project-row")');
+  await click(".directory-project-row");
   await until('!!document.querySelector(".view-switch")');
   await evaluate('Array.from(document.querySelectorAll(".view-switch button")).find(b=>b.textContent==="Visual").click()');
   await until('document.querySelectorAll(".structured-table tbody tr").length===3');
@@ -68,11 +69,16 @@ async function run() {
   await until('document.activeElement?.getAttribute("aria-label")==="Row 2, column 2"');
   await page.webContents.insertText("Beta");
   await click(cell(3,1));
+  await until('document.activeElement?.getAttribute("aria-label")==="Row 3, column 1"');
   await page.webContents.insertText("Gamma");
   await key("Tab");
-  assert.ok(await evaluate('document.querySelector(".structured-table").textContent.includes("Alpha") && document.querySelector(".structured-table").textContent.includes("Beta")'), "switching cells retains drafts");
+  await until('document.querySelector(".structured-table").textContent.includes("Gamma")');
+  const draftState = await evaluate('JSON.stringify({table:document.querySelector(".structured-table")?.textContent, active:document.activeElement?.getAttribute("aria-label"), editor:document.querySelector(".structured-table textarea")?.value, saveStatus:document.querySelector(".save-status")?.className})');
+  assert.ok(await evaluate('document.querySelector(".structured-table").textContent.includes("Alpha") && document.querySelector(".structured-table").textContent.includes("Beta")'), `switching cells retains drafts; state=${draftState}`);
   await click(cell(2,1));
   await click(cell(3,2), ["shift"]);
+  const selectionState = await evaluate('JSON.stringify(Array.from(document.querySelectorAll(".structured-table td[aria-selected=true]")).map(td=>({row:td.parentElement?.rowIndex,col:td.cellIndex})))');
+  assert.equal(await evaluate('document.querySelectorAll(".structured-table td[aria-selected=true]").length'), 4, `Shift-click should select the 2x2 cell rectangle; selection=${selectionState}`);
   await click(".table-preview-toolbar button:nth-child(7)");
   await until('Array.from(document.querySelectorAll(".structured-table td")).some(td=>td.colSpan===2 && td.rowSpan===2)');
   await click(".table-preview-toolbar button:nth-child(2)");
@@ -103,7 +109,9 @@ async function run() {
 
   await click('.structured-table td');
   await until('document.querySelector(\'.preview-block[data-environment="table"]\')?.classList.contains("selected")');
-  await click('.preview-block[data-environment="table"] .preview-block-header-actions button[title="Insert after block"]');
+  // The table's floating editing toolbar can overlap its header controls; use
+  // the matching footer action so this check exercises the block boundary itself.
+  await click('.preview-block[data-environment="table"] .preview-block-footer-actions button[title="Insert after block"]');
   await until('!!document.querySelector(".preview-local-editor")');
   await click('.environment-quick-action > button');
   await click('.environment-picker [data-environment-id="remark"]');

@@ -20,6 +20,7 @@ async function until(script, label) {
 async function press(keyCode, modifiers = []) {
   page.webContents.sendInputEvent({ type: "keyDown", keyCode, modifiers });
   page.webContents.sendInputEvent({ type: "keyUp", keyCode, modifiers });
+  await delay(80);
 }
 async function reloadProject() {
   await evaluate('document.querySelector(".save-status").click()');

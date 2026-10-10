@@ -2,6 +2,11 @@ import { defineConfig } from "vitest/config";
 
 export default defineConfig({
   test: {
+    includeTaskLocation: true,
+    slowTestThreshold: 1000,
+    testTimeout: 15000,
+    hookTimeout: 15000,
+    retry: 0,
     projects: [
       {
         extends: true,

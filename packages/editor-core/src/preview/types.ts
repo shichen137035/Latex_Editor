@@ -50,6 +50,8 @@ export type EnvironmentMatchRule =
   | { kind: "custom-pattern"; pattern: string };
 
 export interface EnvironmentStyle {
+  colorMode?: "adaptive" | "fixed";
+  baseColor?: string;
   accentToken: string;
   fillToken: string;
   labelBackgroundToken: string;
@@ -87,6 +89,13 @@ export interface EnvironmentBehavior {
   tableToolbar?: "selected" | "always" | "hidden";
   allowExpandedEditor?: boolean;
   expandedToolbar?: boolean;
+  /** Registered block handler; identifiers are resolved by the runtime, never evaluated as code. */
+  blockHandler?: string;
+  listStyle?: "ordered" | "unordered" | "description";
+  listItemCommand?: string;
+  listMarker?: "decimal" | "lower-alpha" | "lower-roman" | "disc" | "circle" | "square" | "none";
+  listItemEditing?: boolean;
+  listShowCount?: boolean;
 }
 
 export interface EnvironmentDefinition {

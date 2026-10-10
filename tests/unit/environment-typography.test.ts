@@ -29,10 +29,11 @@ describe("environment title typography", () => {
     expect(environmentTitleTypography("assumption", "definition")).toMatchObject({ titleFontSize: 16, titleFontWeight: 500 });
     expect(environmentTitleTypography("section", "section").titleFontWeight).toBe(600);
   });
-  it("fills new properties for saved definitions without resetting existing color overrides", () => {
+  it("fills typography defaults while retaining explicitly fixed color overrides", () => {
     const definition = cloneEnvironmentDefinitions().find(item => item.id === "section")!;
     delete definition.style.titleFontSize; delete definition.style.titleFontWeight;
     definition.style.accentToken = "#abcdef";
+    definition.style.colorMode = "fixed";
     expect(environmentBlockStyle("section", "section", definition)).toMatchObject({ "--preview-title-size": "24px", "--preview-title-weight": 600, "--block-accent": "#abcdef" });
     expect(definition.style.accentToken).toBe("#abcdef");
   });

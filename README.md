@@ -37,7 +37,7 @@ npm run desktop:dev
 
 Windows 也可以双击根目录的 [`Start.bat`](Start.bat)。脚本会检查 Node.js/npm；若 Electron 依赖缺失，会先运行 `npm install`，然后启动桌面开发版。
 
-运行完整静态检查、资源校验和测试：
+运行开发检查、资源校验和全部非桌面测试：
 
 ```powershell
 npm run verify
@@ -56,18 +56,33 @@ npm run test:compiler
 npm run test:cli
 ```
 
-部分桌面端验证脚本需要启动 Electron，可按需运行：
+发行前运行完整检查，包括构建和隔离的 Electron 桌面回归：
 
 ```powershell
-npm run desktop:test-ui
-npm run desktop:test-history
-npm run desktop:test-preview
-npm run desktop:test-preview-startup
-npm run desktop:test-preview-large
-npm run desktop:test-compiler-path
-npm run desktop:test-foundations
-npm run desktop:test-spellcheck
+npm run verify:release
 ```
+
+单元测试按功能域分组运行，完整列表见 [测试说明](docs/TESTING.md)：
+
+```powershell
+npm run test:unit:ai
+npm run test:unit:editor
+npm run test:unit:preview
+npm run test:unit:projects
+npm run test:unit:references
+npm run test:unit:compiler
+npm run test:unit:settings
+```
+
+桌面检查清单和运行方式：
+
+```powershell
+npm run desktop:test-check-list
+npm run desktop:test-check -- project-references
+npm run desktop:diagnose-preview
+```
+
+`npm run test:debug` 会串行运行并打印详细用例位置和耗时。完整测试覆盖矩阵、测试隔离方式及发行检查范围见 [测试说明](docs/TESTING.md)。
 
 ## Windows 打包
 

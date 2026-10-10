@@ -38,6 +38,11 @@ async function reloadProject() {
   page.focus();
 }
 async function suggest(selector, text, expected) {
+  const local = selector.includes('preview-local-editor');
+  if (local) {
+    await evaluate(`document.querySelector('.preview-local-editor').style.width='240px'`);
+    await delay(100);
+  }
   // Visual editors restore their initial caret over two animation frames.
   // Wait for that restoration before moving the caret and entering a test command.
   await evaluate('new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))');
@@ -45,7 +50,22 @@ async function suggest(selector, text, expected) {
   await press('END', ['control']); await page.webContents.insertText('\n' + text);
   await press('SPACE', ['control']);
   for (const value of expected) await until(`Array.from(document.querySelectorAll('.suggest-widget.visible .label-name')).some(el => el.textContent === ${JSON.stringify(value)})`, `completion ${value}`);
+  if (local) {
+    const placement = await evaluate(`(() => {
+      const host=document.querySelector('body > .preview-editor-overflow-widgets');
+      const widget=host?.querySelector('.suggest-widget.visible');
+      if (!widget) return {mounted:false};
+      const box=widget.getBoundingClientRect(), editor=document.querySelector('.preview-local-editor').getBoundingClientRect();
+      const hit=document.elementFromPoint(box.right-8,Math.min(box.bottom-8,box.top+20));
+      return {mounted:true,withinWindow:box.left>=0&&box.right<=innerWidth&&box.top>=0&&box.bottom<=innerHeight,escapesBlock:box.right>editor.right,unobscured:!!hit?.closest('.suggest-widget')};
+    })()`);
+    assert.ok(placement.mounted, 'Visual completions mount outside the clipped editor');
+    assert.ok(placement.withinWindow, 'Visual completions stay within the window');
+    assert.ok(placement.escapesBlock, 'a narrow block does not constrain completion width');
+    assert.ok(placement.unobscured, 'the right side of the completion list remains clickable');
+  }
   await press('ESC');
+  if (local) await evaluate(`document.querySelector('.preview-local-editor').style.width=''`);
 }
 async function run() {
   while (!BrowserWindow.getAllWindows().length) await delay(50);
@@ -62,7 +82,7 @@ async function run() {
     await evaluate(`window.latexEditor.files.write(${id}, ${JSON.stringify(`figures/${name}.svg`)}, ${JSON.stringify(`<svg xmlns="http://www.w3.org/2000/svg" width="160" height="60"><rect width="160" height="60" fill="${color}"/></svg>`)})`);
   }
   writeFileSync(resolve(project.canonicalPath, 'figures/unused.webp'), Buffer.from('UklGRiIAAABXRUJQVlA4IBYAAAAwAQCdASoBAAEADsD+JaQAA3AAAAAA', 'base64'));
-  await evaluate(`window.latexEditor.files.write(${id}, "references.bib", '@book(first,title="First") @article{second,title={Second}}')`);
+  await evaluate(`window.latexEditor.files.write(${id}, "references.bib", ${JSON.stringify('@book{first,title={First}}\n@article{second,title={Second}}')})`);
   await evaluate(`window.latexEditor.files.createFile(${id}, "unused.tex")`);
   await evaluate(`window.latexEditor.files.write(${id}, "unused.tex", "Unreferenced file.\\\\label{fig:unused}")`);
   const source = "\\documentclass{article}\n\\begin{document}\n\\begin{figure}\n\\includegraphics[width=.25\\textwidth]{figures/old.svg}\n\\includegraphics[width=.3\\textwidth]{figures/second.svg}\n\\caption{Keep caption}\\label{fig:keep}\n\\end{figure}\nEditor anchor.\n\\includegraphics{figures/missing.svg}\n\\end{document}";
@@ -141,6 +161,7 @@ async function run() {
   console.log('PASS Visual source completion refreshes resource snapshots while its editor stays open');
   await evaluate('Array.from(document.querySelectorAll(".preview-local-editor-actions button")).find(button => button.textContent === "Cancel").click()');
   await until('!document.querySelector(".preview-local-editor")', 'close test paragraph draft');
+  assert.equal(await evaluate('document.querySelectorAll(".preview-editor-overflow-widgets").length'), 0, 'closing the draft releases its popup host');
   const catalog = require('../../../../resources/environments/preview-environments.json');
   const definitions = catalog.previewEnvironments.map(entry => ({ ...entry, enabled:true, builtIn:true, labelKey:entry.labelKey ?? `environment.${entry.id}`, style:{...catalog.defaultStyle,...catalog.familyStyles[entry.family],...entry.style}, behavior:{...catalog.defaultBehavior,...entry.behavior} }));
   const configuredFigure = definitions.find(entry => entry.id === 'figure');

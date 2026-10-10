@@ -1,4 +1,4 @@
-import { Fragment, Profiler, useCallback, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore, type ReactNode, type RefObject } from "react";
+import { Fragment, Profiler, useCallback, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore, type ReactNode, type RefObject, type CSSProperties } from "react";
 import { flushSync } from "react-dom";
 import { capturePreviewScrollAnchor, restorePreviewScrollAnchor, type PreviewScrollAnchor } from "./scrollAnchor.js";
 
@@ -119,7 +119,7 @@ export class VirtualPreviewController {
   mountedCount(): number { return this.mounted.size; }
 }
 
-function MeasuredRow({ item, controller, children, as = "div", ordinal }: { item: VirtualPreviewItem; controller: VirtualPreviewController; children: ReactNode; as?: "div" | "li"; ordinal?: number }) {
+function MeasuredRow({ item, controller, children, as = "div", ordinal, hideMarker }: { item: VirtualPreviewItem; controller: VirtualPreviewController; children: ReactNode; as?: "div" | "li"; ordinal?: number; hideMarker?: boolean }) {
   const ref = useRef<HTMLElement>(null);
   useLayoutEffect(() => {
     const element = ref.current;
@@ -145,17 +145,20 @@ function MeasuredRow({ item, controller, children, as = "div", ordinal }: { item
     return () => { observer.disconnect(); mutations.disconnect(); element.removeEventListener("load", measure, true); element.removeEventListener("error", measure, true); controller.mounted.delete(item.id); };
   }, [controller, item.id]);
   return as === "li"
-    ? <li className="preview-virtual-row" ref={ref as RefObject<HTMLLIElement>} data-virtual-node-id={item.id} value={ordinal}>{children}</li>
+    ? <li className="preview-virtual-row" ref={ref as RefObject<HTMLLIElement>} data-virtual-node-id={item.id} value={ordinal} style={hideMarker ? { listStyleType: "none" } : undefined}>{children}</li>
     : <div className="preview-virtual-row" ref={ref as RefObject<HTMLDivElement>} data-virtual-node-id={item.id}>{children}</div>;
 }
 
-export function VirtualPreviewList<T extends VirtualPreviewItem>({ items, controller, rootRef, forcedIds, renderItem, as = "div" }: {
+export function VirtualPreviewList<T extends VirtualPreviewItem>({ items, controller, rootRef, forcedIds, renderItem, as = "div", markerStyle, hideMarker, ordinalFor }: {
   items: T[];
   controller: VirtualPreviewController;
   rootRef: RefObject<HTMLElement | null>;
   forcedIds: ReadonlySet<string>;
   renderItem(item: T): ReactNode;
   as?: "div" | "ol" | "ul";
+  markerStyle?: CSSProperties["listStyleType"];
+  hideMarker?(item: T): boolean;
+  ordinalFor?(item: T, index: number): number;
 }) {
   useSyncExternalStore(controller.subscribe, controller.snapshot, controller.snapshot);
   const listRef = useRef<HTMLElement | null>(null);
@@ -188,7 +191,7 @@ export function VirtualPreviewList<T extends VirtualPreviewItem>({ items, contro
       : <li key={`space:${cursor}`} className="preview-virtual-spacer" aria-hidden="true" style={{ height: offsets[index]! - offsets[cursor]!, listStyle: "none" }}/>);
     const item = items[index]!;
     const content = renderItem(item);
-    children.push(<MeasuredRow key={item.id} item={item} controller={controller} as={as === "div" ? "div" : "li"} {...(as === "ol" ? { ordinal: index + 1 } : {})}>{import.meta.env.DEV
+    children.push(<MeasuredRow key={item.id} item={item} controller={controller} hideMarker={Boolean(hideMarker?.(item))} as={as === "div" ? "div" : "li"} {...(as === "ol" ? { ordinal: ordinalFor?.(item, index) ?? index + 1 } : {})}>{import.meta.env.DEV
       ? <Profiler id={item.id} onRender={(_id, _phase, duration) => controller.reportRowRender(item.id, duration)}>{content}</Profiler>
       : content}</MeasuredRow>);
     cursor = index + 1;
@@ -197,7 +200,7 @@ export function VirtualPreviewList<T extends VirtualPreviewItem>({ items, contro
     ? <div key={`space:${cursor}`} className="preview-virtual-spacer" style={{ height: offsets[items.length]! - offsets[cursor]! }}/>
     : <li key={`space:${cursor}`} className="preview-virtual-spacer" aria-hidden="true" style={{ height: offsets[items.length]! - offsets[cursor]!, listStyle: "none" }}/>);
   const content = <Fragment>{children}</Fragment>;
-  if (as === "ol") return <ol ref={setListRef} className="preview-virtual-list preview-list" data-virtual-total={items.length}>{content}</ol>;
-  if (as === "ul") return <ul ref={setListRef} className="preview-virtual-list preview-list" data-virtual-total={items.length}>{content}</ul>;
+  if (as === "ol") return <ol ref={setListRef} style={{ listStyleType: markerStyle }} className="preview-virtual-list preview-list" data-virtual-total={items.length}>{content}</ol>;
+  if (as === "ul") return <ul ref={setListRef} style={{ listStyleType: markerStyle }} className="preview-virtual-list preview-list" data-virtual-total={items.length}>{content}</ul>;
   return <div ref={setListRef} className="preview-virtual-list" data-virtual-total={items.length}>{content}</div>;
 }

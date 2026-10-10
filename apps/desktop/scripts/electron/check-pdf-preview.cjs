@@ -26,16 +26,32 @@ async function until(script, label) {
 function source(marker, count = 6) {
   return '\\documentclass{article}\n\\begin{document}\n' + Array.from({length:count}, (_, index) => `${marker} page ${index+1}.\\par ${'Readable prose. '.repeat(40)}${index<count-1?'\\newpage':''}\n`).join('') + '\\end{document}\n';
 }
-async function compileUi() {
+async function compileUi(expectedSource, projectId) {
   await evaluate('document.querySelector(".compile-button").click()');
   await until('!document.querySelector(".compile-button")?.disabled', 'compile button idle');
+  if (expectedSource !== undefined) {
+    const saved = `await window.latexEditor.files.read(${projectId},"main.tex")`;
+    try {
+      await until(`(async()=> (${saved}).content===${JSON.stringify(expectedSource)})()`, 'expected source saved before compile completes');
+    } catch (error) {
+      const state = await evaluate(`(async()=>{const file=${saved};return {expectedLength:${JSON.stringify(expectedSource)}.length,actualLength:file.content.length,expectedMarker:${JSON.stringify(expectedSource.split(/\\r?\\n/)[2]?.split(' ')[0] ?? '')},actualStart:file.content.slice(0,180),actualEnd:file.content.slice(-180)}})()`);
+      throw new Error(`${error instanceof Error ? error.message : String(error)}\\nCompile source diagnostics: ${JSON.stringify(state)}`);
+    }
+  }
   await delay(250);
 }
 async function replaceSource(text) {
   await evaluate('document.querySelector(".editor-surface .monaco-editor textarea").focus()');
+  await until('!!document.querySelector(".editor-surface .monaco-editor.focused")', 'focused source editor before replace');
+  await delay(80);
   page.webContents.sendInputEvent({type:'keyDown',keyCode:'A',modifiers:['control']});
   page.webContents.sendInputEvent({type:'keyUp',keyCode:'A',modifiers:['control']});
+  // Electron queues input events to Chromium. Let Monaco process Ctrl+A before
+  // insertText, especially after a compiler diagnostic has taken focus.
+  await delay(100);
   await page.webContents.insertText(text);
+  const marker=text.split(/\r?\n/)[2]?.split(' ')[0];
+  if(marker) await until(`document.querySelector(".editor-surface .monaco-editor .view-lines")?.innerText.includes(${JSON.stringify(marker)})`, `source editor contains ${marker}`);
 }
 async function readingPosition() {
   return evaluate(`(() => { const root = document.querySelector('.pdf-viewer'); const y=root.getBoundingClientRect().top; const pages=Array.from(root.querySelectorAll('.pdf-page')); const page=pages.find(el=>el.getBoundingClientRect().bottom>y)||pages.at(-1); const rect=page.getBoundingClientRect(); return {page:Number(page.dataset.page),fraction:(y-rect.top)/rect.height}; })()`);
@@ -53,12 +69,13 @@ async function run() {
   await until('!!document.querySelector(".directory-project-row")','project list');
   await evaluate('document.querySelector(".directory-project-row").click()'); page.focus();
   await until('!!document.querySelector(".editor-surface .monaco-editor textarea")','source editor');
-  await compileUi();
+  await compileUi(undefined,id);
   await until('document.querySelectorAll(".pdf-page").length===6 && !!document.querySelector(".pdf-page canvas")','six-page PDF');
   await evaluate(`(() => { const root=document.querySelector('.pdf-viewer'); const page=root.querySelector('[data-page="4"]'); root.scrollTop=page.getBoundingClientRect().top-root.getBoundingClientRect().top+root.scrollTop+page.clientHeight*.35; })()`);
   await delay(200); const before=await readingPosition(); assert.equal(before.page,4);
-  await replaceSource(source('Recompiled'));
-  await compileUi();
+  const recompiledSource=source('Recompiled');
+  await replaceSource(recompiledSource);
+  await compileUi(recompiledSource,id);
   await until(`Array.from(document.querySelectorAll('.pdf-page .textLayer span')).some(el=>el.textContent.includes('Recompiled'))`,'updated PDF text');
   const after=await readingPosition(); assert.equal(after.page,4); assert.ok(Math.abs(after.fraction-before.fraction)<.08);
   console.log('PASS recompilation preserves page and relative reading position');
@@ -79,31 +96,57 @@ async function run() {
   assert.equal((await readingPosition()).page,4);
   console.log('PASS AI build displays its PDF without replacing unaccepted project sources/artifacts');
 
-  const current=source('Recompiled');
+  // Build the proposal from the exact persisted file after prior compile/save
+  // interactions; a stale fixture here should be rejected by the real guard.
+  const current=await readFile(join(project.canonicalPath,'main.tex'),'utf8');
   const conversation={id:'test-chat',title:'AI compile test',mode:'codex',projectId:project.id,createdAt:Date.now(),updatedAt:Date.now(),messages:[]};
   const changes={id:'test-changes',conversationId:conversation.id,createdAt:Date.now(),status:'pending',permissionMode:'ask',files:[{path:'main.tex',type:'modify',originalContent:current,proposedContent:aiSource,status:'pending',hunks:[{id:'test-hunk',oldStart:0,oldLines:current.split('\n').length,newStart:0,newLines:aiSource.split('\n').length,oldText:current,newText:aiSource,decision:'pending'}]}]};
   // No provider/network request is needed to exercise local review and compilation.
   for (const endpoint of [desktopInvoke.ai.detect,desktopInvoke.ai.status,desktopInvoke.ai.copilotStatus]) { ipcMain.removeHandler(endpoint.channel); ipcMain.handle(endpoint.channel,()=>({auth:'signed_in',process:'running'})); }
   for (const endpoint of [desktopInvoke.ai.models,desktopInvoke.ai.copilotModels]) { ipcMain.removeHandler(endpoint.channel); ipcMain.handle(endpoint.channel,()=>[]); }
   ipcMain.removeHandler(desktopInvoke.ai.conversations.channel); ipcMain.handle(desktopInvoke.ai.conversations.channel,()=>({conversations:[conversation],changeSets:[changes]}));
-  ipcMain.removeHandler(desktopInvoke.ai.markChangeSetApplied.channel); ipcMain.handle(desktopInvoke.ai.markChangeSetApplied.channel,(_event,_id,ids)=>{if(ids.length)changes.files[0].hunks[0].applied=true;return changes;});
-  ipcMain.removeHandler(desktopInvoke.ai.resolveChangeSet.channel); ipcMain.handle(desktopInvoke.ai.resolveChangeSet.channel,(_event,_id,decisions)=>{if(decisions['test-hunk']){changes.files[0].hunks[0].decision=decisions['test-hunk'];changes.status='accepted';}return changes;});
-  await evaluate(`document.querySelector('.activity-bar button[title="AI Editor"]').click()`);
+  ipcMain.removeHandler(desktopInvoke.ai.markChangeSetApplied.channel); ipcMain.handle(desktopInvoke.ai.markChangeSetApplied.channel,(_event,_id,ids,error)=>{if(ids.length)changes.files[0].hunks[0].applied=true;if(error)changes.autoApplyError=error;return changes;});
+  ipcMain.removeHandler(desktopInvoke.ai.resolveChangeSet.channel); ipcMain.handle(desktopInvoke.ai.resolveChangeSet.channel,(_event,_id,decisions)=>{for(const hunk of changes.files[0].hunks)if(decisions[hunk.id])hunk.decision=decisions[hunk.id];if(Object.keys(decisions).length)changes.status=Object.values(decisions).every(value=>value==='accepted')?'accepted':'partially_accepted';return changes;});
+  await evaluate(`document.querySelector('.activity-bar button[title^="AI Editor"]').click()`);
   await until('!!document.querySelector(".ai-change-set")','AI changes card');
   await evaluate('document.querySelector(".ai-change-set header button").click()');
-  await until('document.querySelector(".pdf-origin-label")?.textContent === "main.tex" && document.querySelector(".save-status")?.textContent.includes("Saved")','automatic project compile after accepting');
+  await until(`(async()=>{const file=await window.latexEditor.files.read(${id},"main.tex");return file.content===${JSON.stringify(aiSource)}||!!document.querySelector(".ai-change-set .ai-change-error")||!!document.querySelector(".block-notice")})()`, 'AI source accepted or visible error');
+  const acceptedSource=await readFile(join(project.canonicalPath,'main.tex'),'utf8');
+  if(acceptedSource!==aiSource){
+    const state=await evaluate(`({changeCard:document.querySelector(".ai-change-set")?.innerText,aiErrors:Array.from(document.querySelectorAll(".ai-change-error,.ai-error,[role=alert]")).map(el=>el.innerText),notice:document.querySelector(".block-notice")?.innerText})`);
+    throw new Error(`AI acceptance did not apply its proposal. Source matched original fixture: ${acceptedSource===current}. UI diagnostics: ${JSON.stringify(state)}`);
+  }
+  try {
+    await until('document.querySelector(".pdf-origin-label")?.textContent === "main.tex" && document.querySelector(".save-status")?.textContent.includes("Saved")','automatic project compile after accepting');
+  } catch (error) {
+    const state = await evaluate(`(async () => ({
+      diskSource:(await window.latexEditor.files.read(${id},"main.tex")).content.slice(0,90),
+      diskMatchesProposalBase:(await window.latexEditor.files.read(${id},"main.tex")).content===${JSON.stringify(current)},
+      bufferSource:document.querySelector(".editor-surface .monaco-editor .view-lines")?.innerText.slice(0,90),
+      saveStatus:document.querySelector(".save-status")?.innerText,
+      pdfOrigin:document.querySelector(".pdf-origin-label")?.innerText,
+      compileButton:{disabled:document.querySelector(".compile-button")?.disabled,title:document.querySelector(".compile-button")?.title},
+      changeCard:document.querySelector(".ai-change-set")?.innerText,
+      aiErrors:Array.from(document.querySelectorAll(".ai-change-error,.ai-error,[role=alert]")).map(el=>el.innerText),
+      notice:document.querySelector(".block-notice")?.innerText,
+      diagnostics:document.querySelector(".bottom-panel")?.innerText.slice(0,500)
+    }))()`);
+    throw new Error(`${error instanceof Error ? error.message : String(error)}\nAI apply/compile diagnostics: ${JSON.stringify(state)}`);
+  }
   assert.equal(await readFile(join(project.canonicalPath,'main.tex'),'utf8'),aiSource);
   assert.notDeepEqual(await readFile(join(project.canonicalPath,'main.pdf')),realPdf);
   assert.equal((await readingPosition()).page,4);
   console.log('PASS accepting AI source edits saves and recompiles the real project automatically');
 
-  await replaceSource(source('Broken').replace('\\end{document}','\\notARealCommand\n\\end{document}'));
-  await compileUi();
+  const brokenSource=source('Broken').replace('\\end{document}','\\notARealCommand\n\\end{document}');
+  await replaceSource(brokenSource);
+  await compileUi(brokenSource,id);
   await until('!!document.querySelector(".bottom-panel .diagnostic-group")','failure diagnostics');
   assert.equal(await evaluate('document.querySelectorAll(".pdf-page").length'),6);
   assert.equal((await readingPosition()).page,4);
   console.log('PASS compilation failures retain the previous readable PDF');
-  await replaceSource(source('Short',2)); await compileUi();
+  const shortSource=source('Short',2);
+  await replaceSource(shortSource); await compileUi(shortSource,id);
   await until('document.querySelectorAll(".pdf-page").length===2','shorter PDF');
   await delay(300); assert.equal((await readingPosition()).page,2);
   console.log('PASS a shorter PDF restores near the last surviving page');
@@ -111,15 +154,16 @@ async function run() {
   await evaluate(`window.latexEditor.files.createFile(${id},"nested/alternate.tex")`);
   await evaluate(`window.latexEditor.files.write(${id},"nested/alternate.tex",${JSON.stringify(source('Alternate',1))})`);
   await evaluate(`window.latexEditor.projects.setMainFile(${id},"nested/alternate.tex")`);
-  await until('!document.querySelector(".pdf-viewer")','main file change resets old PDF');
-  await evaluate(`document.querySelector('.activity-bar button[title="Files"]').click()`);
+  await until('Array.from(document.querySelector(".pdf-document-select")?.options??[]).some(option=>option.value==="nested/alternate.tex")','main file change refreshes the PDF catalog');
+  await evaluate(`document.querySelector('.activity-bar button[title^="Files"]').click()`);
   await evaluate(`document.querySelector('.sidebar-heading button[title="Refresh file tree"]').click()`);
   await until(`!!document.querySelector('.tree-row[data-path="nested"]')`,'nested directory in file tree');
   await evaluate(`document.querySelector('.tree-row[data-path="nested"]').click()`);
   await until(`!!document.querySelector('.tree-row[data-path="nested/alternate.tex"]')`,'nested main in file tree');
   await evaluate(`document.querySelector('.tree-row[data-path="nested/alternate.tex"]').click()`);
   await until('document.querySelector(".editor-tabs button.active")?.textContent.includes("alternate.tex")','nested main selected');
-  await compileUi();
+  await until('!document.querySelector(".pdf-viewer")','selecting an uncompiled document clears the previous PDF');
+  await compileUi(undefined,id);
   await until(`document.querySelectorAll('.pdf-page').length===1 && Array.from(document.querySelectorAll('.pdf-page .textLayer span')).some(el=>el.textContent.includes('Alternate'))`,'nested main PDF');
   assert.ok(await evaluate(`window.latexEditor.files.readPdf(${id},"alternate.pdf")`));
   console.log('PASS main-file changes synchronize to the UI and nested main files use the correct root output');

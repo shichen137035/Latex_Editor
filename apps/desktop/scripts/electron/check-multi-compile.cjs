@@ -39,6 +39,20 @@ async function openFile(path) {
   await evaluate(`document.querySelector('.tree-row[data-path=${JSON.stringify(path)}]').click()`);
   await until(`!!document.querySelector('.tree-row.active[data-path=${JSON.stringify(path)}]')`, 'selected file ' + path);
 }
+async function selectPdf(id) {
+  await evaluate(`(() => { const select = document.querySelector('.pdf-document-select'); select.value = ${JSON.stringify(id)}; select.dispatchEvent(new Event('change', {bubbles:true})); })()`);
+  await until(`document.querySelector('.pdf-document-select')?.value === ${JSON.stringify(id)} && !!document.querySelector('.pdf-page .textLayer span')`, 'preview selection ' + id);
+}
+async function setFollowing(enabled) {
+  page.webContents.sendInputEvent({ type: 'keyDown', keyCode: ',', modifiers: ['control'] });
+  page.webContents.sendInputEvent({ type: 'keyUp', keyCode: ',', modifiers: ['control'] });
+  await until('!!document.querySelector(".settings-dialog-header")', 'settings');
+  await evaluate('document.querySelector(\'[data-section="projectBuild"]\').click()');
+  await until('!!document.querySelector(\'[data-setting="pdfFollowActiveTex"] input\')', 'PDF following preference');
+  await evaluate(`(() => { const input = document.querySelector('[data-setting="pdfFollowActiveTex"] input'); if(input.checked !== ${enabled}) input.click(); })()`);
+  await until(`document.querySelector('[data-setting="pdfFollowActiveTex"] input').checked === ${enabled}`, 'PDF following state');
+  await evaluate('document.querySelector(".settings-close").click()');
+}
 async function readingPage() {
   return evaluate(`(() => { const root = document.querySelector('.pdf-viewer'), y = root.getBoundingClientRect().top; return Number(Array.from(root.querySelectorAll('.pdf-page')).find(el => el.getBoundingClientRect().bottom > y)?.dataset.page); })()`);
 }
@@ -49,7 +63,11 @@ async function run() {
   const project = await evaluate(`window.latexEditor.projects.create({name:"multi-documents",parentPath:${JSON.stringify(projects)}})`);
   const id = JSON.stringify(project.id);
   mkdirSync(join(project.canonicalPath, 'supplement'));
-  await writeFile(join(project.canonicalPath, 'main.tex'), source('Primary', 1));
+  mkdirSync(join(project.canonicalPath, 'parts'));
+  await writeFile(join(project.canonicalPath, 'parts/shared.tex'), 'Included chapter fragment.\\label{sec:shared}\n');
+  await writeFile(join(project.canonicalPath, 'main.tex'), source('Primary', 1)
+    .replace('\\begin{document}', '\\usepackage{hyperref}\n\\begin{document}')
+    .replace('\\end{document}', '\\input{parts/shared}\n\\href{supplement/main.pdf#page=3}{Read supplement}\n\\end{document}'));
   await writeFile(join(project.canonicalPath, 'supplement/main.tex'), source('Secondary', 3));
   await writeFile(join(project.canonicalPath, 'references.bib'), '@book{test,title={Example},author={Author},year={2026}}');
   await evaluate(`window.latexEditor.settings.set("autoSave","off",${id})`);
@@ -60,6 +78,7 @@ async function run() {
   await until(`!!document.querySelector('.tree-row[data-path="supplement"]')`, 'file tree');
   await evaluate(`document.querySelector('.tree-row[data-path="supplement"]').click()`);
   await until(`!!document.querySelector('.tree-row[data-path="supplement/main.tex"]')`, 'expanded directory');
+  await until('document.querySelector(".pdf-document-select")?.options.length === 2', 'document roots, excluding include fragment');
   await openFile('supplement/main.tex');
   await compileUi('Secondary');
   assert.equal(await evaluate('document.querySelector(".pdf-origin-label").textContent'), 'supplement/main.tex');
@@ -69,6 +88,7 @@ async function run() {
   const [target] = await readdir(targetsRoot);
   const secondaryPdf = join(targetsRoot, target, 'main.pdf');
   assert.notDeepEqual(await readFile(secondaryPdf), primaryPdf);
+  assert.deepEqual(await readFile(join(project.canonicalPath, 'supplement/main.pdf')), await readFile(secondaryPdf));
   assert.equal((await evaluate(`window.latexEditor.projects.list()`)).find(item => item.id === project.id).mainFile, 'main.tex');
   console.log('PASS primary and selected TeX both compile; same-named outputs stay separate');
 
@@ -100,6 +120,35 @@ async function run() {
   await delay(300); assert.equal(await readingPage(), 3);
   assert.deepEqual(await readFile(join(project.canonicalPath, 'main.pdf')), primaryPdf);
   console.log('PASS non-TeX selection displays main; returning to a secondary restores its own reading position');
+
+  await selectPdf('main.tex');
+  await until('document.querySelector(".pdf-origin-label")?.textContent === "main.tex"', 'manual primary preview without compiling');
+  await selectPdf('supplement/main.tex');
+  await delay(300); assert.equal(await readingPage(), 3);
+  console.log('PASS preview picker switches existing PDFs and retains independent reading positions');
+
+  await evaluate('document.querySelector(\'.tree-row[data-path="parts"]\').click()');
+  await until('!!document.querySelector(\'.tree-row[data-path="parts/shared.tex"]\')', 'included source');
+  await openFile('parts/shared.tex');
+  await until('document.querySelector(".pdf-document-select")?.value === "main.tex" && !!document.querySelector(".pdf-link")', 'include owner preview and PDF reference link');
+  await compileUi('Primary');
+  assert.equal((await evaluate(`window.latexEditor.compile.outputs(${id})`)).some(item => item.sourceFile === 'parts/shared.tex'), false);
+  await evaluate('Array.from(document.querySelectorAll(".pdf-link")).find(link => link.dataset.pdfLink.includes("supplement/main.pdf")).click()');
+  await until('document.querySelector(".pdf-document-select")?.value === "supplement/main.tex" && document.querySelectorAll(".pdf-page").length === 3', 'PDF cross-document reference');
+  await until(`(() => { const root=document.querySelector('.pdf-viewer'), y=root?.getBoundingClientRect().top; return root && Number(Array.from(root.querySelectorAll('.pdf-page')).find(el=>el.getBoundingClientRect().bottom>y)?.dataset.page)===3; })()`, 'linked page destination');
+  console.log('PASS input fragments follow their owning PDF; PDF cross-references switch document and page');
+
+  await setFollowing(false);
+  await openFile('main.tex'); await openFile('references.bib');
+  assert.equal(await evaluate('document.querySelector(".pdf-document-select").value'), 'supplement/main.tex');
+  await evaluate('document.querySelector(".compile-button").click()');
+  await until('!document.querySelector(".compile-button")?.disabled', 'compile without changing pinned preview');
+  assert.equal(await evaluate('document.querySelector(".pdf-document-select").value'), 'supplement/main.tex');
+  await setFollowing(true);
+  await until('document.querySelector(".pdf-document-select")?.value === "main.tex"', 'reenable following');
+  await openFile('supplement/main.tex');
+  await until('document.querySelector(".pdf-document-select")?.value === "supplement/main.tex"', 'automatic secondary preview without compiling');
+  console.log('PASS following is configurable and manual preview remains selected while disabled, including during compilation');
   assert.deepEqual(errors, []);
 }
 app.whenReady().then(() => {

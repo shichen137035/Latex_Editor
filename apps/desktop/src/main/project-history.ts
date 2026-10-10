@@ -345,6 +345,13 @@ export class ProjectHistoryService {
     return this.run(projectId, async (store) => { this.row(store, entryId); store.db.prepare("DELETE FROM entries WHERE id = ?").run(entryId); });
   }
 
+  clearSnapshots(projectId: string): Promise<void> {
+    return this.run(projectId, async (store) => {
+      store.db.exec("DELETE FROM entries WHERE type = 'snapshot'; UPDATE entries SET parent_history_id = NULL WHERE parent_history_id NOT IN (SELECT id FROM entries);");
+      await this.collectUnusedHistory(store);
+    });
+  }
+
   private async storageInStore(store: Store): Promise<ProjectHistoryStorage> {
     const rows = this.rows(store);
     let bytes = 0;
@@ -385,18 +392,22 @@ export class ProjectHistoryService {
   optimize(projectId: string): Promise<ProjectHistoryStorage> {
     return this.run(projectId, async (store) => {
       this.prune(store, await this.preferences(projectId));
-      const manifests = new Set(this.rows(store).map((row) => row.manifest_id));
-      const objects = new Set<string>();
-      for (const id of manifests) for (const objectId of Object.values(await this.manifest(store, id))) objects.add(objectId);
-      for (const [folder, keep, suffix] of [["manifests", manifests, ".json"], ["objects", objects, ""]] as const) {
-        try { for (const name of await readdir(join(store.historyRoot, folder))) {
-          const id = suffix ? name.replace(/\.json$/, "") : name;
-          if (!keep.has(id) && /^[a-f0-9]{64}$/.test(id)) await rm(join(store.historyRoot, folder, name));
-        } } catch (error) { if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error; }
-      }
-      store.db.prepare("DELETE FROM file_index").run();
-      store.db.exec("PRAGMA wal_checkpoint(TRUNCATE); VACUUM;");
+      await this.collectUnusedHistory(store);
       return this.storageInStore(store);
     });
+  }
+
+  private async collectUnusedHistory(store: Store): Promise<void> {
+    const manifests = new Set(this.rows(store).map((row) => row.manifest_id));
+    const objects = new Set<string>();
+    for (const id of manifests) for (const objectId of Object.values(await this.manifest(store, id))) objects.add(objectId);
+    for (const [folder, keep, suffix] of [["manifests", manifests, ".json"], ["objects", objects, ""]] as const) {
+      try { for (const name of await readdir(join(store.historyRoot, folder))) {
+        const id = suffix ? name.replace(/\.json$/, "") : name;
+        if (!keep.has(id) && /^[a-f0-9]{64}$/.test(id)) await rm(join(store.historyRoot, folder, name));
+      } } catch (error) { if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error; }
+    }
+    store.db.prepare("DELETE FROM file_index").run();
+    store.db.exec("PRAGMA wal_checkpoint(TRUNCATE); VACUUM;");
   }
 }

@@ -3,6 +3,7 @@ const { mkdtempSync, mkdirSync, writeFileSync } = require("node:fs");
 const { tmpdir } = require("node:os");
 const { resolve, join } = require("node:path");
 const assert = require("node:assert/strict");
+const labels = require("../../src/renderer/i18n/locales/en.json");
 
 const root = mkdtempSync(resolve(tmpdir(), "texweave-file-tree-"));
 const projects = join(root, "projects"); mkdirSync(projects);
@@ -76,8 +77,8 @@ async function run() {
   await toggle('chapters'); await expanded('chapters/nested', true);
   console.log('PASS reopening restores parent and nested folder states independently');
 
-  await evaluate(`document.querySelector('.activity-bar button[title="Search"]').click()`);
-  await evaluate(`document.querySelector('.activity-bar button[title="Files"]').click()`);
+  await evaluate(`Array.from(document.querySelectorAll('.activity-bar button')).find(button => button.title.startsWith(${JSON.stringify(labels["activity.search"])})).click()`);
+  await evaluate(`Array.from(document.querySelectorAll('.activity-bar button')).find(button => button.title.startsWith(${JSON.stringify(labels["activity.files"])})).click()`);
   await until(`!!document.querySelector(${JSON.stringify(row('chapters/nested'))})`, 'remounted tree');
   await expanded('chapters/nested', true);
   mkdirSync(join(created[0].canonicalPath, 'new-folder'));

@@ -8,9 +8,9 @@ import { handleIpc, onIpc, sendIpc } from "./ipc.js";
 import { app, BrowserWindow, clipboard, dialog, Menu, shell } from "electron";
 import type { IpcMainInvokeEvent } from "electron";
 import { randomUUID } from "node:crypto";
-import { copyFile, readFile } from "node:fs/promises";
+import { copyFile, readFile, stat, writeFile } from "node:fs/promises";
 import { extname, join, resolve } from "node:path";
-import type { AIStatus, CompileResult, FileWriteResult, PdfExportResult, PreviewDirectiveDefinition, Project } from "@latex-editor/contracts" with { "resolution-mode": "import" };
+import type { AIStatus, CompileResult, FileWriteResult, PdfExportResult, PreviewDirectiveDefinition, Project, SettingsPresetKind, SettingsPresetDocument } from "@latex-editor/contracts" with { "resolution-mode": "import" };
 import type { EnvironmentCatalog } from "@latex-editor/editor-core/preview/catalog" with { "resolution-mode": "import" };
 import type { EnvironmentDefinition } from "@latex-editor/editor-core/preview/types" with { "resolution-mode": "import" };
 import type { DesktopContext } from "./desktopContext.js";
@@ -205,6 +205,60 @@ function registerIpcHandlers(): void {
     const window = BrowserWindow.fromWebContents(event.sender);
     if (window) await dialog.showMessageBox(window, { type: "error", title, message });
   });
+  handleIpc(desktopInvoke.settings.listPresets, (_event, kind) => settings.listPresets(kind));
+  handleIpc(desktopInvoke.settings.savePreset, async (_event, name, id, kind = "settings", projectId) => {
+    const extra: Partial<SettingsPresetDocument> = {};
+    if (["settings", "themes"].includes(kind) && context) { const selected = (await context.themes.list()).find(item => item.id === settings.global.theme); if (selected?.css) extra.theme = { id: selected.id, css: selected.css, name: selected.name }; }
+    if (kind === "toolchain" && settings.toolchain) extra.toolchain = settings.toolchain;
+    if (kind === "aiSkills") extra.skills = context?.aiWorkspaces.listSkills().map(({ name, content, enabled }) => ({ name, content, enabled })) ?? [];
+    if (kind === "styleResources" && context) {
+      extra.resources = [];
+      for (const item of await context.styleResources.list()) if (item.source === "user") {
+        const resource = await context.styleResources.getResource(item.id);
+        if (!resource) throw new Error("settingsPresets.failed");
+        extra.resources.push({ name: resource.name, files: resource.files.map(file => ({ targetPath: file.targetPath, content: file.content ?? "" })) });
+      }
+    }
+    return settings.savePreset(name, id, kind, extra, projectId);
+  });
+  handleIpc(desktopInvoke.settings.removePreset, (_event, id) => settings.removePreset(id));
+  handleIpc(desktopInvoke.settings.exportPreset, async (_event, id) => {
+    const preset = await settings.presetDocument(id);
+    const target = await dialog.showSaveDialog({ defaultPath: preset.name.replace(/[^\p{L}\p{N}._ -]/gu, "_") + ".json", filters: [{ name: "JSON", extensions: ["json"] }] });
+    if (target.canceled || !target.filePath) return false;
+    await writeFile(target.filePath, JSON.stringify(preset, null, 2), "utf8"); return true;
+  });
+  handleIpc(desktopInvoke.settings.importPreset, async (_event, kind: SettingsPresetKind) => {
+    const picked = await dialog.showOpenDialog({ filters: [{ name: "JSON", extensions: ["json"] }], properties: ["openFile"] });
+    const path = picked.filePaths[0]; if (picked.canceled || !path) return undefined;
+    const { validPresetDocument } = await import("@latex-editor/contracts");
+    if ((await stat(path)).size > 8_000_000) throw new Error("settingsPresets.invalidFile");
+    let document: unknown; try { document = JSON.parse(await readFile(path, "utf8")); } catch { throw new Error("settingsPresets.invalidFile"); }
+    if (!validPresetDocument(document) || document.kind !== kind) throw new Error("settingsPresets.invalidFile");
+    const existing = await settings.listPresets(kind), base = document.name;
+    for (let suffix = 2; existing.some(item => item.name.normalize("NFKC").toLowerCase() === document.name.normalize("NFKC").toLowerCase()); suffix++) document.name = base.slice(0, 70) + " (" + suffix + ")";
+    return settings.importPreset(document);
+  });
+  handleIpc(desktopInvoke.settings.applyPreset, async (_event, id, projectId) => {
+    const document = await settings.presetDocument(id);
+    if (document.resources && context) await context.styleResources.importPresetResources(document.resources);
+    if (document.skills && context) for (const skill of document.skills) {
+      await context.aiWorkspaces.saveSkill({ name: skill.name, content: skill.content, create: !context.aiWorkspaces.listSkills().some(item => item.name === skill.name) });
+      await context.aiWorkspaces.setSkillEnabled({ name: skill.name, enabled: skill.enabled });
+    }
+    let snapshot = await settings.applyPreset(id, projectId);
+    if (context && ["themes", "settings"].includes(document.kind)) await context.themes.setDirectory(snapshot.global.themeDirectory ?? "");
+    if (document.theme && context) {
+      const themeId = await context.themes.importPresetTheme(document.theme);
+      if (themeId !== document.theme.id) {
+        const profile = snapshot.global.themeColorProfiles?.[document.theme.id];
+        if (profile) await settings.set("themeColorProfiles", { ...snapshot.global.themeColorProfiles, [themeId]: profile });
+        snapshot = await settings.set("theme", themeId);
+      }
+    }
+    for (const window of BrowserWindow.getAllWindows()) window.setTitle(nativeText("native.windowTitle"));
+    return snapshot;
+  });
   handleIpc(desktopInvoke.settings.get, (_event, projectId) => settings.snapshot(projectId));
   handleIpc(desktopInvoke.settings.set, async (_event, key, value, projectId) => {
     const snapshot = await settings.set(key, value, projectId);
@@ -250,6 +304,10 @@ function registerIpcHandlers(): void {
   handleIpc(desktopInvoke.references.createCollection, (_event, name, parentId) => {
     if (!context) throw new Error(nativeText("native.contextNotReady"));
     return context.references.createCollection(name, parentId);
+  });
+  handleIpc(desktopInvoke.references.setEntryTags, (_event, id, tags) => {
+    if (!context) throw new Error(nativeText("native.contextNotReady"));
+    return context.references.setEntryTags(id, tags);
   });
   handleIpc(desktopInvoke.references.createTag, (_event, name) => {
     if (!context) throw new Error(nativeText("native.contextNotReady"));
@@ -411,7 +469,7 @@ function registerIpcHandlers(): void {
   });
   handleIpc(desktopInvoke.projects.removeFromDirectory, async (_event, projectId, retention = "all") => {
     if (!context) throw new Error(nativeText("native.contextNotReady"));
-    if (!["all", "versions", "none"].includes(retention)) throw new Error("Invalid project data retention option");
+    if (!["all", "versions", "none"].includes(retention)) throw new Error(nativeText("native.retentionInvalid"));
     const project = context.projects.getProject(projectId);
     if (!project.missing) {
       const { consolidateProjectMetadata } = await import("@latex-editor/filesystem-node");
@@ -565,6 +623,11 @@ function registerIpcHandlers(): void {
     if (result.status !== "succeeded" || result.pdfPath === undefined) return result;
     const pdfDataUrl = `data:application/pdf;base64,${(await readFile(result.pdfArtifactPath ?? result.pdfPath)).toString("base64")}`;
     return { ...result, pdfDataUrl };
+  });
+  handleIpc(desktopInvoke.compile.outputs, async (_event, projectId) => {
+    if (context === undefined) throw new Error(nativeText("native.contextNotReady"));
+    const { projectPdfDocuments } = await import("./project-pdfs.js");
+    return projectPdfDocuments(context.projects.getProject(projectId), context.files);
   });
   handleIpc(desktopInvoke.compile.readLog, (_event, projectId, compilationId) => {
     if (context === undefined) throw new Error(nativeText("native.contextNotReady"));

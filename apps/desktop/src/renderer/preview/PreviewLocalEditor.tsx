@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { Editor, type OnMount } from "@monaco-editor/react";
 import { createPortal } from "react-dom";
 import type { ProjectTreeNode } from "@latex-editor/contracts";
@@ -52,6 +52,11 @@ export function PreviewLocalEditor({ value, onApply, onDraftChange, onCancel, on
   const [cursorMath, setCursorMath] = useState<{ expression: string; displayMode: boolean; start: number; end: number }>();
   const [mathAnchor, setMathAnchor] = useState<DOMRect>();
   const [confirmLeave, setConfirmLeave] = useState(false);
+  const [overflowWidgets] = useState(() => {
+    const host = document.createElement("div");
+    host.className = "monaco-editor preview-editor-overflow-widgets";
+    return host;
+  });
   const editorShellRef = useRef<HTMLDivElement | null>(null);
   const localEditorRef = useRef<Parameters<OnMount>[0] | null>(null);
   const mathPopoverInteracting = useRef(false);
@@ -69,6 +74,28 @@ export function PreviewLocalEditor({ value, onApply, onDraftChange, onCancel, on
   const lineHeight = Math.round(preferences.get("fontSize") * 1.5);
   const estimatedContentHeight = Math.max(40, draft.split(/\r\n?|\n/).length * lineHeight + 20);
   const contentHeight = Math.max(estimatedContentHeight, measuredContentHeight ?? 0, initialHeight === undefined ? 0 : initialHeight - 66);
+  useLayoutEffect(() => {
+    document.body.appendChild(overflowWidgets);
+    return () => overflowWidgets.remove();
+  }, [overflowWidgets]);
+  useEffect(() => {
+    let frame = 0;
+    const reposition = (event: Event) => {
+      const target = event.target;
+      if (event.type === "scroll" && target instanceof Element && !target.contains(editorShellRef.current)) return;
+      if (frame || !overflowWidgets.querySelector(".suggest-widget.visible, .parameter-hints-widget.visible")) return;
+      frame = requestAnimationFrame(() => {
+        frame = 0;
+        const editor = localEditorRef.current, bounds = editorShellRef.current?.getBoundingClientRect();
+        if (!editor || !bounds) return;
+        if (bounds.bottom < 0 || bounds.top > innerHeight) editor.trigger("preview-scroll", "hideSuggestWidget", null);
+        else editor.render(true);
+      });
+    };
+    document.addEventListener("scroll", reposition, true);
+    window.addEventListener("resize", reposition);
+    return () => { cancelAnimationFrame(frame); document.removeEventListener("scroll", reposition, true); window.removeEventListener("resize", reposition); };
+  }, [overflowWidgets]);
   draftRef.current = draft;
   applyRef.current = onApply;
   cancelRef.current = onCancel;
@@ -89,7 +116,8 @@ export function PreviewLocalEditor({ value, onApply, onDraftChange, onCancel, on
       commands.register("edit.redo", { execute: () => localEditorRef.current?.trigger("command", "redo", null), when: () => localEditorRef.current?.hasTextFocus() === true }),
       commands.register("preview.applyDraft", { execute: () => applyRef.current(draftRef.current) }),
       commands.register("preview.cancelDraft", {
-        when: () => !localEditorRef.current?.getDomNode()?.querySelector(".suggest-widget.visible, .parameter-hints-widget.visible"),
+        when: () => !localEditorRef.current?.getDomNode()?.querySelector(".suggest-widget.visible, .parameter-hints-widget.visible")
+          && !overflowWidgets.querySelector(".suggest-widget.visible, .parameter-hints-widget.visible"),
         execute: () => cancelRef.current()
       }),
       commands.register("block.insertBefore", { when: () => !!onInsertBefore, execute: () => onInsertBefore?.(draftRef.current) }),
@@ -221,9 +249,9 @@ export function PreviewLocalEditor({ value, onApply, onDraftChange, onCancel, on
     window.addEventListener("keydown", choose, true);
     return () => window.removeEventListener("keydown", choose, true);
   }, [confirmLeave]);
-  return <><div ref={editorShellRef} className="preview-local-editor" onClick={(event) => event.stopPropagation()}>
+  return <><div ref={editorShellRef} className="preview-local-editor" data-source-start-offset={sourceStartOffset} onClick={(event) => event.stopPropagation()}>
     {activeMath && mathAnchor && <MathPreviewPopover source={activeMath.expression} displayMode={activeMath.displayMode} context={mathContext} anchor={mathAnchor} className="preview-draft-math" onInteractionChange={(active) => { mathPopoverInteracting.current = active; if (!active && !localEditorRef.current?.hasTextFocus()) setCursorMath(undefined); }}/>}
-    <Editor height={`${contentHeight}px`} language="latex" value={draft} onChange={(next) => { const nextValue = next ?? ""; draftRef.current = nextValue; setDraft(nextValue); onDraftChange?.(nextValue); }} theme={editorThemeName(preferences.get("theme"))} options={{ minimap: { enabled: false }, lineNumbers: "off", folding: false, fontSize: preferences.get("fontSize"), tabSize: preferences.get("tabSize"), wordWrap: "on", lineHeight, automaticLayout: true, scrollbar: { handleMouseWheel: false, alwaysConsumeMouseWheel: false }, scrollBeyondLastLine: false, padding: { top: 10 }, quickSuggestions: { other: true, comments: true, strings: true }, suggestOnTriggerCharacters: true, autoClosingBrackets: "never", autoClosingQuotes: "always", autoSurround: "never" }} onMount={onMount} />
+    <Editor height={`${contentHeight}px`} language="latex" value={draft} onChange={(next) => { const nextValue = next ?? ""; draftRef.current = nextValue; setDraft(nextValue); onDraftChange?.(nextValue); }} theme={editorThemeName(preferences.get("theme"))} options={{ overflowWidgetsDomNode: overflowWidgets, fixedOverflowWidgets: true, minimap: { enabled: false }, lineNumbers: "off", folding: false, fontSize: preferences.get("fontSize"), tabSize: preferences.get("tabSize"), wordWrap: "on", lineHeight, automaticLayout: true, scrollbar: { handleMouseWheel: false, alwaysConsumeMouseWheel: false }, scrollBeyondLastLine: false, padding: { top: 10 }, quickSuggestions: { other: true, comments: true, strings: true }, suggestOnTriggerCharacters: true, autoClosingBrackets: "never", autoClosingQuotes: "always", autoSurround: "never" }} onMount={onMount} />
     <div className="preview-local-editor-actions"><span>{t("preview.editHint")}</span>{onInsertBefore && onInsertAfter && <div className="preview-line-actions"><button title={t("preview.insertLineBefore")} onClick={() => onInsertBefore(draftRef.current)}>↥＋</button><button title={t("preview.insertLineAfter")} onClick={() => onInsertAfter(draftRef.current)}>↧＋</button></div>}<button onClick={onCancel}>{t("preview.cancel")}</button><button className="primary" onClick={() => applyRef.current(draftRef.current)}>{t("preview.apply")}</button></div>
   </div>{confirmLeave && createPortal(<div className="preview-confirm-backdrop"><section className="preview-confirm-dialog" role="dialog" aria-modal="true" aria-label={t("preview.unsavedTitle")}><h2>{t("preview.unsavedTitle")}</h2><p>{t("preview.unsavedMessage")}</p><div><button autoFocus className="primary" onClick={() => { setConfirmLeave(false); applyRef.current(draftRef.current); }}>{t("preview.yes")}</button><button onClick={() => { setConfirmLeave(false); cancelRef.current(); }}>{t("preview.no")}</button></div></section></div>, document.body)}</>;
 }

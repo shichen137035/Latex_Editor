@@ -3,12 +3,13 @@ import type { RelationDirection, SemanticBlock } from "@latex-editor/contracts";
 import { t } from "../i18n/index.js";
 import { environmentName } from "../i18n/displayNames.js";
 import type { EnvironmentDefinition } from "../preview/types.js";
-import { environmentAccent, environmentDefinition } from "../preview/environment-colors.js";
+import { environmentColorRoles, environmentDefinition } from "../preview/environment-colors.js";
 import { blockRole } from "./model.js";
 
 export function blockColorStyle(block: SemanticBlock, definitions: EnvironmentDefinition[]): CSSProperties {
   const type = blockRole(block);
-  return { "--environment-accent": environmentAccent(type, environmentDefinition(type, definitions)) } as CSSProperties;
+  const roles = environmentColorRoles(type, environmentDefinition(type, definitions));
+  return { "--environment-accent": roles.accent, "--environment-label-bg": roles.labelBackground, "--environment-label-text": roles.labelText, "--environment-border": roles.border } as CSSProperties;
 }
 
 export function blockTypeLabel(block: SemanticBlock, definitions: EnvironmentDefinition[]): string {
@@ -38,7 +39,7 @@ export function RelationScopeControls({ direction, depth, documentFiltered, segm
     <div className="relation-scope-field"><span>{t("relation.direction")}</span>{segmented ? <div className="relation-direction" role="group" aria-label={t("relation.direction")}>
       {(["prerequisite", "both", "consequence"] as const).map(value => <button key={value} title={t(`relation.${value}`)} aria-label={t(`relation.${value}`)} aria-pressed={direction === value} className={direction === value ? "active" : ""} onClick={() => onDirection(value)}>{t(`relation.short.${value}`)}</button>)}
     </div> : <select aria-label={t("relation.direction")} value={direction} onChange={event => onDirection(event.target.value as RelationDirection)}>{(["prerequisite", "both", "consequence"] as const).map(value => <option key={value} value={value}>{t(`relation.${value}`)}</option>)}</select>}</div>
-    <label className="relation-scope-field"><span>{t("relation.depth")}</span><select value={String(depth)} onChange={event => onDepth(event.target.value === "all" ? "all" : Number(event.target.value))}>{[1, 2, 3, 4, 5].map(value => <option value={value} key={value}>{value}</option>)}<option value="all">{t("relation.all")}</option></select></label>
+    <label className="relation-scope-field"><span>{t("relation.depth")}</span><select aria-label={t("relation.depth")} title={t("relation.depth")} value={String(depth)} onChange={event => onDepth(event.target.value === "all" ? "all" : Number(event.target.value))}>{[1, 2, 3, 4, 5].map(value => <option value={value} key={value}>{value}</option>)}<option value="all">{t("relation.all")}</option></select></label>
     <label className="relation-document-toggle"><input type="checkbox" checked={documentFiltered} onChange={event => onDocumentFiltered(event.target.checked)}/><span className="relation-toggle-track"/><span>{t("relation.filterDocument")}</span></label>
   </div>;
 }

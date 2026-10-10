@@ -1,5 +1,5 @@
 /* Shared surfaces bridge the older directory/Preview CSS into the token system. */
-:root { color-scheme: light; --color-text-disabled: var(--color-text-muted); --color-border-active: var(--color-primary); }
+:root { color-scheme: light; --font-ui: "DM Sans", "Segoe UI Variable Text", "Segoe UI", "Microsoft YaHei UI", "PingFang SC", sans-serif; --font-heading: "Space Grotesk", "Segoe UI", "Microsoft YaHei UI", "PingFang SC", sans-serif; --color-text-disabled: var(--color-text-muted); --color-border-active: var(--color-primary); --color-bg-muted: var(--color-bg-subtle); --color-danger: var(--color-error); }
 :root[data-theme="dark"] { color-scheme: dark; }
 body, .app-shell { background: var(--color-bg-app); color: var(--color-text-primary); }
 .topbar,.project-card,.project-row,.modal-card,.settings-panel,.new-menu,.environment-dialog,.environment-editor,.environment-manager-header,.environment-dialog-bar,.preview-local-editor { background: var(--color-bg-panel); color: var(--color-text-primary); border-color: var(--color-border); }
@@ -14,7 +14,6 @@ body, .app-shell { background: var(--color-bg-app); color: var(--color-text-prim
 .structured-preview { background: var(--color-bg-panel); }.structured-preview > article,.preview-display-math,.preview-inline-math { color: var(--color-text-primary); }
 .preview-reference { color: var(--color-link, var(--color-primary-strong)); background: color-mix(in srgb, var(--color-primary) 9%, var(--color-bg-panel)); }.preview-content-region:hover { background: var(--color-bg-hover); }
 .environment-xml-error,.inline-error { color: var(--color-error); background: var(--color-bg-panel); border-color: var(--color-error); }
-:root[data-theme="dark"] .preview-block { --block-fill: var(--color-bg-hover) !important; --block-label-bg: var(--color-bg-subtle) !important; --block-label-text: var(--block-accent) !important; }
 :root[data-theme="dark"] .pane-placeholder { background: var(--color-bg-panel); }
 .latex-toolbar { position: relative; }.latex-toolbar .view-switch { flex-shrink: 0; margin-left: auto; }
 @media (max-width: 1450px) { .latex-toolbar > button > span { display: none; } }
@@ -39,3 +38,5 @@ body, .app-shell { background: var(--color-bg-app); color: var(--color-text-prim
 .entry-name-form { background: var(--color-bg-panel); }
 .status-bar { color: var(--color-status-text); background: var(--color-status-bg); }
 .preview-diagnostics { color: var(--color-warning); background: color-mix(in srgb, var(--color-warning) 12%, var(--color-bg-panel)); border-color: color-mix(in srgb, var(--color-warning) 55%, var(--color-border)); }
+
+:root { --semantic-color-mode: auto; --semantic-chroma-scale: 1; --semantic-accent-contrast: 3; --semantic-text-contrast: 4.5; --semantic-fill-mix: .04; --semantic-label-mix: .1; --semantic-border-mix: .24; }

@@ -18,6 +18,10 @@ export default tseslint.config(
     languageOptions: { sourceType: "module", globals: globals.node }
   },
   {
+    files: ["tests/**/*.mjs"],
+    languageOptions: { sourceType: "module", globals: globals.node }
+  },
+  {
     files: ["**/*.ts", "**/*.tsx"],
     languageOptions: {
       parserOptions: {

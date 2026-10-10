@@ -2,62 +2,81 @@ import { spawn } from "node:child_process";
 import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import electron from "electron";
+import { desktopChecks, desktopCheckById } from "./electron-check-catalog.mjs";
 
 const root = resolve(fileURLToPath(new URL("../../..", import.meta.url)));
-const checks = new Map([
-  ["ai-attachments", { script: "electron/check-ai-attachments.cjs" }],
-  ["ai-connection", { script: "electron/check-ai-connection.cjs", cleanCodexPath: true }],
-  ["preview-caret", { script: "electron/check-preview-caret.cjs" }],
-  ["preview-navigation", { script: "electron/check-preview-navigation.cjs" }],
-  ["preview-scroll", { script: "electron/check-preview-scroll.cjs" }],
-  ["project-references", { script: "electron/check-project-references.cjs" }],
-  ["source-editor", { script: "electron/check-source-editor.cjs" }],
-  ["auto-save", { script: "electron/check-auto-save.cjs" }],
-  ["document-title", { script: "electron/check-document-title.cjs" }],
-  ["project-directory", { script: "electron/check-project-directory.cjs" }],
-  ["search-filter", { script: "electron/check-search-filter.cjs" }],
-  ["environment-typography", { script: "electron/check-environment-typography.cjs" }],
-  ["image-completion", { script: "electron/check-image-completion.cjs" }],
-  ["table-editor", { script: "electron/check-table-editor.cjs" }],
-  ["pdf-preview", { script: "electron/check-pdf-preview.cjs" }],
-  ["multi-compile", { script: "electron/check-multi-compile.cjs" }],
-  ["file-tree-state", { script: "electron/check-file-tree-state.cjs" }],
-  ["i18n", { script: "electron/check-i18n.cjs" }],
-  ["preview-startup", { script: "electron/check-preview-startup.cjs" }],
-  ["preview-diagnostics", { script: "diagnostics/preview-performance.cjs" }]
-]);
-const name = process.argv[2];
-const check = checks.get(name);
-if (!check) {
-  process.stderr.write(`Choose a check: ${[...checks.keys()].join(", ")}\n`);
+const requested = process.argv[2];
+const releaseChecks = desktopChecks.filter(check => check.release !== false);
+
+if (requested === "--list" || requested === "--list=json") {
+  if (requested.endsWith("=json")) process.stdout.write(`${JSON.stringify(desktopChecks, null, 2)}\n`);
+  else for (const check of desktopChecks) console.log(`${check.id.padEnd(24)} ${check.area.padEnd(16)} ${check.release === false ? "diagnostic" : "release"} — ${check.summary}`);
+  process.exit(0);
+}
+
+if (!requested) {
+  console.error("Choose a desktop check id or 'release'. Use --list to show the catalog.");
+  process.exit(2);
+}
+const selected = requested === "release" ? releaseChecks : [desktopCheckById.get(requested)].filter(Boolean);
+if (!selected.length) {
+  console.error(`Unknown desktop check: ${requested}. Use --list to show available checks.`);
   process.exit(2);
 }
 
-const env = { ...process.env };
-delete env.ELECTRON_RUN_AS_NODE;
-if (check.cleanCodexPath) {
-  delete env.OPENAI_API_KEY;
-  delete env.CODEX_API_KEY;
-  const pathKey = Object.keys(env).find(key => key.toLowerCase() === "path");
-  if (pathKey) {
-    const delimiter = process.platform === "win32" ? ";" : ":";
-    env.PATH = env[pathKey].split(delimiter)
-      .filter(value => !/[\\/]\.(?:vscode[^\\/]*|codex)(?:[\\/]|$)/i.test(value))
-      .join(delimiter);
-    if (pathKey !== "PATH") delete env[pathKey];
+function checkEnvironment(check) {
+  const env = { ...process.env, ...check.env };
+  delete env.ELECTRON_RUN_AS_NODE;
+  if (check.cleanCodexPath) {
+    delete env.OPENAI_API_KEY;
+    delete env.CODEX_API_KEY;
+    const pathKey = Object.keys(env).find(key => key.toLowerCase() === "path");
+    if (pathKey) {
+      const delimiter = process.platform === "win32" ? ";" : ":";
+      env.PATH = env[pathKey].split(delimiter)
+        .filter(value => !/[\\/]\.(?:vscode[^\\/]*|codex)(?:[\\/]|$)/i.test(value))
+        .join(delimiter);
+      if (pathKey !== "PATH") delete env[pathKey];
+    }
   }
+  return env;
 }
 
-const child = spawn(electron.trim(), [resolve(root, "apps/desktop/scripts", check.script)], {
-  cwd: root,
-  env,
-  stdio: "inherit",
-  windowsHide: false
-});
-child.once("error", error => {
-  process.stderr.write(`${error.message}\n`);
-  process.exitCode = 1;
-});
-child.once("exit", (code, signal) => {
-  process.exitCode = code ?? (signal ? 1 : 0);
-});
+async function runCheck(check) {
+  const startedAt = Date.now();
+  const script = resolve(root, "apps/desktop/scripts", check.script);
+  const command = check.engine === "node" ? process.execPath : electron.trim();
+  console.log(`\n[desktop:${check.id}] START — ${check.summary}`);
+  await new Promise((done, reject) => {
+    const child = spawn(command, [script, ...(check.args ?? [])], {
+      cwd: root,
+      env: checkEnvironment(check),
+      stdio: "inherit",
+      windowsHide: false
+    });
+    child.once("error", error => reject(new Error(`[desktop:${check.id}] could not start ${command} ${script}: ${error.stack ?? error.message}`, { cause: error })));
+    child.once("exit", (code, signal) => {
+      const duration = ((Date.now() - startedAt) / 1000).toFixed(1);
+      if (code === 0 && !signal) {
+        console.log(`[desktop:${check.id}] PASS (${duration}s)`);
+        done();
+      } else {
+        reject(new Error(`[desktop:${check.id}] FAIL after ${duration}s (exit ${code ?? "none"}, signal ${signal ?? "none"}); command: ${command} ${script} ${(check.args ?? []).join(" ")}`));
+      }
+    });
+  });
+}
+
+let passed = 0;
+const suiteStartedAt = Date.now();
+for (const check of selected) {
+  try {
+    await runCheck(check);
+    passed += 1;
+  } catch (error) {
+    console.error(error.stack ?? error.message);
+    console.error(`[desktop suite] Stopped after ${passed}/${selected.length} checks. The failed check's output above includes its test artifacts when available.`);
+    process.exit(1);
+  }
+}
+console.log(`\n[desktop suite] ${passed}/${selected.length} checks passed in ${((Date.now() - suiteStartedAt) / 1000).toFixed(1)}s.`);

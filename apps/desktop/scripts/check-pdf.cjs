@@ -18,7 +18,7 @@ async function run() {
   window = BrowserWindow.getAllWindows()[0];
   window.webContents.on("console-message", (...args) => console.log("RENDERER", ...args.map(value => typeof value === "object" ? JSON.stringify(value) : value)));
   window.webContents.on("render-process-gone", (_, details) => console.log("PROCESS GONE", details));
-  await until("!!window.latexEditor && !!document.querySelector('.project-directory, .project-table, .new-project-button, .topbar')");
+  await until("!!window.latexEditor && !!document.querySelector('.project-directory-v044')");
   const project = await evaluate('window.latexEditor.projects.create({name:"PDF regression",parentPath:' + JSON.stringify(resolve(root,"projects")) + '})');
   await evaluate(`window.latexEditor.files.write(${JSON.stringify(project.id)}, "main.tex", ${JSON.stringify(String.raw`\documentclass{article}
 \begin{document}
@@ -29,9 +29,9 @@ Visible text at normal scale.
   const compile = await evaluate(`window.latexEditor.compile.run(${JSON.stringify(project.id)}, "main.tex")`);
   assert.equal(compile.status, "succeeded", compile.stderrTail);
   window.webContents.reload();
-  await until("!!document.querySelector('.project-row')");
+  await until("!!document.querySelector('.directory-project-row')");
   await evaluate("window.addEventListener('error', e=>console.error('CAPTURE',e.message,e.error?.stack));window.addEventListener('unhandledrejection',e=>console.error('REJECTION',String(e.reason),e.reason?.stack));");
-  await evaluate("document.querySelector('.project-row').click()");
+  await evaluate("document.querySelector('.directory-project-row').click()");
   await until("!!document.querySelector('.pdf-page canvas') && !!document.querySelector('.pdf-page .textLayer span')");
   const textLayer = await evaluate(`(() => { const span=document.querySelector('.textLayer span'); const range=document.createRange(); range.selectNodeContents(span); const selection=getSelection(); selection.removeAllRanges(); selection.addRange(range); return {text:selection.toString(),cursor:getComputedStyle(span).cursor}; })()`);
   assert.ok(textLayer.text.length > 0, "PDF text can be selected");

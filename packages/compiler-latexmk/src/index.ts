@@ -11,7 +11,9 @@ import { parseLatexDiagnostics } from "@latex-editor/diagnostics";
 import type { Clock, IdGenerator } from "@latex-editor/domain";
 import { findSyncTexData, syncTexDirectories } from "./synctex-data.js";
 import { documentOutputDirectory, targetOutputArguments } from "./output.js";
+import { externalDocumentPlan } from "./document-dependencies.js";
 export { findSyncTexData, syncTexDirectories, type SyncTexData } from "./synctex-data.js";
+export { documentOutputDirectory } from "./output.js";
 
 const maximumTailLength = 64 * 1024;
 const maximumTimeoutMs = 300_000;
@@ -272,7 +274,7 @@ export class LatexmkCompilerService {
     await consolidateProjectMetadata(project.canonicalPath);
     const outputDirectory = documentOutputDirectory(project.canonicalPath, mainFile, project.mainFile);
     if (outputDirectory !== project.canonicalPath) await this.#files.resolveFilePath(project.id, relative(project.canonicalPath, outputDirectory), false);
-    return this.#compileAtRoot(project.canonicalPath, mainFile, { ...input, outputDirectory });
+    return this.#compileAtRoot(project.canonicalPath, mainFile, { ...input, outputDirectory, ...(project.mainFile ? { projectMain: project.mainFile } : {}) });
   }
 
   /** Compile an AI snapshot with the same configured engine and diagnostics, without registering it as a user project. */
@@ -307,10 +309,66 @@ export class LatexmkCompilerService {
     return readFile(logPath, "utf8");
   }
 
-  async #compileAtRoot(root: string, mainFile: string, input: { engine?: CompileInput["engine"]; timeoutMs?: number; outputDirectory?: string }): Promise<CompileResult> {
+  async #compileAtRoot(root: string, mainFile: string, input: { engine?: CompileInput["engine"]; timeoutMs?: number; outputDirectory?: string; projectId?: string; projectMain?: string }): Promise<CompileResult> {
     const key = await realpath(root);
     const previous = this.#rootQueues.get(key) ?? Promise.resolve();
-    const next = previous.catch(() => undefined).then(() => this.#runAtRoot(root, mainFile, input));
+    const next = previous.catch(() => undefined).then(async () => {
+      const resolveLocal = async (path: string, exists = true) => {
+        if (input.projectId) return this.#files.resolveFilePath(input.projectId, path, exists);
+        const absolute = resolve(root, path), local = relative(root, absolute);
+        if (isAbsolute(local) || local === ".." || local.startsWith(`..${sep}`)) throw new Error("Document dependency is outside the workspace");
+        // Resolve existing ancestors too, so a symlink cannot redirect outputs.
+        let ancestor = exists ? absolute : dirname(absolute), canonical: string;
+        for (;;) {
+          try { canonical = await realpath(ancestor); break; }
+          catch (error) {
+            if (exists || (error as NodeJS.ErrnoException).code !== "ENOENT" || dirname(ancestor) === ancestor) throw error;
+            ancestor = dirname(ancestor);
+          }
+        }
+        const canonicalLocal = relative(key, canonical);
+        if (isAbsolute(canonicalLocal) || canonicalLocal === ".." || canonicalLocal.startsWith(`..${sep}`)) throw new Error("Document dependency is outside the workspace");
+        return absolute;
+      };
+      const plan = await externalDocumentPlan(mainFile, async path => {
+        try { return await readFile(await resolveLocal(path), "utf8"); }
+        catch { return undefined; }
+      });
+      let result: CompileResult | undefined;
+      for (const document of plan) {
+        const outputDirectory = document === mainFile ? input.outputDirectory ?? root
+          : documentOutputDirectory(root, document, input.projectMain ?? mainFile);
+        if (outputDirectory !== root) await resolveLocal(relative(root, outputDirectory), false);
+        result = await this.#runAtRoot(root, document, { ...input, outputDirectory });
+        if (result.status !== "succeeded") return document === mainFile ? result : {
+          ...result, mainFile,
+          diagnostics: [{ severity: "error" as const, source: "system" as const, file: document, message: `External document could not be compiled: ${document}` }, ...result.diagnostics]
+        };
+        // xr reads the public .aux next to the referenced source. Keep all other
+        // secondary build artifacts isolated, and publish its PDF alongside it.
+        const stem = basename(document, extname(document));
+        const sourceDirectory = dirname(document);
+        const auxQueue = [`${stem}.aux`], seenAux = new Set<string>();
+        while (auxQueue.length) {
+          const aux = auxQueue.shift()!;
+          if (seenAux.has(aux)) continue;
+          seenAux.add(aux);
+          const from = resolve(outputDirectory, aux);
+          const local = relative(outputDirectory, from);
+          if (isAbsolute(local) || local === ".." || local.startsWith(`..${sep}`)) continue;
+          let content: string;
+          try { content = await readFile(from, "utf8"); } catch { continue; }
+          const to = await resolveLocal(relative(root, resolve(root, aux === `${stem}.aux` ? `${sourceDirectory}/${aux}` : aux)), false);
+          if (from !== to) await copyFile(from, to);
+          for (const match of content.matchAll(/\\@input\{([^{}]+\.aux)\}/g)) auxQueue.push(match[1]!);
+        }
+        if (outputDirectory !== root && result.pdfPath) {
+          const target = await resolveLocal(relative(root, resolve(root, sourceDirectory, `${stem}.pdf`)), false);
+          await copyFile(result.pdfArtifactPath ?? result.pdfPath, target);
+        }
+      }
+      return result!;
+    });
     this.#rootQueues.set(key, next);
     try { return await next; }
     finally { if (this.#rootQueues.get(key) === next) this.#rootQueues.delete(key); }
@@ -352,6 +410,11 @@ export class LatexmkCompilerService {
     if (!args.some((arg) => arg.toLowerCase() === "-recorder")) args.push("-recorder");
     args.push(engineFlag, mainFile);
     const environment = profileEnvironment(profile.executable);
+    // Root-relative project resources retain priority; nested documents may
+    // also import sibling resources/aux files. The empty tail keeps TeX defaults.
+    const sourceDirectory = dirname(resolve(root, mainFile));
+    environment.TEXINPUTS = [root, sourceDirectory, environment.TEXINPUTS ?? ""].join(delimiter) + delimiter;
+    environment.BIBINPUTS = [root, sourceDirectory, environment.BIBINPUTS ?? ""].join(delimiter) + delimiter;
     const child = spawn(profile.executable, args, {
       cwd: root,
       shell: false,

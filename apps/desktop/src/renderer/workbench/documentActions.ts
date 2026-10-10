@@ -16,7 +16,7 @@ interface DocumentActionsOptions {
   guard?: CompileGuard;
   isCurrent?(mainFile: string): boolean;
   onIdle?(): void;
-  onPdfReady?(result: CompileResult): void;
+  onPdfReady?(result: DisplayCompileResult): boolean | void;
   onCompileBatch?(results: CompileResult[]): void;
   saveActive(): Promise<void>;
   saveAll(): Promise<void>;
@@ -64,7 +64,7 @@ export function createDocumentActions(options: DocumentActionsOptions) {
       const result = results.at(-1)!;
       options.onCompileBatch?.(results);
       options.setCompileResult(result);
-      if (result.status === "succeeded" && result.pdfDataUrl) { options.setPdfDataUrl(result.pdfDataUrl); options.onPdfReady?.(result); }
+      if (result.status === "succeeded" && result.pdfDataUrl && options.onPdfReady?.(result) !== false) options.setPdfDataUrl(result.pdfDataUrl);
       options.setLayout((value) => value.mode === "single" ? { ...value, singlePane: "pdf" } : { ...value, rightPane: "pdf" });
       options.setBottomTab(results.some(item => item.diagnostics.length) ? "problems" : "compileLog");
       options.setBottomVisible(results.some(item => item.status !== "succeeded"));
@@ -121,8 +121,7 @@ export function createDocumentActions(options: DocumentActionsOptions) {
         window.alert(diagnostic?.message ?? t("export.pdfFailed"));
         return;
       }
-      options.setPdfDataUrl(result.pdfDataUrl);
-      options.onPdfReady?.(result.compilation);
+      if (options.onPdfReady?.({ ...result.compilation, pdfDataUrl: result.pdfDataUrl }) !== false) options.setPdfDataUrl(result.pdfDataUrl);
       options.setLayout((value) => ({ ...value, rightPane: "pdf" }));
       options.setBottomTab(result.compilation.diagnostics.length ? "problems" : "compileLog");
       options.setBottomVisible(false);

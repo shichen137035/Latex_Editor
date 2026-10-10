@@ -3,7 +3,7 @@ import { resolve } from "node:path";
 
 const catalogs = new Map<string, Record<string, string>>();
 function catalog(locale: string): Record<string, string> {
-  const name = ["en", "zh-CN", "zh-TW", "ja", "ko", "fr"].includes(locale) ? locale : "en";
+  const name = ["en", "zh-CN", "zh-TW", "ja", "ko", "fr", "kk"].includes(locale) ? locale : "en";
   let result = catalogs.get(name);
   if (!result) {
     try { result = JSON.parse(readFileSync(resolve(__dirname, "locales", name + ".json"), "utf8")) as Record<string, string>; }

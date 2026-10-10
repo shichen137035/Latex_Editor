@@ -97,6 +97,19 @@ export class ReferenceLibraryRepository {
     return this.snapshot().entries.find((entry) => entry.id === id)!;
   }
 
+  setEntryTags(entryId: string, names: string[]): ReferenceLibraryEntry {
+    if (!Array.isArray(names) || names.some(name => typeof name !== "string")) throw new Error("Invalid reference tags");
+    const entry = this.snapshot().entries.find(item => item.id === entryId);
+    if (!entry) throw new Error("Reference entry not found");
+    this.db.exec("BEGIN");
+    try {
+      this.syncEntryTags(entryId, names);
+      this.db.prepare("UPDATE library_entries SET updated_at = ? WHERE id = ?").run(now(), entryId);
+      this.db.exec("COMMIT");
+    } catch (error) { this.db.exec("ROLLBACK"); throw error; }
+    return this.snapshot().entries.find(item => item.id === entryId)!;
+  }
+
   private syncEntryTags(entryId: string, names: string[]): void {
     const distinctNames = new Map<string, string>();
     for (const name of names) {

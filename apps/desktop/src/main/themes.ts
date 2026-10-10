@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { cp, mkdir, readdir, readFile, rm } from "node:fs/promises";
+import { cp, mkdir, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { basename, extname, join, resolve } from "node:path";
 import type { ThemeDefinition } from "@latex-editor/contracts" with { "resolution-mode": "import" };
 
@@ -42,7 +42,8 @@ export class ThemeRepository {
   async list(): Promise<ThemeDefinition[]> {
     const builtIns: ThemeDefinition[] = [
       { id: "light", name: "Light", source: "built-in" },
-      { id: "dark", name: "Dark", source: "built-in" }
+      { id: "dark", name: "Dark", source: "built-in" },
+      { id: "tech-light", name: "Tech Light", source: "built-in" }
     ];
     const discovered = await Promise.all([
       this.#listRoot(this.#builtInRoot, "built-in"),
@@ -66,6 +67,15 @@ export class ThemeRepository {
       imported.push({ id, name: displayName(original, await readFile(original, "utf8")), source: "user", css: await readFile(target, "utf8"), filePath: target });
     }
     return imported;
+  }
+  async importPresetTheme(theme: { id: string; css: string; name?: string }): Promise<string> {
+    const css = theme.name ? `/* @theme-name: ${theme.name.replace(/[\r\n*]/g, " ")} */\n${theme.css}` : theme.css;
+    const existing = (await this.list()).find(item => item.css === theme.css || item.css === css);
+    if (existing) return existing.id;
+    const id = `custom-preset-${randomUUID().slice(0, 8)}`;
+    await mkdir(this.#userRoot, { recursive: true });
+    await writeFile(join(this.#userRoot, `${id}.css`), css, { encoding: "utf8", flag: "wx" });
+    return id;
   }
 
   async importFolder(folderPath: string): Promise<ThemeDefinition[]> {

@@ -45,6 +45,7 @@ function loadConfiguredDefaults(): EnvironmentDefinition[] {
 }
 
 export const DEFAULT_ENVIRONMENTS: EnvironmentDefinition[] = loadConfiguredDefaults();
+export const DEFAULT_ENVIRONMENT_STYLE: EnvironmentStyle = { ...(catalog as unknown as EnvironmentCatalog).defaultStyle };
 
 export function environmentOptionBrackets(definition?: EnvironmentDefinition): boolean {
   return definition?.behavior.showOptionBrackets

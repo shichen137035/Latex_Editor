@@ -81,8 +81,7 @@ export function RelationBrowser(props: RelationBrowserProps) {
 
   return <div className={`relation-browser view-${props.viewMode} ${hasDisplayFilter ? "has-display-filter" : ""}`}>
     <div className="relation-browser-head">
-      <h3>{t("relation.scopeTitle")}</h3>
-      <div className="relation-focus-summary"><span>{t("relation.focus")}</span><strong title={focus ? blockName(focus) : undefined}>{focus ? <><EnvironmentDot block={focus} definitions={props.definitions}/><span className="relation-focus-title">{blockName(focus)}</span></> : t("relation.chooseFocus")}</strong></div>
+      {focus && <div className="relation-focus-summary"><strong title={focus ? blockName(focus) : undefined}>{focus ? <><EnvironmentDot block={focus} definitions={props.definitions}/><span className="relation-focus-title">{blockName(focus)}</span></> : t("relation.chooseFocus")}</strong></div>}
       <RelationScopeControls segmented direction={props.direction} depth={props.depth} documentFiltered={props.documentFiltered} onDirection={props.onDirection} onDepth={props.onDepth} onDocumentFiltered={props.onDocumentFiltered}/>
       <details className="relation-refine"><summary>{t("relation.refine")}{refineCount > 0 && <span>{refineCount}</span>}</summary><div className="relation-controls-grid">
         <label><span>{t("relation.hierarchy")}</span><select value={props.filters.hierarchyScope} onChange={event => setFilter("hierarchyScope", event.target.value as HierarchyScope)}>{(["all", "same-parent", "ancestors", "descendants", "same-section"] as const).map((value, index) => <option key={value} value={value}>{t(`relation.${["all", "sameParent", "ancestors", "descendants", "sameSection"][index]}`)}</option>)}</select></label>

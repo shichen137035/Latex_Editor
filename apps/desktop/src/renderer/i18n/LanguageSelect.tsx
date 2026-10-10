@@ -3,7 +3,7 @@ import { supportedLocales, type Locale } from "./index.js";
 
 /** Autonyms identify a language even when the reader cannot understand the current UI. */
 const nativeNames: Readonly<Record<Locale, string>> = {
-  en: "English", ja: "日本語", "zh-CN": "简体中文", "zh-TW": "繁體中文", ko: "한국어", fr: "Français"
+  en: "English", ja: "日本語", "zh-CN": "简体中文", "zh-TW": "繁體中文", ko: "한국어", fr: "Français", kk: "Қазақша"
 };
 
 export function nativeLanguageName(code: string): string {

@@ -13,6 +13,7 @@ export function registerHistoryIpc(service: () => ProjectHistoryService): void {
   handleIpc(desktopInvoke.history.promote, (_event, id, entryId, input) => service().promote(id, entryId, input));
   handleIpc(desktopInvoke.history.editVersion, (_event, id, entryId, input) => service().editVersion(id, entryId, input));
   handleIpc(desktopInvoke.history.remove, (_event, id, entryId) => service().remove(id, entryId));
+  handleIpc(desktopInvoke.history.clearSnapshots, (_event, id) => service().clearSnapshots(id));
   handleIpc(desktopInvoke.history.storage, (_event, id) => service().storage(id));
   handleIpc(desktopInvoke.history.optimize, (_event, id) => service().optimize(id));
 }

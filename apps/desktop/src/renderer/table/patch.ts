@@ -255,8 +255,8 @@ export function splitTableCells(source: string, startRow: number, startColumn: n
   const left = Math.min(startColumn, endColumn);
   const right = Math.max(startColumn, endColumn);
   const table = parseTable(source);
-  if (!table || table.tabular.editableLevel !== "full") return source;
-  const anchors = table.tabular.cells.filter((cell) => cell.row >= top && cell.row <= bottom && cell.column >= left && cell.column <= right && (cell.colSpan > 1 || cell.rowSpan > 1));
+  if (!table || !canRestructureTable(table)) return source;
+  const anchors = table.tabular.cells.filter((cell) => cell.row <= bottom && cell.row + cell.rowSpan > top && cell.column <= right && cell.column + cell.colSpan > left && (cell.colSpan > 1 || cell.rowSpan > 1));
   for (const cell of anchors.reverse()) result = splitTableCell(result, cell.row, cell.column);
   return result;
 }

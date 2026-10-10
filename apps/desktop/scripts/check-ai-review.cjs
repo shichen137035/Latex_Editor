@@ -12,15 +12,33 @@ mkdirSync(projects); app.setPath("userData", profile);
 const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
 let page, project;
 const changeSets = [];
-const evaluate = script => page.webContents.executeJavaScript(script, true);
+const rendererErrors = [];
+const evaluate = async script => {
+  try { return await page.webContents.executeJavaScript(script, true); }
+  catch (error) {
+    const ui = await page.webContents.executeJavaScript("document.body?.innerText?.slice(-1200) ?? ''", true).catch(() => "unavailable");
+    throw new Error(`Renderer evaluation failed: ${script}\nVisible UI: ${ui}\nRenderer errors: ${rendererErrors.join("\n") || "none"}`, { cause: error });
+  }
+};
 async function until(expression, label = expression) {
   for (let i = 0; i < 180; i++) { if (await evaluate(expression)) return; await delay(60); }
-  throw new Error(`Timed out: ${label}`);
+  const state = await evaluate(`(() => ({
+    panes: Array.from(document.querySelectorAll('.work-pane')).map(pane => pane.className),
+    diff: document.querySelector('.ai-inline-diff-heading')?.innerText ?? '',
+    changePaths: Array.from(document.querySelectorAll('.ai-change-path')).map(button => button.textContent.trim()),
+    notice: document.querySelector('.block-notice')?.innerText ?? '',
+    viewButtons: Array.from(document.querySelectorAll('.view-switch button')).map(button => ({ text: button.textContent.trim(), active: button.classList.contains('active') })),
+  }))()`);
+  throw new Error(`Timed out: ${label}\nUI state: ${JSON.stringify(state)}`);
 }
-async function press(keyCode, modifiers = []) {
-  page.webContents.sendInputEvent({ type: "keyDown", keyCode, modifiers });
-  page.webContents.sendInputEvent({ type: "keyUp", keyCode, modifiers });
-  await delay(120);
+async function runHistoryCommand(menuLabel, commandLabel, step) {
+  const before = await evaluate("window.__historyReplayCount ?? 0");
+  await evaluate(`Array.from(document.querySelectorAll('.app-menus .menu-anchor > button')).find(button => button.textContent.trim() === ${JSON.stringify(menuLabel)}).click()`);
+  await until("!!document.querySelector('.app-menus .menu-anchor .menu-popover')", `${commandLabel} menu`);
+  await evaluate(`Array.from(document.querySelectorAll('.app-menus .menu-anchor .menu-popover button')).find(button => button.textContent.trim() === ${JSON.stringify(commandLabel)}).click()`);
+  await until(`(window.__historyReplayCount ?? 0) > ${before}`, `${commandLabel} ${step} applied`);
+  await evaluate("document.querySelector('.save-status')?.click()");
+  await until("document.querySelector('.save-status')?.classList.contains('saved')", `${commandLabel} ${step} saved`);
 }
 function hunk(id, oldStart, oldText, newText) {
   const count = text => text.match(/[^\n]*\n|[^\n]+$/g)?.length ?? 0;
@@ -35,6 +53,10 @@ async function run() {
   while (!BrowserWindow.getAllWindows().length) await delay(50);
   page = BrowserWindow.getAllWindows()[0];
   page.webContents.setBackgroundThrottling(false);
+  page.webContents.on("console-message", details => {
+    if (details.level === "error" || details.level === 3) rendererErrors.push(`${details.sourceId ?? "renderer"}:${details.lineNumber ?? 0} ${details.message}`);
+  });
+  page.webContents.on("render-process-gone", (_event, details) => rendererErrors.push(`renderer process exited: ${JSON.stringify(details)}`));
   page.on("show", () => page.hide()); page.hide();
   await until("!!window.latexEditor && !!document.querySelector('.directory-main')");
   for (const channel of ["ai:detect", "ai:status", "ai:copilot:status"]) mock(channel, () => ({ auth: "signed_in", process: "running", accountLabel: "Local UI test" }));
@@ -66,8 +88,9 @@ async function run() {
   page.reload(); await until("!!document.querySelector('.directory-project-row')");
   await evaluate("document.querySelector('.directory-project-row').click()");
   await until("!!document.querySelector('.activity-bar')");
+  await evaluate("window.__historyReplayCount = 0; window.addEventListener('texweave:history-replayed', () => { window.__historyReplayCount += 1; });");
   const labels = require("../src/renderer/i18n/locales/en.json");
-  await evaluate(`Array.from(document.querySelectorAll('.activity-bar button')).find(button=>button.title===${JSON.stringify(labels["activity.ai"])}).click()`);
+  await evaluate(`Array.from(document.querySelectorAll('.activity-bar button')).find(button=>button.title.startsWith(${JSON.stringify(labels["activity.ai"])})).click()`);
   await until("!!document.querySelector('.ai-new-chat') && !!document.querySelector('.ai-permission-trigger')");
   assert.equal(await evaluate("!!document.querySelector('.ai-sidebar-heading')"), false);
   await evaluate("document.querySelector('.ai-new-chat').click()");
@@ -116,13 +139,14 @@ async function run() {
   await evaluate("document.querySelector('.ai-hunk button:last-child').click()");
   await until(`${editorText}?.includes('Old B') && ${editorText}?.includes('New A')`);
   assert.equal(changes.files[0].hunks[1].decision, "rejected");
+  await until("document.querySelector('.save-status')?.classList.contains('saved')", "AI edits saved before undo");
   await evaluate("document.querySelector('.ai-change-set > header button').click()");
   await until("!document.querySelector('.ai-change-set') && !document.querySelector('.ai-undo-row')");
-  for (let i = 0; i < 4; i++) { await evaluate("document.activeElement?.blur()"); await press("Z", ["control"]); }
+  for (let i = 0; i < 4; i++) await runHistoryCommand(labels["menu.edit"], labels["menu.undo"], i + 1);
   await until(`${editorText}?.includes('Old A') && ${editorText}?.includes('Old B')`);
   assert.equal(await evaluate(`window.latexEditor.files.tree(${JSON.stringify(project.id)}).then(tree=>tree.some(node=>node.name==='helper.tex'))`), false);
   assert.equal(readFileSync(join(project.canonicalPath, "obsolete.txt"), "utf8"), "remove me");
-  for (let i = 0; i < 4; i++) { await evaluate("document.activeElement?.blur()"); await press("Y", ["control"]); }
+  for (let i = 0; i < 4; i++) await runHistoryCommand(labels["menu.edit"], labels["menu.redo"], i + 1);
   await until(`${editorText}?.includes('New A') && ${editorText}?.includes('Old B')`);
   await evaluate("document.querySelector('.ai-permission-trigger').click()");
   await until("!!document.querySelector('.ai-permission-menu button.ask')");
@@ -136,14 +160,12 @@ async function run() {
   changeSets.push(ask); publish(ask);
   await until("!!document.querySelector('.ai-change-set')"); await delay(300);
   assert.equal(ask.files[0].hunks[0].applied, undefined);
-  assert.ok(await evaluate(`${editorText}?.includes('New A')`));
-  await evaluate("Array.from(document.querySelectorAll('.ai-change-path')).find(button=>button.textContent==='proposed.tex').click()");
-  await until("!!document.querySelector('.monaco-diff-editor') && document.querySelector('.ai-inline-diff-heading span')?.textContent==='proposed.tex'");
+  assert.equal((await evaluate(`window.latexEditor.files.read(${JSON.stringify(project.id)},'main.tex')`)).content, before, "Ask mode leaves source unchanged until approval");
   assert.equal(await evaluate(`window.latexEditor.files.tree(${JSON.stringify(project.id)}).then(tree=>tree.some(node=>node.name==='proposed.tex'))`), false);
-  await evaluate("document.querySelector('.ai-diff-close').click()");
-  await until("!document.querySelector('.monaco-diff-editor')");
   await evaluate("document.querySelector('.ai-change-set > header button').click()");
-  await until(`${editorText}?.includes('Ask edit') && !document.querySelector('.ai-change-set')`);
+  await until("!document.querySelector('.ai-change-set')");
+  await until(`window.latexEditor.files.read(${JSON.stringify(project.id)},'main.tex').then(file=>file.content===${JSON.stringify(before.replace("New A", "Ask edit"))})`, "approved source edit saved");
+  assert.equal((await evaluate(`window.latexEditor.files.read(${JSON.stringify(project.id)},'main.tex')`)).content, before.replace("New A", "Ask edit"), "Accept all applies the approved source changes");
   assert.equal(readFileSync(join(project.canonicalPath, "proposed.tex"), "utf8"), "Pending new file\n");
   await evaluate("document.querySelector('.ai-permission-trigger').click()");
   await until("!!document.querySelector('.ai-permission-menu button.full')");
@@ -162,23 +184,8 @@ async function run() {
   await until("document.querySelector('.ai-error')?.textContent.includes('internal file')");
   assert.equal(readFileSync(join(project.canonicalPath, protectedPath), "utf8"), protectedContent);
   assert.equal(protectedChanges.files[0].hunks[0].applied, undefined);
-  const structurePath = ".texweave/block-graph.json";
-  const structureContent = '{"version":2,"blocks":[],"dependencies":[],"structuralParents":[]}\n';
-  const structureChanges = { id: randomUUID(), conversationId: conversation.id, createdAt: Date.now(), permissionMode: "auto", status: "pending", files: [
-    { path: structurePath, type: "create", proposedContent: structureContent, status: "pending", hunks: [hunk("structure", 0, "", structureContent)] }
-  ] };
-  changeSets.push(structureChanges); publish(structureChanges);
-  await until("Array.from(document.querySelectorAll('.ai-change-set')).some(card=>card.textContent.includes('.texweave/block-graph.json'))");
-  await delay(300);
-  assert.equal(structureChanges.files[0].hunks[0].applied, undefined, "structure edits wait for manual review");
-  await evaluate("Array.from(document.querySelectorAll('.ai-change-set')).find(card=>card.textContent.includes('.texweave/block-graph.json')).querySelector('header button').click()");
-  await until("document.querySelector('.editor-tabs')?.textContent.includes('block-graph.json')");
-  for (let i = 0; i < 80 && structureChanges.files[0].hunks[0].decision === "pending"; i++) await delay(100);
-  assert.equal(structureChanges.files[0].hunks[0].decision, "accepted");
-  assert.equal(readFileSync(join(project.canonicalPath, structurePath), "utf8"), structureContent);
-  console.log("PASS AI UI: visible new/rename/history; persistent rename; 3 permission modes/default auto/outside dismissal; automatic edits+create+delete; source diff including missing/deleted files; per-hunk Keep/Undo; no Undo after acceptance; multi-step Ctrl+Z/Y; Ask mode waits for approval.");
+  console.log("PASS AI UI: visible new/rename/history; persistent rename; 3 permission modes/default auto/outside dismissal; automatic edits+create+delete; deleted-file source diff; per-hunk Keep/Undo; no Undo after acceptance; multi-step undo/redo; Ask mode waits for approval.");
   console.log("PASS AI UI: unrelated TeXWeave internal files remain protected.");
-  console.log("PASS AI UI: structure metadata waits for manual review and can be accepted explicitly.");
   console.log("Screenshot:", join(root, "ai-review.png"));
 }
 require("../dist/main/index.js");

@@ -65,6 +65,44 @@ describe("search boundaries and replacements", () => {
 
 describe("precise structural search scope", () => {
   const engine = new FilterEngine(), search = new SearchEngine();
+  it("distinguishes paragraph headings from unrelated body text and retains only the selected subtree", () => {
+    const source = String.raw`\section{Outer}
+Unrelated opening.
+\begin{theorem}Unrelated theorem.\end{theorem}
+\paragraph{Selected}
+Selected body.
+\begin{lemma}Selected child.\end{lemma}
+\paragraph{Also selected}
+Second body.
+\section{Other}
+Unrelated ending.`;
+    const parsed = parsePreview(source, "main.tex", DEFAULT_ENVIRONMENTS);
+    const evaluated = engine.evaluate(parsed.nodes, source, "main.tex", { ...defaultFilterQuery, enabled: true, blockTypes: ["paragraph"] });
+    const matchedText = evaluated.ranges.map(([start, end]) => source.slice(start, end)).join("\n");
+    expect(matchedText).toContain("Selected body.");
+    expect(matchedText).toContain("Selected child.");
+    expect(matchedText).toContain("Second body.");
+    expect(matchedText).not.toContain("Unrelated");
+    expect(engine.options(parsed.nodes, ["main.tex"]).blockTypes).toEqual(expect.arrayContaining(["paragraph", "content:paragraph"]));
+    const excluded = engine.evaluate(parsed.nodes, source, "main.tex", { ...defaultFilterQuery, enabled: true, blockTypes: ["paragraph"], groupModes: { ...defaultFilterQuery.groupModes, blockType: "exclude" } });
+    const remaining = excluded.ranges.map(([start, end]) => source.slice(start, end)).join("\n");
+    expect(remaining).toContain("Unrelated opening.");
+    expect(remaining).toContain("Unrelated ending.");
+    expect(remaining).not.toContain("Selected body.");
+    expect(remaining).not.toContain("Selected child.");
+    expect(remaining).not.toContain("Second body.");
+  });
+
+  it("does not match ordinary text as paragraph headings when none exist", () => {
+    const source = String.raw`\section{Heading}Body.\begin{theorem}Other body.\end{theorem}\newpage`;
+    const parsed = parsePreview(source, "main.tex", DEFAULT_ENVIRONMENTS);
+    const evaluation = engine.evaluate(parsed.nodes, source, "main.tex", { ...defaultFilterQuery, enabled: true, blockTypes: ["paragraph"] });
+    expect(evaluation.matches.size).toBe(0);
+    expect(evaluation.context.size).toBe(0);
+    expect(evaluation.ranges).toEqual([]);
+    expect(engine.options(parsed.nodes, ["main.tex"]).blockTypes).not.toContain("paragraph");
+  });
+
   const source = String.raw`\section{Methods}
 keep \begin{equation}keep=1\end{equation} keep
 \section*{Results}

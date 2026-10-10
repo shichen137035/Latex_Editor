@@ -28,6 +28,7 @@ async function until(script, label) {
 async function press(keyCode, modifiers = []) {
   page.webContents.sendInputEvent({ type: "keyDown", keyCode, modifiers });
   page.webContents.sendInputEvent({ type: "keyUp", keyCode, modifiers });
+  await delay(80);
 }
 async function settings() {
   await press(",", ["control"]);
@@ -39,6 +40,7 @@ async function mode(value) {
 }
 async function edit(text) {
   await evaluate('document.querySelector(".editor-surface .monaco-editor textarea").focus()');
+  await delay(120);
   await press("END", ["control"]);
   await page.webContents.insertText(text);
   await until(`document.querySelector('.editor-surface .view-lines').textContent.includes(${JSON.stringify(text.trim())})`, 'source edit');

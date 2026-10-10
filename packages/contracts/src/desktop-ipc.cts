@@ -1,8 +1,9 @@
-import type { AIStatus, AIModelOption, AIConversation, AIChangeSet, AIContextSnapshotFile, AIProjectSkill, AIMode, AIAttachment, AddSemanticBlockInput, BlockCreationValidation, BlockGraphSnapshot, BlockId, CommandMetadata, CompileResult, PdfExportResult, CreateSemanticBlockInput, CreateUserBlockInput, DependencyCycle, DictionaryPackage, FileWriteResult, GraphDiagnostic, GraphTraversalOptions, GraphTraversalResult, ImportedImage, LogicalRelation, Project, ProjectHistoryDetails, ProjectHistoryEntry, ProjectHistoryStorage, ProjectTreeNode, RelationDirection, RelationMutationResult, RelationNeighborhood, RelationValidation, ResolvedGraphic, SemanticBlock, SettingsSnapshot, PreferenceKey, LatexToolchain, StyleResource, StyleResourceFile, ThemeDefinition, SnapshotReason, SpellCheckMode, SpellCheckStatus, StructuralDependencyOverlap, StructuralHistoryState, StructureWarning, SyncTexPdfPosition, SyncTexSourcePosition, TextFileContent, UpdateSemanticBlockInput, ProjectReferenceLink, ReferenceLibraryEntry, ReferenceLibrarySnapshot, ReferenceImportResult, ReferenceTag } from "./index.js" with { "resolution-mode": "import" };
+import type { AIStatus, AIModelOption, AIConversation, AIChangeSet, AIContextSnapshotFile, AIProjectSkill, AIMode, AIAttachment, AddSemanticBlockInput, BlockCreationValidation, BlockGraphSnapshot, BlockId, CommandMetadata, CompileResult, PdfExportResult, CreateSemanticBlockInput, CreateUserBlockInput, DependencyCycle, DictionaryPackage, FileWriteResult, GraphDiagnostic, GraphTraversalOptions, GraphTraversalResult, ImportedImage, LogicalRelation, Project, ProjectHistoryDetails, ProjectHistoryEntry, ProjectHistoryStorage, ProjectTreeNode, RelationDirection, RelationMutationResult, RelationNeighborhood, RelationValidation, ResolvedGraphic, SemanticBlock, SettingsSnapshot, SettingsPreset, SettingsPresetKind, PreferenceKey, LatexToolchain, StyleResource, StyleResourceFile, ThemeDefinition, SnapshotReason, SpellCheckMode, SpellCheckStatus, StructuralDependencyOverlap, StructuralHistoryState, StructureWarning, SyncTexPdfPosition, SyncTexSourcePosition, TextFileContent, UpdateSemanticBlockInput, ProjectReferenceLink, ReferenceLibraryEntry, ReferenceLibrarySnapshot, ReferenceImportResult, ReferenceTag } from "./index.js" with { "resolution-mode": "import" };
 
 import type { BlockApiResult, DocumentBlockApi, DocumentStructure, AIApprovalRequest, WorkingDocumentInput, WorkingDocumentResult } from "./index.js" with { "resolution-mode": "import" };
 
 import type { InstallationState, InstalledComponent, RemoveUserDataOptions } from "./installation.js" with { "resolution-mode": "import" };
+import type { ProjectPdfDocument } from "./index.js" with { "resolution-mode": "import" };
 import type { RelationAPI, RelationEvent } from "./relations.js" with { "resolution-mode": "import" };
 
 /** A request descriptor owns its wire name, arguments and resolved result. */
@@ -73,6 +74,12 @@ export const desktopInvoke = {
     showSaveError: invoke<(title: string, message: string) => Promise<void>>("window:save-error"),
   },
   settings: {
+    listPresets: invoke<(kind?: SettingsPresetKind) => Promise<SettingsPreset[]>>("settings:presets:list"),
+    savePreset: invoke<(name: string, id?: string, kind?: SettingsPresetKind, projectId?: string) => Promise<SettingsPreset>>("settings:presets:save"),
+    applyPreset: invoke<(id: string, projectId?: string) => Promise<SettingsSnapshot>>("settings:presets:apply"),
+    exportPreset: invoke<(id: string) => Promise<boolean>>("settings:presets:export"),
+    importPreset: invoke<(kind: SettingsPresetKind) => Promise<SettingsPreset | undefined>>("settings:presets:import"),
+    removePreset: invoke<(id: string) => Promise<void>>("settings:presets:remove"),
     get: invoke<(projectId?: string) => Promise<SettingsSnapshot>>("settings:get"),
     set: invoke<(key: PreferenceKey, value: unknown, projectId?: string) => Promise<SettingsSnapshot>>("settings:set"),
     detectToolchain: invoke<(manual?: "directory" | "executable") => Promise<LatexToolchain | undefined>>("toolchain:detect"),
@@ -93,6 +100,7 @@ export const desktopInvoke = {
     saveEntry: invoke<(entry: Partial<ReferenceLibraryEntry> & Pick<ReferenceLibraryEntry, "citationKey" | "entryType" | "fields">) => Promise<ReferenceLibraryEntry>>("references:save-entry"),
     removeEntry: invoke<(id: string) => Promise<void>>("references:remove-entry"),
     setFavorite: invoke<(id: string, favorite: boolean) => Promise<void>>("references:set-favorite"),
+    setEntryTags: invoke<(id: string, tags: string[]) => Promise<ReferenceLibraryEntry>>("references:set-entry-tags"),
     createCollection: invoke<(name: string, parentId?: string) => Promise<{ id: string; name: string; parentId?: string }>>("references:create-collection"),
     createTag: invoke<(name: string) => Promise<ReferenceTag>>("references:create-tag"),
     renameTag: invoke<(id: string, name: string) => Promise<ReferenceTag>>("references:rename-tag"),
@@ -207,6 +215,7 @@ export const desktopInvoke = {
     promote: invoke<(projectId: string, entryId: string, input: { versionNumber: string; title: string; summary?: string }) => Promise<ProjectHistoryEntry>>("history:promote"),
     editVersion: invoke<(projectId: string, entryId: string, input: { title: string; summary?: string }) => Promise<ProjectHistoryEntry>>("history:edit-version"),
     remove: invoke<(projectId: string, entryId: string) => Promise<void>>("history:remove"),
+    clearSnapshots: invoke<(projectId: string) => Promise<void>>("history:clear-snapshots"),
     storage: invoke<(projectId: string) => Promise<ProjectHistoryStorage>>("history:storage"),
     optimize: invoke<(projectId: string) => Promise<ProjectHistoryStorage>>("history:optimize"),
   },
@@ -216,6 +225,7 @@ export const desktopInvoke = {
     resolve: invoke<(projectId: string, texPath: string, requestedPath: string, graphicPaths?: string[]) => Promise<ResolvedGraphic>>("images:resolve"),
   },
   compile: {
+    outputs: invoke<(projectId: string) => Promise<ProjectPdfDocument[]>>("compile:outputs"),
     run: invoke<(projectId: string, mainFile?: string) => Promise<CompileResult & { pdfDataUrl?: string }>>("compile:run"),
     readLog: invoke<(projectId: string, compilationId: string) => Promise<string>>("compile:read-log"),
   },

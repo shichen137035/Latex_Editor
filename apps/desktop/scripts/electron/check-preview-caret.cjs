@@ -122,7 +122,12 @@ async function run() {
     await clickAt({ x: point.x, y: point.y });
     await until('!!document.querySelector(".preview-local-editor .monaco-editor")', label);
     // Do not accept the initial (0) value: wait for the requested caret and focus.
-    await until(`Number(document.querySelector(".preview-local-editor")?.dataset.cursorOffset) === ${point.local} && !!document.querySelector(".preview-local-editor .monaco-editor.focused")`, `${label} caret ${point.local}`);
+    // Specialized editors such as list items start at their own source span
+    // (the \item command), while ordinary block editors start at the block.
+    // Compare against the editor's declared source anchor instead of assuming
+    // every local editor shares the surrounding preview block's offset.
+    const editorCursorOffset = `${point.absolute} - Number(document.querySelector(".preview-local-editor")?.dataset.sourceStartOffset)`;
+    await until(`Number(document.querySelector(".preview-local-editor")?.dataset.cursorOffset) === (${editorCursorOffset}) && !!document.querySelector(".preview-local-editor .monaco-editor.focused")`, `${label} caret at source offset ${point.absolute}`);
     const baseline = await evaluate(`(async () => { await window.latexEditor.structure.snapshot(${JSON.stringify(project.id)}); return (await window.latexEditor.files.read(${JSON.stringify(project.id)}, ".texweave/structure.json")).content; })()`);
     const marker = `CARET${caseIndex}`;
     await page.webContents.insertText(marker);

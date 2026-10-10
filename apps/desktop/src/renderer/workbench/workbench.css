@@ -124,3 +124,76 @@
 .tree-sort-controls { display:flex; align-items:center; gap:6px; flex:0 0 30px; margin:0 8px; } .tree-sort-controls label { display:flex; align-items:center; gap:6px; flex:1; min-width:0; color:var(--color-text-muted); font-size:10px; } .tree-sort-controls label span { white-space:nowrap; } .tree-sort-controls select { flex:1; min-width:0; height:25px; padding:0 6px; border:1px solid var(--color-border); border-radius:5px; color:var(--color-text-primary); background:var(--color-bg-panel); font:inherit; } .tree-sort-controls button { width:27px; height:27px; border:1px solid var(--color-border); border-radius:5px; color:var(--color-text-secondary); background:var(--color-bg-panel); font-size:15px; } .tree-sort-controls button:hover { color:var(--color-primary); background:var(--color-bg-hover); } .tree-row.dragging { opacity:.4; } .tree-row.drop-target { outline:1px dashed var(--color-primary); outline-offset:-2px; background:color-mix(in srgb,var(--color-primary) 13%,var(--color-bg-panel)); } .file-tree.root-drop-target { outline:1px dashed var(--color-primary); outline-offset:-3px; }
 .compile-result-picker { min-width: 100px; max-width: 260px; margin: 3px 0 3px auto; padding: 2px 6px; border: 1px solid var(--color-border); border-radius: 5px; color: var(--color-text-primary); background: var(--color-bg-panel); font: inherit; font-size: 12px; }
 .bottom-tabs:has(.compile-result-picker) .panel-close { margin-left: 4px; }
+
+/* Workspace chrome: consistent edges and controls without changing pane geometry. */
+.workbench {
+  --workbench-edge: color-mix(in srgb, var(--color-border) 88%, var(--color-text-secondary));
+  --workbench-control-fill: color-mix(in srgb, var(--color-primary) 4%, var(--color-bg-panel));
+  font-family: 'DM Sans', 'Segoe UI Variable Text', 'Segoe UI', 'Microsoft YaHei UI', sans-serif;
+}
+.workbench-topbar { border-color: var(--workbench-edge); background: var(--color-bg-panel); box-shadow: 0 2px 8px color-mix(in srgb, var(--color-text-primary) 6%, transparent); }
+.app-menus > .menu-anchor > button { font-weight: 500; }
+.app-menus > .menu-anchor > button:hover { box-shadow: inset 0 -2px color-mix(in srgb, var(--color-primary) 50%, transparent); }
+.menu-popover { border-color: var(--workbench-edge); border-radius: 11px; padding: 5px; box-shadow: 0 8px 28px color-mix(in srgb, var(--color-text-primary) 14%, transparent); }
+.menu-popover button { border-radius: 6px; }
+.activity-bar { background: var(--color-bg-subtle); border-color: var(--workbench-edge); }
+.activity-bar button.active { background: color-mix(in srgb, var(--color-primary) 10%, var(--color-bg-panel)); box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--color-primary) 15%, transparent); }
+.sidebar { background: var(--color-bg-panel); border-color: var(--workbench-edge); }
+.sidebar-heading { background: var(--color-bg-subtle); border-color: var(--workbench-edge); }
+.sidebar-heading strong { color: var(--color-primary-strong); letter-spacing: .08em; font-weight: 650; }
+.sidebar-input { border-color: var(--workbench-edge); border-radius: 8px; background: var(--color-bg-panel); }
+.tree-sort-controls select, .tree-sort-controls button { border-color: var(--workbench-edge); border-radius: 6px; }
+.tree-row.active { background: color-mix(in srgb, var(--color-primary) 11%, var(--color-bg-panel)); box-shadow: inset 2px 0 var(--color-primary); }
+.split-toolbar, .latex-toolbar, .output-toolbar { border-color: var(--workbench-edge); background: linear-gradient(180deg, var(--color-bg-panel), var(--color-bg-toolbar)); }
+.split-toolbar .latex-toolbar, .split-toolbar .output-toolbar { background: transparent; }
+.split-toolbar-right { border-color: var(--workbench-edge); }
+.latex-toolbar button:not(.active):not(:disabled):hover, .output-toolbar button:not(.compile-button):not(:disabled):hover { background: var(--workbench-control-fill); box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--color-primary) 22%, var(--color-border)); }
+.view-switch { border-color: var(--workbench-edge); border-radius: 8px; background: var(--color-bg-subtle); }
+.view-switch button.active { background: var(--color-bg-panel); box-shadow: 0 1px 4px color-mix(in srgb, var(--color-text-primary) 12%, transparent), inset 0 0 0 1px color-mix(in srgb, var(--color-primary) 18%, var(--color-border)); }
+.work-pane { background: var(--color-bg-panel); }
+.editor-tabs { background: var(--color-bg-subtle); border-color: var(--workbench-edge); }
+.editor-tabs > button { border-color: var(--workbench-edge); border-radius: 6px 6px 0 0; font-weight: 500; }
+.editor-tabs > button.active { background: var(--color-bg-panel); color: var(--color-primary-strong); box-shadow: inset 0 2px var(--color-primary); font-weight: 600; }
+.editor-tabs > button:hover:not(.active) { background: var(--color-bg-hover); }
+.editor-tabs .tab-close { border-radius: 4px; }
+.editor-tabs .tab-close:hover { background: color-mix(in srgb, var(--color-primary) 10%, var(--color-bg-panel)); }
+.vertical-resizer::after, .split-resizer::after, .horizontal-resizer::after, .bottom-resizer::after { background: var(--workbench-edge); }
+.vertical-resizer:hover::after, .split-resizer:hover::after, .horizontal-resizer:hover::after, .bottom-resizer:hover::after { background: var(--color-primary); }
+.bottom-tabs { background: var(--color-bg-subtle); border-color: var(--workbench-edge); }
+.bottom-tabs button.active { color: var(--color-primary-strong); box-shadow: inset 0 -2px var(--color-primary); background: var(--color-bg-panel); }
+.workbench-body > :is(.figure-inspector, .table-inspector, .custom-block-inspector, .relation-inspector) { border-color: var(--workbench-edge); }
+.workbench :is(.app-menus, .latex-toolbar, .output-toolbar, .sidebar-heading, .view-switch, .bottom-tabs) button:focus-visible { outline: 2px solid color-mix(in srgb, var(--color-primary) 70%, transparent); outline-offset: -2px; }
+.workbench :is(.latex-toolbar, .output-toolbar) button:disabled { box-shadow: none; }
+.tree-file-controls { display: flex; align-items: center; flex: 0 0 auto; min-width: 0; gap: 5px; padding: 8px; }
+.tree-file-controls .sidebar-input { width: auto; min-width: 0; flex: 1; margin: 0; }
+.tree-file-controls .tree-sort-controls { flex: 0 1 122px; min-width: 0; margin: 0; gap: 4px; }
+.tree-file-controls .tree-sort-controls label > span { display: none; }
+.tree-file-controls .tree-sort-controls select { height: 30px; font-size: 10px; }
+.tree-file-controls .tree-sort-controls button { width: 26px; height: 30px; flex: 0 0 26px; }
+.outline-heading { justify-content: space-between; background: var(--color-bg-subtle); border-color: var(--workbench-edge); }
+.outline-heading strong { color: var(--color-primary-strong); font-family: inherit; font-weight: 650; letter-spacing: .08em; }
+.outline-heading .sidebar-section-toggle { width: 27px; height: 27px; padding: 0; display: grid; place-items: center; border-radius: 5px; color: var(--color-text-secondary); }
+.sidebar-section-toggle[aria-expanded="false"] svg { transform: rotate(-90deg); }
+.outline-heading .sidebar-section-toggle:hover { background: var(--color-bg-hover); color: var(--color-primary); }
+.tree-section[data-section-collapsed="true"] { display: none; }
+.outline-section[data-section-collapsed="true"] { min-height: 33px; flex: 0 0 33px; }
+.outline-section[data-section-collapsed="true"] > .outline-list { display: none; }
+
+/* A single visible seam with the original five-pixel pointer target overlaid on it. */
+.workbench-body > .sidebar { border-right: 0; }
+.vertical-resizer, .split-resizer { width: 1px; flex: 0 0 1px; background: var(--workbench-edge); }
+.horizontal-resizer, .bottom-resizer { height: 1px; flex: 0 0 1px; background: var(--workbench-edge); }
+.vertical-resizer::before, .split-resizer::before { content: ''; position: absolute; inset: 0 -2px; z-index: 5; cursor: col-resize; }
+.horizontal-resizer::before, .bottom-resizer::before { content: ''; position: absolute; inset: -2px 0; z-index: 5; cursor: row-resize; }
+.vertical-resizer::after, .split-resizer::after { left: 0; width: 1px; }
+.horizontal-resizer::after, .bottom-resizer::after { top: 0; height: 1px; }
+.vertical-resizer:hover::after, .split-resizer:hover::after { width: 1px; }
+.horizontal-resizer:hover::after, .bottom-resizer:hover::after { height: 1px; }
+
+/* Sidebar titles yield their space before the right-hand controls. */
+.sidebar-heading, .outline-heading { min-width: 0; gap: 6px; overflow: hidden; }
+:is(.sidebar-heading, .outline-heading) > strong { flex: 1 1 0; min-width: 0; margin: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.sidebar-heading > div { flex: 0 0 auto; min-width: 0; max-width: 100%; margin-left: auto; overflow-x: auto; scrollbar-width: none; white-space: nowrap; }
+.sidebar-heading > div::-webkit-scrollbar { display: none; }
+:is(.sidebar-heading, .outline-heading) button, .sidebar-heading .filter-switch { flex-shrink: 0; }
+.sidebar-heading :is(.library-toolbar-target, .history-toolbar-target) { flex: 0 0 auto; display: flex; align-items: center; }

@@ -9,7 +9,10 @@ app.setPath("userData", resolve(root, "profile"));
 const delay = ms => new Promise(done => setTimeout(done, ms));
 let page;
 const errors = [];
-const evaluate = script => page.webContents.executeJavaScript(script, true);
+const evaluate = async script => {
+  try { return await page.webContents.executeJavaScript(script, true); }
+  catch (error) { console.error('Renderer evaluation failed:', script, error); throw error; }
+};
 app.on("web-contents-created", (_event, contents) => contents.on("console-message", ({ level, message }) => {
   if ((level === "error" || level === 3) && !message.includes("Canceled: Canceled")) errors.push(message);
 }));
@@ -71,7 +74,7 @@ async function run() {
   await until(`!!document.querySelector(${JSON.stringify(titleSelector('subsection'))}) && !!document.querySelector(${JSON.stringify(titleSelector('assumption'))})`, "headings");
   page.focus();
   async function checkTruncation() {
-    const tokens = await evaluate(`Array.from(document.querySelectorAll('.structured-preview .preview-citation, .structured-preview .preview-reference, .structured-preview [data-environment="section"] > .preview-block-header .preview-block-label')).map(element => { const style = getComputedStyle(element), rect = element.getBoundingClientRect(), region = element.closest('.preview-content-region, .preview-block-header').getBoundingClientRect(); return { clipped: element.scrollWidth > element.clientWidth, ellipsis: style.textOverflow, nowrap: style.whiteSpace, contained: rect.left >= region.left - 1 && rect.right <= region.right + 1, text: element.textContent, title: element.title }; })`);
+    const tokens = await evaluate(`Array.from(document.querySelectorAll('.structured-preview .preview-citation .preview-inline-reference-text, .structured-preview .preview-reference .preview-inline-reference-text, .structured-preview [data-environment="section"] > .preview-block-header .preview-block-label')).map(element => { const wrapper = element.matches('.preview-block-label') ? element : element.parentElement, style = getComputedStyle(element), rect = wrapper.getBoundingClientRect(), region = wrapper.closest('.preview-content-region, .preview-block-header').getBoundingClientRect(); return { clipped: element.scrollWidth > element.clientWidth, ellipsis: style.textOverflow, nowrap: style.whiteSpace, contained: rect.left >= region.left - 1 && rect.right <= region.right + 1, text: wrapper.textContent, title: wrapper.title }; })`);
     assert.equal(tokens.length, 3);
     for (const token of tokens) { assert.equal(token.ellipsis, 'ellipsis'); assert.equal(token.nowrap, 'nowrap'); assert.ok(token.clipped); assert.ok(token.contained); assert.ok(token.title.includes(token.text.replace(/^\[|\]$/g, ''))); }
     assert.ok(await evaluate(`(() => { const preview = document.querySelector('.structured-preview'); return preview.scrollWidth <= preview.clientWidth + 1; })()`));
@@ -87,8 +90,12 @@ async function run() {
   page.maximize(); await delay(250);
   console.log('PASS long labels, references and citations use ellipsis without horizontal overflow at wide and narrow sizes; full labels remain editable');
   const section = await typography(titleSelector('section'));
+  const configuredTitleFont = catalog.defaultStyle.titleFontFamily.split(',')[0].replace(/["']/g, '').trim();
   assert.equal(section.size, '24px'); assert.equal(section.weight, '600');
-  assert.ok(section.family.includes('Space Grotesk')); assert.equal(section.spacing, '0.6px');
+  assert.ok(section.family.includes(configuredTitleFont), `expected configured title font ${configuredTitleFont}, received ${section.family}`);
+  const configuredSpacing = catalog.defaultStyle.titleLetterSpacing;
+  if (configuredSpacing === 0) assert.equal(section.spacing, 'normal');
+  else assert.ok(Math.abs(Number.parseFloat(section.spacing) - configuredSpacing * Number.parseFloat(section.size)) < 0.01, `expected configured title letter spacing ${configuredSpacing}em, received ${section.spacing}`);
   const subsection = await typography(titleSelector('subsection')), assumption = await typography(titleSelector('assumption'));
   assert.equal(await evaluate(`document.querySelector(${JSON.stringify(titleSelector('assumption'))}).textContent`), 'Regularity condition');
   assert.equal(subsection.size, '21px'); assert.equal(subsection.weight, '600');
@@ -97,7 +104,7 @@ async function run() {
   writeFileSync(resolve(root, 'default-headings.png'), (await page.webContents.capturePage()).toPNG());
   console.log('PASS actual title buttons retain hierarchy and weight despite workbench button resets');
   await manager();
-  assert.equal(await evaluate('document.querySelectorAll(".environment-specialized-settings details").length'), 3);
+  assert.equal(await evaluate('document.querySelectorAll(".environment-specialized-settings details").length'), 4);
   assert.ok(await evaluate('Array.from(document.querySelectorAll(".environment-specialized-settings details")).every(details => !details.open)'));
   await evaluate('document.querySelector(\'.environment-catalog-list [data-environment-id="assumption"]\').click()');
   await until('document.querySelector(".environment-editor-title h2")?.textContent === "Assumption"', 'select Assumption');
@@ -133,7 +140,9 @@ async function run() {
   await editXml('0');
   await until('document.querySelector(".environment-xml-error")?.textContent.includes("titleFontSize")', "reject invalid XML size");
   assert.equal(await evaluate(`window.latexEditor.settings.get(${id}).then(snapshot => snapshot.project.environments.find(item => item.id === 'section').style.titleFontSize)`), 30);
-  await evaluate('document.querySelector(".preferences-dialog > header .settings-close").click()');
+  await evaluate('document.querySelector(".settings-manager-return").click()');
+  await until('!!document.querySelector(".settings-dialog-header")', "return to settings");
+  await evaluate('document.querySelector(".settings-dialog-header .settings-close").click()');
   await until(`getComputedStyle(document.querySelector(${JSON.stringify(titleSelector('section'))})).fontSize === '30px'`, "Preview updates");
   assert.equal(await evaluate(`document.querySelector(${JSON.stringify(titleSelector('assumption'))}).textContent`), '[Regularity condition]');
   assert.equal((await typography(titleSelector('subsection'))).size, '21px');

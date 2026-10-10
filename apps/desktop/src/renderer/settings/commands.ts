@@ -7,12 +7,18 @@ export const commandCatalog = {
   "file.save": { label: "menu.save", group: "files", context: "workspace", contextLabel: "command.context.global", defaultBinding: "Mod+S" },
   "file.saveAll": { label: "menu.saveAll", group: "files", context: "workspace", contextLabel: "command.context.global", defaultBinding: "Mod+Shift+S" },
   "edit.find": { label: "activity.search", group: "search", context: "workspace", contextLabel: "shortcut.context.workspace", defaultBinding: "Mod+F" },
+  "sidebar.files": { label: "activity.files", group: "navigation", context: "workspace", contextLabel: "shortcut.context.workspace", defaultBinding: "Mod+Shift+1" },
+  "sidebar.search": { label: "activity.search", group: "search", context: "workspace", contextLabel: "shortcut.context.workspace", defaultBinding: "Mod+Shift+2" },
+  "sidebar.library": { label: "activity.library", group: "navigation", context: "workspace", contextLabel: "shortcut.context.workspace", defaultBinding: "Mod+Shift+3" },
+  "sidebar.history": { label: "activity.history", group: "navigation", context: "workspace", contextLabel: "shortcut.context.workspace", defaultBinding: "Mod+Shift+5" },
+  "sidebar.relations": { label: "activity.relations", group: "navigation", context: "workspace", contextLabel: "shortcut.context.workspace", defaultBinding: "Mod+Shift+6" },
+  "sidebar.help": { label: "activity.help", group: "general", context: "workspace", contextLabel: "shortcut.context.workspace", defaultBinding: "Mod+Shift+7" },
   "edit.replace": { label: "menu.replace", group: "search", context: "workspace.editor.source", contextLabel: "command.context.source", defaultBinding: "Mod+H" },
   "navigation.back": { label: "command.navigationBack", group: "navigation", context: "workspace", contextLabel: "command.context.global", defaultBinding: "Mod+B" },
   "navigation.forward": { label: "command.navigationForward", group: "navigation", context: "workspace", contextLabel: "command.context.global", defaultBinding: "Mod+R" },
   "latex.compile": { label: "build.compile", group: "build", context: "workspace", contextLabel: "command.context.global", defaultBinding: "Mod+Shift+B" },
   "settings.open": { label: "activity.settings", group: "general", context: "global", contextLabel: "command.context.global", defaultBinding: "Mod+," },
-  "ai.open": { label: "activity.ai", group: "ai", context: "workspace", contextLabel: "command.context.global", defaultBinding: "Mod+Shift+A" },
+  "ai.open": { label: "activity.ai", group: "ai", context: "workspace", contextLabel: "command.context.global", defaultBinding: "Mod+Shift+A", alternateDefaultBindings: ["Mod+Shift+4"] },
   "block.insertBefore": { label: "command.blockInsertBefore", group: "blocks", context: "workspace.editor.preview.block-selected", contextLabel: "command.context.previewBlock", defaultBinding: "Alt+Enter" },
   "block.insertAfter": { label: "command.blockInsertAfter", group: "blocks", context: "workspace.editor.preview.block-selected", contextLabel: "command.context.previewBlock", defaultBinding: "Shift+Enter" },
   "block.selectPrevious": { label: "blockOperation.selectPrevious", group: "blocks", context: "workspace.editor.preview.block-selected", contextLabel: "command.context.previewBlock", defaultBinding: "Up" },
@@ -103,7 +109,8 @@ export function eventBinding(event: KeyboardEvent): string {
   // Option/Alt can turn letters into symbols on some keyboard layouts. Keep
   // letter-based shortcuts recordable and executable by using their key code.
   const altLetter = event.altKey && /^Key[A-Z]$/.test(event.code) ? event.code.slice(3) : undefined;
-  const key = altLetter ?? keyAliases[event.key] ?? event.key;
+  const digit = (event.ctrlKey || event.metaKey || event.altKey) && /^Digit[0-9]$/.test(event.code) ? event.code.slice(5) : undefined;
+  const key = digit ?? altLetter ?? keyAliases[event.key] ?? event.key;
   const normalizedKey = /^[a-z]$/i.test(key) ? key.toUpperCase() : key;
   const isMac = typeof navigator !== "undefined" && /Mac|iPhone|iPad/.test(navigator.platform);
   const modifiers = [isMac ? event.metaKey ? "Mod" : "" : event.ctrlKey ? "Mod" : "", isMac ? event.ctrlKey ? "Ctrl" : "" : event.metaKey ? "Ctrl" : "", event.altKey ? "Alt" : "", event.shiftKey ? "Shift" : ""].filter(Boolean);

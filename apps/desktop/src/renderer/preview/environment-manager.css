@@ -99,3 +99,10 @@
 .environment-specialized-body { display: grid; gap: 12px; padding: 16px; }
 .environment-specialized-body > label { display: grid; gap: 7px; }
 .environment-specialized-settings input[type=checkbox] { width: 18px; height: 18px; align-self: start; }
+
+.environment-manager-toolbar-controls button { min-height: 34px; padding: 0 12px; border: 1px solid transparent; border-radius: 7px; color: var(--color-text-secondary); background: transparent; font: 500 12px/1 var(--font-ui); white-space: nowrap; }
+.environment-manager-toolbar-controls .environment-manager-mode { padding: 3px; border-color: var(--color-border); background: var(--color-bg-subtle); }
+.environment-manager-toolbar-controls .environment-manager-mode button.active { color: #fff; background: var(--color-status-bg, #18598c); box-shadow: 0 2px 5px color-mix(in srgb, var(--color-text-primary) 12%, transparent); }
+.environment-manager-toolbar-controls .environment-manager-mode button:not(.active):hover { color: var(--color-primary-strong); background: var(--color-bg-hover); }
+.environment-manager-toolbar-controls button.primary { color: #fff; background: var(--color-status-bg, #18598c); border-color: var(--color-status-bg, #18598c); }
+.environment-manager-toolbar-controls button.primary:hover { filter: brightness(1.08); }

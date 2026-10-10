@@ -38,7 +38,7 @@ async function run() {
   await evaluate("document.querySelector('.directory-project-row').click()");
   await until("!!document.querySelector('.activity-bar')");
   const labels = require("../src/renderer/i18n/locales/en.json");
-  await evaluate(`Array.from(document.querySelectorAll('.activity-bar button')).find(button => button.title === ${JSON.stringify(labels["activity.ai"])}).click()`);
+  await evaluate(`Array.from(document.querySelectorAll('.activity-bar button')).find(button => button.title.startsWith(${JSON.stringify(labels["activity.ai"])})).click()`);
   await until("!!document.querySelector('.ai-history-trigger')");
   await evaluate("document.querySelector('.ai-history-trigger').click()");
   await until("document.querySelectorAll('.ai-history-row').length===4");

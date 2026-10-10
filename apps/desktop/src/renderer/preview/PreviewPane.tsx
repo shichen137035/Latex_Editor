@@ -1,9 +1,11 @@
+import { directiveColorStyle } from "./directive-colors.js";
 import { environmentName, directiveName, blockNameLocale } from "../i18n/displayNames.js";
-import { Fragment, memo, Profiler, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type MouseEvent, type PointerEvent as ReactPointerEvent, type ReactNode } from "react";
+import { Fragment, memo, Profiler, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type MouseEvent, type PointerEvent as ReactPointerEvent, type ReactNode } from "react";
 import { createPortal, flushSync } from "react-dom";
 import { includeNewBuiltInDirectives, isRelationCapableBlock, type BlockGraphSnapshot, type BlockId, type PreviewDirectiveDefinition, type ProjectTreeNode, type RelationDirection } from "@latex-editor/contracts";
 import { t, getLocale } from "../i18n/index.js";
 import { definitionForId, environmentOptionBrackets } from "./environments.js";
+import { listItemOrdinals } from "./block-handlers.js";
 import { environmentPreview, imageClickAction } from "./environment-preview.js";
 import { environmentBlockStyle } from "./environment-block-style.js";
 import { parsePreview } from "./parser.js";
@@ -193,8 +195,8 @@ function inlineLatex(value: string | undefined, mathContext: MathContext, search
     else if (token.kind === "format") {
       const children = render(token.children ?? []);
       content = token.command === "textbf" ? <strong>{children}</strong> : token.command === "texttt" ? <code>{children}</code> : token.command === "textit" || token.command === "emph" ? <em>{children}</em> : children;
-    } else if (token.kind === "citation") content = map(<span className="preview-citation" title={`\\${token.command}{${token.value}}`}>[{token.value}]</span>, token);
-    else if (token.kind === "reference") content = map(<button type="button" className="preview-reference" data-reference={token.value} data-reference-source-start={sourceStartOffset === undefined ? undefined : token.start} data-reference-source-end={sourceStartOffset === undefined ? undefined : token.end} title={`\\${token.command}{${token.value}} · modifier-click to jump`}>[{token.value}]</button>, token);
+    } else if (token.kind === "citation") content = map(<span className="preview-citation" title={`\\${token.command}{${token.value}}`}><span className="preview-inline-reference-text">[{token.value}]</span></span>, token);
+    else if (token.kind === "reference") content = map(<button type="button" className="preview-reference" data-reference={token.value} data-reference-source-start={sourceStartOffset === undefined ? undefined : token.start} data-reference-source-end={sourceStartOffset === undefined ? undefined : token.end} title={`\\${token.command}{${token.value}} · modifier-click to jump`}><span className="preview-inline-reference-text">[{token.value}]</span></button>, token);
     else content = <span className="preview-algorithm-command" data-command={token.command?.toUpperCase()}>{sourceMapped(<strong>{token.command?.toUpperCase()}</strong>, sourceStartOffset === undefined ? undefined : token.start, sourceStartOffset === undefined ? undefined : token.start + (token.command?.length ?? 0) + 1, true)}{token.children && <span className="preview-algorithm-argument">{render(token.children)}</span>}</span>;
     return <Fragment key={token.kind + ":" + token.start}>{content}</Fragment>;
   });
@@ -211,39 +213,6 @@ function DocumentTitlePreview({ title, author, date, mathContext, searchQuery }:
 }
 
 const defaultInlineSearch: SearchQuery = { text: "", caseSensitive: false, wholeWord: false, useRegex: false, scope: "current-file" };
-
-interface PreviewListItem {
-  startOffset: number;
-  endOffset: number;
-  label?: string;
-  labelStart?: number;
-}
-
-/** Keep absolute ranges so nested math blocks can remain independent preview nodes. */
-function listBodyRange(node: StructuralBlock, source: PreviewSourceReader): [number, number] {
-  const full = nodeSource(node, source);
-  const opening = /^\\begin\{[^}]+\}(?:\[[^\]]*\])?/s.exec(full)?.[0]?.length ?? 0;
-  const closing = /\\end\{[^}]+\}\s*$/s.exec(full);
-  const bodyStart = node.source.startOffset + opening;
-  const bodyEnd = closing ? node.source.startOffset + closing.index : node.source.endOffset;
-  return [bodyStart, Math.max(bodyStart, bodyEnd)];
-}
-
-function previewListItems(node: StructuralBlock, source: PreviewSourceReader): PreviewListItem[] {
-  const [bodyStart, bodyEnd] = listBodyRange(node, source);
-  const value = source.slice(bodyStart, bodyEnd);
-  const matches = [...value.matchAll(/\\item(?:\[([^\]]+)\])?/g)];
-  if (!matches.length) return [{ startOffset: bodyStart, endOffset: bodyEnd }];
-  return matches.map((match, index) => {
-    const contentStart = bodyStart + (match.index ?? 0) + match[0].length;
-    const contentEnd = bodyStart + (matches[index + 1]?.index ?? value.length);
-    return {
-      startOffset: contentStart,
-      endOffset: contentEnd,
-      ...(match[1] ? { label: match[1], labelStart: bodyStart + (match.index ?? 0) + match[0].indexOf("[") + 1 } : {})
-    };
-  });
-}
 
 function nodeSource(node: PreviewNode, source: PreviewSourceReader): string {
   return source.slice(node.source.startOffset, node.source.endOffset);
@@ -462,16 +431,20 @@ function SpecializedContent({ node, source, services, applyEdit, edit, imageMode
   return null;
 }
 
-function ListContent({ node, source, mathContext, searchQuery, activeSearch, renderChild, onEdit, services }: { node: StructuralBlock; source: PreviewSourceReader; mathContext: MathContext; searchQuery: SearchQuery; activeSearch: boolean; renderChild(child: PreviewNode): ReactNode; onEdit(offset?: number): void; services: PreviewEditorServices }) {
-  const items = previewListItems(node, source);
+function ListContent({ node, source, mathContext, searchQuery, activeSearch, renderChild, onEdit, services, configuration, applyEdit }: { node: StructuralBlock; source: PreviewSourceReader; mathContext: MathContext; searchQuery: SearchQuery; activeSearch: boolean; renderChild(child: PreviewNode): ReactNode; onEdit(offset?: number): void; services: PreviewEditorServices; configuration: ReturnType<typeof environmentPreview>; applyEdit(node: PreviewNode, value: string): void }) {
+  const items = configuration.handler?.parse(nodeSource(node, source), node.source.startOffset, configuration.behavior.listItemCommand) ?? [];
+  const [editingItem, setEditingItem] = useState<{ index: number; start: number; end: number; original: string; cursor: number }>();
+  useEffect(() => { if (!editingItem) return; services.onFieldEditing(node.id, true); return () => services.onFieldEditing(node.id, false); }, [editingItem, node.id, services.onFieldEditing]);
+  const ordinals = listItemOrdinals(items);
   let childIndex = 0;
   const rows = items.map((item, index) => {
     while (node.children[childIndex] && node.children[childIndex]!.source.endOffset <= item.startOffset) childIndex += 1;
     const children: PreviewNode[] = [];
     for (let cursor = childIndex; node.children[cursor] && node.children[cursor]!.source.startOffset < item.endOffset; cursor += 1) children.push(node.children[cursor]!);
-    return { id: `listitem:${node.id}:${index}`, estimatedHeight: Math.max(45, 20 + Math.ceil((item.endOffset - item.startOffset) / 75) * 27) + children.reduce((sum, child) => sum + (child.kind === "block" ? estimatedPreviewHeight(child) : 0), 0), item, index, children };
+    return { id: `listitem:${node.id}:${index}`, ordinal: ordinals[index]!, estimatedHeight: Math.max(45, 20 + Math.ceil((item.endOffset - item.startOffset) / 75) * 27) + children.reduce((sum, child) => sum + (child.kind === "block" ? estimatedPreviewHeight(child) : 0), 0), item, index, children };
   });
   const forcedListItems = new Set(services.forcedIds);
+  if (editingItem) for (const row of rows) if (row.index === editingItem.index) forcedListItems.add(row.id);
   const forcedOffsets = [...services.forcedIds].map((id) => services.nodeRanges.get(id)?.startOffset).filter((offset): offset is number => offset !== undefined);
   if (services.forceOffset !== undefined) forcedOffsets.push(services.forceOffset);
   for (const row of rows) if (forcedOffsets.some((offset) => row.item.startOffset <= offset && offset < row.item.endOffset)) forcedListItems.add(row.id);
@@ -494,9 +467,21 @@ function ListContent({ node, source, mathContext, searchQuery, activeSearch, ren
       cursor = Math.max(cursor, child.source.endOffset);
     }
     addText(Math.max(cursor, item.startOffset), item.endOffset, `tail:${itemIndex}`);
-    return <div data-source-start-offset={item.startOffset} data-source-end-offset={item.endOffset} onClick={(event) => { if ((event.target as Element).closest("button, .preview-local-editor") || window.getSelection()?.isCollapsed === false) return; event.stopPropagation(); onEdit(sourceOffsetAtPoint(event.currentTarget, event)); }}>{item.label && <strong>{inlineLatex(item.label, mathContext, searchQuery, activeSearch, item.labelStart)} </strong>}{content}</div>;
+    if (editingItem?.index === itemIndex) return <LocalEditor value={editingItem.original} sourceStartOffset={item.commandStart} sourceStartLine={node.source.startLine + source.slice(node.source.startOffset, item.commandStart).split(/\r?\n/).length - 1} initialCursorOffset={editingItem.cursor} onApply={value => {
+      if (source.slice(item.commandStart, item.endOffset) !== editingItem.original) { window.alert(t("environment.preview.listChanged")); return; }
+      const raw = nodeSource(node, source), start = item.commandStart - node.source.startOffset, end = item.endOffset - node.source.startOffset;
+      setEditingItem(undefined); applyEdit(node, raw.slice(0, start) + value + raw.slice(end));
+    }} onCancel={() => setEditingItem(undefined)} {...services}/>;
+    return <div data-source-start-offset={item.startOffset} data-source-end-offset={item.endOffset} onClick={(event) => {
+      if ((event.target as Element).closest("button, a, .preview-reference, [data-reference], .preview-local-editor") || window.getSelection()?.isCollapsed === false || !configuration.behavior.inlineEditable) return;
+      event.stopPropagation();
+      const offset = sourceOffsetAtPoint(event.currentTarget, event) ?? item.startOffset;
+      if (configuration.behavior.listItemEditing) setEditingItem({ index: itemIndex, start: item.commandStart, end: item.endOffset, original: source.slice(item.commandStart, item.endOffset), cursor: Math.max(0, offset - item.commandStart) });
+      else onEdit(offset);
+    }}>{item.label !== undefined && <span className="preview-list-custom-marker">{inlineLatex(item.label, mathContext, searchQuery, activeSearch, item.labelStart)} </span>}{content}</div>;
   };
-  return <VirtualPreviewList items={rows} controller={services.virtual} rootRef={services.virtualRoot} forcedIds={forcedListItems} renderItem={renderItem} as={node.environmentId === "enumerate" ? "ol" : "ul"}/>;
+  if (!items.length) return <div className="preview-list-empty" onClick={event => { if (!configuration.behavior.inlineEditable) return; event.stopPropagation(); onEdit(); }}>{inlineLatex(source.slice(node.body.startOffset, node.body.endOffset), mathContext, searchQuery, activeSearch, node.body.startOffset)}</div>;
+  return <VirtualPreviewList items={rows} controller={services.virtual} rootRef={services.virtualRoot} forcedIds={forcedListItems} renderItem={renderItem} as={configuration.behavior.listStyle === "ordered" ? "ol" : "ul"} markerStyle={configuration.behavior.listMarker} hideMarker={row => row.item.label !== undefined} ordinalFor={row => row.ordinal}/>;
 }
 
 const LocalEditor = PreviewLocalEditor;
@@ -519,7 +504,7 @@ function ContentRenderer({ node, source, editing, cursorOffset, boundary, beginE
   const directiveContent = node.contentType === "directive" || node.contentType === "spacer";
   return <Fragment>
     {insertion?.side === "before" && <LocalEditor value="" sourceStartOffset={insertion.position} onApply={(value) => applyBoundary(insertion, value)} onDraftChange={(value) => services.onBoundaryDraftChange(insertion, value)} onCancel={cancelEdit} {...services}/>}
-    {editing ? <LocalEditor value={nodeSource(node, source)} sourceStartLine={node.source.startLine} sourceStartOffset={node.source.startOffset} initialCursorOffset={cursorOffset === undefined ? undefined : cursorOffset - node.source.startOffset} onApply={applyEdit} onDraftChange={onDraftChange} onCancel={cancelEdit} onInsertBefore={(draft) => requestBoundary(node, "before", draft)} onInsertAfter={(draft) => requestBoundary(node, "after", draft)} {...services}/> : <div className={`preview-content-region${virtualClass} ${filterClass} ${activeSearch ? "search-result-active" : ""}${directiveContent ? ` preview-directive preview-directive-${directiveDisplay}` : ""}`} style={directiveContent ? { "--directive-color": directive?.color ?? "#a0afbc" } as CSSProperties : undefined} title={directiveContent && directive ? directiveName(directive) : undefined} data-node-id={node.id} data-source-line={node.source.startLine} data-source-start-offset={node.source.startOffset} data-source-end-offset={node.source.endOffset} onClick={(event) => { event.stopPropagation(); if (window.getSelection()?.isCollapsed !== false) beginEdit(directiveContent ? node.source.startOffset : sourceOffsetAtPoint(event.currentTarget, event)); }}>{directiveContent ? <><span className="preview-directive-line"/><span className="preview-directive-label">{node.directiveId === "blank-line" ? "" : directive ? directiveName(directive) : node.raw.trim()}</span><span className="preview-directive-line"/>{directiveDisplay === "placeholder" && <code>{node.raw.trim()}</code>}</> : inlineLatex(node.raw, services.mathContext, effectiveSearch, activeSearch, node.source.startOffset)}</div>}
+    {editing ? <LocalEditor value={nodeSource(node, source)} sourceStartLine={node.source.startLine} sourceStartOffset={node.source.startOffset} initialCursorOffset={cursorOffset === undefined ? undefined : cursorOffset - node.source.startOffset} onApply={applyEdit} onDraftChange={onDraftChange} onCancel={cancelEdit} onInsertBefore={(draft) => requestBoundary(node, "before", draft)} onInsertAfter={(draft) => requestBoundary(node, "after", draft)} {...services}/> : <div className={`preview-content-region${virtualClass} ${filterClass} ${activeSearch ? "search-result-active" : ""}${directiveContent ? ` preview-directive preview-directive-${directiveDisplay}` : ""}`} style={directiveContent ? directiveColorStyle(directive) : undefined} title={directiveContent && directive ? directiveName(directive) : undefined} data-node-id={node.id} data-source-line={node.source.startLine} data-source-start-offset={node.source.startOffset} data-source-end-offset={node.source.endOffset} onClick={(event) => { event.stopPropagation(); if (window.getSelection()?.isCollapsed !== false) beginEdit(directiveContent ? node.source.startOffset : sourceOffsetAtPoint(event.currentTarget, event)); }}>{directiveContent ? <><span className="preview-directive-line"/><span className="preview-directive-label">{node.directiveId === "blank-line" ? "" : directive ? directiveName(directive) : node.raw.trim()}</span><span className="preview-directive-line"/>{directiveDisplay === "placeholder" && <code>{node.raw.trim()}</code>}</> : inlineLatex(node.raw, services.mathContext, effectiveSearch, activeSearch, node.source.startOffset)}</div>}
     {insertion?.side === "after" && <LocalEditor value="" sourceStartOffset={insertion.position} onApply={(value) => applyBoundary(insertion, value)} onDraftChange={(value) => services.onBoundaryDraftChange(insertion, value)} onCancel={cancelEdit} {...services}/>}
   </Fragment>;
 }
@@ -623,7 +608,7 @@ function BlockRenderer({ node, source, definitions, selectedId, editingId, curso
     : emptyStructuralParagraph
       ? <PreviewNodeRenderer node={emptyStructuralParagraph} source={source} definitions={definitions} selectedId={selectedId} editingId={editingId} cursorOffset={cursorOffset} boundary={boundary} select={select} edit={edit} applyEdit={applyEdit} onDraftChange={(draft) => { if (structuralBlockDraft(draft, services.currentPath, definitions)) applyEdit(emptyStructuralParagraph, draft); }} applyBoundary={applyBoundary} cancelEdit={cancelEdit} requestBoundary={requestBoundary} services={services}/>
       : listEnvironment
-        ? <ListContent node={node} source={source} mathContext={services.mathContext} searchQuery={effectiveSearch} activeSearch={activeSearch} onEdit={(offset) => edit(node.id, offset)} services={services} renderChild={(child) => <PreviewNodeRenderer key={child.id} node={child} source={source} definitions={definitions} selectedId={selectedId} editingId={editingId} cursorOffset={cursorOffset} boundary={boundary} select={select} edit={edit} applyEdit={applyEdit} applyBoundary={applyBoundary} cancelEdit={cancelEdit} requestBoundary={requestBoundary} services={services}/>} />
+        ? <ListContent configuration={previewConfiguration} applyEdit={applyEdit} node={node} source={source} mathContext={services.mathContext} searchQuery={effectiveSearch} activeSearch={activeSearch} onEdit={(offset) => edit(node.id, offset)} services={services} renderChild={(child) => <PreviewNodeRenderer key={child.id} node={child} source={source} definitions={definitions} selectedId={selectedId} editingId={editingId} cursorOffset={cursorOffset} boundary={boundary} select={select} edit={edit} applyEdit={applyEdit} applyBoundary={applyBoundary} cancelEdit={cancelEdit} requestBoundary={requestBoundary} services={services}/>} />
         : specialized;
   const insertion = boundary?.targetId === node.id ? boundary : undefined;
   const semanticId = services.relation?.transientToBlockId[node.id];
@@ -648,6 +633,10 @@ function BlockRenderer({ node, source, definitions, selectedId, editingId, curso
     const replacement = replaceHeadingTitle(node, blockSource, title);
     if (replacement !== undefined && replacement !== blockSource) applyEdit(node, replacement);
   };
+  const listHeader = listEnvironment && <span className="preview-list-header-tools">
+    {previewConfiguration.behavior.listShowCount && <small>{t("environment.preview.listCount", { count: previewConfiguration.handler?.parse(blockSource, node.source.startOffset, previewConfiguration.behavior.listItemCommand).length ?? 0 })}</small>}
+    {previewConfiguration.behavior.inlineEditable && <button type="button" disabled={editing} title={t("environment.preview.listAddItem")} aria-label={t("environment.preview.listAddItem")} onClick={event => { event.stopPropagation(); const replacement = previewConfiguration.handler?.append(blockSource, previewConfiguration.behavior.listItemCommand); if (replacement) applyEdit(node, replacement); }}>＋</button>}
+  </span>;
   const selectFromHeader = (event: MouseEvent<HTMLElement>) => {
     event.stopPropagation();
     if (event.ctrlKey || event.metaKey || event.shiftKey) services.selectBlockWithModifiers(node.id, { toggle: event.ctrlKey || event.metaKey, range: event.shiftKey });
@@ -690,7 +679,7 @@ function BlockRenderer({ node, source, definitions, selectedId, editingId, curso
   }
   return <Fragment>
     {insertion?.side === "before" && <LocalEditor value="" sourceStartOffset={insertion.position} onApply={(value) => applyBoundary(insertion, value)} onDraftChange={(value) => services.onBoundaryDraftChange(insertion, value)} onCancel={cancelEdit} {...services}/>}
-    <section className={`preview-block env-${family} ${filterClass} ${activeSearch ? "search-result-active" : ""} ${selected ? "selected" : ""} ${selected && services.selectedBlockIds.length > 1 ? "multi-selected" : ""} ${editing ? "editing" : ""} ${collapsed ? "block-collapsed" : ""} ${semanticId === services.relation?.focusId ? "relation-focus" : ""}`} data-preview-node-id={node.id} data-environment={node.environmentId} data-semantic-block-id={semanticId} data-source-line={node.source.startLine} data-source-start-offset={node.source.startOffset} data-source-end-offset={node.source.endOffset} data-drop-position={dropPosition} onDragOver={dragOver} onDragLeave={() => setDropPosition(undefined)} onDrop={drop} onClickCapture={(event) => { if (!(event.ctrlKey || event.metaKey || event.shiftKey) || editing) return; const target = event.target as Element; if (target.closest(".preview-block") !== event.currentTarget || target.closest("a, input, textarea, select, [contenteditable=true], .preview-local-editor, .structured-table, .preview-reference, .preview-block-header-actions, .preview-block-collapse, .preview-block-drag, .preview-environment-selector, .preview-block-footer-actions, .preview-block-footer-main, button:not(.preview-block-title):not(.preview-block-label)")) return; event.preventDefault(); event.stopPropagation(); services.selectBlockWithModifiers(node.id, { toggle: event.ctrlKey || event.metaKey, range: event.shiftKey }); }} onDoubleClickCapture={(event) => { const target = event.target as Element; if (target.closest("[data-preview-field], button, input, .preview-local-editor, .structured-table, .figure-preview-image-choice, .figure-preview-empty-slot") || target.closest(".preview-block") !== event.currentTarget) return; event.preventDefault(); event.stopPropagation(); if (figureBlock) { if (imageClickAction(previewConfiguration, preferences.get("images").editor.defaultMode) === "source") edit(node.id); else { select(node.id); services.onFigureSelect?.({ fileId: services.currentPath, start: node.source.startOffset, end: node.source.endOffset, source: nodeSource(node, source) }); } return; } services.onForwardSync(services.currentPath, node.source.startLine, 1); }} style={environmentBlockStyle(node.environmentId, family, definition)}>
+    <section className={`preview-block env-${family} ${filterClass} ${activeSearch ? "search-result-active" : ""} ${selected ? "selected" : ""} ${selected && services.selectedBlockIds.length > 1 ? "multi-selected" : ""} ${editing ? "editing" : ""} ${collapsed ? "block-collapsed" : ""} ${semanticId === services.relation?.focusId ? "relation-focus" : ""}`} data-preview-node-id={node.id} data-environment={node.environmentId} data-color-mode={definition?.style.colorMode ?? "adaptive"} data-semantic-block-id={semanticId} data-source-line={node.source.startLine} data-source-start-offset={node.source.startOffset} data-source-end-offset={node.source.endOffset} data-drop-position={dropPosition} onDragOver={dragOver} onDragLeave={() => setDropPosition(undefined)} onDrop={drop} onClickCapture={(event) => { if (!(event.ctrlKey || event.metaKey || event.shiftKey) || editing) return; const target = event.target as Element; if (target.closest(".preview-block") !== event.currentTarget || target.closest("a, input, textarea, select, [contenteditable=true], .preview-local-editor, .structured-table, .preview-reference, .preview-block-header-actions, .preview-block-collapse, .preview-block-drag, .preview-environment-selector, .preview-block-footer-actions, .preview-block-footer-main, button:not(.preview-block-title):not(.preview-block-label)")) return; event.preventDefault(); event.stopPropagation(); services.selectBlockWithModifiers(node.id, { toggle: event.ctrlKey || event.metaKey, range: event.shiftKey }); }} onDoubleClickCapture={(event) => { const target = event.target as Element; if (target.closest("[data-preview-field], button, input, .preview-local-editor, .structured-table, .figure-preview-image-choice, .figure-preview-empty-slot") || target.closest(".preview-block") !== event.currentTarget) return; event.preventDefault(); event.stopPropagation(); if (figureBlock) { if (imageClickAction(previewConfiguration, preferences.get("images").editor.defaultMode) === "source") edit(node.id); else { select(node.id); services.onFigureSelect?.({ fileId: services.currentPath, start: node.source.startOffset, end: node.source.endOffset, source: nodeSource(node, source) }); } return; } services.onForwardSync(services.currentPath, node.source.startLine, 1); }} style={environmentBlockStyle(node.environmentId, family, definition)}>
     {(definition?.behavior.showHeader ?? true) && <div className="preview-block-header">
       {canCollapseBlock(node) && <button className="preview-block-collapse" title={t(collapsed ? "blockOperation.expand" : "blockOperation.collapse")} aria-expanded={!collapsed} onClick={(event) => { event.stopPropagation(); services.toggleCollapse([node.id]); }}>{collapsed ? "\u25B8" : "\u25BE"}</button>}
       <button className="preview-block-drag" draggable title={t("blockOperation.drag")} onDragStart={dragStart} onDragEnd={() => setDropPosition(undefined)}>{"\u22EE\u22EE"}</button>
@@ -699,6 +688,7 @@ function BlockRenderer({ node, source, definitions, selectedId, editingId, curso
         {optionField ? <TitleEditor title={optionField.value} bracketed={environmentOptionBrackets(definition)} onCommit={value => { const next = replaceSourceField(blockSource, optionField, value); if (next !== undefined) applyEdit(node, next); }}/> : node.title && (replaceHeadingTitle(node, blockSource, node.title) !== undefined ? <TitleEditor title={node.title} onCommit={applyTitle}/> : <strong>{node.title}</strong>)}
         {(definition?.behavior.showLabel ?? true) && <LabelEditor label={node.latexLabel ?? ""} auto={Boolean(node.autoLabel)} onCommit={applyLabel}/>}
       </div>
+      {listHeader}
       {(singleSelected || (services.relation?.active && semanticId && services.selectedBlockIds.length === 1)) && <div className="preview-block-header-actions">
         {services.relation?.active && semanticId && <>
           <button className={semanticId === services.relation.focusId ? "relation-control active" : "relation-control"} disabled={!canSetRelationFocus} title={canSetRelationFocus ? t("relation.setFocus") : t("relation.invalid.virtual-endpoint")} onClick={(event) => { event.stopPropagation(); services.relation?.onFocus(semanticId); }}>{"\u25CE"}</button>
@@ -711,9 +701,10 @@ function BlockRenderer({ node, source, definitions, selectedId, editingId, curso
         </>}
       </div>}
     </div>}
-    {!(definition?.behavior.showHeader ?? true) && (node.environmentId !== "placeholder" || collapsed) && canCollapseBlock(node) && <div className="preview-block-compact-header">
+    {!(definition?.behavior.showHeader ?? true) && (node.environmentId !== "placeholder" || collapsed) && canCollapseBlock(node) && <div className="preview-block-compact-header" onClick={selectFromHeader}>
       <button className="preview-block-collapse" title={t(collapsed ? "blockOperation.expand" : "blockOperation.collapse")} aria-label={t(collapsed ? "blockOperation.expand" : "blockOperation.collapse")} aria-expanded={!collapsed} onClick={(event) => { event.stopPropagation(); services.toggleCollapse([node.id]); }}>{collapsed ? "▸" : "▾"}</button>
-      <span>{environmentLabel(definition, node.environmentId)}</span>
+      <button type="button" className="preview-block-compact-title" onClick={selectFromHeader}>{environmentLabel(definition, node.environmentId)}</button>
+      {listHeader}
     </div>}
     {!collapsed && <div className="preview-block-body" onClickCapture={(event) => {
        if ((event.target as Element).closest("[data-preview-field], .table-editor-backdrop, .table-floating-tools")) return;

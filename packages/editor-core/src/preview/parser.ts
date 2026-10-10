@@ -4,9 +4,10 @@ import { includeNewBuiltInDirectives, inferBlockKind, type BlockKind, type Previ
 import { automaticLabelOccurrences, findBlockLabel, isAutomaticLabel } from "./labels.js";
 import type { BlockLabelRange } from "./labels.js";
 import { documentTitleRegion } from "./document-title.js";
+import { latexHeadingFields } from "../latex-source.js";
 
 /** Bump when source ownership changes so persisted indexes refresh on upgrade. */
-export const STRUCTURE_PARSER_REVISION = 6;
+export const STRUCTURE_PARSER_REVISION = 7;
 
 interface RawBlock {
   start: number;
@@ -297,16 +298,14 @@ export function parsePreview(source: string, filePath: string, definitions: Envi
   const boundaries = scopeCommands.filter((command) => command.placement === "independent");
 
   const headings: Array<{ start: number; bodyStart: number; command: string; title: string; level: number }> = [];
-  const headingPattern = /\\(chapter|section|subsection|subsubsection|paragraph)\*?\{([^{}]*)\}/g;
-  for (const match of source.matchAll(headingPattern)) {
-    const start = match.index ?? 0;
-    if (start < documentStart || start >= documentEnd || commentedAt(source, start)) continue;
-    const commandName = match[1];
-    if (!commandName) continue;
+  for (const field of latexHeadingFields(source, Object.keys(headingLevel))) {
+    const start = field.start;
+    if (start < documentStart || field.end > documentEnd) continue;
+    const commandName = field.command;
     const definition = commandDefinitions.get(commandName);
     if (definition?.enabled === false) continue;
-    const bodyStart = start + match[0].length;
-    headings.push({ start, bodyStart, command: definition?.id ?? commandName, title: match[2] ?? "", level: headingLevel[commandName] ?? 3 });
+    const bodyStart = field.end;
+    headings.push({ start, bodyStart, command: definition?.id ?? commandName, title: field.body.value, level: headingLevel[commandName] ?? 3 });
   }
   const nearestHeadingAtLevel: Array<number | undefined> = [];
   headings.slice().reverse().forEach((heading) => {
@@ -386,12 +385,13 @@ export function parsePreview(source: string, filePath: string, definitions: Envi
   contentBlockIds.add("texweave-disabled");
   const headingBlockIds = new Set(headings.map((heading) => heading.command));
   for (const block of valid) {
-    // Sectioning commands can have content even when their semantic graph kind
-    // is content (notably \paragraph). Keep that body in the preview tree.
+    // Sectioning commands own independently editable children, even when their
+    // name also identifies ordinary prose in the semantic graph.
     if (inferBlockKind(block.environmentId) === "content" && !headingBlockIds.has(block.environmentId)) contentBlockIds.add(block.environmentId);
   }
   const semanticKindFor = (block: RawBlock): BlockKind => {
     if (block.environmentId === "texweave-disabled") return "content";
+    if (headingBlockIds.has(block.environmentId)) return "structural";
     const definition = definitionById.get(block.environmentId);
     return definition && ["equation", "figure", "table"].includes(definition.family)
       ? "content" : inferBlockKind(block.environmentId);

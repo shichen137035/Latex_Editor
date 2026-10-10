@@ -65,7 +65,9 @@ export function parseMathNodes(source: string): MathNode[] {
   candidates.sort((left, right) => left.start - right.start || right.end - left.end);
   const outer: MathNode[] = [];
   for (const candidate of candidates) {
-    if (outer.some((existing) => existing.start <= candidate.start && existing.end >= candidate.end)) continue;
+    // Sorted starts plus descending ends mean accepted endpoints only increase:
+    // the last accepted range is sufficient to detect containment.
+    if ((outer.at(-1)?.end ?? -1) >= candidate.end) continue;
     outer.push(candidate);
   }
   return outer;

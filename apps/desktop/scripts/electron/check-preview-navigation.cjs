@@ -67,8 +67,11 @@ async function run() {
   await evaluate('Array.from(document.querySelectorAll(".view-switch button")).find(button => button.textContent === "Code").click()');
   await until('!!document.querySelector(".editor-surface .monaco-editor textarea")', "Code editor");
   await evaluate('document.querySelector(".editor-surface .monaco-editor textarea").focus()');
+  page.focus();
+  await delay(100);
   await press("F", ["control"]);
-  await until('document.activeElement?.matches(".advanced-search-input") && document.activeElement.selectionEnd === document.activeElement.value.length && document.activeElement.selectionStart === 0', "Ctrl+F refocuses and selects the existing query in Code mode");
+  await until('document.activeElement?.matches(".advanced-search-input")', "Ctrl+F refocuses search in Code mode");
+  await until('document.activeElement.selectionEnd === document.activeElement.value.length && document.activeElement.selectionStart === 0', "Ctrl+F selects the existing query in Code mode");
   await evaluate(`window.latexEditor.settings.set("keybindings", {"edit.find":"Mod+Shift+F"}, ${projectId})`);
   // Reopen the project to hydrate renderer settings after a direct IPC write.
   await evaluate('document.querySelector(".logo-button").click()');
@@ -95,7 +98,7 @@ async function run() {
   // Leaving TeX for an unsupported file must not suppress the return restore.
   await evaluate('document.querySelector(".structured-preview").scrollTop = 1200');
   await delay(150);
-  await evaluate(`document.querySelector('.activity-bar button[title="Files"]').click()`);
+  await evaluate(`document.querySelector('.activity-bar button[title^="Files"]').click()`);
   await evaluate(`document.querySelector('.tree-row[data-path="notes.txt"]').click()`);
   await until('!!document.querySelector(".preview-empty")', "non-TeX preview");
   await evaluate(`document.querySelector('.tree-row[data-path="main.tex"]').click()`);

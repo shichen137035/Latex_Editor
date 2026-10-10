@@ -9,36 +9,139 @@
     "labelTextToken": "--env-generic-label-text",
     "borderToken": "--env-border-default",
     "selectedBorderToken": "--env-border-selected",
-    "titleFontFamily": "\"Space Grotesk\", \"Segoe UI\", \"Microsoft YaHei\", \"PingFang SC\", sans-serif",
+    "titleFontFamily": "\"DM Sans\", \"Segoe UI Variable Text\", \"Segoe UI\", \"Microsoft YaHei UI\", \"PingFang SC\", sans-serif",
     "titleFontSize": 16,
     "titleFontWeight": 500,
     "titleLineHeight": 1.35,
-    "titleLetterSpacing": 0.025,
+    "titleLetterSpacing": 0,
     "captionFontSize": 13,
     "imageMaxHeightVh": 62,
     "imageGridMinWidth": 180,
     "imageGridGap": 12,
     "tableCellMaxHeightEm": 9,
     "tableEditorMaxHeight": 180,
-    "tableExpandedFontSize": 15
+    "tableExpandedFontSize": 15,
+    "colorMode": "adaptive",
+    "baseColor": "--env-generic-base"
   },
   "familyStyles": {
-    "section": { "accentToken": "--env-section-accent", "fillToken": "--env-section-fill", "labelBackgroundToken": "--env-section-label-bg", "labelTextToken": "--env-section-label-text", "titleFontSize": 18, "titleFontWeight": 600 },
-    "theorem": { "accentToken": "--env-theorem-accent", "fillToken": "--env-theorem-fill", "labelBackgroundToken": "--env-theorem-label-bg", "labelTextToken": "--env-theorem-label-text" },
-    "definition": { "accentToken": "--env-definition-accent", "fillToken": "--env-definition-fill", "labelBackgroundToken": "--env-definition-label-bg", "labelTextToken": "--env-definition-label-text" },
-    "proof": { "accentToken": "--env-proof-accent", "fillToken": "--env-proof-fill", "labelBackgroundToken": "--env-proof-label-bg", "labelTextToken": "--env-proof-label-text" },
-    "equation": { "accentToken": "--env-equation-accent", "fillToken": "--env-equation-fill", "labelBackgroundToken": "--env-equation-label-bg", "labelTextToken": "--env-equation-label-text" },
-    "remark": { "accentToken": "--env-remark-accent", "fillToken": "--env-remark-fill", "labelBackgroundToken": "--env-remark-label-bg", "labelTextToken": "--env-remark-label-text" },
-    "example": { "accentToken": "--env-example-accent", "fillToken": "--env-example-fill", "labelBackgroundToken": "--env-example-label-bg", "labelTextToken": "--env-example-label-text" },
-    "figure": { "accentToken": "--env-figure-accent", "fillToken": "--env-figure-fill", "labelBackgroundToken": "--env-figure-label-bg", "labelTextToken": "--env-figure-label-text" },
-    "table": { "accentToken": "--env-table-accent", "fillToken": "--env-table-fill", "labelBackgroundToken": "--env-table-label-bg", "labelTextToken": "--env-table-label-text" },
-    "list": { "accentToken": "--env-list-accent", "fillToken": "--env-list-fill", "labelBackgroundToken": "--env-list-label-bg", "labelTextToken": "--env-list-label-text" },
-    "quote": { "accentToken": "--env-quote-accent", "fillToken": "--env-quote-fill", "labelBackgroundToken": "--env-quote-label-bg", "labelTextToken": "--env-quote-label-text" },
-    "code": { "accentToken": "--env-code-accent", "fillToken": "--env-code-fill", "labelBackgroundToken": "--env-code-label-bg", "labelTextToken": "--env-code-label-text" },
-    "virtual": { "accentToken": "--env-virtual-accent", "fillToken": "--env-virtual-fill", "labelBackgroundToken": "--env-virtual-label-bg", "labelTextToken": "--env-virtual-label-text" },
-    "generic": { "accentToken": "--env-generic-accent", "fillToken": "--env-generic-fill", "labelBackgroundToken": "--env-generic-label-bg", "labelTextToken": "--env-generic-label-text" }
+    "section": {
+      "accentToken": "--env-section-accent",
+      "fillToken": "--env-section-fill",
+      "labelBackgroundToken": "--env-section-label-bg",
+      "labelTextToken": "--env-section-label-text",
+      "titleFontSize": 18,
+      "titleFontWeight": 600,
+      "baseColor": "--env-section-base"
+    },
+    "theorem": {
+      "accentToken": "--env-theorem-accent",
+      "fillToken": "--env-theorem-fill",
+      "labelBackgroundToken": "--env-theorem-label-bg",
+      "labelTextToken": "--env-theorem-label-text",
+      "baseColor": "--env-theorem-base"
+    },
+    "definition": {
+      "accentToken": "--env-definition-accent",
+      "fillToken": "--env-definition-fill",
+      "labelBackgroundToken": "--env-definition-label-bg",
+      "labelTextToken": "--env-definition-label-text",
+      "baseColor": "--env-definition-base"
+    },
+    "proof": {
+      "accentToken": "--env-proof-accent",
+      "fillToken": "--env-proof-fill",
+      "labelBackgroundToken": "--env-proof-label-bg",
+      "labelTextToken": "--env-proof-label-text",
+      "baseColor": "--env-proof-base"
+    },
+    "equation": {
+      "accentToken": "--env-equation-accent",
+      "fillToken": "--env-equation-fill",
+      "labelBackgroundToken": "--env-equation-label-bg",
+      "labelTextToken": "--env-equation-label-text",
+      "baseColor": "--env-equation-base"
+    },
+    "remark": {
+      "accentToken": "--env-remark-accent",
+      "fillToken": "--env-remark-fill",
+      "labelBackgroundToken": "--env-remark-label-bg",
+      "labelTextToken": "--env-remark-label-text",
+      "baseColor": "--env-remark-base"
+    },
+    "example": {
+      "accentToken": "--env-example-accent",
+      "fillToken": "--env-example-fill",
+      "labelBackgroundToken": "--env-example-label-bg",
+      "labelTextToken": "--env-example-label-text",
+      "baseColor": "--env-example-base"
+    },
+    "figure": {
+      "accentToken": "--env-figure-accent",
+      "fillToken": "--env-figure-fill",
+      "labelBackgroundToken": "--env-figure-label-bg",
+      "labelTextToken": "--env-figure-label-text",
+      "baseColor": "--env-figure-base"
+    },
+    "table": {
+      "accentToken": "--env-table-accent",
+      "fillToken": "--env-table-fill",
+      "labelBackgroundToken": "--env-table-label-bg",
+      "labelTextToken": "--env-table-label-text",
+      "baseColor": "--env-table-base"
+    },
+    "list": {
+      "accentToken": "--env-list-accent",
+      "fillToken": "--env-list-fill",
+      "labelBackgroundToken": "--env-list-label-bg",
+      "labelTextToken": "--env-list-label-text",
+      "baseColor": "--env-list-base"
+    },
+    "quote": {
+      "accentToken": "--env-quote-accent",
+      "fillToken": "--env-quote-fill",
+      "labelBackgroundToken": "--env-quote-label-bg",
+      "labelTextToken": "--env-quote-label-text",
+      "baseColor": "--env-quote-base"
+    },
+    "code": {
+      "accentToken": "--env-code-accent",
+      "fillToken": "--env-code-fill",
+      "labelBackgroundToken": "--env-code-label-bg",
+      "labelTextToken": "--env-code-label-text",
+      "baseColor": "--env-code-base"
+    },
+    "virtual": {
+      "accentToken": "--env-virtual-accent",
+      "fillToken": "--env-virtual-fill",
+      "labelBackgroundToken": "--env-virtual-label-bg",
+      "labelTextToken": "--env-virtual-label-text",
+      "baseColor": "--env-virtual-base"
+    },
+    "generic": {
+      "accentToken": "--env-generic-accent",
+      "fillToken": "--env-generic-fill",
+      "labelBackgroundToken": "--env-generic-label-bg",
+      "labelTextToken": "--env-generic-label-text",
+      "baseColor": "--env-generic-base"
+    }
   },
-  "familyRenderers": { "section": "content", "theorem": "content", "definition": "content", "proof": "content", "equation": "math", "remark": "content", "example": "content", "figure": "figure", "table": "table", "list": "list", "quote": "content", "code": "code", "virtual": "content", "generic": "content" },
+  "familyRenderers": {
+    "section": "content",
+    "theorem": "content",
+    "definition": "content",
+    "proof": "content",
+    "equation": "math",
+    "remark": "content",
+    "example": "content",
+    "figure": "figure",
+    "table": "table",
+    "list": "list",
+    "quote": "content",
+    "code": "code",
+    "virtual": "content",
+    "generic": "content"
+  },
   "defaultBehavior": {
     "inlineEditable": true,
     "allowChildren": true,
@@ -51,49 +154,519 @@
     "imageClickAction": "settings",
     "tableToolbar": "selected",
     "allowExpandedEditor": true,
-    "expandedToolbar": true
+    "expandedToolbar": true,
+    "blockHandler": "",
+    "listStyle": "unordered",
+    "listItemCommand": "item",
+    "listMarker": "disc",
+    "listItemEditing": true,
+    "listShowCount": true
   },
   "previewEnvironments": [
-    { "id": "chapter", "family": "section", "match": { "kind": "command", "command": "chapter" }, "style": { "titleFontSize": 28, "titleLineHeight": 1.25 } },
-    { "id": "section", "family": "section", "match": { "kind": "command", "command": "section" }, "style": { "titleFontSize": 24, "titleLineHeight": 1.3 } },
-    { "id": "subsection", "family": "section", "match": { "kind": "command", "command": "subsection" }, "style": { "titleFontSize": 21 } },
-    { "id": "subsubsection", "family": "section", "match": { "kind": "command", "command": "subsubsection" }, "style": { "titleFontSize": 18 } },
-    { "id": "paragraph", "family": "section", "match": { "kind": "command", "command": "paragraph" }, "style": { "titleFontSize": 16 } },
-    { "id": "abstract", "family": "section", "match": { "kind": "latex-environment", "name": "abstract" } },
-    { "id": "theorem", "family": "theorem", "match": { "kind": "latex-environment", "name": "theorem" } },
-    { "id": "lemma", "family": "theorem", "match": { "kind": "latex-environment", "name": "lemma" } },
-    { "id": "proposition", "family": "theorem", "match": { "kind": "latex-environment", "name": "proposition" } },
-    { "id": "corollary", "family": "theorem", "match": { "kind": "latex-environment", "name": "corollary" } },
-    { "id": "definition", "family": "definition", "match": { "kind": "latex-environment", "name": "definition" } },
-    { "id": "assumption", "family": "definition", "match": { "kind": "latex-environment", "name": "assumption" } },
-    { "id": "remark", "family": "remark", "match": { "kind": "latex-environment", "name": "remark" } },
-    { "id": "example", "family": "example", "match": { "kind": "latex-environment", "name": "example" } },
-    { "id": "proof", "family": "proof", "match": { "kind": "latex-environment", "name": "proof" } },
-    { "id": "algorithm", "family": "code", "match": { "kind": "latex-environment", "name": "algorithm" }, "behavior": { "renderer": "content" } },
-    { "id": "algorithmic", "family": "code", "match": { "kind": "latex-environment", "name": "algorithmic" }, "behavior": { "showHeader": false, "showLabel": false, "renderer": "content" } },
-    { "id": "equation", "family": "equation", "match": { "kind": "latex-environment", "name": "equation" }, "behavior": { "allowChildren": false } },
-    { "id": "equation-star", "family": "equation", "match": { "kind": "latex-environment", "name": "equation*" }, "behavior": { "allowChildren": false } },
-    { "id": "align", "family": "equation", "match": { "kind": "latex-environment", "name": "align" }, "behavior": { "allowChildren": false } },
-    { "id": "align-star", "family": "equation", "match": { "kind": "latex-environment", "name": "align*" }, "behavior": { "allowChildren": false } },
-    { "id": "gather", "family": "equation", "match": { "kind": "latex-environment", "name": "gather" }, "behavior": { "allowChildren": false } },
-    { "id": "multline", "family": "equation", "match": { "kind": "latex-environment", "name": "multline" }, "behavior": { "allowChildren": false } },
-    { "id": "display-math", "labelKey": "environment.equation", "family": "equation", "match": { "kind": "display-math" }, "behavior": { "allowChildren": false } },
-    { "id": "figure", "family": "figure", "match": { "kind": "latex-environment", "name": "figure" }, "behavior": { "showOptionBrackets": true } },
-    { "id": "figure-star", "labelKey": "environment.figure", "family": "figure", "match": { "kind": "latex-environment", "name": "figure*" }, "behavior": { "showOptionBrackets": true } },
-    { "id": "inline-image", "labelKey": "environment.figure", "family": "figure", "match": { "kind": "command", "command": "includegraphics" } },
-    { "id": "table", "family": "table", "match": { "kind": "latex-environment", "name": "table" }, "behavior": { "showOptionBrackets": true } },
-    { "id": "table-star", "labelKey": "environment.table", "family": "table", "match": { "kind": "latex-environment", "name": "table*" }, "behavior": { "showOptionBrackets": true } },
-    { "id": "tabular", "labelKey": "environment.table", "family": "table", "match": { "kind": "latex-environment", "name": "tabular" }, "behavior": { "showHeader": false } },
-    { "id": "tabular-star", "labelKey": "environment.table", "family": "table", "match": { "kind": "latex-environment", "name": "tabular*" }, "behavior": { "showHeader": false } },
-    { "id": "tabularx", "labelKey": "environment.table", "family": "table", "match": { "kind": "latex-environment", "name": "tabularx" }, "behavior": { "showHeader": false } },
-    { "id": "longtable", "labelKey": "environment.table", "family": "table", "match": { "kind": "latex-environment", "name": "longtable" }, "behavior": { "showHeader": false } },
-    { "id": "itemize", "family": "list", "match": { "kind": "latex-environment", "name": "itemize" }, "behavior": { "showHeader": false, "showLabel": false } },
-    { "id": "enumerate", "family": "list", "match": { "kind": "latex-environment", "name": "enumerate" }, "behavior": { "showHeader": false, "showLabel": false } },
-    { "id": "description", "family": "list", "match": { "kind": "latex-environment", "name": "description" }, "behavior": { "showHeader": false, "showLabel": false } },
-    { "id": "quote", "family": "quote", "match": { "kind": "latex-environment", "name": "quote" }, "behavior": { "showLabel": false } },
-    { "id": "quotation", "family": "quote", "match": { "kind": "latex-environment", "name": "quotation" }, "behavior": { "showLabel": false } },
-    { "id": "verbatim", "family": "code", "match": { "kind": "latex-environment", "name": "verbatim" }, "behavior": { "allowChildren": false } },
-    { "id": "lstlisting", "family": "code", "match": { "kind": "latex-environment", "name": "lstlisting" }, "behavior": { "allowChildren": false } },
-    { "id": "placeholder", "family": "virtual", "match": { "kind": "virtual-block", "type": "placeholder" }, "behavior": { "showHeader": false, "showLabel": false } }
+    {
+      "id": "chapter",
+      "family": "section",
+      "match": {
+        "kind": "command",
+        "command": "chapter"
+      },
+      "style": {
+        "titleFontSize": 28,
+        "titleLineHeight": 1.25
+      }
+    },
+    {
+      "id": "section",
+      "family": "section",
+      "match": {
+        "kind": "command",
+        "command": "section"
+      },
+      "style": {
+        "titleFontSize": 24,
+        "titleLineHeight": 1.3
+      }
+    },
+    {
+      "id": "subsection",
+      "family": "section",
+      "match": {
+        "kind": "command",
+        "command": "subsection"
+      },
+      "style": {
+        "titleFontSize": 21,
+        "baseColor": "--env-subsection-base"
+      }
+    },
+    {
+      "id": "subsubsection",
+      "family": "section",
+      "match": {
+        "kind": "command",
+        "command": "subsubsection"
+      },
+      "style": {
+        "titleFontSize": 18,
+        "baseColor": "--env-subsubsection-base"
+      }
+    },
+    {
+      "id": "paragraph",
+      "family": "section",
+      "match": {
+        "kind": "command",
+        "command": "paragraph"
+      },
+      "style": {
+        "titleFontSize": 16
+      }
+    },
+    {
+      "id": "abstract",
+      "family": "section",
+      "match": {
+        "kind": "latex-environment",
+        "name": "abstract"
+      }
+    },
+    {
+      "id": "theorem",
+      "family": "theorem",
+      "match": {
+        "kind": "latex-environment",
+        "name": "theorem"
+      }
+    },
+    {
+      "id": "lemma",
+      "family": "theorem",
+      "match": {
+        "kind": "latex-environment",
+        "name": "lemma"
+      },
+      "style": {
+        "baseColor": "--env-lemma-base"
+      }
+    },
+    {
+      "id": "proposition",
+      "family": "theorem",
+      "match": {
+        "kind": "latex-environment",
+        "name": "proposition"
+      },
+      "style": {
+        "baseColor": "--env-proposition-base"
+      }
+    },
+    {
+      "id": "corollary",
+      "family": "theorem",
+      "match": {
+        "kind": "latex-environment",
+        "name": "corollary"
+      },
+      "style": {
+        "baseColor": "--env-corollary-base"
+      }
+    },
+    {
+      "id": "definition",
+      "family": "definition",
+      "match": {
+        "kind": "latex-environment",
+        "name": "definition"
+      }
+    },
+    {
+      "id": "assumption",
+      "family": "definition",
+      "match": {
+        "kind": "latex-environment",
+        "name": "assumption"
+      },
+      "style": {
+        "baseColor": "--env-assumption-base"
+      }
+    },
+    {
+      "id": "remark",
+      "family": "remark",
+      "match": {
+        "kind": "latex-environment",
+        "name": "remark"
+      }
+    },
+    {
+      "id": "example",
+      "family": "example",
+      "match": {
+        "kind": "latex-environment",
+        "name": "example"
+      }
+    },
+    {
+      "id": "proof",
+      "family": "proof",
+      "match": {
+        "kind": "latex-environment",
+        "name": "proof"
+      }
+    },
+    {
+      "id": "algorithm",
+      "family": "code",
+      "match": {
+        "kind": "latex-environment",
+        "name": "algorithm"
+      },
+      "behavior": {
+        "renderer": "content"
+      },
+      "style": {
+        "accentToken": "--env-algorithm-accent",
+        "fillToken": "--env-algorithm-fill",
+        "labelBackgroundToken": "--env-algorithm-label-bg",
+        "labelTextToken": "--env-algorithm-label-text",
+        "baseColor": "--env-algorithm-base"
+      }
+    },
+    {
+      "id": "algorithmic",
+      "family": "code",
+      "match": {
+        "kind": "latex-environment",
+        "name": "algorithmic"
+      },
+      "behavior": {
+        "showHeader": false,
+        "showLabel": false,
+        "renderer": "content"
+      },
+      "style": {
+        "accentToken": "--env-algorithm-accent",
+        "fillToken": "--env-algorithm-fill",
+        "labelBackgroundToken": "--env-algorithm-label-bg",
+        "labelTextToken": "--env-algorithm-label-text",
+        "baseColor": "--env-algorithm-base"
+      }
+    },
+    {
+      "id": "equation",
+      "family": "equation",
+      "match": {
+        "kind": "latex-environment",
+        "name": "equation"
+      },
+      "behavior": {
+        "allowChildren": false
+      }
+    },
+    {
+      "id": "equation-star",
+      "family": "equation",
+      "match": {
+        "kind": "latex-environment",
+        "name": "equation*"
+      },
+      "behavior": {
+        "allowChildren": false
+      }
+    },
+    {
+      "id": "align",
+      "family": "equation",
+      "match": {
+        "kind": "latex-environment",
+        "name": "align"
+      },
+      "behavior": {
+        "allowChildren": false
+      }
+    },
+    {
+      "id": "align-star",
+      "family": "equation",
+      "match": {
+        "kind": "latex-environment",
+        "name": "align*"
+      },
+      "behavior": {
+        "allowChildren": false
+      }
+    },
+    {
+      "id": "gather",
+      "family": "equation",
+      "match": {
+        "kind": "latex-environment",
+        "name": "gather"
+      },
+      "behavior": {
+        "allowChildren": false
+      }
+    },
+    {
+      "id": "multline",
+      "family": "equation",
+      "match": {
+        "kind": "latex-environment",
+        "name": "multline"
+      },
+      "behavior": {
+        "allowChildren": false
+      }
+    },
+    {
+      "id": "display-math",
+      "labelKey": "environment.equation",
+      "family": "equation",
+      "match": {
+        "kind": "display-math"
+      },
+      "behavior": {
+        "allowChildren": false
+      }
+    },
+    {
+      "id": "figure",
+      "family": "figure",
+      "match": {
+        "kind": "latex-environment",
+        "name": "figure"
+      },
+      "behavior": {
+        "showOptionBrackets": true
+      }
+    },
+    {
+      "id": "figure-star",
+      "labelKey": "environment.figure",
+      "family": "figure",
+      "match": {
+        "kind": "latex-environment",
+        "name": "figure*"
+      },
+      "behavior": {
+        "showOptionBrackets": true
+      }
+    },
+    {
+      "id": "inline-image",
+      "labelKey": "environment.figure",
+      "family": "figure",
+      "match": {
+        "kind": "command",
+        "command": "includegraphics"
+      }
+    },
+    {
+      "id": "table",
+      "family": "table",
+      "match": {
+        "kind": "latex-environment",
+        "name": "table"
+      },
+      "behavior": {
+        "showOptionBrackets": true
+      }
+    },
+    {
+      "id": "table-star",
+      "labelKey": "environment.table",
+      "family": "table",
+      "match": {
+        "kind": "latex-environment",
+        "name": "table*"
+      },
+      "behavior": {
+        "showOptionBrackets": true
+      }
+    },
+    {
+      "id": "tabular",
+      "labelKey": "environment.table",
+      "family": "table",
+      "match": {
+        "kind": "latex-environment",
+        "name": "tabular"
+      },
+      "behavior": {
+        "showHeader": false
+      }
+    },
+    {
+      "id": "tabular-star",
+      "labelKey": "environment.table",
+      "family": "table",
+      "match": {
+        "kind": "latex-environment",
+        "name": "tabular*"
+      },
+      "behavior": {
+        "showHeader": false
+      }
+    },
+    {
+      "id": "tabularx",
+      "labelKey": "environment.table",
+      "family": "table",
+      "match": {
+        "kind": "latex-environment",
+        "name": "tabularx"
+      },
+      "behavior": {
+        "showHeader": false
+      }
+    },
+    {
+      "id": "longtable",
+      "labelKey": "environment.table",
+      "family": "table",
+      "match": {
+        "kind": "latex-environment",
+        "name": "longtable"
+      },
+      "behavior": {
+        "showHeader": false
+      }
+    },
+    {
+      "id": "itemize",
+      "family": "list",
+      "match": {
+        "kind": "latex-environment",
+        "name": "itemize"
+      },
+      "behavior": {
+        "showHeader": true,
+        "showLabel": false,
+        "renderer": "list",
+        "blockHandler": "builtin.list",
+        "listStyle": "unordered",
+        "listMarker": "disc"
+      }
+    },
+    {
+      "id": "enumerate",
+      "family": "list",
+      "match": {
+        "kind": "latex-environment",
+        "name": "enumerate"
+      },
+      "behavior": {
+        "showHeader": true,
+        "showLabel": false,
+        "renderer": "list",
+        "blockHandler": "builtin.list",
+        "listStyle": "ordered",
+        "listMarker": "decimal"
+      }
+    },
+    {
+      "id": "description",
+      "family": "list",
+      "match": {
+        "kind": "latex-environment",
+        "name": "description"
+      },
+      "behavior": {
+        "showHeader": true,
+        "showLabel": false,
+        "renderer": "list",
+        "blockHandler": "builtin.list",
+        "listStyle": "description",
+        "listMarker": "none"
+      }
+    },
+    {
+      "id": "quote",
+      "family": "quote",
+      "match": {
+        "kind": "latex-environment",
+        "name": "quote"
+      },
+      "behavior": {
+        "showLabel": false
+      }
+    },
+    {
+      "id": "quotation",
+      "family": "quote",
+      "match": {
+        "kind": "latex-environment",
+        "name": "quotation"
+      },
+      "behavior": {
+        "showLabel": false
+      }
+    },
+    {
+      "id": "verbatim",
+      "family": "code",
+      "match": {
+        "kind": "latex-environment",
+        "name": "verbatim"
+      },
+      "behavior": {
+        "allowChildren": false
+      }
+    },
+    {
+      "id": "lstlisting",
+      "family": "code",
+      "match": {
+        "kind": "latex-environment",
+        "name": "lstlisting"
+      },
+      "behavior": {
+        "allowChildren": false
+      }
+    },
+    {
+      "id": "placeholder",
+      "family": "virtual",
+      "match": {
+        "kind": "virtual-block",
+        "type": "placeholder"
+      },
+      "behavior": {
+        "showHeader": false,
+        "showLabel": false
+      }
+    }
+  ],
+  "colorPalette": {
+    "section": "#3979c6",
+    "theorem": "#296bcb",
+    "definition": "#25979f",
+    "proof": "#4b9471",
+    "equation": "#71879e",
+    "remark": "#a17d49",
+    "example": "#3489a7",
+    "figure": "#268bb5",
+    "table": "#4b8996",
+    "list": "#8094a7",
+    "quote": "#84909b",
+    "code": "#566b7e",
+    "algorithm": "#159eae",
+    "virtual": "#c07845",
+    "generic": "#8a97a3",
+    "lemma": "#159a82",
+    "proposition": "#b56b2f",
+    "corollary": "#8c54c7",
+    "assumption": "#bc5484",
+    "subsection": "#668bc1",
+    "subsubsection": "#8975b7"
+  },
+  "customColorPalette": [
+    "lemma",
+    "corollary",
+    "definition",
+    "remark",
+    "example",
+    "proposition",
+    "virtual"
   ]
 }

@@ -29,6 +29,13 @@
 .reference-quick-tabs button.active { color: var(--color-primary); font-weight: 650; }
 .reference-quick-tabs button.active::after { position: absolute; right: 8px; bottom: -1px; left: 8px; height: 2px; background: var(--color-primary); content: ''; }
 .reference-quick-tabs button span { margin-left: 3px; color: var(--color-text-muted); font-size: 9px; }
+.reference-quick-compact-header { min-height: 39px; padding: 0 7px; gap: 4px; }
+.reference-quick-compact-header .reference-quick-tabs { min-width: 0; flex: 1; padding: 0; border: 0; }
+.reference-quick-compact-header .reference-quick-tabs button { padding: 0 5px; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 10px; }
+.reference-quick-compact-header .reference-quick-navigation button { width: 25px; padding: 0; font-size: 15px; }
+.library-toolbar-target { display: flex; align-items: center; }
+.sidebar-heading .library-toolbar-target .reference-quick-navigation { gap: 2px; }
+.sidebar-heading .library-toolbar-target button { width: 27px; height: 27px; padding: 0; font-size: 15px; }
 .reference-quick-filters { padding: 8px 9px 5px; border-bottom: 1px solid var(--color-border); }
 .reference-quick-filters > input, .reference-quick-filter-row select { min-width: 0; height: 29px; padding: 0 8px; border: 1px solid var(--color-border); border-radius: 6px; outline: none; color: var(--color-text-primary); background: var(--color-bg-panel); font: inherit; }
 .reference-quick-filters > input { width: 100%; }

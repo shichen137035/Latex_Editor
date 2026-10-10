@@ -22,11 +22,12 @@ async function until(script, label) {
     if (await evaluate(script)) return;
     await delay(50);
   }
-  throw new Error(`Timed out: ${label}\n${await evaluate('JSON.stringify({title:document.querySelector(".preview-title-object")?.textContent,status:document.querySelector(".save-status")?.className,focus:document.activeElement?.outerHTML?.slice(0,180)})')}`);
+  throw new Error(`Timed out: ${label}\n${await evaluate('JSON.stringify({previewTitle:document.querySelector(".preview-document-title h1")?.innerText,titleObject:document.querySelector(".preview-title-object")?.outerHTML?.slice(0,500),previewText:document.querySelector(".preview-page")?.innerText?.slice(0,500),sourceEditor:document.querySelector(".editor-surface .monaco-editor")?.textContent?.slice(0,500),status:document.querySelector(".save-status")?.className,focus:document.activeElement?.outerHTML?.slice(0,180)})')}`);
 }
 async function press(keyCode, modifiers = []) {
   page.webContents.sendInputEvent({ type: "keyDown", keyCode, modifiers });
   page.webContents.sendInputEvent({ type: "keyUp", keyCode, modifiers });
+  await delay(80); // Allow Chromium to apply selections before insertText sends the replacement.
 }
 async function openTitle() {
   await evaluate('document.querySelector(".preview-document-title h1").click()');
@@ -79,5 +80,10 @@ async function run() {
 }
 app.whenReady().then(() => {
   require('../../dist/main/index.js');
-  run().then(() => app.exit(0)).catch(error => { console.error(error); console.error(`Artifacts: ${root}`); app.exit(1); });
+  run().then(() => app.exit(0)).catch(async error => {
+    console.error(error); console.error(`Artifacts: ${root}`);
+    try { if (page) require("node:fs").writeFileSync(join(root, "failure.png"), (await page.webContents.capturePage(undefined, { stayHidden: true, stayAwake: true })).toPNG()); }
+    catch (captureError) { console.error(`Screenshot capture failed: ${captureError.message}`); }
+    app.exit(1);
+  });
 });

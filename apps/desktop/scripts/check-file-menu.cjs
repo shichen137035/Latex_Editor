@@ -73,8 +73,9 @@ async function run() {
   console.log("PASS blank-area menu -> create folder -> disk");
   await menu('[data-path="chapters"]', "New file");
   await name("draft.tex");
+  assert.ok(existsSync(resolve(project.canonicalPath, "chapters/draft.tex")), "nested file is created on disk");
+  await click('[data-path="chapters"]'); // New files do not implicitly open a collapsed folder.
   await until('!!document.querySelector(\'[data-path="chapters/draft.tex"]\')', "created nested file");
-  assert.ok(existsSync(resolve(project.canonicalPath, "chapters/draft.tex")));
   console.log("PASS folder menu -> create nested file -> disk");
   await menu('[data-path="chapters/draft.tex"]', "Rename");
   await name("renamed.tex");
