@@ -1,4 +1,12 @@
 {
+  "ai.queueTitle": "File de messages",
+  "ai.queueMessage": "Ajouter à la file",
+  "ai.queuePaused": "En pause",
+  "ai.queueSendNow": "Envoyer maintenant (interrompre la tâche en cours)",
+  "ai.queueRemove": "Retirer de la file",
+  "ai.queueFull": "La file est pleine. Retirez un message en attente.",
+  "ai.queueInterrupted": "Ce message était en attente à la fermeture de l’application. Envoyez-le maintenant pour réessayer.",
+  "ai.queueAttachmentsUnavailable": "Les pièces jointes en attente ne sont plus disponibles. Copiez le message et ajoutez-les à nouveau.",
   "settings.aiPrivacyHint": "Copilot Chat et Codex travaillent sur des instantanés du projet ; examinez leurs diffs avant d’appliquer les changements au projet original.",
   "settings.aiPermissionDetails": "La recherche web est disponible dans tous les modes. Le mode approbation examine les modifications avant application ; le mode automatique les applique pour examen. L’accès complet autorise aussi les écritures externes sans confirmation.",
   "ai.renameChat": "Renommer la conversation",

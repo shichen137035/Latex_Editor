@@ -1,4 +1,12 @@
 {
+  "ai.queueTitle": "Message queue",
+  "ai.queueMessage": "Add to queue",
+  "ai.queuePaused": "Paused",
+  "ai.queueSendNow": "Send now (interrupt current task)",
+  "ai.queueRemove": "Remove from queue",
+  "ai.queueFull": "The message queue is full. Remove a pending message first.",
+  "ai.queueInterrupted": "This queued message was interrupted when the app closed. Send it now to retry.",
+  "ai.queueAttachmentsUnavailable": "Queued attachments are no longer available. Copy the message and attach the files again.",
   "image.replaceImage": "Replace image: {{path}}",
   "environment.typography": "Title typography",
   "environment.style.titleFontFamily": "Title font",

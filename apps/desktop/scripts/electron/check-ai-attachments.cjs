@@ -1,6 +1,7 @@
 // Isolated UI regression; stages files but never sends a model request.
 const { app, BrowserWindow, ipcMain } = require("electron");
-const { desktopInvoke } = require("@latex-editor/contracts/desktop-ipc");
+const { desktopInvoke, desktopEvents } = require("@latex-editor/contracts/desktop-ipc");
+const { randomUUID } = require("node:crypto");
 const { mkdtempSync, mkdirSync, readdirSync } = require("node:fs");
 const { tmpdir } = require("node:os");
 const { resolve, join } = require("node:path");
@@ -63,8 +64,33 @@ async function run() {
   ipcMain.handle(desktopInvoke.ai.send.channel, (_event, input) => {
     sentContent = input.content;
     history.updatedAt = Date.now();
+    if (history.activeTaskId) {
+      history.queuedMessages ??= [];
+      history.queuedMessages.push({id:input.taskId,content:input.content,createdAt:Date.now()});
+      publishHistory();
+      return {conversation:history,taskId:history.activeTaskId,queued:true};
+    }
     history.messages.push({id:"sent",role:"user",content:input.content,createdAt:Date.now(),status:"complete"});
     return {conversation:history,taskId:input.taskId};
+  });
+  function publishHistory() {
+    history.revision = (history.revision ?? 0) + 1;
+    page.webContents.send(desktopEvents.toRenderer.aiUpdate.channel,{kind:'conversation',payload:history});
+  }
+  ipcMain.removeHandler(desktopInvoke.ai.sendQueued.channel);
+  ipcMain.handle(desktopInvoke.ai.sendQueued.channel, (_event, id, messageId) => {
+    assert.equal(id,conversation.id);
+    const selected=history.queuedMessages.find(item=>item.id===messageId);
+    assert.ok(selected); history.messages.at(-1).status='complete';
+    history.queuedMessages=history.queuedMessages.filter(item=>item.id!==messageId);
+    history.messages.push({id:randomUUID(),role:'user',content:selected.content,createdAt:Date.now(),status:'complete'}, {id:randomUUID(),role:'assistant',content:'Priority reply',createdAt:Date.now(),status:'streaming'});
+    history.activeTaskId=messageId; publishHistory();
+    return {conversation:history,taskId:messageId};
+  });
+  ipcMain.removeHandler(desktopInvoke.ai.removeQueued.channel);
+  ipcMain.handle(desktopInvoke.ai.removeQueued.channel, (_event,id,messageId)=>{
+    assert.equal(id,conversation.id);
+    history.queuedMessages=history.queuedMessages.filter(item=>item.id!==messageId);publishHistory();
   });
   await evaluate("document.querySelectorAll('.activity-bar > div:first-child > button')[3].click()");
   await until(() => evaluate("!!document.querySelector('.ai-composer textarea')"), "AI composer");
@@ -111,6 +137,25 @@ async function run() {
   await until(() => evaluate("!document.querySelector('.ai-composer-backdrop')"), "toggle button collapses input");
   await evaluate("(() => {const input=document.querySelector('.ai-composer textarea');Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype,'value').set.call(input,'');input.dispatchEvent(new Event('input',{bubbles:true}));})()");
   console.log('PASS bounded composer: internal scrolling, expanded panel, preserved draft/caret, outside click and toggle collapse');
+  history.activeTaskId=randomUUID();
+  history.messages.push({id:randomUUID(),role:'assistant',content:'Working',createdAt:Date.now(),status:'streaming'});publishHistory();
+  await until(()=>evaluate("!!document.querySelector('.ai-send-button.stopping')"),'running task stop control');
+  for (const content of ['Queued one','Queued two']) {
+    await evaluate(`(() => {const input=document.querySelector('.ai-composer textarea');Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype,'value').set.call(input,${JSON.stringify(content)});input.dispatchEvent(new Event('input',{bubbles:true}));})()`);
+    await until(()=>evaluate("!!document.querySelector('.ai-send-button:not(.stopping)') && !document.querySelector('.ai-send-button:not(.stopping)').disabled"),'send while task is running');
+    await evaluate("document.querySelector('.ai-send-button:not(.stopping)').click()");
+    await until(()=>evaluate("document.querySelector('.ai-composer textarea').value === ''"),'queued draft cleared');
+  }
+  assert.equal(await evaluate("document.querySelectorAll('.ai-message-queue li').length"),2);
+  assert.ok(await evaluate("!!document.querySelector('.ai-send-button.stopping')"));
+  await evaluate("document.querySelector('.ai-message-queue li button').click()");
+  await until(()=>evaluate("document.querySelectorAll('.ai-message-queue li').length === 1"),'send selected queued message now');
+  assert.equal(history.messages.at(-2).content,'Queued one');
+  await evaluate("document.querySelector('.ai-message-queue li button:last-child').click()");
+  await until(()=>evaluate("!document.querySelector('.ai-message-queue')"),'remove pending queued message');
+  delete history.activeTaskId;history.messages.at(-1).status='complete';publishHistory();
+  await until(()=>evaluate("!document.querySelector('.ai-send-button.stopping')"),'priority response completed');
+  console.log('PASS queue UI: send during generation, pending list, send-now and remove controls, independent Stop button');
   await paste();
   await evaluate("document.querySelector('.ai-attachment-chip button').click()");
   await until(() => evaluate("document.querySelectorAll('.ai-attachment-chip').length === 0"), "removed chip");

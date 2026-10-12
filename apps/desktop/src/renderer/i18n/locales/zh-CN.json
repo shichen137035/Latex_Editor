@@ -1,4 +1,12 @@
 {
+  "ai.queueTitle": "消息队列",
+  "ai.queueMessage": "加入队列",
+  "ai.queuePaused": "已暂停",
+  "ai.queueSendNow": "立即发送（中断当前任务）",
+  "ai.queueRemove": "从队列移除",
+  "ai.queueFull": "消息队列已满，请先移除一条待发送消息。",
+  "ai.queueInterrupted": "应用关闭时此消息尚未发送，可点击立即发送重试。",
+  "ai.queueAttachmentsUnavailable": "排队附件已不可用，请复制消息并重新添加附件。",
   "image.replaceImage": "更换图片：{{path}}",
   "environment.typography": "标题字体",
   "environment.style.titleFontFamily": "字体风格",

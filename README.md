@@ -4,7 +4,7 @@ TeXWeave 是一款面向本地项目的 LaTeX 桌面编辑器。它将源码编�
 
 版本统一以根目录 [`package.json`](package.json) 为准，界面和安装器使用同一版本来源。这是本地优先的桌面应用，不要求把论文或项目上传到云端。
 
-开发者导航：[项目文件结构与模块边界](docs/REPOSITORY_STRUCTURE.md)、[0.6.6 功能清单与体检](docs/FUNCTIONAL_AUDIT_0.6.6.md)、[基础架构](docs/BACKEND_ARCHITECTURE.md)。
+开发者导航：[功能总览与 Help 缺口](docs/FEATURE_CATALOG_AND_HELP_GAPS.md)、[项目文件结构与模块边界](docs/REPOSITORY_STRUCTURE.md)、[0.6.6 功能清单与体检](docs/FUNCTIONAL_AUDIT_0.6.6.md)、[基础架构](docs/BACKEND_ARCHITECTURE.md)。
 
 ## 功能概览
 

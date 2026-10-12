@@ -12,8 +12,8 @@ import { newestConversation } from "../../apps/desktop/src/renderer/ai/conversat
 
 const roots: string[] = [];
 afterEach(async () => { vi.useRealTimers(); await Promise.all(roots.splice(0).map(root => rm(root, { recursive: true, force: true }))); });
-async function fixture(mode: "chat" | "codex") {
-  const root = await mkdtemp(join(tmpdir(), "texweave-lifecycle-")); roots.push(root);
+async function fixture(mode: "chat" | "codex", prepareContext?: ConstructorParameters<typeof AIWorkspaceService>[0]["prepareContext"], existingRoot?: string) {
+  const root = existingRoot ?? await mkdtemp(join(tmpdir(), "texweave-lifecycle-")); if (!existingRoot) roots.push(root);
   let listener: Parameters<CodexAppServer["onEvent"]>[0] = () => undefined;
   let workspace = "";
   type Event = { data: Record<string, unknown>; agentId?: string };
@@ -26,22 +26,27 @@ async function fixture(mode: "chat" | "codex") {
       return () => listeners.delete(handler);
     }
   };
-  const codex = { onEvent: (callback: typeof listener) => { listener = callback; return () => undefined; }, startTurn: async (input: Parameters<CodexAppServer["startTurn"]>[0]) => { workspace = input.cwd; input.onThreadReady?.("thread"); return { threadId: "thread", turnId: "turn" }; } } as unknown as CodexAppServer;
+  let turnNumber = 0;
+  const currentTurn = () => turnNumber === 1 ? "turn" : `turn-${turnNumber}`;
+  const codexMock = { onEvent: (callback: typeof listener) => { listener = callback; return () => undefined; }, interruptTurn: vi.fn(async () => undefined), startTurn: vi.fn(async (input: Parameters<CodexAppServer["startTurn"]>[0]) => { turnNumber++; workspace = input.cwd; input.onThreadReady?.("thread"); return { threadId: "thread", turnId: currentTurn() }; }) };
+  const codex = codexMock as unknown as CodexAppServer;
   const updates: AIConversation[] = [];
   const service = new AIWorkspaceService({ userDataPath: root, codex,
     copilot: { dispose: async () => undefined, releaseSession: async () => undefined, session: async (_id: unknown, _model: unknown, _newId: unknown, path: string) => { workspace = path; return session; } } as unknown as CopilotChatService,
     projectFiles: { resolveFilePath: async (_id, path) => join(root, "project", path) }, projectExists: () => true,
+    ...(prepareContext ? { prepareContext } : {}),
     builtInSkillsRoot: join(root, "skills"), compileWorkspace: async () => { throw new Error("Unexpected compile"); }, setMainFile: async () => undefined,
     createBlockApi: ({ projectId, workspaceRoot }) => createWorkspaceBlockApi({ id: projectId, name: "Test", canonicalPath: workspaceRoot, createdAt: "", registeredAt: "", writable: true, missing: false }, workspaceRoot),
     onUpdate: (kind, payload) => { if (kind === "conversation") updates.push(payload as AIConversation); }
   });
   await service.initialize(); const conversation = await service.create({ projectId: "project", mode });
-  const send = () => service.send({ conversationId: conversation.id, content: "Edit", snapshot: [{ path: "main.tex", content: "\\begin{document}Old text.\\end{document}" }] });
+  const send = (content = "Edit") => service.send({ conversationId: conversation.id, content, snapshot: [{ path: "main.tex", content: "\\begin{document}Old text.\\end{document}" }] });
   const emit = (type: string, data: Record<string, unknown> = {}, agentId?: string) => {
     if (mode === "codex") listener({ method: type, params: { threadId: "thread", ...data } });
     else for (const callback of [...(callbacks.get("*") ?? []), ...(callbacks.get(type) ?? [])]) callback({ data, ...(agentId ? { agentId } : {}) });
   };
-  return { root, service, session, conversation, send, emit, updates, workspace: () => workspace, message: () => service.snapshot("project").conversations[0]!.messages.at(-1)! };
+  const finish = () => emit(mode === "chat" ? "session.idle" : "turn/completed", { turn: { id: currentTurn(), status: "completed" } });
+  return { root, service, session, codexMock, conversation, send, emit, finish, updates, workspace: () => workspace, message: () => service.snapshot("project").conversations[0]!.messages.at(-1)! };
 }
 
 for (const mode of ["chat", "codex"] as const) {
@@ -119,4 +124,147 @@ it("ends an unresponsive Copilot turn explicitly instead of waiting forever", as
     expect(f.message().status).toBe("error"); expect(f.message().content).toContain("stopped responding");
     expect(f.session.abort).toHaveBeenCalledOnce();
   } finally { vi.useRealTimers(); await f.service.dispose(); }
+});
+
+for (const mode of ["chat", "codex"] as const) {
+  it(`${mode} pauses queued work on provider failure until the user sends an entry now`, async () => {
+    const f = await fixture(mode);
+    try {
+      await f.send("First"); await f.send("Second");
+      f.emit(mode === "chat" ? "session.shutdown" : "turn/completed", { errorReason: "Disconnected", turn: { id: "turn", status: "failed" } });
+      await vi.waitFor(() => expect(f.service.snapshot("project").conversations[0]!.queuePaused).toBe(true));
+      const conversation = f.service.snapshot("project").conversations[0]!;
+      expect(conversation.messages).toHaveLength(2); expect(conversation.queuedMessages).toHaveLength(1);
+      await f.service.sendQueued(conversation.id, conversation.queuedMessages![0]!.id);
+      expect(f.service.snapshot("project").conversations[0]!.messages.at(-2)?.content).toBe("Second");
+    } finally { await f.service.dispose(); }
+  });
+
+  it(`${mode} defers a priority entry until an interrupted initial preparation has settled`, async () => {
+    let release!: () => void;
+    const gate = new Promise<void>(resolve => { release = resolve; });
+    const prepare = vi.fn(async () => {
+      if (prepare.mock.calls.length === 1) await gate;
+      return { snapshot: [{ path: "main.tex", content: "Source" }] };
+    });
+    const f = await fixture(mode, prepare);
+    try {
+      const first = f.send("First");
+      await vi.waitFor(() => expect(prepare).toHaveBeenCalledOnce());
+      const pending = await f.send("Priority");
+      const priority = f.service.sendQueued(f.conversation.id, pending.conversation.queuedMessages![0]!.id);
+      release(); await first; await priority;
+      expect(mode === "chat" ? f.session.send : f.codexMock.startTurn).toHaveBeenCalledOnce();
+      expect(f.service.snapshot("project").conversations[0]!.messages.at(-2)?.content).toBe("Priority");
+    } finally { release(); await f.service.dispose(); }
+  });
+
+  it(`${mode} drains queued messages in order only after the preceding turn completes`, async () => {
+    const f = await fixture(mode);
+    try {
+      await f.send("First");
+      expect(await f.send("Second")).toMatchObject({ queued: true });
+      expect(await f.send("Third")).toMatchObject({ queued: true });
+      expect(f.service.snapshot("project").conversations[0]!.messages).toHaveLength(2);
+      f.finish();
+      await vi.waitFor(() => expect(f.service.snapshot("project").conversations[0]!.messages.at(-2)?.content).toBe("Second"));
+      await vi.waitFor(() => expect(mode === "chat" ? f.session.send.mock.calls.length : f.codexMock.startTurn.mock.calls.length).toBe(2));
+      f.finish();
+      await vi.waitFor(() => expect(f.service.snapshot("project").conversations[0]!.messages.at(-2)?.content).toBe("Third"));
+      const conversation = f.service.snapshot("project").conversations[0]!;
+      expect(conversation.messages.filter(item => item.role === "user").map(item => item.content)).toEqual(["First", "Second", "Third"]);
+      expect(conversation.queuedMessages).toEqual([]);
+    } finally { await f.service.dispose(); }
+  });
+
+  it(`${mode} immediately sends the chosen entry after interrupting, leaving other entries in FIFO order`, async () => {
+    const f = await fixture(mode);
+    try {
+      await f.send("First"); await f.send("Second"); await f.send("Third");
+      const queued = f.service.snapshot("project").conversations[0]!.queuedMessages!;
+      await f.service.sendQueued(f.conversation.id, queued[1]!.id);
+      expect(mode === "chat" ? f.session.abort : f.codexMock.interruptTurn).toHaveBeenCalledOnce();
+      expect(f.service.snapshot("project").conversations[0]!.messages.at(-2)?.content).toBe("Third");
+      if (mode === "codex") {
+        f.emit("turn/completed", { turn: { id: "turn", status: "completed" } });
+        expect(f.message().status).toBe("streaming");
+      }
+      f.finish();
+      await vi.waitFor(() => expect(f.service.snapshot("project").conversations[0]!.messages.at(-2)?.content).toBe("Second"));
+    } finally { await f.service.dispose(); }
+  });
+
+  it(`${mode} pauses on Stop and retains queued attachments when their composer draft closes`, async () => {
+    const f = await fixture(mode);
+    try {
+      const running = await f.send("First");
+      const draftId = randomUUID(); f.service.openAttachmentDraft("project", draftId);
+      const attachment = await f.service.addPastedFile("project", "queued.txt", Buffer.from("Queued attachment"), draftId);
+      await f.service.send({ conversationId: f.conversation.id, content: "Attached follow-up", attachmentDraftId: draftId, attachmentIds: [attachment.id] });
+      await f.service.attachments.close({ projectId: "project", draftId });
+      await f.service.cancel(running.taskId);
+      expect(f.service.attachments.usage().count).toBe(1);
+      const conversation = f.service.snapshot("project").conversations[0]!;
+      expect(conversation.queuePaused).toBe(true); expect(conversation.messages).toHaveLength(2);
+      await f.service.sendQueued(conversation.id, conversation.queuedMessages![0]!.id);
+      expect(await readFile(join(f.workspace(), ".texweave", "ai-attachments", attachment.id, attachment.name), "utf8")).toBe("Queued attachment");
+      expect(f.service.attachments.usage().count).toBe(0);
+    } finally { await f.service.dispose(); }
+  });
+
+  it(`${mode} queues during initial preparation and reads fresh context only at dispatch`, async () => {
+    let release!: () => void;
+    const gate = new Promise<void>(resolve => { release = resolve; });
+    let content = "Original";
+    const prepare = vi.fn(async () => {
+      if (prepare.mock.calls.length === 1) await gate;
+      return { snapshot: [{ path: "main.tex", content }] };
+    });
+    const f = await fixture(mode, prepare);
+    try {
+      const first = f.send("First");
+      await vi.waitFor(() => expect(prepare).toHaveBeenCalledOnce());
+      const queued = await f.send("Second"); expect(queued.queued).toBe(true);
+      expect(prepare).toHaveBeenCalledOnce();
+      release(); await first; content = "Fresh project state";
+      f.finish();
+      await vi.waitFor(() => expect(prepare).toHaveBeenCalledTimes(2));
+      await vi.waitFor(async () => expect(await readFile(join(f.workspace(), "main.tex"), "utf8")).toBe(content));
+    } finally { release(); await f.service.dispose(); }
+  });
+}
+
+it("releases attachments when a queued message is removed without sending", async () => {
+  const f = await fixture("chat");
+  try {
+    await f.send(); const draftId = randomUUID(); f.service.openAttachmentDraft("project", draftId);
+    const item = await f.service.addPastedFile("project", "unused.txt", Buffer.from("Unused"), draftId);
+    const result = await f.service.send({ conversationId: f.conversation.id, content: "Remove me", attachmentDraftId: draftId, attachmentIds: [item.id] });
+    await f.service.removeQueued(f.conversation.id, result.conversation.queuedMessages![0]!.id);
+    expect(f.service.attachments.usage().count).toBe(0);
+    expect(f.service.snapshot("project").conversations[0]!.queuedMessages).toEqual([]);
+  } finally { await f.service.dispose(); }
+});
+
+it("does not resurrect a removed queue item when an older IPC response arrives", () => {
+  const base: AIConversation = { id: "chat", title: "Test", mode: "chat", messages: [], createdAt: 1, updatedAt: 1, revision: 1, queuedMessages: [{ id: "queued", content: "Waiting", createdAt: 1 }] };
+  const removed = { ...base, revision: 2, queuedMessages: [] };
+  expect(newestConversation(removed, base)).toBe(removed);
+  expect(newestConversation(base, removed)).toBe(removed);
+});
+
+it("retains unsent text after closing without automatically restarting tasks", async () => {
+  const original = await fixture("codex");
+  const running = await original.send("First"); await original.send("Unsent follow-up");
+  await original.service.cancel(running.taskId); await original.service.dispose();
+  const reopened = await fixture("codex", undefined, original.root);
+  try {
+    expect(reopened.codexMock.startTurn).not.toHaveBeenCalled();
+    const conversation = reopened.service.snapshot("project").conversations.find(item => item.id === original.conversation.id)!;
+    expect(conversation.queuePaused).toBe(true);
+    expect(conversation.queuedMessages![0]).toMatchObject({ content: "Unsent follow-up", error: "ai.queueInterrupted" });
+    await reopened.service.sendQueued(conversation.id, conversation.queuedMessages![0]!.id);
+    expect(reopened.codexMock.startTurn).toHaveBeenCalledOnce();
+    expect(reopened.service.snapshot("project").conversations.find(item => item.id === conversation.id)!.messages.at(-2)?.content).toBe("Unsent follow-up");
+  } finally { await reopened.service.dispose(); }
 });

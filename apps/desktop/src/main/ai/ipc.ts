@@ -2,12 +2,8 @@ import { desktopInvoke } from "@latex-editor/contracts/desktop-ipc";
 import { handleIpc } from "../ipc.js";
 import { dialog } from "electron";
 import type { WebContents } from "electron";
-import { readFile, stat } from "node:fs/promises";
-import type { AIContextSnapshotFile, ProjectTreeNode } from "@latex-editor/contracts" with { "resolution-mode": "import" };
 import type { DesktopContext } from "../desktopContext.js";
 import type { SettingsRepository } from "../settings.js";
-import { collectGraphicDependencies } from "../graphic-dependencies.js";
-import { isSnapshotTextPath, MAX_WORKSPACE_ASSET_BYTES, MAX_WORKSPACE_ASSET_COUNT, MAX_WORKSPACE_ASSET_TOTAL_BYTES } from "./workspaceFiles.js";
 
 /** Register AI and Copilot renderer requests separately from core project IPC. */
 export function registerAiIpcHandlers(context: DesktopContext | undefined, settings: SettingsRepository): void {
@@ -101,45 +97,15 @@ export function registerAiIpcHandlers(context: DesktopContext | undefined, setti
     if (!conversation) throw new Error("AI conversation was not found for this project.");
     if (conversation.projectId !== input.projectId) throw new Error("AI conversations can only access their associated project.");
     if (input.attachmentIds?.length) assertDraftOwner(event.sender, input.projectId!, input.attachmentDraftId!);
-    const attachmentLease = context.aiWorkspaces.acquireAttachments(input.conversationId, input.attachmentDraftId, input.attachmentIds);
-    try {
-      let snapshot: AIContextSnapshotFile[] = [];
-      const assets: Array<{ path: string; content: Uint8Array }> = [];
-      let omittedAssets = 0;
-      let unresolvedGraphics: string[] = [];
-      let projectPaths: string[] = [];
-      if (input.projectId) {
-        const collect = (nodes: ProjectTreeNode[]): string[] => nodes.flatMap((node) => node.kind === "file" ? [node.relativePath] : node.children ? collect(node.children) : []);
-        projectPaths = collect(await context.files.listTree(input.projectId) as ProjectTreeNode[]);
-        const paths = projectPaths.filter(isSnapshotTextPath);
-        snapshot = (await Promise.all(paths.map(async (path) => {
-          const value = await context!.files.readText(input.projectId!, path) as { content?: unknown };
-          return typeof value?.content === "string" ? { path, content: value.content } : undefined;
-        }))).filter((item): item is AIContextSnapshotFile => Boolean(item));
-        const overrideMap = new Map((input.overrides ?? []).map((file) => [file.path.replaceAll("\\", "/"), file.content]));
-        snapshot = snapshot.map((file) => overrideMap.has(file.path) ? { ...file, content: overrideMap.get(file.path)! } : file);
-        for (const [path, content] of overrideMap) if (!snapshot.some((file) => file.path === path)) snapshot.push({ path, content });
-        const graphicDependencies = collectGraphicDependencies(snapshot, projectPaths);
-        unresolvedGraphics = graphicDependencies.unresolved;
-        let assetBytes = 0;
-        for (const path of graphicDependencies.resolved) {
-          if (assets.length >= MAX_WORKSPACE_ASSET_COUNT) { omittedAssets++; continue; }
-          const absolutePath = await context.files.resolveFilePath(input.projectId, path, true);
-          const metadata = await stat(absolutePath);
-          if (!metadata.isFile() || metadata.size > MAX_WORKSPACE_ASSET_BYTES || assetBytes + metadata.size > MAX_WORKSPACE_ASSET_TOTAL_BYTES) { omittedAssets++; continue; }
-          const content = await readFile(absolutePath);
-          assets.push({ path, content });
-          assetBytes += content.byteLength;
-        }
-      }
-      const model = conversation.mode === "chat" ? settings.global.aiCopilotModel : settings.global.aiModel;
-      const reasoningEffort = conversation.mode === "chat" ? settings.global.aiCopilotReasoningEffort : settings.global.aiReasoningEffort;
-      const request = { conversationId: input.conversationId, ...(attachmentLease ? { attachmentLease } : {}), ...(input.taskId ? { taskId: input.taskId } : {}), content: input.content, permissionMode: settings.global.aiPermissionMode ?? "auto" as const, attachmentIds: input.attachmentIds ?? [], projectPaths, ...(model ? { model } : {}), ...(reasoningEffort ? { reasoningEffort } : {}), ...(snapshot.length ? { snapshot } : {}), ...(assets.length ? { assets } : {}), ...(omittedAssets ? { omittedAssets } : {}), ...(unresolvedGraphics.length ? { unresolvedGraphics } : {}), ...(input.contextText ? { contextText: input.contextText } : {}) };
-      return input.editMessageId
-        ? await context.aiWorkspaces.editAndResend({ ...request, messageId: input.editMessageId })
-        : await context.aiWorkspaces.send(request);
-    } finally { await attachmentLease?.release(); }
+    const model = conversation.mode === "chat" ? settings.global.aiCopilotModel : settings.global.aiModel;
+    const reasoningEffort = conversation.mode === "chat" ? settings.global.aiCopilotReasoningEffort : settings.global.aiReasoningEffort;
+    const request = { ...input, permissionMode: settings.global.aiPermissionMode ?? "auto" as const, ...(model ? { model } : {}), ...(reasoningEffort ? { reasoningEffort } : {}) };
+    return input.editMessageId
+      ? context.aiWorkspaces.editAndResend({ ...request, messageId: input.editMessageId })
+      : context.aiWorkspaces.send(request);
   });
+  handleIpc(desktopInvoke.ai.sendQueued, (_event, conversationId, messageId) => context?.aiWorkspaces.sendQueued(conversationId, messageId));
+  handleIpc(desktopInvoke.ai.removeQueued, (_event, conversationId, messageId) => context?.aiWorkspaces.removeQueued(conversationId, messageId));
   handleIpc(desktopInvoke.ai.cancel, (_event, taskId) => context?.aiWorkspaces.cancel(taskId));
   handleIpc(desktopInvoke.ai.setExecutable, async (_event, path) => {
     await settings.set("aiCodexExecutable", path);

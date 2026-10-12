@@ -242,8 +242,15 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return !!value && typeof value === "object" && !Array.isArray(value);
 }
 
+function hasUnsafeStyleCharacters(value: string): boolean {
+  for (const character of value) {
+    if (character.charCodeAt(0) < 32) return true;
+  }
+  return /[;{}<>]/.test(value);
+}
+
 function validEnvironmentColor(value: unknown, depth = 0): value is string {
-  if (typeof value !== "string" || !value.trim() || value.length > 256 || /[\0-\x1f;{}<>]/.test(value) || /(?:url|expression)\s*\(/i.test(value)) return false;
+  if (typeof value !== "string" || !value.trim() || value.length > 256 || hasUnsafeStyleCharacters(value) || /(?:url|expression)\s*\(/i.test(value)) return false;
   const color = value.trim();
   if (/^--[\w-]+$/.test(color) || /^#[\da-f]{3,8}$/i.test(color) || /^[a-z]+$/i.test(color)) return true;
   const variable = /^var\((--[\w-]+)(?:\s*,\s*(.+))?\)$/i.exec(color);
@@ -299,7 +306,7 @@ export function validEnvironmentDefinition(value: unknown): boolean {
   const style = item.style;
   if (!environmentColorProperties.every(key => validEnvironmentColor(style[key]))
     || style.baseColor !== undefined && !validEnvironmentColor(style.baseColor)
-    || style.titleFontFamily !== undefined && (typeof style.titleFontFamily !== "string" || !style.titleFontFamily.trim() || style.titleFontFamily.length > 256 || /[\0-\x1f;{}<>]/.test(style.titleFontFamily))) return false;
+    || style.titleFontFamily !== undefined && (typeof style.titleFontFamily !== "string" || !style.titleFontFamily.trim() || style.titleFontFamily.length > 256 || hasUnsafeStyleCharacters(style.titleFontFamily))) return false;
   for (const [field, [min, max]] of Object.entries(environmentTitleRanges)) {
     const number = style[field];
     if (number !== undefined && (typeof number !== "number" || !Number.isFinite(number) || number < min || number > max)) return false;

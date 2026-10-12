@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { copyFile, lstat, mkdir, readFile, realpath, rename, rm, writeFile } from "node:fs/promises";
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
-import type { AIAttachment, AIApprovalRequest, AIPermissionMode, AIChangeSet, AIConversation, AIContextSnapshotFile, AIFileChange, AIMessage, AIModelOption, AIProjectSkill, CompileResult, ProjectTreeNode } from "@latex-editor/contracts" with { "resolution-mode": "import" };
+import type { AIAttachment, AIApprovalRequest, AIPermissionMode, AIChangeSet, AIConversation, AIContextSnapshotFile, AIFileChange, AIMessage, AIModelOption, AIProjectSkill, AIQueuedMessage, CompileResult, ProjectTreeNode } from "@latex-editor/contracts" with { "resolution-mode": "import" };
 import type { CopilotSession } from "@github/copilot-sdk" with { "resolution-mode": "import" };
 import type { CodexAppServer } from "./codex-app-server.js";
 import type { CopilotChatService } from "./copilot-chat.js";
@@ -21,7 +21,9 @@ import { createProjectResources, createCopilotResourceTools } from "./project-re
 import { AIAttachmentStore, attachmentLimits, type AttachmentLease } from "./attachment-store.js";
 
 type AIWorkspaceAsset = { path: string; content: Uint8Array };
-type SendInput = { conversationId: string; taskId?: string; content: string; snapshot?: AIContextSnapshotFile[]; assets?: AIWorkspaceAsset[]; projectPaths?: string[]; omittedAssets?: number; unresolvedGraphics?: string[]; contextText?: string; model?: string; reasoningEffort?: string; attachmentIds?: string[]; attachmentDraftId?: string; attachmentLease?: AttachmentLease; permissionMode?: AIPermissionMode; editMessageId?: string; retainedAttachments?: RetainedAttachment[] };
+type SendInput = { conversationId: string; taskId?: string; content: string; overrides?: AIContextSnapshotFile[]; snapshot?: AIContextSnapshotFile[]; assets?: AIWorkspaceAsset[]; projectPaths?: string[]; omittedAssets?: number; unresolvedGraphics?: string[]; contextText?: string; model?: string; reasoningEffort?: string; attachmentIds?: string[]; attachmentDraftId?: string; attachmentLease?: AttachmentLease; permissionMode?: AIPermissionMode; editMessageId?: string; retainedAttachments?: RetainedAttachment[] };
+type PreparedContext = Pick<SendInput, "snapshot" | "assets" | "projectPaths" | "omittedAssets" | "unresolvedGraphics">;
+type QueuedSend = { id: string; input: SendInput; lease?: AttachmentLease; bytes?: number; ready?: boolean };
 type RetainedAttachment = { id: string; name: string; size: number; content: Uint8Array };
 type WorkspaceAttachment = AIAttachment & { path: string };
 type AICompileWorkspace = (input: { projectId: string; workspaceRoot: string; mainFile?: string }) => Promise<CompileResult>;
@@ -71,6 +73,11 @@ export class AIWorkspaceService {
   #cancelingCopilot = new Map<string, ActiveCopilotTurn>();
   #writeChain = Promise.resolve();
   #saveTimer: ReturnType<typeof setTimeout> | undefined;
+  #queuedSends = new Map<string, QueuedSend>();
+  #startingSends = new Map<string, { taskId: string; done: Promise<void> }>();
+  #queueControls = new Set<string>();
+  #disposed = false;
+  readonly #prepareContext: ((projectId: string | undefined, overrides: AIContextSnapshotFile[]) => Promise<PreparedContext>) | undefined;
   readonly attachments: AIAttachmentStore;
   #unsubscribe: () => void;
 
@@ -80,6 +87,7 @@ export class AIWorkspaceService {
     copilot: CopilotChatService;
     projectFiles: { resolveFilePath(projectId: string, relativePath: string, mustExist?: boolean): Promise<string>; listTree?(projectId: string): Promise<ProjectTreeNode[]> };
     projectExists(projectId: string): boolean;
+    prepareContext?(projectId: string | undefined, overrides: AIContextSnapshotFile[]): Promise<PreparedContext>;
     builtInSkillsRoot: string;
     compileWorkspace: AICompileWorkspace;
     setMainFile(projectId: string, relativePath: string): Promise<void>;
@@ -95,6 +103,7 @@ export class AIWorkspaceService {
     this.#copilot = options.copilot;
     this.#projectFiles = options.projectFiles;
     this.#projectExists = options.projectExists;
+    this.#prepareContext = options.prepareContext;
     this.#builtInSkillsRoot = options.builtInSkillsRoot;
     this.#userSkillsRoot = join(options.userDataPath, "ai", "skills");
     this.#compileWorkspace = options.compileWorkspace;
@@ -121,6 +130,11 @@ export class AIWorkspaceService {
         this.#data = { version: 1, conversations, changeSets };
         let interrupted = false;
         for (const conversation of conversations) {
+          if (conversation.queuedMessages?.length) {
+            conversation.queuePaused = true;
+            for (const queued of conversation.queuedMessages) queued.error = "ai.queueInterrupted";
+            interrupted = true;
+          }
           if (conversation.activeTaskId) { delete conversation.activeTaskId; interrupted = true; }
           for (const message of conversation.messages) {
             if (message.status === "streaming") {
@@ -139,6 +153,13 @@ export class AIWorkspaceService {
   }
 
   async dispose(): Promise<void> {
+    this.#disposed = true;
+    for (const conversation of this.#data.conversations) if (conversation.queuedMessages?.length) {
+      conversation.queuePaused = true;
+      for (const queued of conversation.queuedMessages) queued.error = "ai.queueInterrupted";
+    }
+    await Promise.all([...this.#queuedSends.values()].map(entry => entry.lease?.release()));
+    this.#queuedSends.clear();
     await this.attachments.dispose();
     this.approvals.cancel(); this.#unsubscribe();
     for (const turn of this.#cancelingCopilot.values()) { turn.canceled = true; await turn.finish?.(); }
@@ -250,7 +271,7 @@ export class AIWorkspaceService {
     if (typeof title !== "string" || !title.trim() || title.trim().length > 120) throw new Error("Use a conversation name between 1 and 120 characters.");
     conversation.title = title.trim(); conversation.updatedAt = Date.now();
     await this.#persist();
-    this.#onUpdate("conversation", structuredClone(conversation));
+    this.#publishConversation(conversation);
     return structuredClone(conversation);
   }
 
@@ -275,9 +296,13 @@ export class AIWorkspaceService {
   }
 
   async remove(conversationId: string): Promise<void> {
-    this.#conversation(conversationId);
+    const conversation = this.#conversation(conversationId);
+    if (this.#startingSends.has(conversationId) || this.#queueControls.has(conversationId)) throw new Error("Cancel the active response before deleting this chat.");
     if ([...this.#activeByThread.values()].some((turn) => turn.conversationId === conversationId) || [...this.#cancelingCopilot.values()].some((turn) => turn.conversationId === conversationId)) throw new Error("Cancel the active response before deleting this chat.");
     await this.#copilot.deleteSession(this.#conversation(conversationId).copilotSessionId);
+    for (const queued of conversation.queuedMessages ?? []) {
+      await this.#queuedSends.get(queued.id)?.lease?.release(); this.#queuedSends.delete(queued.id);
+    }
     this.#data.conversations = this.#data.conversations.filter((item) => item.id !== conversationId);
     this.#data.changeSets = this.#data.changeSets.filter((item) => item.conversationId !== conversationId);
     await rm(join(this.#root, conversationId), { recursive: true, force: true });
@@ -380,18 +405,141 @@ export class AIWorkspaceService {
     }));
   }
 
-  async send(input: SendInput): Promise<{ conversation: AIConversation; taskId: string }> {
-    const attachmentLease = input.attachmentLease ?? this.acquireAttachments(input.conversationId, input.attachmentDraftId, input.attachmentIds);
+  async send(input: SendInput): Promise<{ conversation: AIConversation; taskId: string; queued?: boolean }> {
+    const conversation = this.#conversation(input.conversationId);
+    if (this.#disposed) throw new Error("AI workspace is shutting down.");
+    if (typeof input.content !== "string" || !input.content.trim() || input.content.trim().length > 40_000) throw new Error("Enter a message under 40,000 characters.");
+    if (input.taskId !== undefined && !/^[0-9a-f-]{36}$/i.test(input.taskId)) throw new Error("Invalid AI task id.");
+    const id = input.taskId ?? randomUUID();
+    if (this.#queuedSends.has(id) || [...this.#startingSends.values()].some(entry => entry.taskId === id) || this.#data.conversations.some(item => item.activeTaskId === id)) throw new Error("This AI request has already been submitted.");
+    const bytes = Buffer.byteLength(input.content) + Buffer.byteLength(input.contextText ?? "")
+      + [...(input.snapshot ?? []), ...(input.overrides ?? [])].reduce((total, file) => total + Buffer.byteLength(file.content), 0)
+      + (input.assets ?? []).reduce((total, asset) => total + asset.content.byteLength, 0);
+    const waiting = this.#conversationBusy(conversation) || !!conversation.queuedMessages?.length || this.#queueControls.has(conversation.id);
+    if (waiting && ((conversation.queuedMessages?.length ?? 0) >= 20
+      || this.#data.conversations.reduce((total, item) => total + (item.queuedMessages?.length ?? 0), 0) >= 100
+      || bytes + [...this.#queuedSends.values()].reduce((total, entry) => total + (entry.bytes ?? 0), 0) > MAX_SNAPSHOT_BYTES * 2)) throw new Error("ai.queueFull");
+    const lease = input.attachmentLease ?? this.acquireAttachments(conversation.id, input.attachmentDraftId, input.attachmentIds);
+    if (lease && lease.projectId !== conversation.projectId) { await lease.release(); throw new Error("Attachments belong to another project."); }
+    const entry: QueuedSend = { id, bytes, input: { ...input, taskId: id, ...(lease ? { attachmentLease: lease } : {}) }, ...(lease ? { lease } : {}) };
+    if (waiting) {
+      const metadata: AIQueuedMessage = { id, content: input.content, createdAt: Date.now(), permissionMode: input.permissionMode ?? "auto", ...(input.model ? { model: input.model } : {}), ...(input.reasoningEffort ? { reasoningEffort: input.reasoningEffort } : {}), ...(input.contextText ? { contextText: input.contextText } : {}), ...(lease ? { attachments: lease.entries.map(({ id, name, size }) => ({ id, name, size })) } : {}) };
+      conversation.queuedMessages ??= [];
+      conversation.queuedMessages.push(metadata); this.#queuedSends.set(id, entry);
+      try { await this.#persist(); await lease?.consume(); entry.ready = true; }
+      catch (error) { conversation.queuedMessages = conversation.queuedMessages.filter(item => item.id !== id); this.#queuedSends.delete(id); await lease?.release(); throw error; }
+      this.#publishConversation(conversation);
+      this.#drainQueue(conversation);
+      return { conversation: structuredClone(conversation), taskId: conversation.activeTaskId ?? id, queued: true };
+    }
+    conversation.queuePaused = false;
+    return this.#startSend(entry);
+  }
+
+  #conversationBusy(conversation: AIConversation): boolean {
+    return this.#startingSends.has(conversation.id) || !!conversation.activeTaskId || conversation.messages.some(message => message.status === "streaming")
+      || [...this.#activeByThread.values(), ...this.#cancelingCopilot.values()].some(turn => turn.conversationId === conversation.id);
+  }
+
+  async #startSend(entry: QueuedSend): Promise<{ conversation: AIConversation; taskId: string }> {
+    const conversation = this.#conversation(entry.input.conversationId);
+    let finishStarting!: () => void;
+    const done = new Promise<void>(resolve => { finishStarting = resolve; });
+    this.#startingSends.set(conversation.id, { taskId: entry.id, done });
+    conversation.activeTaskId = entry.id;
+    this.#publishConversation(conversation);
     try {
-      if (attachmentLease && attachmentLease.projectId !== this.#conversation(input.conversationId).projectId) throw new Error("Attachments belong to another project.");
-      const result = await this.#send({ ...input, ...(attachmentLease ? { attachmentLease } : {}) });
-      await attachmentLease?.consume();
+      const prepared = this.#prepareContext ? await this.#prepareContext(conversation.projectId, entry.input.overrides ?? []) : {};
+      if (this.#disposed) throw new Error("AI workspace is shutting down.");
+      const result = await this.#send({ ...entry.input, ...prepared, taskId: entry.id });
+      await entry.lease?.consume();
       return result;
-    } finally { await attachmentLease?.release(); }
+    } catch (error) {
+      if (conversation.activeTaskId === entry.id) delete conversation.activeTaskId;
+      conversation.queuePaused = true;
+      this.#publishConversation(conversation);
+      throw error;
+    } finally {
+      try { await entry.lease?.release(); }
+      finally { this.#startingSends.delete(conversation.id); finishStarting(); this.#drainQueue(conversation); }
+    }
+  }
+
+  #drainQueue(conversation: AIConversation): void {
+    if (this.#disposed || conversation.queuePaused || this.#queueControls.has(conversation.id) || this.#conversationBusy(conversation)) return;
+    const metadata = conversation.queuedMessages?.[0];
+    if (!metadata || metadata.error) return;
+    const entry = this.#queuedSends.get(metadata.id);
+    if (!entry?.ready) return;
+    this.#queuedSends.delete(entry.id); conversation.queuedMessages!.shift();
+    void this.#startSend(entry).catch(async error => {
+      metadata.error = error instanceof Error ? error.message : String(error);
+      // Consumed attachments cannot be retried after a failed dispatch.
+      conversation.queuedMessages ??= [];
+      conversation.queuedMessages.unshift(metadata); conversation.queuePaused = true;
+      this.#publishConversation(conversation);
+      await this.#persist();
+    }).catch(error => console.error("Could not save queued AI message", error));
+  }
+
+  #queueTurnFinished(conversation: AIConversation, success: boolean): void {
+    if (!success && conversation.queuedMessages?.length && !conversation.queuePaused) {
+      conversation.queuePaused = true; this.#publishConversation(conversation);
+      void this.#persist().catch(error => console.error("Could not save AI queue state", error));
+    }
+    this.#drainQueue(conversation);
+  }
+
+  async sendQueued(conversationId: string, messageId: string): Promise<{ conversation: AIConversation; taskId: string }> {
+    const conversation = this.#conversation(conversationId);
+    const metadata = conversation.queuedMessages?.find(item => item.id === messageId);
+    if (!metadata) throw new Error("Queued AI message was not found.");
+    if (this.#disposed || this.#queueControls.has(conversationId)) throw new Error("Another queue operation is in progress.");
+    const stored = this.#queuedSends.get(messageId);
+    if (stored && !stored.ready) throw new Error("Wait until the queued message has been saved.");
+    if (!stored && metadata.attachments?.length) throw new Error("ai.queueAttachmentsUnavailable");
+    const entry: QueuedSend = stored ?? { id: messageId, input: { conversationId, taskId: messageId, content: metadata.content, permissionMode: metadata.permissionMode ?? "ask", ...(metadata.model ? { model: metadata.model } : {}), ...(metadata.reasoningEffort ? { reasoningEffort: metadata.reasoningEffort } : {}), ...(metadata.contextText ? { contextText: metadata.contextText } : {}) } };
+    this.#queueControls.add(conversationId);
+    try {
+      const starting = this.#startingSends.get(conversationId);
+      if (conversation.activeTaskId) await this.cancel(conversation.activeTaskId);
+      await starting?.done;
+      if (conversation.activeTaskId) await this.cancel(conversation.activeTaskId);
+      if (this.#conversationBusy(conversation)) throw new Error("Wait for the current AI request to stop.");
+      this.#queuedSends.delete(messageId);
+      conversation.queuedMessages = conversation.queuedMessages!.filter(item => item.id !== messageId);
+      conversation.queuePaused = false;
+      return await this.#startSend(entry);
+    } catch (error) {
+      if (!conversation.queuedMessages?.some(item => item.id === messageId)) {
+        metadata.error = error instanceof Error ? error.message : String(error);
+        conversation.queuedMessages ??= []; conversation.queuedMessages.unshift(metadata);
+      }
+      conversation.queuePaused = true; this.#publishConversation(conversation); await this.#persist();
+      throw error;
+    } finally { this.#queueControls.delete(conversationId); this.#drainQueue(conversation); }
+  }
+
+  async removeQueued(conversationId: string, messageId: string): Promise<void> {
+    const conversation = this.#conversation(conversationId);
+    if (this.#queueControls.has(conversationId)) throw new Error("Another queue operation is in progress.");
+    const entry = this.#queuedSends.get(messageId);
+    this.#queuedSends.delete(messageId);
+    conversation.queuedMessages = (conversation.queuedMessages ?? []).filter(item => item.id !== messageId);
+    await entry?.lease?.release();
+    this.#publishConversation(conversation); await this.#persist();
+    this.#drainQueue(conversation);
+  }
+
+  #publishConversation(conversation: AIConversation): void {
+    conversation.revision = (conversation.revision ?? 0) + 1;
+    conversation.updatedAt = Math.max(Date.now(), conversation.updatedAt + 1);
+    this.#onUpdate("conversation", structuredClone(conversation));
   }
 
   async editAndResend(input: SendInput & { messageId: string }): Promise<{ conversation: AIConversation; taskId: string }> {
     const conversation = this.#conversation(input.conversationId);
+    if (conversation.queuedMessages?.length || this.#startingSends.has(conversation.id)) throw new Error("Clear the message queue before editing an earlier message.");
     const messageIndex = conversation.messages.findIndex(message => message.id === input.messageId);
     const message = conversation.messages[messageIndex];
     if (!message || message.role !== "user") throw new Error("Only your own messages can be edited.");
@@ -405,7 +553,8 @@ export class AIWorkspaceService {
     const attachmentLease = input.attachmentLease ?? this.acquireAttachments(input.conversationId, input.attachmentDraftId, input.attachmentIds);
     try {
       if (attachmentLease && attachmentLease.projectId !== conversation.projectId) throw new Error("Attachments belong to another project.");
-      return await this.#send({ ...input, ...(attachmentLease ? { attachmentLease } : {}), retainedAttachments, editMessageId: input.messageId });
+      if (this.#conversationBusy(conversation)) throw new Error("Stop the current response before editing a message.");
+      return await this.#startSend({ id: input.taskId ?? randomUUID(), input: { ...input, ...(attachmentLease ? { attachmentLease } : {}), retainedAttachments, editMessageId: input.messageId }, ...(attachmentLease ? { lease: attachmentLease } : {}) });
     } finally { await attachmentLease?.release(); }
   }
 
@@ -450,7 +599,7 @@ export class AIWorkspaceService {
       assistantMessage.completedAt = Date.now();
       delete conversation.activeTaskId;
       assistantMessage.content = `Could not start AI response: ${error instanceof Error ? error.message : String(error)}`;
-      this.#onUpdate("conversation", structuredClone(conversation));
+      this.#publishConversation(conversation);
       throw error;
     }
     if (await this.#finishPendingCancellation(taskId, conversation, assistantMessage)) return { conversation: structuredClone(conversation), taskId };
@@ -530,7 +679,7 @@ export class AIWorkspaceService {
       delete conversation.activeTaskId;
       assistantMessage.content = error instanceof Error ? error.message : String(error);
       conversation.updatedAt = Date.now();
-      this.#onUpdate("conversation", structuredClone(conversation));
+      this.#publishConversation(conversation);
       await this.#persist();
       throw error;
     }
@@ -544,8 +693,9 @@ export class AIWorkspaceService {
     message.content ||= "Generation stopped.";
     for (const part of message.reasoning ?? []) part.complete = true;
     conversation.updatedAt = Date.now();
-    this.#onUpdate("conversation", structuredClone(conversation));
+    this.#publishConversation(conversation);
     await this.#persist();
+    this.#queueTurnFinished(conversation, false);
     return true;
   }
 
@@ -565,11 +715,14 @@ export class AIWorkspaceService {
     this.#cancelingThreads.delete(taskId);
     this.#cancelRequested.delete(taskId);
     conversation.updatedAt = Date.now();
-    this.#onUpdate("conversation", structuredClone(conversation));
+    this.#publishConversation(conversation);
     await this.#persist();
+    this.#queueTurnFinished(conversation, false);
   }
 
   async cancel(taskId: string): Promise<void> {
+    const conversation = this.#data.conversations.find(item => item.activeTaskId === taskId);
+    if (conversation) { conversation.queuePaused = true; this.#publishConversation(conversation); }
     const copilotTurn = this.#cancelingCopilot.get(taskId);
     if (copilotTurn) {
       copilotTurn.canceled = true;
@@ -656,14 +809,15 @@ export class AIWorkspaceService {
         turn.base.clear();
         turn.unsubscribe.length = 0;
         void this.#copilot.releaseSession(session.sessionId).catch(error => console.warn("Could not release completed Copilot session", error));
-        this.#onUpdate("conversation", structuredClone(conversation));
+        this.#publishConversation(conversation);
         try { await this.#persist(); }
         catch (error) {
           assistantMessage.status = "error";
           assistantMessage.completedAt = Date.now();
           assistantMessage.content += `\n\nCould not save AI history: ${error instanceof Error ? error.message : String(error)}`;
-          this.#onUpdate("conversation", structuredClone(conversation));
+          this.#publishConversation(conversation);
         }
+        this.#queueTurnFinished(conversation, !turn.canceled && assistantMessage.status === "complete");
       };
       turn.finish = finish;
       
@@ -686,7 +840,7 @@ export class AIWorkspaceService {
         const id = event.data.messageId;
         updateResponseText(assistantMessage, id, event.data.deltaContent, false);
         conversation.updatedAt = Date.now();
-        this.#onUpdate("conversation", structuredClone(conversation));
+        this.#publishConversation(conversation);
         this.#schedulePersist();
       }));
       turn.unsubscribe.push(session.on("assistant.message", (event) => {
@@ -694,13 +848,13 @@ export class AIWorkspaceService {
         assistantMessage.activity = "responding";
         updateResponseText(assistantMessage, event.data.messageId, event.data.content, true);
         conversation.updatedAt = Date.now();
-        this.#onUpdate("conversation", structuredClone(conversation));
+        this.#publishConversation(conversation);
       }));
       const publishReasoning = (id: string, text: string, complete: boolean) => {
         if (turn.complete) return;
         updateReasoning(assistantMessage, id, text, complete);
         conversation.updatedAt = Date.now();
-        this.#onUpdate("conversation", structuredClone(conversation));
+        this.#publishConversation(conversation);
         this.#schedulePersist();
       };
       turn.unsubscribe.push(session.on("assistant.reasoning_delta", (event) => {
@@ -714,7 +868,7 @@ export class AIWorkspaceService {
         if (event.agentId || turn.complete) return;
         assistantMessage.activity = "working";
         for (const part of assistantMessage.reasoning ?? []) part.complete = true;
-        this.#onUpdate("conversation", structuredClone(conversation));
+        this.#publishConversation(conversation);
       }));
       turn.unsubscribe.push(session.on("session.shutdown", (event) => { void finish(event.data.errorReason ?? "Copilot session closed before the response completed."); }));
       turn.unsubscribe.push(session.on("session.error", (event) => { void finish(event.data.message); }));
@@ -753,7 +907,7 @@ export class AIWorkspaceService {
       delete conversation.activeTaskId;
       assistantMessage.content = error instanceof Error ? error.message : String(error);
       conversation.updatedAt = Date.now();
-      this.#onUpdate("conversation", structuredClone(conversation));
+      this.#publishConversation(conversation);
       await this.#persist();
       throw error;
     }
@@ -937,15 +1091,16 @@ export class AIWorkspaceService {
       const turn = params.turn as Record<string, unknown> | undefined;
       if (typeof turn?.id === "string") active.turnId = turn.id;
     }
-    this.#onUpdate("conversation", structuredClone(conversation));
+    this.#publishConversation(conversation);
     if (method !== "turn/completed") { this.#schedulePersist(); return; }
     try { await this.#persist(); }
     catch (error) {
       message.status = "error";
       message.completedAt = Date.now();
       message.content += `\n\nCould not save AI history: ${error instanceof Error ? error.message : String(error)}`;
-      this.#onUpdate("conversation", structuredClone(conversation));
+      this.#publishConversation(conversation);
     }
+    this.#queueTurnFinished(conversation, !active.canceled && message.status === "complete");
   }
 
   async #collectChanges(conversation: AIConversation, active: Pick<ActiveTurn, "scratchRoot" | "base" | "structure" | "permissionMode">): Promise<void> {
@@ -970,7 +1125,7 @@ export class AIWorkspaceService {
     if (excludedRelations) {
       const message = [...conversation.messages].reverse().find(item => item.role === "assistant");
       if (message) message.content += "\n\nRelation edits in metadata were excluded. Use the relation proposal tools and explicit approval to change logical dependencies.";
-      this.#onUpdate("conversation", structuredClone(conversation));
+      this.#publishConversation(conversation);
     }
     if (!files.length) return;
     const changeSet: AIChangeSet = { id: randomUUID(), conversationId: conversation.id, createdAt: Date.now(), files, status: "pending", permissionMode: active.permissionMode };

@@ -64,6 +64,7 @@ export function AIView(props: Props) {
   const longDraftFileRef = useRef<{ content: string; path: string } | undefined>(undefined);
   const [taskId, setTaskId] = useState<string>();
   const [canceling, setCanceling] = useState(false);
+  const [queueBusyId, setQueueBusyId] = useState<string>();
   const [includeSelection, setIncludeSelection] = useState(Boolean(props.selectedText));
   const [changesBusy, setChangesBusy] = useState(false);
   const [approvals, setApprovals] = useState<AIApprovalRequest[]>([]);
@@ -90,7 +91,7 @@ export function AIView(props: Props) {
   const latestMessageContent = activeConversation?.messages[activeConversation.messages.length - 1]?.content;
   const latestReasoning = activeConversation?.messages.at(-1)?.reasoning?.map((part) => part.text).join("\n");
   const lastUserMessageId = [...(activeConversation?.messages ?? [])].reverse().find(message => message.role === "user")?.id;
-  const responseRunning = Boolean(taskId) || Boolean(activeConversation?.messages.some((message) => message.status === "streaming"));
+  const responseRunning = Boolean(taskId || activeConversation?.activeTaskId) || Boolean(activeConversation?.messages.some((message) => message.status === "streaming"));
 
   useEffect(() => {
     if (!api) return;
@@ -104,8 +105,8 @@ export function AIView(props: Props) {
         const conversation = newestConversation(snapshotRef.current.conversations.find(item => item.id === incoming.id), incoming);
         snapshotRef.current = { ...snapshotRef.current, conversations: [conversation, ...snapshotRef.current.conversations.filter(item => item.id !== conversation.id)].sort((a, b) => b.updatedAt - a.updatedAt) };
         setSnapshot(current => ({ ...current, conversations: [newestConversation(current.conversations.find(item => item.id === conversation.id), conversation), ...current.conversations.filter(item => item.id !== conversation.id)] }));
-        if (conversation.id === activeIdRef.current && !conversation.messages.some((message) => message.status === "streaming")) { activeTaskIdRef.current = undefined; setTaskId(undefined); setCanceling(false); }
-        else if (conversation.id === activeIdRef.current && conversation.activeTaskId) { activeTaskIdRef.current = conversation.activeTaskId; setTaskId(conversation.activeTaskId); }
+        if (conversation.id === activeIdRef.current && conversation.activeTaskId) { activeTaskIdRef.current = conversation.activeTaskId; setTaskId(conversation.activeTaskId); }
+        else if (conversation.id === activeIdRef.current && !conversation.messages.some((message) => message.status === "streaming")) { activeTaskIdRef.current = undefined; setTaskId(undefined); setCanceling(false); }
       } else if (update.kind === "changes") {
         const changeSet = update.payload as AIChangeSet;
         setSnapshot((current) => ({ ...current, changeSets: [changeSet, ...current.changeSets.filter((item) => item.id !== changeSet.id)] }));
@@ -136,7 +137,7 @@ export function AIView(props: Props) {
       const first = conversations.find(item => item.id === activeIdRef.current) ?? conversations[0];
       setActiveId(first?.id);
       activeIdRef.current = first?.id;
-      const runningTask = first?.messages.some(message => message.status === "streaming") ? first.activeTaskId : undefined;
+      const runningTask = first?.activeTaskId;
       activeTaskIdRef.current = runningTask; setTaskId(runningTask);
       if (first) setMode(first.mode);
       else setMode(preferences.global("aiDefaultMode"));
@@ -303,11 +304,11 @@ export function AIView(props: Props) {
   };
 
   const addAttachments = async () => {
-    if (!api || attachmentsLoading || busy || responseRunning) return;
+    if (!api || attachmentsLoading || busy) return;
     setError(""); await attachmentDraft?.pick();
   };
   const addPastedAttachments = async (files: File[]) => {
-    if (!api || attachmentsLoading || busy || responseRunning) return;
+    if (!api || attachmentsLoading || busy) return;
     setError(""); await attachmentDraft?.paste(files);
   };
 
@@ -324,11 +325,10 @@ export function AIView(props: Props) {
 
   const send = async () => {
     const draft = draftRef.current;
-    if (!api || (!draft.trim() && !attachments.length) || responseRunning || busy || attachmentsLoading) return;
+    if (!api || (!draft.trim() && !attachments.length) || busy || attachmentsLoading) return;
+    const wasRunning = responseRunning;
     const requestedTaskId = crypto.randomUUID();
-    activeTaskIdRef.current = requestedTaskId;
-    setTaskId(requestedTaskId);
-    setCanceling(false);
+    if (!wasRunning) { activeTaskIdRef.current = requestedTaskId; setTaskId(requestedTaskId); setCanceling(false); }
     setBusy(true); setSending(true); setError("");
     try {
       const draftContent = draft.trim() || t("ai.attachmentPrompt");
@@ -362,7 +362,7 @@ export function AIView(props: Props) {
         const latest = snapshotRef.current.conversations.find((item) => item.id === started.conversation.id);
         const newest = newestConversation(latest, started.conversation);
         const stillRunning = newest.messages.some((message) => message.status === "streaming");
-        const currentTaskId = stillRunning ? started.taskId || requestedTaskId : undefined;
+        const currentTaskId = newest.activeTaskId ?? (stillRunning ? started.taskId || requestedTaskId : undefined);
         activeTaskIdRef.current = currentTaskId;
         setTaskId(currentTaskId);
         if (!stillRunning) setCanceling(false);
@@ -375,7 +375,7 @@ export function AIView(props: Props) {
       setDraft("");
       if (attachmentPayload) attachmentDraft?.sent(attachmentPayload);
       longDraftFileRef.current = undefined;
-    } catch (reason) { activeTaskIdRef.current = undefined; setTaskId(undefined); setCanceling(false); setError(messageOf(reason)); }
+    } catch (reason) { if (!wasRunning) { activeTaskIdRef.current = undefined; setTaskId(undefined); setCanceling(false); } setError(messageOf(reason)); }
     finally { setBusy(false); setSending(false); }
   };
 
@@ -406,6 +406,24 @@ export function AIView(props: Props) {
     setCanceling(true);
     try { await api.cancel(currentTaskId); } catch (reason) { setError(messageOf(reason)); }
     finally { setCanceling(false); }
+  };
+
+  const operateQueue = async (messageId: string, immediately: boolean) => {
+    if (!api || !activeConversation || queueBusyId || canceling) return;
+    setQueueBusyId(messageId); setError("");
+    if (immediately && responseRunning) setCanceling(true);
+    try {
+      if (immediately) {
+        const started = await api.sendQueued(activeConversation.id, messageId);
+        if (started) {
+          const newest = newestConversation(snapshotRef.current.conversations.find(item => item.id === started.conversation.id), started.conversation);
+          const next = { ...snapshotRef.current, conversations: [newest, ...snapshotRef.current.conversations.filter(item => item.id !== newest.id)] };
+          snapshotRef.current = next; setSnapshot(next);
+          activeTaskIdRef.current = newest.activeTaskId; setTaskId(newest.activeTaskId);
+        }
+      } else await api.removeQueued(activeConversation.id, messageId);
+    } catch (reason) { setError(messageOf(reason)); }
+    finally { setQueueBusyId(undefined); if (immediately) setCanceling(false); }
   };
 
   const scrollTranscriptToBottom = () => {
@@ -491,11 +509,12 @@ export function AIView(props: Props) {
           <textarea ref={composerRef} rows={1} defaultValue={draftRef.current} onChange={(event) => setDraft(event.target.value)} onPaste={handleComposerPaste} onKeyDown={(event) => { if (event.key === "Enter" && !event.shiftKey && !event.nativeEvent.isComposing) { event.preventDefault(); void send(); } }} placeholder={t("ai.messagePlaceholder")} aria-label={t("ai.messagePlaceholder")}/>
           {attachments.length > 0 && <div className="ai-draft-attachments">{attachments.map((attachment) => <span className="ai-attachment-chip" key={attachment.id} title={`${attachment.name} · ${(attachment.size / 1024).toFixed(1)} KB`}><span>▧ {attachment.name}</span><button aria-label={t("ai.removeAttachment", { name: attachment.name })} disabled={sending} onClick={() => void attachmentDraft?.remove(attachment.id)}>×</button></span>)}</div>}
           <div className="ai-composer-actions">
-            <button className="ai-add-attachment" title={t("ai.addAttachment")} aria-label={t("ai.addAttachment")} disabled={busy || attachmentsLoading || responseRunning} onClick={() => void addAttachments()}><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg></button>
+            <button className="ai-add-attachment" title={t("ai.addAttachment")} aria-label={t("ai.addAttachment")} disabled={busy || attachmentsLoading} onClick={() => void addAttachments()}><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg></button>
             <PermissionPicker value={preferences.global("aiPermissionMode")} disabled={busy || responseRunning} onChange={mode => void preferences.set("aiPermissionMode", mode)}/>
             <select className="ai-composer-model" aria-label={t("ai.model")} title={t("ai.model")} value={selectedModelId} disabled={modelsLoading || busy || responseRunning} onChange={(event) => void preferences.set(activeMode === "chat" ? "aiCopilotModel" : "aiModel", event.target.value)}><option value="">{t(modelsLoading ? "ai.loadingModels" : "ai.defaultModel")}</option>{models.map((model) => <option key={model.id} value={model.id}>{model.name}{model.isDefault ? ` (${t("ai.recommended")})` : ""}</option>)}</select>
             <ReasoningEffortPicker value={selectedEffort} defaultEffort={selectedModel?.defaultReasoningEffort} efforts={efforts} modelName={selectedModel?.name ?? t("ai.defaultModel")} disabled={modelsLoading || busy || responseRunning} onChange={effort => void preferences.set(effortKey, effort)}/>
-            {responseRunning ? <button className="ai-send-button stopping" title={t(canceling ? "ai.stopping" : "ai.stop")} aria-label={t(canceling ? "ai.stopping" : "ai.stop")} disabled={!taskId || canceling} onClick={() => void cancel()}><svg width="16" height="16" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true"><rect x="4" y="4" width="12" height="12" rx="2"/></svg></button> : <button className="ai-send-button" title={t("ai.send")} aria-label={t("ai.send")} disabled={busy || attachmentsLoading || (!draftSummary.hasText && !attachments.length)} onClick={() => void send()}><svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M12 19V5m-6 6 6-6 6 6"/></svg></button>}
+            {responseRunning && <button className="ai-send-button stopping" title={t(canceling ? "ai.stopping" : "ai.stop")} aria-label={t(canceling ? "ai.stopping" : "ai.stop")} disabled={!taskId || canceling} onClick={() => void cancel()}><svg width="16" height="16" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true"><rect x="4" y="4" width="12" height="12" rx="2"/></svg></button>}
+            {(!responseRunning || draftSummary.hasText || attachments.length > 0) && <button className="ai-send-button" title={t(responseRunning ? "ai.queueMessage" : "ai.send")} aria-label={t(responseRunning ? "ai.queueMessage" : "ai.send")} disabled={busy || attachmentsLoading || (!draftSummary.hasText && !attachments.length)} onClick={() => void send()}><svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M12 19V5m-6 6 6-6 6 6"/></svg></button>}
           </div>
         </div>;
 
@@ -525,7 +544,7 @@ export function AIView(props: Props) {
           {message.role === "assistant" && <AIResponse message={message} projectRoot={props.projectRoot} {...(props.mathContext ? { mathContext: props.mathContext } : {})} onOpenFile={props.onOpenFile}/>}
           {editingMessageId === message.id ? <div className="ai-message-edit"><textarea value={editedContent} onChange={event => setEditedContent(event.target.value)} aria-label={t("ai.editMessage")} autoFocus/><div><button type="button" disabled={busy || !editedContent.trim()} onClick={() => void editAndResend(message.id)}>{t("ai.editResend")}</button><button type="button" disabled={busy} onClick={() => { setEditingMessageId(undefined); setEditedContent(""); }}>{t("ai.cancelEdit")}</button></div></div> : message.role !== "assistant" && message.content && <div className="ai-message-content"><AIMessageContent content={message.content} projectRoot={props.projectRoot} {...(props.mathContext ? { mathContext: props.mathContext } : {})} {...(props.onOpenFile ? { onOpenFile: props.onOpenFile } : {})}/></div>}
           {!!message.attachments?.length && <div className="ai-message-attachments">{message.attachments.map((attachment) => <span key={attachment.id} title={attachment.name}>▧ {attachment.name}</span>)}</div>}
-          <div className="ai-message-actions"><button type="button" className="ai-edit-message" disabled={!message.content} title={t("editor.context.copy")} aria-label={t("editor.context.copy")} onClick={() => { void navigator.clipboard.writeText(message.content).catch(reason => setError(messageOf(reason))); }}><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="8" y="8" width="12" height="12" rx="2"/><path d="M16 8V4a2 2 0 0 0-2-2H4a2 2 0 0 0-2 2v10a2 2 0 0 0 2 2h4"/></svg></button>{message.role === "user" && message.id === lastUserMessageId && !responseRunning && !sending && editingMessageId !== message.id && <button type="button" className="ai-edit-message" disabled={busy} title={t("ai.editMessage")} aria-label={t("ai.editMessage")} onClick={() => { setEditingMessageId(message.id); setEditedContent(message.content); setError(""); }}><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m15 5 4 4M4 20l4-1L20 7a2.8 2.8 0 0 0-4-4L4 15z"/></svg></button>}</div>
+          <div className="ai-message-actions"><button type="button" className="ai-edit-message" disabled={!message.content} title={t("editor.context.copy")} aria-label={t("editor.context.copy")} onClick={() => { void navigator.clipboard.writeText(message.content).catch(reason => setError(messageOf(reason))); }}><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="8" y="8" width="12" height="12" rx="2"/><path d="M16 8V4a2 2 0 0 0-2-2H4a2 2 0 0 0-2 2v10a2 2 0 0 0 2 2h4"/></svg></button>{message.role === "user" && message.id === lastUserMessageId && !activeConversation?.queuedMessages?.length && !responseRunning && !sending && editingMessageId !== message.id && <button type="button" className="ai-edit-message" disabled={busy} title={t("ai.editMessage")} aria-label={t("ai.editMessage")} onClick={() => { setEditingMessageId(message.id); setEditedContent(message.content); setError(""); }}><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m15 5 4 4M4 20l4-1L20 7a2.8 2.8 0 0 0-4-4L4 15z"/></svg></button>}</div>
         </article>)}{!activeConversation?.messages.length && !sending && <p className="ai-empty-chat">{t(activeMode === "chat" ? "ai.chatReady" : "ai.codexReady")}</p>}
         {sending && responseRunning && !activeConversation?.messages.some((message) => message.status === "streaming") && <div className="ai-task-status" role="status"><span className="ai-thinking-spinner" aria-hidden="true"/>{t("ai.thinking")}</div>}</div>
         {activeChanges.map(changeSet => <ChangesCard key={changeSet.id} changes={changeSet} busy={changesBusy || responseRunning} onKeep={ids => void reviewChanges(changeSet, ids, true)} onDiscard={ids => void reviewChanges(changeSet, ids, false)} onView={path => props.onViewChanges(changeSet, path)}/>)}
@@ -533,6 +552,14 @@ export function AIView(props: Props) {
       {!transcriptAtBottom && <button type="button" className="ai-scroll-bottom" title={t("ai.scrollToLatest")} aria-label={t("ai.scrollToLatest")} onClick={scrollTranscriptToBottom}><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 4v15m-6-6 6 6 6-6"/></svg></button>}
       </div>
       <footer className="ai-composer-dock">
+        {!!activeConversation?.queuedMessages?.length && <section className="ai-message-queue" aria-label={t("ai.queueTitle")}>
+          <header><strong>{t("ai.queueTitle")}</strong><span>{activeConversation.queuedMessages.length}{activeConversation.queuePaused ? ` · ${t("ai.queuePaused")}` : ""}</span></header>
+          <ol>{activeConversation.queuedMessages.map(queued => <li key={queued.id}>
+            <div className="ai-queued-message-content"><p title={queued.content}>{queued.content}</p>{!!queued.attachments?.length && <small>{queued.attachments.map(item => item.name).join(", ")}</small>}{queued.error && <small className="ai-queue-error">{messageOf(queued.error)}</small>}</div>
+            <button type="button" disabled={!!queueBusyId || canceling || busy} title={t("ai.queueSendNow")} aria-label={t("ai.queueSendNow")} onClick={() => void operateQueue(queued.id, true)}><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 20V4m-6 6 6-6 6 6M5 20h14"/></svg></button>
+            <button type="button" disabled={!!queueBusyId || canceling || busy} title={t("ai.queueRemove")} aria-label={t("ai.queueRemove")} onClick={() => void operateQueue(queued.id, false)}><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m6 6 12 12M6 18 18 6"/></svg></button>
+          </li>)}</ol>
+        </section>}
         {approvals.filter(request => request.conversationId === activeId).map(request => <section className="ai-approval-card" key={request.id} role="alert"><strong>{t("ai.approvalRequired")}</strong><p>{request.description}</p>{request.command && <pre>{request.command}</pre>}{request.paths.length > 0 && <small>{request.paths.join("\n")}</small>}<div><button onClick={() => void resolveApproval(request.id, false)}>{t("ai.denyAction")}</button><button onClick={() => void resolveApproval(request.id, true)}>{t("ai.allowAction")}</button></div></section>)}
         {props.selectedText && <div className="ai-context-options"><label><input type="checkbox" checked={includeSelection} onChange={(event) => setIncludeSelection(event.target.checked)}/>{t("ai.includeSelection")}</label></div>}
           {(error || activeStatus.error) && <div className="inline-error ai-error" role="alert">{error || activeStatus.error}</div>}
@@ -544,4 +571,8 @@ export function AIView(props: Props) {
   </section>;
 }
 
-function messageOf(reason: unknown): string { return reason instanceof Error ? reason.message : String(reason); }
+function messageOf(reason: unknown): string {
+  const message = reason instanceof Error ? reason.message : String(reason);
+  const key = ["ai.queueFull", "ai.queueInterrupted", "ai.queueAttachmentsUnavailable"].find(key => message === key || message.endsWith(`: ${key}`));
+  return key ? t(key) : message;
+}

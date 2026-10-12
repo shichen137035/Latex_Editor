@@ -1,4 +1,12 @@
 {
+  "ai.queueTitle": "訊息佇列",
+  "ai.queueMessage": "加入佇列",
+  "ai.queuePaused": "已暫停",
+  "ai.queueSendNow": "立即傳送（中斷目前任務）",
+  "ai.queueRemove": "從佇列移除",
+  "ai.queueFull": "訊息佇列已滿，請先移除一則待傳送訊息。",
+  "ai.queueInterrupted": "應用程式關閉時此訊息尚未傳送，可點擊立即傳送重試。",
+  "ai.queueAttachmentsUnavailable": "排隊附件已無法使用，請複製訊息並重新加入附件。",
   "image.replaceImage": "更換圖片：{{path}}",
   "environment.typography": "標題字體",
   "environment.style.titleFontFamily": "字體風格",

@@ -674,9 +674,7 @@
 .settings-manager-block-environments-header .settings-manager-header-tools { flex: 0 0 auto; align-items: center; flex-wrap: nowrap; }
 .settings-manager-block-environments-header .environment-manager-toolbar-controls { flex-wrap: nowrap; }
 .preferences-dialog .manager-presets-button { flex: 0 0 auto; width: auto; min-height: 34px; padding: 0 12px; white-space: nowrap; border: 1px solid var(--color-border); background: var(--color-bg-subtle); color: var(--color-primary-strong); font: 500 12px var(--font-ui); }
-@media (min-width: 981px) { .preferences-dialog > .settings-manager-toolchain-header, .preferences-dialog > .settings-manager-simple-header { grid-template-columns: 36px minmax(0, 1fr) auto auto 34px; } }
-
-.preferences-dialog > .settings-manager-dialog-header { display: flex; flex-wrap: nowrap; gap: 12px; min-height: 64px; }
+.preferences-dialog.preferences-dialog-manager > .settings-manager-dialog-header { display: flex; flex-wrap: nowrap; gap: 12px; min-height: 64px; }
 .settings-manager-dialog-header .settings-manager-return { flex: 0 0 36px; }
 .settings-manager-dialog-header .settings-manager-dialog-title { flex: 1; }
 .settings-manager-dialog-header .settings-manager-header-tools { flex: 0 1 auto; min-width: 0; max-width: 65%; flex-wrap: nowrap; align-items: center; overflow-x: auto; scrollbar-width: thin; }

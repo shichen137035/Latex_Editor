@@ -57,6 +57,17 @@ export interface AIMessage {
   completedAt?: number;
   attachments?: AIAttachment[];
 }
+export interface AIQueuedMessage {
+  id: string;
+  content: string;
+  createdAt: number;
+  attachments?: AIAttachment[];
+  error?: string;
+  permissionMode?: AIPermissionMode;
+  model?: string;
+  reasoningEffort?: string;
+  contextText?: string;
+}
 export interface AIConversation {
   id: string;
   title: string;
@@ -70,6 +81,10 @@ export interface AIConversation {
   copilotToolsVersion?: number;
   /** Current request, so reopening the chat can reconnect its Stop action. */
   activeTaskId?: string;
+  /** Monotonic event revision, including pending queue changes. */
+  revision?: number;
+  queuedMessages?: AIQueuedMessage[];
+  queuePaused?: boolean;
   messages: AIMessage[];
 }
 export interface AIContextSnapshotFile { path: string; content: string }

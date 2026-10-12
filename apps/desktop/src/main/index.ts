@@ -27,6 +27,7 @@ import { CopilotChatService } from "./ai/copilot-chat.js";
 import { AIWorkspaceService } from "./ai/ai-workspace.js";
 import { createWorkspaceBlockApi } from "./ai/workspace-block-api.js";
 import { registerAiIpcHandlers } from "./ai/ipc.js";
+import { prepareAISendContext } from "./ai/send-context.js";
 import { failedCompilation, publishWorkspaceCompilation } from "./compile-preview.js";
 import { createProjectSourceArchive, ExportDependencyError } from "./project-export.js";
 import { ProjectHistoryService } from "./project-history.js";
@@ -135,6 +136,7 @@ async function createContext(): Promise<DesktopContext> {
     codex: ai,
     copilot,
     projectFiles: files,
+    prepareContext: (projectId, overrides) => prepareAISendContext(files, projectId, overrides),
     projectExists: (id) => Boolean(registry.get(id) && !registry.get(id)?.missing),
     builtInSkillsRoot: resolve(resourceRoot, "ai", "skills"),
     createBlockApi: async ({ projectId, workspaceRoot }) => {

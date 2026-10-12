@@ -300,3 +300,16 @@
 .ai-approval-card > div { display: flex; justify-content: flex-end; gap: 6px; margin-top: 7px; }
 .ai-approval-card button { padding: 5px 9px; border: 1px solid var(--color-border); border-radius: 6px; color: var(--color-primary-strong); background: var(--color-bg-panel); font-size: 11px; }
 .ai-inline-diff-heading .ai-diff-close { flex: 0 0 auto; margin-left: auto; padding: 4px 7px; border: 0; border-radius: 5px; color: var(--color-primary-strong); background: var(--color-bg-panel); font-size: 10px; }
+.ai-message-queue { flex: none; min-width: 0; padding: 8px 10px; border: 1px solid var(--color-border); border-radius: 10px; background: var(--color-bg-subtle); }
+.ai-message-queue header { display: flex; align-items: center; justify-content: space-between; gap: 8px; color: var(--color-text-secondary); font-size: 12px; }
+.ai-message-queue header strong { font-weight: 600; }
+.ai-message-queue ol { margin: 6px 0 0; padding: 0; max-height: 144px; overflow: auto; list-style: none; counter-reset: queued; }
+.ai-message-queue li { display: flex; align-items: center; gap: 6px; min-width: 0; padding: 5px 0; counter-increment: queued; }
+.ai-message-queue li::before { content: counter(queued); flex: none; width: 14px; font-size: 11px; color: var(--color-text-secondary); }
+.ai-queued-message-content { flex: 1; min-width: 0; }
+.ai-queued-message-content p, .ai-queued-message-content small { display: block; margin: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; }
+.ai-queued-message-content small { font-size: 11px; color: var(--color-text-secondary); }
+.ai-queued-message-content .ai-queue-error { white-space: normal; color: var(--color-danger, #c54a60); }
+.ai-message-queue li button { display: grid; place-items: center; flex: none; width: 27px; height: 27px; padding: 5px; border: 0; border-radius: 6px; color: var(--color-accent); background: transparent; }
+.ai-message-queue li button:hover { background: var(--color-bg-hover); }
+.ai-message-queue li button svg { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; }

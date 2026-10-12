@@ -1,4 +1,12 @@
 {
+  "ai.queueTitle": "メッセージの送信待ち",
+  "ai.queueMessage": "送信待ちに追加",
+  "ai.queuePaused": "一時停止中",
+  "ai.queueSendNow": "今すぐ送信（現在のタスクを中断）",
+  "ai.queueRemove": "送信待ちから削除",
+  "ai.queueFull": "送信待ちがいっぱいです。待機中のメッセージを削除してください。",
+  "ai.queueInterrupted": "アプリ終了時にこのメッセージは未送信でした。今すぐ送信して再試行できます。",
+  "ai.queueAttachmentsUnavailable": "待機中の添付ファイルは利用できません。メッセージをコピーし、ファイルを再添付してください。",
   "settings.aiPrivacyHint": "Copilot Chat と Codex はプロジェクトのスナップショット内で作業します。元のプロジェクトに適用する前に差分を確認してください。",
   "settings.aiPermissionDetails": "すべてのモードで Web 検索を利用できます。承認モードでは適用前に確認し、自動モードでは通常の変更を適用してレビューします。フルアクセスでは外部ファイルの書き込みも確認不要です。",
   "ai.renameChat": "会話名を変更",
