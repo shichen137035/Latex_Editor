@@ -4,6 +4,7 @@ import { describe, expect, it } from "vitest";
 import { DEFAULT_ENVIRONMENTS, environmentWithOverrides } from "../../apps/desktop/src/renderer/preview/environments.js";
 import { parsePreview } from "../../apps/desktop/src/renderer/preview/parser.js";
 import { plainLatex } from "../../apps/desktop/src/renderer/preview/inlineText.js";
+import { tokenizeInlineSource } from "../../apps/desktop/src/renderer/preview/inlineSource.js";
 import { previewBlocksForReconciliation } from "../../apps/desktop/src/renderer/preview/reconciliation.js";
 import { unwrapLatexEnvironment } from "../../apps/desktop/src/renderer/preview/sourceOperations.js";
 import type { PreviewNode, StructuralBlock } from "../../apps/desktop/src/renderer/preview/types.js";
@@ -57,6 +58,31 @@ z=w
     expect(blocks(document.nodes)).toHaveLength(1);
     expect(document.nodes[0]?.source.endOffset).toBe(source.length);
     expect(document.diagnostics).toEqual([]);
+  });
+
+  it("keeps blank lines inside display-dollar formulas in one preview source block", () => {
+    const source = ["Before.", "", "$$", "x &= y " + "\\\\", "", "z &= w", "$$", "", "After."].join("\n");
+    const document = parsePreview(source, "main.tex", DEFAULT_ENVIRONMENTS);
+    const content = document.nodes.filter((node) => node.kind === "content");
+    expect(content).toHaveLength(3);
+    const raw = content.map((node) => node.kind === "content" ? node.raw : "");
+    expect(raw[1]?.startsWith("$$")).toBe(true);
+    expect(raw[1]?.endsWith("$$")).toBe(true);
+    expect(raw[1]).toContain("x &= y " + "\\\\" + "\n\nz &= w");
+    const formula = tokenizeInlineSource(raw[1] ?? "").find((token) => token.kind === "math");
+    expect(formula).toMatchObject({ display: true });
+    expect(formula?.value).toContain("\n\n");
+  });
+
+  it("recognizes inline dollar math that spans source lines", () => {
+    const source = String.raw`Before $\mathcal G_j=\{(\theta,\theta^\top x):\theta\in\Theta,\\
+  x\in G_{j,\theta}\}$ after.`;
+    const tokens = tokenizeInlineSource(source);
+    const formulas = tokens.filter((token) => token.kind === "math");
+    expect(formulas).toHaveLength(1);
+    expect(formulas[0]?.value).toContain("\\\n");
+    expect(formulas[0]?.value).toContain("x\\in G_{j,\\theta}");
+    expect(tokens.map((token) => token.kind)).toEqual(["text", "math", "text"]);
   });
 
   it("distinguishes literal escaped percent from an actual comment", () => {

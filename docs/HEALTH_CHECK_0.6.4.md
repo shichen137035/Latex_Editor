@@ -1,6 +1,6 @@
 # 0.6.4 仓库体检
 
-日期：2026-10-08。覆盖桌面主进程、preload、renderer、CLI、共享包、资源、测试和构建配置。目录导航见 [项目结构](REPOSITORY_STRUCTURE.md)，基础架构说明见 [BACKEND_ARCHITECTURE](BACKEND_ARCHITECTURE.md)。
+日期：2026-10-08。覆盖桌面主进程、preload、renderer、CLI、共享包、资源、测试和构建配置。当前目录导航见 [工程结构](architecture/PROJECT_STRUCTURE.md)，基础架构说明见 [BACKEND_ARCHITECTURE](BACKEND_ARCHITECTURE.md)。
 
 后续处理状态：文本版本边界已改为明确的已保存/工作集视图，并移除桌面未带版本的范围更新接口。实现与回归详见 [文档版本模型](WORKING_DOCUMENT_MODEL.md)。下面保留初次体检的结果与风险证据。
 

@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { MathMacroRegistry, parseMacroDefinitions } from "../../apps/desktop/src/renderer/math/MathMacroRegistry.js";
 import { MathNodeIndex, parseMathNodes } from "../../apps/desktop/src/renderer/math/MathNodeLocator.js";
 import { extractMathExpression, MathRenderService } from "../../apps/desktop/src/renderer/math/MathRenderService.js";
+import { tokenizeInlineSource } from "../../apps/desktop/src/renderer/preview/inlineSource.js";
 
 describe("v0.3.1 project math context", () => {
   it("parses arguments, follows local files, and applies definitions in source order", () => {
@@ -21,6 +22,20 @@ describe("v0.3.1 project math context", () => {
     const invalid = renderer.render("\\frac{x}{", { macros: {}, operators: {}, sourceVersion: 1 }, { displayMode: true });
     expect(invalid.error?.recoverable).toBe(true);
     expect(invalid.html).toContain("katex-error");
+  });
+
+  it("renders parameterized arrow macros such as p-convergence", () => {
+    const registry = new MathMacroRegistry();
+    const context = registry.rebuild([{ path: "main.tex", content: String.raw`\newcommand{\pto}{\xrightarrow{p}}` }], "main.tex");
+    expect(context.macros["\\pto"]).toBe(String.raw`\xrightarrow{p}`);
+    const result = new MathRenderService().render(String.raw`X_n\pto X`, context, { displayMode: false, throwOnError: false });
+    expect(result.error).toBeUndefined();
+    expect(result.html).toContain("x-arrow");
+    expect(result.html).toContain("→");
+    expect(result.html).toContain("<mi>p</mi>");
+    const inlineFormula = tokenizeInlineSource(String.raw`$X_n\pto X$`).find(token => token.kind === "math");
+    expect(inlineFormula?.value).toBe(String.raw`X_n\pto X`);
+    expect(new MathRenderService().render(inlineFormula!.value, context, { displayMode: false, throwOnError: false }).html).toContain("x-arrow");
   });
 });
 

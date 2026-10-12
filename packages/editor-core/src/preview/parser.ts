@@ -153,10 +153,37 @@ function onlyWhitespaceAndComments(value: string): boolean {
   return /^(?:\s|%[^\r\n]*(?:\r?\n|$))*$/.test(value);
 }
 
+function displayDollarRanges(value: string): Array<{ start: number; end: number }> {
+  const ranges: Array<{ start: number; end: number }> = [];
+  let open = -1;
+  const escapedAt = (offset: number) => {
+    let slashes = 0;
+    for (let cursor = offset - 1; cursor >= 0 && value[cursor] === "\\"; cursor -= 1) slashes += 1;
+    return slashes % 2 === 1;
+  };
+  for (let cursor = 0; cursor < value.length;) {
+    if (value[cursor] === "%" && !escapedAt(cursor)) {
+      const newline = value.indexOf("\n", cursor);
+      cursor = newline < 0 ? value.length : newline + 1;
+      continue;
+    }
+    if (value.startsWith("$$", cursor) && !escapedAt(cursor)) {
+      if (open < 0) open = cursor;
+      else { ranges.push({ start: open, end: cursor + 2 }); open = -1; }
+      cursor += 2;
+      continue;
+    }
+    cursor += 1;
+  }
+  if (open >= 0) ranges.push({ start: open, end: value.length });
+  return ranges;
+}
+
 function paragraphRanges(source: string, start: number, end: number): ContentSlice[] {
   const ranges: ContentSlice[] = [];
   const value = source.slice(start, end);
   const separator = /\r?\n[ \t]*\r?\n(?:[ \t]*\r?\n)*/g;
+  const displayMath = displayDollarRanges(value);
   let cursor = 0;
   const add = (from: number, to: number) => {
     let left = start + from;
@@ -166,8 +193,12 @@ function paragraphRanges(source: string, start: number, end: number): ContentSli
     if (left < right && stripForVisibility(source.slice(left, right))) ranges.push({ start: left, end: right });
   };
   for (const match of value.matchAll(separator)) {
-    add(cursor, match.index ?? cursor);
-    cursor = (match.index ?? cursor) + match[0].length;
+    const separatorStart = match.index ?? cursor;
+    // Blank lines inside a $$...$$ display formula belong to the formula's
+    // source range; splitting here would leave both halves unrenderable.
+    if (displayMath.some((range) => separatorStart > range.start && separatorStart < range.end)) continue;
+    add(cursor, separatorStart);
+    cursor = separatorStart + match[0].length;
   }
   add(cursor, value.length);
   return ranges;

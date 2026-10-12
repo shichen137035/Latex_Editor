@@ -1274,6 +1274,7 @@
   "ai.attachmentPrompt": "Please examine the attached files.",
   "ai.thoughtSummary": "Thought summary",
   "ai.working": "Working…",
+  "ai.concurrentEditWarning": "AI is working. Editing files now may prevent its changes from applying.",
   "ai.responding": "Responding…",
   "export.sourceArchive": "Export all source files (.zip)",
   "export.pdf": "Export main PDF",

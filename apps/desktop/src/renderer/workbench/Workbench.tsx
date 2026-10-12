@@ -5,7 +5,7 @@ import { DiffEditor, Editor, type OnMount } from "@monaco-editor/react";
 import type * as Monaco from "monaco-editor";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal, flushSync } from "react-dom";
-import type { AIChangeSet, BlockGraphSnapshot, BlockId, BlockTextEdit, CompileResult, Diagnostic, Project, ProjectTreeNode, SemanticBlock, SpellCheckStatus, StructuralHistoryState } from "@latex-editor/contracts";
+import type { AIChangeSet, AIConversation, BlockGraphSnapshot, BlockId, BlockTextEdit, CompileResult, Diagnostic, Project, ProjectTreeNode, SemanticBlock, SpellCheckStatus, StructuralHistoryState } from "@latex-editor/contracts";
 import toolbarActions from "../resources/toolbar-actions.json" with { type: "json" };
 import { t, type MessageKey } from "../i18n/index.js";
 import { PreviewPane } from "../preview/PreviewPane.js";
@@ -132,6 +132,8 @@ export function Workbench({ project, projects, environments, onHome, onSwitch, o
   const [tableDialogOpen, setTableDialogOpen] = useState(false);
   const [tableSelection, setTableSelection] = useState<TableSelection>();
   const [blockNotice, setBlockNotice] = useState<string>();
+  const aiWorkingRef = useRef(false);
+  const aiEditWarningShown = useRef(false);
   const [createdBlockHighlight, setCreatedBlockHighlight] = useState<{ fileId: string; start: number; end: number; nonce: number }>();
   const [nameRequest, setNameRequest] = useState<EntryNameRequest>();
   const [deleteRequest, setDeleteRequest] = useState<DeleteEntryRequest>();
@@ -355,6 +357,43 @@ export function Workbench({ project, projects, environments, onHome, onSwitch, o
     const timer = window.setTimeout(() => setBlockNotice(undefined), 2200);
     return () => window.clearTimeout(timer);
   }, [blockNotice]);
+  useEffect(() => {
+    const ai = window.latexEditor?.ai;
+    if (!ai) return;
+    const conversations = new Map<string, boolean>();
+    const updatesDuringLoad = new Map<string, boolean>();
+    let active = true;
+    let loaded = false;
+    const isWorking = (conversation: AIConversation) => Boolean(conversation.activeTaskId || conversation.messages.some((message) => message.status === "streaming"));
+    const publish = () => {
+      const working = [...conversations.values()].some(Boolean);
+      aiWorkingRef.current = working;
+      if (!working) aiEditWarningShown.current = false;
+    };
+    const unsubscribe = ai.onUpdate((update) => {
+      if (!active || update.kind !== "conversation") return;
+      const conversation = update.payload as AIConversation;
+      if (conversation.projectId !== project.id) return;
+      const working = isWorking(conversation);
+      if (!loaded) updatesDuringLoad.set(conversation.id, working);
+      conversations.set(conversation.id, working);
+      publish();
+    });
+    void ai.conversations(project.id).then((snapshot) => {
+      if (!active || !snapshot) return;
+      for (const conversation of snapshot.conversations) conversations.set(conversation.id, isWorking(conversation));
+      for (const [id, working] of updatesDuringLoad) conversations.set(id, working);
+      updatesDuringLoad.clear();
+      loaded = true;
+      publish();
+    }).catch(() => { loaded = true; updatesDuringLoad.clear(); });
+    return () => { active = false; unsubscribe(); aiWorkingRef.current = false; aiEditWarningShown.current = false; };
+  }, [project.id]);
+  const warnAboutConcurrentAIEdit = (path: string, content: string) => {
+    if (!aiWorkingRef.current || aiEditWarningShown.current || tabsRef.current.find((tab) => tab.path === path)?.content === content) return;
+    aiEditWarningShown.current = true;
+    setBlockNotice(t("ai.concurrentEditWarning"));
+  };
   useEffect(() => {
     if (!spellContextMenu) return;
     const closeWhenOutside = (event: MouseEvent) => { if (!(event.target as Element).closest(".spell-context-menu")) setSpellContextMenu(undefined); };
@@ -598,6 +637,7 @@ export function Workbench({ project, projects, environments, onHome, onSwitch, o
   const closeTab = (path: string) => { navigationHistory.current.clear(); fileOpenSequence.current += 1; navigationNonce.current += 1; setNavigationRequest(undefined); rememberPreviewPosition(); const remaining = tabsRef.current.filter((tab) => tab.path !== path); tabsRef.current = remaining; setTabs(remaining); if (activePath === path) setActivePath(remaining.at(-1)?.path); };
   const setEditorContent = (content: string, edits?: BlockTextEdit[], previewChanges?: PreviewTextChange[]) => {
     if (!activePath) return;
+    warnAboutConcurrentAIEdit(activePath, content);
     changeDocument(activePath, content, edits !== undefined, edits, true, true, previewChanges);
   };
   const changeDocument = (path: string, content: string, typing = false, edits?: BlockTextEdit[], record = true, captureLargeDelete = true, previewChanges?: PreviewTextChange[]) => {
@@ -1034,7 +1074,7 @@ export function Workbench({ project, projects, environments, onHome, onSwitch, o
   const editorQuickActions = isBibFile ? [] : quickActions;
   const sourceTabs = <div className="editor-tabs">{tabs.map((tab) => <button className={tab.path === activePath ? "active" : ""} key={tab.path} onClick={() => { navigationHistory.current.clear(); rememberPreviewPosition(); fileOpenSequence.current += 1; setAiDiffFile(undefined); setNavigationRequest(undefined); setActivePath(tab.path); }}><span>{tab.path.split("/").at(-1)}</span>{tab.dirty && <i/>}<span className="tab-close" title={t("editor.closeTab")} onClick={(event) => { event.stopPropagation(); closeTab(tab.path); }}><Icon name="close"/></span></button>)}</div>;
   const sourceFontSize = store.get("fontSize"), sourceTabSize = store.get("tabSize"), sourceWordWrap = store.get("wordWrap"), sourceMinimap = store.get("sourceMinimap");
-  const sourceEditorOptions = useMemo<Monaco.editor.IStandaloneEditorConstructionOptions>(() => ({ readOnly: !project.writable, minimap: { enabled: sourceMinimap }, fontSize: sourceFontSize, tabSize: sourceTabSize, lineHeight: Math.round(sourceFontSize * 1.5), wordWrap: sourceWordWrap ? "on" : "off", quickSuggestions: { other: true, comments: true, strings: true }, suggestOnTriggerCharacters: true, autoClosingBrackets: "never", autoClosingQuotes: "always", autoSurround: "never", automaticLayout: true, padding: { top: 14 }, renderWhitespace: "selection", scrollBeyondLastLine: false  }), [project.writable, sourceFontSize, sourceTabSize, sourceWordWrap, sourceMinimap]);
+  const sourceEditorOptions = useMemo<Monaco.editor.IStandaloneEditorConstructionOptions>(() => ({ readOnly: !project.writable, minimap: { enabled: sourceMinimap }, fontSize: sourceFontSize, tabSize: sourceTabSize, lineHeight: Math.round(sourceFontSize * 1.5), wordWrap: sourceWordWrap ? "on" : "off", quickSuggestions: { other: true, comments: true, strings: true }, suggestOnTriggerCharacters: true, autoClosingBrackets: "never", autoClosingQuotes: "always", autoSurround: "never", automaticLayout: true, padding: { top: 14 }, renderWhitespace: "none", scrollBeyondLastLine: false  }), [project.writable, sourceFontSize, sourceTabSize, sourceWordWrap, sourceMinimap]);
   const sourceEditor = <div className="editor-surface" onDragOver={(event) => { if (event.dataTransfer.types.includes("Files")) event.preventDefault(); }} onDrop={dropImages}>{aiReviewFile ? <div className="ai-inline-diff"><div className="ai-inline-diff-heading"><strong>{t("ai.inlineDiffTitle")}</strong><span>{aiReviewFile.path}</span><button className="ai-diff-close" onClick={() => setAiDiffFile(undefined)}>{t("ai.closeDiff")}</button></div><DiffEditor height="calc(100% - 34px)" language={aiReviewFile.path.endsWith(".bib") ? "bibtex" : aiReviewFile.path.endsWith(".json") ? "json" : "latex"} original={aiReviewContent?.original ?? ""} modified={aiReviewContent?.modified ?? ""} theme={editorThemeName(store.get("theme"))} options={{ readOnly: true, originalEditable: false, renderSideBySide: true, automaticLayout: true, minimap: { enabled: store.get("sourceMinimap") }, fontSize: store.get("fontSize"), lineHeight: Math.round(store.get("fontSize") * 1.5), wordWrap: store.get("wordWrap") ? "on" : "off", scrollBeyondLastLine: false }} /></div> : activeTab ? <Editor height="100%" language={activeTab.path.endsWith(".bib") ? "bibtex" : activeTab.path.endsWith(".json") ? "json" : "latex"} value={activeTab.content} onChange={(value, event) => setEditorContent(value ?? "", event.changes.map((change) => ({ start: change.rangeOffset, end: change.rangeOffset + change.rangeLength, newLength: change.text.length })), event.changes.map((change) => ({ from: change.rangeOffset, to: change.rangeOffset + change.rangeLength, insertedText: change.text })))} onMount={onEditorMount} theme={editorThemeName(store.get("theme"))} options={sourceEditorOptions} /> : <div className="editor-empty"><Logo/><p>{t("editor.noFile")}</p></div>}</div>;
   const sourceToolbar = <div className="latex-toolbar">{editorQuickActions}<div className="toolbar-spacer"/>{viewSwitch("source", layout.mode === "single")}</div>;
   const previewToolbar = <div className="latex-toolbar">{editorQuickActions}<div className="toolbar-spacer"/>{viewSwitch("preview", layout.mode === "single")}</div>;
@@ -1045,6 +1085,7 @@ export function Workbench({ project, projects, environments, onHome, onSwitch, o
   const previewRequest = activeTab && navigationRequest?.path === activeTab.path ? { fileId: activeTab.path, offset: navigationRequest.offset ?? sourceOffsetAtLine(activeTab.content, navigationRequest.line ?? 1, navigationRequest.column), nonce: navigationRequest.nonce } : undefined;
   const applyPreviewSourceChange = (next: string, changes?: PreviewTextChange[]) => {
     if (!activePath) return;
+    warnAboutConcurrentAIEdit(activePath, next);
     const edits = changes?.map((change) => ({ start: change.from, end: change.to, newLength: change.insertedText.length }));
     changeDocument(activePath, next, false, edits, true, true, changes);
   };

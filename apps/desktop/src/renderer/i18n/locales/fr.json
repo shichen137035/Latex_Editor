@@ -358,6 +358,7 @@
   "ai.attachmentPrompt": "Veuillez examiner les fichiers joints.",
   "ai.thoughtSummary": "Résumé de réflexion",
   "ai.working": "Travail en cours…",
+  "ai.concurrentEditWarning": "L’IA travaille. Modifier des fichiers maintenant peut empêcher l’application de ses modifications.",
   "ai.responding": "Réponse en cours…",
   "export.sourceArchive": "Exporter toutes les sources (.zip)",
   "export.pdf": "Exporter le PDF principal",

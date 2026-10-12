@@ -73,6 +73,26 @@ it("does not resurrect completed messages when a stale send response arrives wit
   await f.service.dispose();
 });
 
+it("streams safe approve-for-me source edits into acknowledged checkpoints before the AI turn ends", async () => {
+  const f = await fixture("codex");
+  const original = "\\begin{document}\nFirst.\n\\end{document}\n";
+  const started = await f.service.send({ conversationId: f.conversation.id, content: "Revise the text", permissionMode: "auto", snapshot: [{ path: "main.tex", content: original }] });
+  const checkpoint = "\\begin{document}\nRevised.\n\\end{document}\n";
+  await writeFile(join(f.workspace(), "main.tex"), checkpoint);
+  await vi.waitFor(() => expect(f.service.snapshot("project").changeSets.length).toBe(1), { timeout: 4000 });
+  const first = f.service.snapshot("project").changeSets[0]!;
+  expect(first.permissionMode).toBe("auto");
+  await f.service.markChangeSetApplied(first.id, first.files.flatMap(file => file.hunks.map(hunk => hunk.id)));
+  await writeFile(join(f.workspace(), "main.tex"), `${checkpoint}Added line.\n`);
+  f.emit("turn/completed", { turn: { id: "turn", status: "completed" } });
+  await vi.waitFor(() => expect(f.service.snapshot("project").changeSets.length).toBe(2), { timeout: 4000 });
+  const final = f.service.snapshot("project").changeSets.find(changes => changes.id !== first.id)!;
+  expect(final.files[0]?.originalContent).toBe(checkpoint);
+  expect(final.files[0]?.proposedContent).toBe(`${checkpoint}Added line.\n`);
+  expect(started.taskId).toBeTruthy();
+  await f.service.dispose();
+});
+
 it("finishes Copilot on session idle, keeps authoritative text and ignores sub-agent output", async () => {
   const f = await fixture("chat"); await f.send();
   f.emit("assistant.message_delta", { messageId: "m", deltaContent: "Partial" });

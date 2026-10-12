@@ -7,14 +7,15 @@ title TeXWeave - Debug Launch
 where node >nul 2>nul
 if errorlevel 1 goto :node_missing
 
-if not exist "node_modules\electron\package.json" goto :dependencies_missing
-if not exist "apps\desktop\dist\main\index.js" goto :build_missing
-if not exist "apps\desktop\dist\renderer\index.html" goto :build_missing
+where npm >nul 2>nul
+if errorlevel 1 goto :npm_missing
 
-echo Starting the latest built TeXWeave app without rebuilding...
-echo Source changes will appear after running: npm run desktop:build
+if not exist "node_modules\electron\package.json" goto :dependencies_missing
+
+echo Starting TeXWeave in development mode with renderer hot reload...
+echo Renderer changes update live. Main-process changes rebuild and restart Electron.
 echo.
-call node apps\desktop\scripts\launch.cjs
+call npm run desktop:dev
 if errorlevel 1 goto :launch_failed
 
 echo.
@@ -27,14 +28,13 @@ echo [ERROR] Node.js was not found on PATH.
 pause
 exit /b 1
 
-:dependencies_missing
-echo [ERROR] Electron dependencies are missing. Run npm install first.
+:npm_missing
+echo [ERROR] npm was not found on PATH.
 pause
 exit /b 1
 
-:build_missing
-echo [ERROR] TeXWeave has not been built yet.
-echo Run npm run desktop:build once, then use Debug.bat for quick launches.
+:dependencies_missing
+echo [ERROR] Electron dependencies are missing. Run npm install first.
 pause
 exit /b 1
 

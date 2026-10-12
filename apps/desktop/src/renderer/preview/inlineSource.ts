@@ -66,7 +66,9 @@ export function tokenizeInlineSource(value: string, sourceStart = 0, trim = true
       const closing = opening === "\\(" ? "\\)" : opening === "\\[" ? "\\]" : opening;
       let end = value.indexOf(closing, cursor + opening.length);
       while (end >= 0 && escaped(value, end)) end = value.indexOf(closing, end + closing.length);
-      if (end >= 0 && end < limit && (opening !== "$" || !value.slice(cursor + 1, end).includes("\n"))) {
+      // Inline math may span source lines. TeX treats a newline as whitespace
+      // here, and rejecting it leaves the delimiters rendered as plain text.
+      if (end >= 0 && end < limit) {
         const inner = value.slice(cursor + opening.length, end);
         const left = inner.length - inner.trimStart().length;
         const right = Math.max(left, inner.trimEnd().length);

@@ -2,7 +2,7 @@
 
 盘点日期：2026-10-12。当前源码版本以根目录 `package.json` 为准，为 **0.6.7**。版本号已更新，发行包仍未构建或发布。
 
-本文结合当前桌面端与共享服务实现、`docs/` 中的架构说明，以及 `Update_tech_file/` 中从 v0.1 到 v0.6.3 的需求和技术方案。Help 应介绍当前实际可用的功能。历史技术方案用于说明设计来源，不能单独作为功能已经交付的证据；发生冲突时，应优先核对当前实现和近期回归记录。
+本文基于当前桌面端与共享服务实现、自动化测试和 `docs/` 中维护的技术说明。Help 应介绍当前实际可用的功能；历史方案不能单独作为功能已经交付的证据，发生冲突时应优先核对当前实现和近期回归记录。`Update_tech_file/` 是已忽略的本地历史资料目录，新克隆仓库可能不包含它。
 
 ## 用户可见功能
 
@@ -144,7 +144,7 @@
 
 以下文档更接近当前实现：
 
-- 架构与项目数据：[BACKEND_ARCHITECTURE.md](BACKEND_ARCHITECTURE.md)、[WORKING_DOCUMENT_MODEL.md](WORKING_DOCUMENT_MODEL.md)、[REPOSITORY_STRUCTURE.md](REPOSITORY_STRUCTURE.md)。
+- 架构与项目数据：[BACKEND_ARCHITECTURE.md](BACKEND_ARCHITECTURE.md)、[WORKING_DOCUMENT_MODEL.md](WORKING_DOCUMENT_MODEL.md)、[完整工程结构](architecture/PROJECT_STRUCTURE.md)。
 - 编辑/预览/块：[PREVIEW_ENVIRONMENT_ARCHITECTURE.md](PREVIEW_ENVIRONMENT_ARCHITECTURE.md)、[block-structure-api.md](block-structure-api.md)、[document-title-preview.md](document-title-preview.md)、[list-block-handlers.md](list-block-handlers.md)、[adaptive-theme-colors.md](adaptive-theme-colors.md)。
 - 搜索/关系/文献：[REFERENCE_NAVIGATION.md](REFERENCE_NAVIGATION.md)、[relation-system.md](relation-system.md)。
 - 图片/表格/数学：[FIGURE_LAYOUT.md](FIGURE_LAYOUT.md)、[image-table-diagnostics.md](image-table-diagnostics.md)、[MATH_PREVIEW_ARCHITECTURE.md](MATH_PREVIEW_ARCHITECTURE.md)。
@@ -152,4 +152,4 @@
 - AI：[AI_SOURCE_EDITING.md](AI_SOURCE_EDITING.md)、[AI_MESSAGE_QUEUE.md](AI_MESSAGE_QUEUE.md)、[AI_ATTACHMENT_LIFECYCLE.md](AI_ATTACHMENT_LIFECYCLE.md)。
 - 设置/本地化/检查：[settings-presets.md](settings-presets.md)、[COMPLETION_ARCHITECTURE.md](COMPLETION_ARCHITECTURE.md)、[i18n.md](i18n.md)、[TESTING.md](TESTING.md)。
 
-`Update_tech_file/` 中的资料主要保留早期需求和设计演变：v0.1 分层与测试规范、v0.2 工作区/预览/资源、v0.2.5–0.2.6 联想与拼写、v0.3 搜索/环境/关系、v0.4 图片/表格/文献/项目列表、v0.5 AI/历史、v0.6 预览性能/设置/快捷键/块操作。编写面向用户的 Help 时，只引用仍能在当前 UI 或实现中确认的行为。
+本地历史资料曾记录 v0.1 到 v0.6 的需求和设计演变，但它不再随仓库分发。编写面向用户的 Help 时，只引用仍能在当前 UI 或实现中确认的行为，并链接到仓库内可获取的当前文档。

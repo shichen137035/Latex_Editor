@@ -2,7 +2,7 @@
 
 This document describes the architecture in the current repository. The root `package.json` is the version and command source of truth; feature-specific contracts and migration notes are maintained alongside their implementation under `docs/`.
 
-For a detailed repository map and prioritized follow-up work, see [Repository structure](REPOSITORY_STRUCTURE.md) and [0.6.4 health check](HEALTH_CHECK_0.6.4.md).
+For the current repository map and module responsibilities, see [Project structure](architecture/PROJECT_STRUCTURE.md). Historical health-check results are in [0.6.4 health check](HEALTH_CHECK_0.6.4.md).
 
 AI draft attachments use a bounded staging store with per-draft ownership and send leases; see [Attachment lifecycle](AI_ATTACHMENT_LIFECYCLE.md).
 

@@ -643,6 +643,7 @@
   "ai.attachmentPrompt": "添付ファイルを確認してください。",
   "ai.thoughtSummary": "思考の概要",
   "ai.working": "作業中…",
+  "ai.concurrentEditWarning": "AI が作業中です。今ファイルを編集すると、AI の変更を適用できなくなる場合があります。",
   "ai.responding": "回答中…",
   "export.sourceArchive": "すべてのソースをエクスポート (.zip)",
   "export.pdf": "メイン文書の PDF をエクスポート",

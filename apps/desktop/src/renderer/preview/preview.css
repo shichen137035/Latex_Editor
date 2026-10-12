@@ -124,6 +124,8 @@ preview-block.relation-focus { border-color: var(--color-primary) !important; bo
 .preview-display-math { display: block; overflow-x: auto; margin: 4px 0 2px; padding: 10px 16px; text-align: center; white-space: normal; font-size: 18px; }
 .env-equation .preview-display-math { margin: 0; padding: 6px 12px 7px; }
 .env-equation .preview-display-math > .katex-display { margin: .25em 0; }
+.env-equation .preview-display-math > .katex-display > .katex { width: max-content; max-width: none; }
+.env-equation .preview-display-math > .katex-display > .katex > .katex-html { width: max-content; }
 .preview-math-fallback { white-space: pre-wrap; font-family: Consolas, monospace; font-style: normal; }
 .preview-code { overflow: auto; margin: 6px 0; padding: 15px; border-radius: 6px; color: #263849; background: #edf2f6; font: 13px/1.55 Consolas, monospace; }
 .preview-list { margin: 6px 0; padding-left: 28px; }

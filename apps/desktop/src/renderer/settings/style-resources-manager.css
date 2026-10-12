@@ -1,5 +1,5 @@
 .settings-manager-dialog-main.settings-manager-style-resources { display: flex; flex-direction: column; overflow: hidden; padding: 0; }
-.settings-manager-style-resources > .settings-manager-page { display: flex; flex: 1; min-height: 0; }
+.settings-manager-style-resources > .settings-manager-page { display: flex; flex: 1; flex-direction: column; min-height: 0; }
 .settings-manager-dialog-main.settings-manager-style-resources > .settings-manager-page { min-height: 0; }
 .settings-manager-style-resources .style-resources-page { display: flex; width: 100%; height: 100%; min-height: 0; flex: 1; flex-direction: column; }
 .preferences-dialog > .settings-manager-dialog-header.settings-manager-style-resources-header { display: grid; grid-template-columns: 38px minmax(0, 1fr) 38px; align-items: center; gap: 14px; min-height: 68px; padding: 10px 22px; border-bottom: 1px solid var(--color-border); background: linear-gradient(180deg, var(--color-bg-panel), color-mix(in srgb, var(--color-bg-subtle) 72%, var(--color-bg-panel))); }

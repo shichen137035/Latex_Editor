@@ -1738,6 +1738,7 @@
   "settings.aiSkillsDisabled": "Өшірулі",
   "ai.thoughtSummary": "Ой қорытындысы",
   "ai.working": "Жұмыс істеуде…",
+  "ai.concurrentEditWarning": "AI жұмыс істеп жатыр. Қазір файлдарды өңдеу оның өзгерістерін қолдануға кедергі келтіруі мүмкін.",
   "ai.responding": "Жауап беруде…",
   "ai.history.manage": "Әңгімелер",
   "ai.history.close": "Жабу",

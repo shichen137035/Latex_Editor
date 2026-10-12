@@ -1002,6 +1002,7 @@
   "ai.attachmentPrompt": "请查看附加的文件。",
   "ai.thoughtSummary": "思考摘要",
   "ai.working": "处理中…",
+  "ai.concurrentEditWarning": "AI 正在工作。此时修改文件可能导致 AI 的变更无法应用。",
   "ai.responding": "回答中…",
   "export.sourceArchive": "导出全部源码 (.zip)",
   "export.pdf": "导出主文件 PDF",

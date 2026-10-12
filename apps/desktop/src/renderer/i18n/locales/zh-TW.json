@@ -488,6 +488,7 @@
   "ai.attachmentPrompt": "請查看附加的檔案。",
   "ai.thoughtSummary": "思考摘要",
   "ai.working": "處理中…",
+  "ai.concurrentEditWarning": "AI 正在工作。此時修改檔案可能導致 AI 的變更無法套用。",
   "ai.responding": "回答中…",
   "export.sourceArchive": "匯出全部原始碼 (.zip)",
   "export.pdf": "匯出主要檔案 PDF",

@@ -30,8 +30,9 @@ type AICompileWorkspace = (input: { projectId: string; workspaceRoot: string; ma
 
 type Persisted = { version: 1; conversations: AIConversation[]; changeSets: AIChangeSet[] };
 type StructureTracker = { managed: string | undefined; direct: boolean; semantic: boolean };
-type ActiveTurn = { conversationId: string; messageId: string; scratchRoot: string; base: Map<string, string>; structure: StructureTracker; turnId: string; canceled: boolean; completed: boolean; permissionMode: AIPermissionMode };
-type ActiveCopilotTurn = { conversationId: string; messageId: string; session: CopilotSession; scratchRoot: string; base: Map<string, string>; structure: StructureTracker; canceled: boolean; complete: boolean; finish?: () => Promise<void>; unsubscribe: Array<() => void>; permissionMode: AIPermissionMode };
+type IncrementalSync = { timer: ReturnType<typeof setInterval> | undefined; syncing: Promise<void> | undefined; waitingForApply: boolean; failed: boolean; checkpoints: Map<string, Map<string, string | undefined>>; stableSnapshots: Map<string, string>; applyAcknowledgement: Promise<void> | undefined; resolveAcknowledgement: (() => void) | undefined };
+type ActiveTurn = { conversationId: string; messageId: string; scratchRoot: string; base: Map<string, string>; structure: StructureTracker; turnId: string; canceled: boolean; completed: boolean; permissionMode: AIPermissionMode; incremental: IncrementalSync };
+type ActiveCopilotTurn = { conversationId: string; messageId: string; session: CopilotSession; scratchRoot: string; base: Map<string, string>; structure: StructureTracker; canceled: boolean; complete: boolean; finish?: () => Promise<void>; unsubscribe: Array<() => void>; permissionMode: AIPermissionMode; incremental: IncrementalSync };
 const MAX_ATTACHMENT_BYTES = attachmentLimits.fileBytes;
 
 function pastedImageExtension(mimeType: string): string | undefined {
@@ -162,6 +163,7 @@ export class AIWorkspaceService {
     this.#queuedSends.clear();
     await this.attachments.dispose();
     this.approvals.cancel(); this.#unsubscribe();
+    for (const turn of new Set([...this.#activeByThread.values(), ...this.#cancelingCopilot.values()])) if (turn.incremental.timer) clearInterval(turn.incremental.timer);
     for (const turn of this.#cancelingCopilot.values()) { turn.canceled = true; await turn.finish?.(); }
     clearTimeout(this.#saveTimer); this.#saveTimer = undefined;
     try { await this.#persist(); }
@@ -291,6 +293,17 @@ export class AIWorkspaceService {
     for (const file of changes.files) for (const hunk of file.hunks) if (hunk.decision === "pending" && ids.has(hunk.id)) hunk.applied = true;
     if (error) changes.autoApplyError = error;
     else delete changes.autoApplyError;
+    const active = [...this.#activeByThread.values(), ...this.#cancelingCopilot.values()].find((turn) => turn.incremental.checkpoints.has(id));
+    const checkpoint = active?.incremental.checkpoints.get(id);
+    if (active && checkpoint) {
+      if (error) active.incremental.failed = true;
+      else for (const [path, content] of checkpoint) content === undefined ? active.base.delete(path) : active.base.set(path, content);
+      active.incremental.checkpoints.delete(id);
+      active.incremental.waitingForApply = false;
+      active.incremental.resolveAcknowledgement?.();
+      active.incremental.resolveAcknowledgement = undefined;
+      active.incremental.applyAcknowledgement = undefined;
+    }
     await this.#persist(); this.#onUpdate("changes", structuredClone(changes));
     return structuredClone(changes);
   }
@@ -632,7 +645,7 @@ export class AIWorkspaceService {
       const compileHandler = this.#makeCompileHandler(conversation, scratchRoot, resources);
       const setMainFileHandler = this.#makeSetMainFileHandler(conversation, scratchRoot);
       if (await this.#finishPendingCancellation(taskId, conversation, assistantMessage)) return { conversation: structuredClone(conversation), taskId };
-      const active: ActiveTurn = { conversationId: conversation.id, messageId: assistantMessage.id, scratchRoot, base: baseline, structure, turnId: "", canceled: false, completed: false, permissionMode: input.permissionMode ?? "auto" };
+      const active: ActiveTurn = { conversationId: conversation.id, messageId: assistantMessage.id, scratchRoot, base: baseline, structure, turnId: "", canceled: false, completed: false, permissionMode: input.permissionMode ?? "auto", incremental: createIncrementalSync() };
       const started = await this.#codex.startTurn({
         cwd: scratchRoot,
         prompt,
@@ -664,6 +677,7 @@ export class AIWorkspaceService {
       conversation.codexToolsVersion = 5;
       await this.#persist();
       active.turnId = started.turnId;
+      this.#startIncrementalAutoApply(conversation, active);
       if (active.canceled && !active.completed) {
         await this.#codex.interruptTurn(started.threadId, started.turnId);
         await this.#finishCancelledCodexTurn(taskId, started.threadId, active);
@@ -702,6 +716,7 @@ export class AIWorkspaceService {
   async #finishCancelledCodexTurn(taskId: string, threadId: string, active: ActiveTurn): Promise<void> {
     if (active.completed) return;
     active.completed = true;
+    await this.#stopIncrementalAutoApply(active);
     const conversation = this.#conversation(active.conversationId);
     delete conversation.activeTaskId;
     const message = conversation.messages.find((item) => item.id === active.messageId);
@@ -780,7 +795,7 @@ export class AIWorkspaceService {
         await this.#finishPendingCancellation(taskId, conversation, assistantMessage);
         return { conversation: structuredClone(conversation), taskId };
       }
-      const turn: ActiveCopilotTurn = { conversationId: conversation.id, messageId: assistantMessage.id, session, scratchRoot, base: baseline, structure, canceled: false, complete: false, unsubscribe: [], permissionMode: input.permissionMode ?? "auto" };
+      const turn: ActiveCopilotTurn = { conversationId: conversation.id, messageId: assistantMessage.id, session, scratchRoot, base: baseline, structure, canceled: false, complete: false, unsubscribe: [], permissionMode: input.permissionMode ?? "auto", incremental: createIncrementalSync() };
       active = turn;
       this.#cancelingCopilot.set(taskId, turn);
       let idleTimer: ReturnType<typeof setTimeout> | undefined;
@@ -795,6 +810,8 @@ export class AIWorkspaceService {
         for (const part of assistantMessage.reasoning ?? []) part.complete = true;
         if (failure) assistantMessage.content = [assistantMessage.content, failure].filter(Boolean).join("\n\n");
         conversation.updatedAt = Date.now();
+        this.#publishConversation(conversation);
+        await this.#stopIncrementalAutoApply(turn);
         turn.unsubscribe.forEach((unsubscribe) => unsubscribe());
         if (!turn.canceled) {
           try { await this.#collectChanges(conversation, turn); }
@@ -820,6 +837,7 @@ export class AIWorkspaceService {
         this.#queueTurnFinished(conversation, !turn.canceled && assistantMessage.status === "complete");
       };
       turn.finish = finish;
+      this.#startIncrementalAutoApply(conversation, turn);
       
       const resetIdleTimer = () => {
         clearTimeout(idleTimer);
@@ -1082,7 +1100,7 @@ export class AIWorkspaceService {
           message.completedAt = Date.now();
           message.content += `\n\nCould not collect proposed changes: ${error instanceof Error ? error.message : String(error)}`;
         }
-      }
+      } else await this.#stopIncrementalAutoApply(active);
       this.#activeByThread.delete(threadId);
       for (const [taskId, turnValue] of this.#cancelingThreads) if (turnValue === active) this.#cancelingThreads.delete(taskId);
     } else if (method === "turn/started") {
@@ -1103,9 +1121,61 @@ export class AIWorkspaceService {
     this.#queueTurnFinished(conversation, !active.canceled && message.status === "complete");
   }
 
-  async #collectChanges(conversation: AIConversation, active: Pick<ActiveTurn, "scratchRoot" | "base" | "structure" | "permissionMode">): Promise<void> {
-    this.approvals.cancel(conversation.id);
+  #startIncrementalAutoApply(conversation: AIConversation, active: ActiveTurn | ActiveCopilotTurn): void {
+    if (active.permissionMode !== "auto") return;
+    active.incremental.timer = setInterval(() => {
+      if (active.incremental.syncing || active.incremental.waitingForApply || active.incremental.failed || ("completed" in active && active.completed) || ("complete" in active && active.complete)) return;
+      const syncing = this.#collectIncrementalChanges(conversation, active).catch((error: unknown) => {
+        active.incremental.failed = true;
+        console.warn("Could not sync AI working-copy edits", error);
+      });
+      active.incremental.syncing = syncing;
+      void syncing.finally(() => { if (active.incremental.syncing === syncing) active.incremental.syncing = undefined; });
+    }, 900);
+    active.incremental.timer.unref?.();
+  }
+
+  async #stopIncrementalAutoApply(active: ActiveTurn | ActiveCopilotTurn): Promise<void> {
+    if (active.incremental.timer) clearInterval(active.incremental.timer);
+    active.incremental.timer = undefined;
+    await active.incremental.syncing;
+    if (active.incremental.waitingForApply && active.incremental.applyAcknowledgement) {
+      let timeout: ReturnType<typeof setTimeout> | undefined;
+      await Promise.race([active.incremental.applyAcknowledgement, new Promise<void>((resolve) => { timeout = setTimeout(resolve, 10_000); timeout.unref?.(); })]);
+      if (timeout) clearTimeout(timeout);
+    }
+  }
+
+  async #collectIncrementalChanges(conversation: AIConversation, active: ActiveTurn | ActiveCopilotTurn): Promise<void> {
     const after = await readWorkspace(active.scratchRoot, true);
+    const files = this.#buildWorkspaceChanges(active, after).files.filter((file) => {
+      if (file.type === "delete" || !isAIEditableProjectPath(file.path)) return false;
+      const content = after.get(file.path);
+      if (content === undefined) return false;
+      const previous = active.incremental.stableSnapshots.get(file.path);
+      active.incremental.stableSnapshots.set(file.path, content);
+      return previous === content;
+    });
+    if (!files.length) return;
+    const changeSet: AIChangeSet = { id: randomUUID(), conversationId: conversation.id, createdAt: Date.now(), files, status: "pending", permissionMode: "auto" };
+    active.incremental.checkpoints.set(changeSet.id, new Map(files.map((file) => [file.path, after.get(file.path)])));
+    active.incremental.waitingForApply = true;
+    active.incremental.applyAcknowledgement = new Promise<void>((resolve) => { active.incremental.resolveAcknowledgement = resolve; });
+    this.#data.changeSets.unshift(changeSet);
+    try {
+      await this.#persist();
+      this.#onUpdate("changes", structuredClone(changeSet));
+    } catch (error) {
+      active.incremental.checkpoints.delete(changeSet.id);
+      active.incremental.waitingForApply = false;
+      active.incremental.resolveAcknowledgement?.();
+      active.incremental.resolveAcknowledgement = undefined;
+      active.incremental.applyAcknowledgement = undefined;
+      throw error;
+    }
+  }
+
+  #buildWorkspaceChanges(active: Pick<ActiveTurn, "base" | "structure">, after: Map<string, string>): { files: AIFileChange[]; excludedRelations: boolean } {
     const files: AIFileChange[] = [];
     let excludedRelations = false;
     for (const path of new Set([...active.base.keys(), ...after.keys()])) {
@@ -1122,6 +1192,14 @@ export class AIWorkspaceService {
       const hunks = makeHunks(path, before ?? "", proposed ?? "");
       files.push({ path, type: before === undefined ? "create" : proposed === undefined ? "delete" : "modify", ...(before === undefined ? {} : { originalContent: before }), ...(proposed === undefined ? {} : { proposedContent: proposed }), hunks, status: "pending" });
     }
+    return { files, excludedRelations };
+  }
+
+  async #collectChanges(conversation: AIConversation, active: ActiveTurn | ActiveCopilotTurn): Promise<void> {
+    this.approvals.cancel(conversation.id);
+    await this.#stopIncrementalAutoApply(active);
+    const after = await readWorkspace(active.scratchRoot, true);
+    const { files, excludedRelations } = this.#buildWorkspaceChanges(active, after);
     if (excludedRelations) {
       const message = [...conversation.messages].reverse().find(item => item.role === "assistant");
       if (message) message.content += "\n\nRelation edits in metadata were excluded. Use the relation proposal tools and explicit approval to change logical dependencies.";
@@ -1165,6 +1243,10 @@ export class AIWorkspaceService {
 async function readStructureMetadata(root: string): Promise<string | undefined> {
   try { return await readFile(join(root, ".texweave", "structure.json"), "utf8"); }
   catch (error) { if ((error as NodeJS.ErrnoException).code === "ENOENT") return undefined; throw error; }
+}
+
+function createIncrementalSync(): IncrementalSync {
+  return { timer: undefined, syncing: undefined, waitingForApply: false, failed: false, checkpoints: new Map(), stableSnapshots: new Map(), applyAcknowledgement: undefined, resolveAcknowledgement: undefined };
 }
 
 function updateReasoning(message: AIMessage, id: string, text: string, complete: boolean): void {

@@ -2,6 +2,7 @@ import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 import { AIMessageContent } from "../../apps/desktop/src/renderer/ai/AIMessageContent.js";
+import { AIResponse } from "../../apps/desktop/src/renderer/ai/AIResponse.js";
 
 describe("AI message Markdown rendering", () => {
   it("renders tables, task lists, and common inline formatting", () => {
@@ -44,5 +45,40 @@ describe("AI message Markdown rendering", () => {
     expect(html).toContain("mathbb");
     expect(html).toContain("<code class=\"ai-inline-code\">$literal$</code>");
     expect(html).toContain("<code>$code$</code>");
+  });
+
+  it("groups adjacent thought summaries into one item while keeping response order", () => {
+    const html = renderToStaticMarkup(createElement(AIResponse, {
+      projectRoot: "",
+      message: {
+        id: "assistant-1",
+        role: "assistant",
+        content: "The answer.",
+        createdAt: 1,
+        status: "complete",
+        reasoning: [
+          { id: "r1", text: "First thought.", complete: true },
+          { id: "r2", text: "Second thought.", complete: true },
+          { id: "r3", text: "Later thought.", complete: true },
+          { id: "r4", text: "Final thought.", complete: true }
+        ],
+        responseParts: [
+          { id: "r1", kind: "reasoning", text: "First thought." },
+          { id: "r2", kind: "reasoning", text: "Second thought." },
+          { id: "answer", kind: "text", text: "The answer." },
+          { id: "r3", kind: "reasoning", text: "Later thought." },
+          { id: "r4", kind: "reasoning", text: "Final thought." }
+        ]
+      }
+    }));
+
+    const groups = html.match(/<details class="ai-reasoning"[\s\S]*?<\/details>/g) ?? [];
+    expect(groups).toHaveLength(2);
+    expect(groups[0]).toContain("First thought.");
+    expect(groups[0]).toContain("Second thought.");
+    expect(groups[1]).toContain("Later thought.");
+    expect(groups[1]).toContain("Final thought.");
+    expect(html.indexOf("Second thought.")).toBeLessThan(html.indexOf("The answer."));
+    expect(html.indexOf("The answer.")).toBeLessThan(html.indexOf("Later thought."));
   });
 });
