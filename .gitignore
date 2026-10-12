@@ -4,6 +4,7 @@ release/
 coverage/
 .latex-editor/
 .latex-editor-data/
+/Update_tech_file/
 *.tsbuildinfo
 *.log
 *.aux
