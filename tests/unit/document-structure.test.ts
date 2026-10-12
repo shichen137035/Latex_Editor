@@ -175,6 +175,23 @@ describe("v0.5.3 source-aware document block API", () => {
     expect(files.get("main.tex")).not.toContain("stale");
   });
 
+  it("replaces a checked relative range and rejects stale text or invalid offsets", async () => {
+    const { api, files } = setup(paper);
+    const theorem = data(await api.find_blocks({ type: "theorem" }))[0]!;
+    const detail = data(await api.get_block({ blockId: theorem.id }));
+    const block = data(await api.get_block_source({ blockId: detail.children[0]!.id }));
+    const start = block.content.indexOf("consistent"), end = start + "consistent".length;
+    const input = { blockId: block.blockId, expectedRevision: block.revision, start, end, expectedText: "consistent", content: "uniformly consistent" };
+    expect(await api.replace_block_range({ ...input, expectedText: "wrong" })).toMatchObject({ ok: false, error: { code: "BLOCK_TEXT_MISMATCH" } });
+    expect(await api.replace_block_range({ ...input, end: block.content.length + 1 })).toMatchObject({ ok: false, error: { code: "BLOCK_RANGE_INVALID" } });
+    const edited = data(await api.replace_block_range(input));
+    expect(files.get("main.tex")).toBe(paper.replace("consistent", "uniformly consistent"));
+    expect(await api.replace_block_range(input)).toMatchObject({ ok: false, error: { code: "STALE_BLOCK" } });
+    const current = data(await api.get_block_source({ blockId: edited.id }));
+    data(await api.replace_block_range({ blockId: current.blockId, expectedRevision: current.revision, start: current.content.length, end: current.content.length, expectedText: "", content: " Extra." }));
+    expect(files.get("main.tex")).toContain("Extra.");
+  });
+
   it("preserves separated metadata across restart and flags it stale after a content edit", async () => {
     const { api, port, ids, files } = setup(paper);
     const card = data(await api.find_blocks({ type: "theorem" }))[0]!;
@@ -242,7 +259,7 @@ describe("v0.5.3 source-aware document block API", () => {
   it("shares the same tool dispatch for AI edits and protects concurrent revisions", async () => {
     const { api } = setup(paper);
     const { dynamicTools, toolHandlers } = createBlockTools(api);
-    expect(dynamicTools).toHaveLength(9);
+    expect(dynamicTools).toHaveLength(10);
     const cards = data(JSON.parse(await toolHandlers.find_blocks!({ type: "paragraph" })) as BlockApiResult<Array<{ id: string }>>);
     const current = data(await api.get_block({ blockId: cards[0]!.id }));
     const results = await Promise.all(["First", "Second"].map((content) => toolHandlers.replace_block_content!({ blockId: current.id, expectedRevision: current.revision, content })));

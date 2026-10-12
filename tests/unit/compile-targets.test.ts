@@ -5,8 +5,17 @@ import { documentOutputDirectory, targetOutputArguments } from "../../packages/c
 import { externalDocumentPlan } from "../../packages/compiler-latexmk/src/document-dependencies.js";
 import { isStandaloneLatexDocument, latexDocumentLinks, latexDocumentPathCandidates } from "../../packages/editor-core/src/latex-source.js";
 import type { ProjectPdfDocument } from "@latex-editor/contracts";
+import { compileResultMetadata } from "../../apps/desktop/src/renderer/workbench/compileResultMetadata.js";
+import type { CompileResult } from "@latex-editor/contracts";
 
 describe("multiple document compilation", () => {
+  it("keeps PDF bytes out of retained diagnostic results", () => {
+    const result = { compilationId: "run", mainFile: "paper.tex", status: "succeeded", diagnostics: [], pdfDataUrl: "data:application/pdf;base64,large-preview", pdfArtifactPath: "artifact.pdf" } as CompileResult & { pdfDataUrl: string };
+    const metadata = compileResultMetadata(result);
+    expect(metadata).not.toHaveProperty("pdfDataUrl");
+    expect(metadata.pdfArtifactPath).toBe("artifact.pdf");
+    expect(result.pdfDataUrl).toContain("large-preview");
+  });
   it("selects only TeX files and avoids compiling the primary twice", () => {
     expect(compilationTargets("nested/main.tex", "nested\\main.tex")).toEqual(["nested/main.tex"]);
     expect(compilationTargets("main.tex", "other.TEX")).toEqual(["main.tex", "other.TEX"]);
@@ -51,9 +60,10 @@ describe("multiple document compilation", () => {
   it("discovers only explicit document links with comments and macro definitions excluded", () => {
     const source = String.raw`% \externaldocument{ignored}
 \newcommand{\example}{\externaldocument{macro}}
-\externaldocument[other-]{supplement/notes}[notes.pdf]
+\externaldocument[other-][nocite]{supplement/notes}[notes.pdf]
 \input{parts/body}`;
-    expect(latexDocumentLinks(source)).toEqual([{ kind: "external", path: "supplement/notes" }, { kind: "include", path: "parts/body" }]);
+    expect(latexDocumentLinks(source)).toEqual([{ kind: "external", path: "supplement/notes", prefix: "other-" }, { kind: "include", path: "parts/body" }]);
+    expect(latexDocumentLinks(String.raw`\externaldocument[unfinished`)).toEqual([]);
     expect(latexDocumentPathCandidates("nested/main.tex", "../other")).toEqual(["other.tex"]);
     expect(latexDocumentPathCandidates("main.tex", "../../outside")).toEqual([]);
     expect(isStandaloneLatexDocument("% \\documentclass{article}\nBody.")).toBe(false);

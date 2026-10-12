@@ -1,4 +1,5 @@
 import type { ImagePreferences } from "@latex-editor/contracts";
+import { automaticSubfigureWidth, gridDimension } from "./layout.js";
 
 function stem(path: string): string {
   return path.replaceAll("\\", "/").split("/").at(-1)?.replace(/\.[^.]+$/, "").replace(/[^A-Za-z0-9:_-]+/g, "-").replace(/^-|-$/g, "") || "image";
@@ -33,7 +34,7 @@ export function multiImageInsertion(paths: string[], preferences: ImagePreferenc
   if (paths.length <= 1) return imageInsertion(paths[0] ?? "figures/image.png", preferences, "figure");
   const configured = preferences.multiFigure.defaultColumns;
   const columns = configured === "auto" ? Math.min(3, paths.length) : configured;
-  const width = preferences.multiFigure.subfigureWidth === "auto" ? `${Math.max(0.2, (1 / columns) - 0.025).toFixed(2)}\\textwidth` : preferences.multiFigure.subfigureWidth;
+  const width = preferences.multiFigure.subfigureWidth === "auto" ? automaticSubfigureWidth(columns) : preferences.multiFigure.subfigureWidth;
   const lines = [`\\begin{figure}[${preferences.defaultInsert.placement}]`, "  \\centering"];
   paths.forEach((path, index) => {
     lines.push(`  \\begin{subfigure}{${width}}`, "    \\centering", `    \\includegraphics[width=${preferences.multiFigure.imageWidth}]{${path}}`);
@@ -49,10 +50,10 @@ export function multiImageInsertion(paths: string[], preferences: ImagePreferenc
 }
 
 export function emptyMultiImageInsertion(rows: number, columns: number, preferences: ImagePreferences): { text: string; cursorOffset: number } {
-  const safeRows = Math.max(1, Math.min(6, Math.floor(rows)));
-  const safeColumns = Math.max(1, Math.min(6, Math.floor(columns)));
+  const safeRows = gridDimension(rows);
+  const safeColumns = gridDimension(columns);
   const count = safeRows * safeColumns;
-  const width = preferences.multiFigure.subfigureWidth === "auto" ? `${Math.max(0.2, (1 / columns) - 0.025).toFixed(2)}\\textwidth` : preferences.multiFigure.subfigureWidth;
+  const width = preferences.multiFigure.subfigureWidth === "auto" ? automaticSubfigureWidth(safeColumns) : preferences.multiFigure.subfigureWidth;
   const lines = [`\\begin{figure}[${preferences.defaultInsert.placement}]`, "  \\centering"];
   for (let index = 0; index < count; index += 1) {
     lines.push(`  \\begin{subfigure}{${width}}`, "    \\centering", `    \\includegraphics[width=${preferences.multiFigure.imageWidth}]{}`, "    \\caption{}", "  \\end{subfigure}");

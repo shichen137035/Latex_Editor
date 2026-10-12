@@ -19,6 +19,7 @@ import { addCommandLabel, nextAutomaticLabel } from "../preview/labels.js";
 import { unsavedChanges, useUnsavedChanges } from "../lifecycle/unsavedChanges.js";
 import { EditHistory, applyTextPatch, patchFromEdits, textPatch, type HistoryDirection } from "./EditHistory.js";
 import { NavigationHistory } from "./NavigationHistory.js";
+import { ProjectReferenceIndex } from "../editor/ProjectReferenceIndex.js";
 import { automaticHunkIds, reviewFileContents } from "../ai/changeOperations.js";
 import type { EnvironmentDefinition } from "../preview/types.js";
 import type { CompletionController } from "../completion/CompletionController.js";
@@ -37,6 +38,10 @@ import { RelationGraphView } from "../relations/RelationGraphView.js";
 import { ImageQuickAction } from "../figure/ImageQuickAction.js";
 import { ImageInsertDialog } from "../figure/ImageInsertDialog.js";
 import { FigureInspector, type FigureSelection } from "../figure/FigureInspector.js";
+import { preferredSubfigureSyntax, subfigurePackage } from "../figure/layout.js";
+import { parseGraphicPaths, parseImages } from "../figure/parser.js";
+import { environmentPreview } from "../preview/environment-preview.js";
+import { planFigureEdit, type FigureEditPlan } from "./figureEditing.js";
 import { TableInsertDialog } from "../table/TableInsertDialog.js";
 import { TableInspector } from "../table/TableInspector.js";
 import type { TableSelection } from "../table/model.js";
@@ -59,6 +64,8 @@ import { createAIChangeController } from "./aiChangeController.js";
 import { emptyBlockSnapshot, useRelationController } from "./relationController.js";
 import { createDocumentInsertions, type ImageDialogState } from "./documentInsertions.js";
 import { createDocumentActions } from "./documentActions.js";
+import { compileResultMetadata } from "./compileResultMetadata.js";
+import { releaseCollapseStateCache } from "../collapseState.js";
 import { CompileResultPicker } from "./CompileResultPicker.js";
 import { usePdfDocuments } from "./usePdfDocuments.js";
 import { useSearchController } from "./searchController.js";
@@ -79,7 +86,7 @@ type BlockCreationAvailability = { kind: "none" | "checking" | "valid" | "repair
 
 
 export function Workbench({ project, projects, environments, onHome, onSwitch, onOpenLibrary }: { project: Project; projects: Project[]; environments: EnvironmentDefinition[]; onHome(): void; onSwitch(project: Project): void; onOpenLibrary(): void }) {
-  useEffect(() => () => releaseFigurePreviewCache(project.id), [project.id]);
+  useEffect(() => () => { releaseFigurePreviewCache(project.id); releaseCollapseStateCache(project.id); }, [project.id]);
   const store = useSettings();
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [settingsInitial, setSettingsInitial] = useState<SettingsSection>("general");
@@ -425,8 +432,9 @@ export function Workbench({ project, projects, environments, onHome, onSwitch, o
   useEffect(() => { setCompileResults([]); setCompileResult(undefined); }, [project.id, project.mainFile]);
   useEffect(() => api?.compile.onUpdate(update => {
     if (update.projectId !== project.id || compileGuard.current.busy) return;
-    setCompileResult(update.result);
-    setCompileResults(values => [...values.filter(value => value.mainFile !== update.result.mainFile), update.result]);
+    const metadata = compileResultMetadata(update.result);
+    setCompileResult(metadata);
+    setCompileResults(values => [...values.filter(value => value.mainFile !== update.result.mainFile), metadata]);
     if (pdfDocumentsRef.current.adopt(update.result, "ai-workspace")) {
       navigationNonce.current += 1;
       setLayout(value => ({ ...value, rightPane: "pdf" }));
@@ -485,6 +493,7 @@ export function Workbench({ project, projects, environments, onHome, onSwitch, o
     project, api, pdfFile, layout, layoutRef, setLayout, activePathRef, tabsRef, editorRef, sourceModelPath, lastTextPane,
     sourcePositions, previewPositions, previewViewportAnchor, navigationHistory, navigationNonce, fileOpenSequence,
     setNavigationRequest, setPdfTarget, openFile,
+    onNavigationPosition: (fileId, offset) => { previewClickAnchor.current = { fileId, offset }; },
     reportSyncError: (message) => setBlockNotice(/SYNCTEX_DATA_(MISSING|STALE)/.test(message) ? t("pdf.syncDataHint") : /SYNCTEX_NO_MATCH/.test(message) ? t("pdf.syncNoMatch") : message),
     canSync: () => { if (pdfOriginRef.current === "ai-workspace") { setBlockNotice(t("pdf.aiSyncHint")); return false; } return true; },
     prepareNavigation: () => {
@@ -502,13 +511,13 @@ export function Workbench({ project, projects, environments, onHome, onSwitch, o
     setTabs, setSaveState, onHome, onSwitch, flushDocuments: workingDocuments.sync, releaseDocuments: workingDocuments.close, onSaveError: setBlockNotice,
     onSaved: (path, content) => updateSavedSearchDocument(path, content)
   });
-  const { compile, exportSourceArchive, exportMainTex, exportPdf } = createDocumentActions({
+  const { compile, exportSourceArchive, exportMainSourceArchive, exportPdf } = createDocumentActions({
     api, project, activePath: pdfDocuments.sourceTarget ?? activePath, tree, compileState, saveActive,
     saveAll: async () => { unsavedChanges.commitDrafts(flushSync); await saveAll(); },
     guard: compileGuard.current, isCurrent: mainFile => !projectMainRef.current || mainFile === projectMainRef.current,
     onIdle: () => autoCompiler.current?.idle(),
     onPdfReady: result => { navigationNonce.current += 1; return pdfDocuments.onPdfReady(result); },
-    onCompileBatch: results => { setCompileResults(results); pdfDocuments.recordResults(results); },
+    onCompileBatch: results => { setCompileResults(results.map(compileResultMetadata)); pdfDocuments.recordResults(results); },
     setCompileState, setCompileResult, setPdfDataUrl, setLayout, setBottomTab, setBottomVisible
   });
   compileRef.current = compile;
@@ -685,6 +694,18 @@ export function Workbench({ project, projects, environments, onHome, onSwitch, o
       unsavedChanges.commitDrafts(flushSync); return true;
     }
   });
+  const referenceIndex = useMemo(() => new ProjectReferenceIndex(), [project.id]);
+  referenceIndex.update(searchDocuments.map(file => ({ path: file.fileId, content: file.content })), project.mainFile);
+  const resolveReference = useCallback((label: string) => referenceIndex.resolve(activePathRef.current ?? "", label), [referenceIndex]);
+  const jumpToReference = (anchor: { fileId: string; offset: number; linkText: string; targetLabel: string }, view: "source" | "preview") => {
+    if (anchor.fileId !== activePathRef.current) return;
+    const target = referenceIndex.resolve(anchor.fileId, anchor.targetLabel);
+    const from = currentNavigationOrigin(anchor.offset);
+    if (!target || !from) return;
+    void navigateTo(target.path, { offset: target.offset }, view, true, {
+      ...from, link: { start: anchor.offset, text: anchor.linkText, targetLabel: target.label, targetPath: target.path }
+    }).catch(error => setBlockNotice(error instanceof Error ? error.message : String(error)));
+  };
   const {
     relationFocusId, relationSelectedId, setRelationSelectedId,
     relationDocumentFiltered, setRelationDocumentFiltered, relationFocusHistory,
@@ -793,23 +814,74 @@ export function Workbench({ project, projects, environments, onHome, onSwitch, o
     setTabs(tabsRef.current);
     await refreshTree();
   };
-  const { applyImageChoice, applyPreviewTableChange, applyTableChoice, dropImages, dropImagesToProject, insertEnvironment } = createDocumentInsertions({
+  const { applyImageChoice, pasteImage, applyPreviewTableChange, applyTableChoice, dropImages, dropImagesToProject, insertEnvironment } = createDocumentInsertions({
     api, project, store, activeTab, getActiveTab: () => tabsRef.current.find(tab => tab.path === activePathRef.current), sourceEditorVisible, editorRef, previewInsertionAnchor,
     previewViewportAnchor, imageDialog, insertText, setEditorContent, setFigureSelection, setTableSelection,
     setImageDialog, setTableDialogOpen, refreshTree, setBlockNotice
   });
+  useEffect(() => {
+    const paste = (event: ClipboardEvent) => {
+      if (event.defaultPrevented || !project.writable || !activeTab?.path.endsWith(".tex") || settingsOpen || tableDialogOpen) return;
+      if (!Array.from(event.clipboardData?.items ?? []).some(item => item.kind === "file" && item.type.startsWith("image/"))) return;
+      const target = event.target instanceof Element ? event.target : undefined;
+      if (!target || target.closest(".preview-local-editor, .ai-inline-diff")) return;
+      if (target !== document.body && !target.closest(".editor-surface, .structured-preview, .figure-inspector, .image-insert-dialog")) return;
+      if (target.closest("input, textarea, [contenteditable=true]") && !target.closest(".editor-surface")) return;
+      event.preventDefault();
+      event.stopPropagation();
+      const selection = target.closest(".preview-figure, .figure-inspector") ? figureSelection : undefined;
+      void pasteImage(selection).catch((reason: unknown) => setBlockNotice(reason instanceof Error ? reason.message : String(reason)));
+    };
+    window.addEventListener("paste", paste, true);
+    return () => window.removeEventListener("paste", paste, true);
+  }, [project.writable, activeTab?.path, settingsOpen, tableDialogOpen, figureSelection, pasteImage]);
+  const figureContextDocuments = () => {
+    const documents = new Map(searchDocuments.map(file => [file.fileId, { path: file.fileId, content: file.content }]));
+    for (const tab of tabsRef.current) documents.set(tab.path, tab);
+    return [...documents.values()];
+  };
+  const figurePreambleContext = useMemo(() => {
+    const owner = activeTab?.content.includes("\\documentclass") && !activeTab.content.includes("{subfiles}") ? activeTab.path : project.mainFile ?? activePath;
+    return owner ? referenceIndex.documentFiles(owner).map(path => searchDocuments.find(file => file.fileId === path)?.content ?? "").join("\n") : activeTab?.content ?? "";
+  }, [referenceIndex, searchDocuments, activePath, activeTab?.content, project.mainFile]);
+  const figureGraphicPaths = useMemo(() => parseGraphicPaths(figurePreambleContext), [figurePreambleContext]);
+  const commitFigureEdit = (plan: FigureEditPlan) => {
+    if (plan.preamble) {
+      const owner = plan.preamble;
+      if (!tabsRef.current.some(tab => tab.path === owner.document.path)) {
+        savedContents.current.set(owner.document.path, owner.before);
+        tabsRef.current = [...tabsRef.current, { path: owner.document.path, content: owner.before, dirty: false }];
+      }
+      changeDocument(owner.document.path, owner.document.content, false, undefined, true, false);
+    }
+    changeDocument(plan.document.path, plan.document.content, false, undefined, true, false);
+    setFigureSelection(plan.selection);
+  };
+  const applyPreviewFigureChange = (selection: FigureSelection, replacement: string): void | Promise<void> => {
+    if (!project.writable || activePathRef.current !== selection.fileId) return;
+    const tab = tabsRef.current.find(value => value.path === selection.fileId);
+    if (!tab || tab.content.slice(selection.start, selection.end) !== selection.source) throw new Error(t("image.layout.changed"));
+    const required = subfigurePackage(replacement);
+    if (!required || required === subfigurePackage(selection.source)) {
+      commitFigureEdit({ before: tab.content, document: { path: tab.path, content: tab.content.slice(0, selection.start) + replacement + tab.content.slice(selection.end) }, selection: { ...selection, source: replacement, end: selection.start + replacement.length } });
+      return;
+    }
+    if (!api) return;
+    return planFigureEdit(selection, replacement, { mainFile: project.mainFile, activePath: () => activePathRef.current, documents: figureContextDocuments, documentFiles: path => referenceIndex.documentFiles(path), read: async path => (await api.files.read(project.id, path)).content })
+      .then(commitFigureEdit).catch(error => { throw new Error(error instanceof Error && error.message.startsWith("image.layout.") ? t(error.message as MessageKey) : error instanceof Error ? error.message : String(error)); });
+  };
+  const changePreviewFigure = (selection: FigureSelection, replacement: string) => {
+    try { void Promise.resolve(applyPreviewFigureChange(selection, replacement)).catch(error => setBlockNotice(error instanceof Error ? error.message : String(error))); }
+    catch (error) { setBlockNotice(error instanceof Error ? error.message : String(error)); }
+  };
   const onEditorMount = createWorkbenchEditorMount({
     api, project, store, editorRef, sourceRestoredFor, setEditorMountVersion, searchDecorationsRef,
     completionController, spellCheckController, referenceMouseListener, symbolPairingListener, activePathRef, sourceModelPath,
     setSourceMathPreview, clearHoverMathPreviewRef, mathPopoverInteracting, mathPopoverInteractionChangeRef,
     setCursor, sourcePositions, activeContentRef, setSourceSelection, forwardSyncToPdf, treeRef, environmentsRef,
     getOpenDocuments: () => tabsRef.current.map(tab => ({ path: tab.path, content: tab.content })),
-    onReferenceJump: jump => {
-      const from = currentNavigationOrigin(jump.offset);
-      if (!from) return;
-      navigationHistory.current.record({ ...from, link: { start: jump.offset, text: jump.text, targetLabel: jump.label } }, { ...from, offset: jump.targetOffset });
-      void navigateTo(from.path, { offset: jump.targetOffset }, "source", false);
-    },
+    resolveReference: (path, label) => referenceIndex.resolve(path, label),
+    onReferenceJump: jump => { if (activePathRef.current) jumpToReference({ fileId: activePathRef.current, offset: jump.offset, linkText: jump.text, targetLabel: jump.label }, "source"); },
     setDetectedSpellLanguage, setSpellContextMenu
   });
 
@@ -923,7 +995,7 @@ export function Workbench({ project, projects, environments, onHome, onSwitch, o
   const spellLanguages = [...new Set(["en-US", ...(spellStatus?.availableLanguages ?? [])])];
   const spellStatusControl = <div className="spell-status-control"><button onClick={() => setSpellMenuOpen((value) => !value)}>{spellMode === "disabled" ? t("spell.status.off") : spellMode === "manual" ? t("spell.status.manual", { language: spellLanguageLabel(spellDisplayLanguage) }) : t("spell.status.auto", { language: spellLanguageLabel(spellDisplayLanguage) })}</button>{spellMenuOpen && <div className="spell-status-menu"><button onClick={() => void configureSpell("auto", detectedSpellLanguage)}>{spellMode === "auto" && "✓"}{t("spell.menu.auto", { language: spellLanguageLabel(detectedSpellLanguage) })}</button>{spellLanguages.map((language) => <button key={language} onClick={() => void configureSpell("manual", language)}>{spellMode === "manual" && spellManualLanguage === language && "✓"}{spellLanguageLabel(language)}</button>)}<div className="menu-divider"/><button onClick={() => void configureSpell("disabled", spellDisplayLanguage)}>{spellMode === "disabled" && "✓"}{t("spell.menu.disable")}</button></div>}</div>;
   const menuItems = (menu: Exclude<MenuName, "projects">) => {
-    if (menu === "file") return [{ label: t("menu.newFile"), action: () => void createEntry(false, "") }, { label: t("menu.openFile"), disabled: importingProjectEntries || !project.writable, action: () => void importFromComputer("file") }, { label: t("menu.openFolder"), disabled: importingProjectEntries || !project.writable, action: () => void importFromComputer("folder") }, { label: t("menu.save"), action: () => { commands.execute("file.save"); } }, { label: t("menu.saveAll"), action: () => { commands.execute("file.saveAll"); } }, { label: "", divider: true }, { label: t("export.sourceArchive"), action: () => void exportSourceArchive() }, { label: t("export.pdf"), action: () => void exportPdf() }, { label: t("export.mainTex"), action: () => void exportMainTex() }, { label: "", divider: true }, { label: t("menu.closeProject"), action: leaveProject }];
+    if (menu === "file") return [{ label: t("menu.newFile"), action: () => void createEntry(false, "") }, { label: t("menu.openFile"), disabled: importingProjectEntries || !project.writable, action: () => void importFromComputer("file") }, { label: t("menu.openFolder"), disabled: importingProjectEntries || !project.writable, action: () => void importFromComputer("folder") }, { label: t("menu.save"), action: () => { commands.execute("file.save"); } }, { label: t("menu.saveAll"), action: () => { commands.execute("file.saveAll"); } }, { label: "", divider: true }, { label: t("export.pdf"), action: () => void exportPdf() }, { label: t("export.sourceArchive"), action: () => void exportSourceArchive() }, { label: t("export.mainSourceArchive"), action: () => void exportMainSourceArchive() }, { label: "", divider: true }, { label: t("menu.closeProject"), action: leaveProject }];
     if (menu === "edit") return [{ label: t("menu.undo"), action: () => { commands.execute("edit.undo"); } }, { label: t("menu.redo"), action: () => { commands.execute("edit.redo"); } }, { label: t("menu.find"), action: () => { commands.execute("edit.find"); } }, { label: t("menu.replace"), action: () => { commands.execute("edit.replace"); } }, { label: "", divider: true }, { label: t("editor.formatSource"), disabled: !isLatexSource || !project.writable, action: formatSource }];
     if (menu === "view") return [{ label: t("menu.source"), action: () => { if ((layout.mode === "single" ? layout.singlePane === "preview" : layout.leftPane === "preview")) pendingVisualToCodeAnchor.current = previewToCodeAnchor(); setLayout((value) => ({ ...value, mode: "single", singlePane: "source" })); } }, { label: t("menu.preview"), action: () => setLayout((value) => ({ ...value, mode: "single", singlePane: "preview" })) }, { label: t("menu.pdf"), action: () => setLayout((value) => ({ ...value, mode: "single", singlePane: "pdf" })) }, { label: "", divider: true }, { label: t("menu.single"), action: () => setLayout((value) => ({ ...value, mode: "single" })) }, { label: t("menu.split"), action: () => setLayout((value) => ({ ...value, mode: "split" })) }];
     return [{ label: t("menu.automaticHistory"), action: () => { setSidebarMode("history"); setLayout((value) => ({ ...value, sidebarVisible: true })); } }, { label: t("menu.namedVersions"), action: () => { setSidebarMode("history"); setLayout((value) => ({ ...value, sidebarVisible: true })); } }];
@@ -976,7 +1048,7 @@ export function Workbench({ project, projects, environments, onHome, onSwitch, o
     const edits = changes?.map((change) => ({ start: change.from, end: change.to, newLength: change.insertedText.length }));
     changeDocument(activePath, next, false, edits, true, true, changes);
   };
-  const previewProps = { getOpenDocuments: () => tabsRef.current.map(tab => ({ path: tab.path, content: tab.content })), filePath: activeTab?.path, source: activeTab?.content, sourceTransaction: previewSourceTransaction.current, definitions: previewEnvironments, mathContext, filterQuery, searchQuery, searchResults: searchResponse.results, activeSearchResult, highlightRange: createdBlockHighlight, locateRequest: previewRequest, restoreOffset: activeTab ? previewPositions.current.get(activeTab.path)?.offset ?? sourcePositions.current.get(activeTab.path)?.offset : undefined, restoreScrollTop: activeTab ? previewPositions.current.get(activeTab.path)?.scrollTop : undefined, onLocated: (nonce: number) => setNavigationRequest((current) => current?.nonce === nonce ? undefined : current), onHighlightLocated: (nonce: number) => setCreatedBlockHighlight((current) => current?.nonce === nonce ? undefined : current), relation: blockSnapshot ? { active: relationModeActive && relationDocumentFiltered, snapshot: blockSnapshot, transientToBlockId: previewSemanticIds, focusId: relationFocusId, direction: relationDirection, matchIds: relationProjection.matchIds, contextIds: relationProjection.contextIds, locateRequest: relationLocateRequest, onLocated: (nonce: number) => setRelationLocateRequest((current) => current?.nonce === nonce ? undefined : current), onFocus: focusRelationBlock, onToggle: toggleRelation } : undefined, onSourceChange: applyPreviewSourceChange, onSelectionChange: setPreviewSelection, onSelectionContextMenu: (selection: DocumentSelection, x: number, y: number) => { setPreviewSelection(selection); setBlockContext({ selection, x, y }); }, onViewportAnchorChange: trackPreviewViewport, onClickSourcePosition: trackPreviewClick, onJumpFromPosition: (anchor: { fileId: string; offset: number; targetOffset: number; linkText: string; targetLabel: string }) => { const from = anchor.fileId === activePathRef.current ? currentNavigationOrigin(anchor.offset) : undefined; if (from) navigationHistory.current.record({ ...from, link: { start: anchor.offset, text: anchor.linkText, targetLabel: anchor.targetLabel } }, { ...from, offset: anchor.targetOffset }); }, onFigureSelect: (selection?: FigureSelection) => { if (selection) { setInspectorBlock(undefined); setTableSelection(undefined); } setFigureSelection(selection); }, onFigureSlotSelect: (selection: FigureSelection) => { if (!project.writable) return; setInspectorBlock(undefined); setTableSelection(undefined); setFigureSelection(selection); setImageDialog({ kind: "replace", selection, imageIndex: selection.imageIndex ?? 0 }); }, onTableSelect: (selection?: TableSelection) => { if (selection) { setInspectorBlock(undefined); setFigureSelection(undefined); } setTableSelection(selection); }, onTableChange: applyPreviewTableChange, api, projectId: project.id, tree, onSpellContextMenu: setSpellContextMenu, onDetectedLanguage: setDetectedSpellLanguage, onForwardSync: forwardSyncToPdf };
+  const previewProps = { getOpenDocuments: () => tabsRef.current.map(tab => ({ path: tab.path, content: tab.content })), filePath: activeTab?.path, source: activeTab?.content, sourceTransaction: previewSourceTransaction.current, definitions: previewEnvironments, mathContext, filterQuery, searchQuery, searchResults: searchResponse.results, activeSearchResult, highlightRange: createdBlockHighlight, locateRequest: previewRequest, restoreOffset: activeTab ? previewPositions.current.get(activeTab.path)?.offset ?? sourcePositions.current.get(activeTab.path)?.offset : undefined, restoreScrollTop: activeTab ? previewPositions.current.get(activeTab.path)?.scrollTop : undefined, onLocated: (nonce: number) => setNavigationRequest((current) => current?.nonce === nonce ? undefined : current), onHighlightLocated: (nonce: number) => setCreatedBlockHighlight((current) => current?.nonce === nonce ? undefined : current), relation: blockSnapshot ? { active: relationModeActive && relationDocumentFiltered, snapshot: blockSnapshot, transientToBlockId: previewSemanticIds, focusId: relationFocusId, direction: relationDirection, matchIds: relationProjection.matchIds, contextIds: relationProjection.contextIds, locateRequest: relationLocateRequest, onLocated: (nonce: number) => setRelationLocateRequest((current) => current?.nonce === nonce ? undefined : current), onFocus: focusRelationBlock, onToggle: toggleRelation } : undefined, onSourceChange: applyPreviewSourceChange, onSelectionChange: setPreviewSelection, onSelectionContextMenu: (selection: DocumentSelection, x: number, y: number) => { setPreviewSelection(selection); setBlockContext({ selection, x, y }); }, onViewportAnchorChange: trackPreviewViewport, onClickSourcePosition: trackPreviewClick, resolveReference, onJumpFromPosition: (anchor: { fileId: string; offset: number; targetOffset: number; linkText: string; targetLabel: string }) => jumpToReference(anchor, "preview"), onPasteImage: project.writable ? (offset: number) => pasteImage(undefined, true, offset) : undefined, onFigureChange: project.writable ? changePreviewFigure : undefined, onFigureSelect: (selection?: FigureSelection) => { if (selection) { setInspectorBlock(undefined); setTableSelection(undefined); } setFigureSelection(selection); }, onFigureSlotSelect: (selection: FigureSelection) => { if (!project.writable) return; setInspectorBlock(undefined); setTableSelection(undefined); setFigureSelection(selection); setImageDialog({ kind: "replace", selection, imageIndex: selection.imageIndex ?? 0 }); }, onTableSelect: (selection?: TableSelection) => { if (selection) { setInspectorBlock(undefined); setFigureSelection(undefined); } setTableSelection(selection); }, onTableChange: applyPreviewTableChange, api, projectId: project.id, tree, onSpellContextMenu: setSpellContextMenu, onDetectedLanguage: setDetectedSpellLanguage, onForwardSync: forwardSyncToPdf };
   const anchoredPreviewProps = { ...previewProps, onInsertionAnchorChange: trackPreviewInsertion };
   const bibPreview = activeTab?.path.toLocaleLowerCase().endsWith(".bib") ? <BibtexPreviewPane source={activeTab.content} filePath={activeTab.path} projectId={project.id} documents={searchDocuments} restoreScrollTop={previewPositions.current.get(activeTab.path)?.scrollTop} onScrollPositionChange={(scrollTop) => { if (activePathRef.current === activeTab.path) previewPositions.current.set(activeTab.path, { offset: 0, scrollTop }); }} onSourceChange={setEditorContent} onLocate={({ filePath, offset }) => {
     void navigateTo(filePath, { offset }, filePath === activePath ? "source" : "preserve");
@@ -1026,11 +1098,7 @@ export function Workbench({ project, projects, environments, onHome, onSwitch, o
         {sidebarMode === "help" && <div className="generic-sidebar help-sidebar"><button onClick={() => { setSettingsInitial("shortcuts"); setSettingsOpen(true); }}>{t("settings.manager.shortcuts")}</button><button onClick={() => commands.execute("settings.open")}>{t("activity.settings")}</button></div>}
       </aside><div className="vertical-resizer" onPointerDown={(event) => startResize("sidebar", event)}/></>}
       <main className="workspace"><div className="workspace-main">{layout.mode === "single" ? singlePane : <><div className="split-toolbar-row">{splitToolbar}</div><div className="split-layout"><div style={{ width: `${layout.splitRatio}%` }}>{splitLeftContent}</div><div className="split-resizer" onPointerDown={(event) => startResize("split", event)}/><div style={{ width: `${100 - layout.splitRatio}%` }}>{secondaryContent}</div></div></>}</div>{bottomVisible && <><div className="bottom-resizer" onPointerDown={(event) => startResize("bottom", event)}/><section className="bottom-panel" style={{ height: layout.bottomPanelHeight }}><div className="bottom-tabs">{(["problems", "output", "compileLog"] as const).map((tab) => <button className={bottomTab === tab ? "active" : ""} key={tab} onClick={() => setBottomTab(tab)}>{t(`panel.${tab}` as MessageKey)}{tab === "problems" && diagnostics.length > 0 && <span>{diagnostics.length}</span>}</button>)}{bottomTab === "compileLog" && <CompileResultPicker results={compileResults} selected={compileResult} onSelect={setCompileResult}/>}<button className="panel-close" onClick={() => setBottomVisible(false)} title={t("common.close")}><Icon name="close"/></button></div><div className="panel-content">{bottomTab === "problems" && (diagnostics.length ? <div className="diagnostic-groups">{diagnosticGroups.map(([category, items]) => <section className="diagnostic-group" key={category}><h3>{category} <span>{items.length}</span></h3>{items.map((diagnostic, index) => <DiagnosticRow diagnostic={diagnostic} onOpen={() => void openDiagnostic(diagnostic)} key={`${diagnostic.message}-${index}`}/>)}</section>)}</div> : <p>{t("panel.noProblems")}</p>)}{bottomTab === "compileLog" && (compileResult ? <><div className="compile-log-status" aria-live="polite">{compileLogView?.compilationId === compileResult.compilationId && compileLogView.loading ? t("panel.loadingLog") : compileLogView?.compilationId === compileResult.compilationId && compileLogView.error ? `${t("panel.logUnavailable")} ${compileLogView.error}` : compileResult.logPath ? compileResult.logPath : ""}</div><pre>{compileLogView?.compilationId === compileResult.compilationId ? compileLogView.text : `${compileResult.stdoutTail}\n${compileResult.stderrTail}`}</pre></> : <p>{t("panel.noOutput")}</p>)}{bottomTab === "output" && <p>{t("panel.noOutput")}</p>}</div></section></>}</main>
-      {figureSelection ? <FigureInspector selection={figureSelection} onClose={() => setFigureSelection(undefined)} onLocate={(imageIndex) => setImageDialog({ kind: "replace", selection: figureSelection, imageIndex })} onChange={(replacement) => {
-        if (!activeTab || activeTab.path !== figureSelection.fileId) return;
-        setEditorContent(activeTab.content.slice(0, figureSelection.start) + replacement + activeTab.content.slice(figureSelection.end));
-        setFigureSelection({ ...figureSelection, source: replacement, end: figureSelection.start + replacement.length });
-      }}/> : tableSelection ? <TableInspector selection={tableSelection} onClose={() => setTableSelection(undefined)} onChange={(replacement) => { if (!activeTab || activeTab.path !== tableSelection.fileId) return; setEditorContent(activeTab.content.slice(0, tableSelection.start) + replacement + activeTab.content.slice(tableSelection.end)); setTableSelection({ ...tableSelection, source: replacement, end: tableSelection.start + replacement.length }); }}/> : inspectorBlock ? <aside className="custom-block-inspector" aria-label={t("block.inspector")}><header><div><small>{t("block.customBlock")}</small><strong>{inspectorBlock.name || inspectorBlock.label || t("block.untitled")}</strong></div><button onClick={() => setInspectorBlock(undefined)} title={t("common.close")}><Icon name="close"/></button></header><div><label><span>{t("block.type")}</span><input value={inspectorBlock.role ?? inspectorBlock.type} onChange={(event) => setInspectorBlock((block) => block ? { ...block, role: event.target.value, type: event.target.value } : block)} onBlur={(event) => void updateInspectorBlock({ role: event.target.value || "custom", type: event.target.value || "custom" })}/></label><label><span>{t("block.name")}</span><input value={inspectorBlock.name ?? ""} placeholder={t("block.optional")} onChange={(event) => setInspectorBlock((block) => block ? { ...block, name: event.target.value, title: event.target.value } : block)} onBlur={(event) => void updateInspectorBlock({ name: event.target.value, title: event.target.value })}/></label><label><span>{t("block.label")}</span><input value={inspectorBlock.label ?? ""} placeholder={t("block.optional")} onChange={(event) => setInspectorBlock((block) => block ? { ...block, label: event.target.value } : block)} onBlur={(event) => void updateInspectorBlock({ label: event.target.value })}/></label><dl><div><dt>{t("block.origin")}</dt><dd>{inspectorBlock.origin}</dd></div><div><dt>{t("block.range")}</dt><dd>{inspectorBlock.range ? `${inspectorBlock.range.start}-${inspectorBlock.range.end}` : "--"}</dd></div></dl></div></aside> : relationModeActive && <RelationInspector snapshot={blockSnapshot ?? emptyBlockSnapshot} definitions={previewEnvironments} selectedId={relationSelectedId} scope={currentRelationScope} documentFiltered={relationDocumentFiltered} onDocumentFiltered={setRelationDocumentFiltered} onSelect={setRelationSelectedId} onLocate={(id) => void locateRelationBlock(id)} focusId={relationFocusId} direction={relationDirection} depth={relationDepth} history={structuralHistory} onDirection={setRelationDirection} onDepth={setRelationDepth} onFocus={focusRelationBlock} onRemove={(from, to) => void removeRelation(from, to).catch((error: unknown) => setBlockNotice(error instanceof Error ? error.message : String(error)))} onUndo={() => void undoStructure()} onRedo={() => void redoStructure()} onClose={() => setSidebarMode("files")}/>}
+      {figureSelection ? <FigureInspector selection={figureSelection} api={api} projectId={project.id} graphicPaths={figureGraphicPaths} preferences={store.get("images")} syntax={preferredSubfigureSyntax(figurePreambleContext)} editable={project.writable && environmentPreview(figureSelection.environmentId ?? "figure", previewEnvironments.find(value => value.id === (figureSelection.environmentId ?? "figure"))).behavior.inlineEditable} onClose={() => setFigureSelection(undefined)} onLocate={(imageIndex) => setImageDialog({ kind: "replace", selection: figureSelection, imageIndex })} onChange={replacement => applyPreviewFigureChange({ ...figureSelection, imageIndex: Math.min(figureSelection.imageIndex ?? 0, Math.max(0, parseImages(figureSelection.source).length - 1)) }, replacement)}/> : tableSelection ? <TableInspector selection={tableSelection} onClose={() => setTableSelection(undefined)} onChange={(replacement) => { if (!activeTab || activeTab.path !== tableSelection.fileId) return; setEditorContent(activeTab.content.slice(0, tableSelection.start) + replacement + activeTab.content.slice(tableSelection.end)); setTableSelection({ ...tableSelection, source: replacement, end: tableSelection.start + replacement.length }); }}/> : inspectorBlock ? <aside className="custom-block-inspector" aria-label={t("block.inspector")}><header><div><small>{t("block.customBlock")}</small><strong>{inspectorBlock.name || inspectorBlock.label || t("block.untitled")}</strong></div><button onClick={() => setInspectorBlock(undefined)} title={t("common.close")}><Icon name="close"/></button></header><div><label><span>{t("block.type")}</span><input value={inspectorBlock.role ?? inspectorBlock.type} onChange={(event) => setInspectorBlock((block) => block ? { ...block, role: event.target.value, type: event.target.value } : block)} onBlur={(event) => void updateInspectorBlock({ role: event.target.value || "custom", type: event.target.value || "custom" })}/></label><label><span>{t("block.name")}</span><input value={inspectorBlock.name ?? ""} placeholder={t("block.optional")} onChange={(event) => setInspectorBlock((block) => block ? { ...block, name: event.target.value, title: event.target.value } : block)} onBlur={(event) => void updateInspectorBlock({ name: event.target.value, title: event.target.value })}/></label><label><span>{t("block.label")}</span><input value={inspectorBlock.label ?? ""} placeholder={t("block.optional")} onChange={(event) => setInspectorBlock((block) => block ? { ...block, label: event.target.value } : block)} onBlur={(event) => void updateInspectorBlock({ label: event.target.value })}/></label><dl><div><dt>{t("block.origin")}</dt><dd>{inspectorBlock.origin}</dd></div><div><dt>{t("block.range")}</dt><dd>{inspectorBlock.range ? `${inspectorBlock.range.start}-${inspectorBlock.range.end}` : "--"}</dd></div></dl></div></aside> : relationModeActive && <RelationInspector snapshot={blockSnapshot ?? emptyBlockSnapshot} definitions={previewEnvironments} selectedId={relationSelectedId} scope={currentRelationScope} documentFiltered={relationDocumentFiltered} onDocumentFiltered={setRelationDocumentFiltered} onSelect={setRelationSelectedId} onLocate={(id) => void locateRelationBlock(id)} focusId={relationFocusId} direction={relationDirection} depth={relationDepth} history={structuralHistory} onDirection={setRelationDirection} onDepth={setRelationDepth} onFocus={focusRelationBlock} onRemove={(from, to) => void removeRelation(from, to).catch((error: unknown) => setBlockNotice(error instanceof Error ? error.message : String(error)))} onUndo={() => void undoStructure()} onRedo={() => void redoStructure()} onClose={() => setSidebarMode("files")}/>}
     </div><footer className="status-bar"><div><span>{activePath ?? project.mainFile ?? "--"}</span><span>{t("status.line", cursor)}</span><span>{t("status.encoding")}</span><span>{t("status.lineEnding")}</span></div><div><span>{t("status.engine")}</span><button onClick={() => { setBottomTab("problems"); setBottomVisible(true); }}>{compileResult && !compilationFailed ? `✓${t("build.succeeded")}` : compileResult ? `! ${t("build.failed")}` : t("build.notRun")}</button><button onClick={() => { setBottomTab("problems"); setBottomVisible(true); }}>{t("status.errors", { count: errors })}</button><button onClick={() => { setBottomTab("problems"); setBottomVisible(true); }}>{t("status.warnings", { count: warnings })}</button>{spellStatusControl}<button onClick={() => setBottomVisible((value) => !value)} title={t("panel.output")}><Icon name="panel"/></button></div></footer>
   {sourceMathPreview && <MathPreviewPopover source={sourceMathPreview.source} displayMode={sourceMathPreview.displayMode} context={mathContext} anchor={sourceMathPreview.anchor} onInteractionChange={(active) => mathPopoverInteractionChangeRef.current(active)}/>} {settingsOpen && <SettingsDialog initial={settingsInitial} onClose={() => setSettingsOpen(false)}/>} {imageDialog && createPortal(<ImageInsertDialog tree={tree} replacement={imageDialog.kind === "replace"} onClose={() => setImageDialog(undefined)} onChoose={(choice) => void applyImageChoice(choice).catch((error: unknown) => setBlockNotice(error instanceof Error ? error.message : String(error)))}/>, document.body)} {tableDialogOpen && activeTab && createPortal(<TableInsertDialog documentSource={activeTab.content} defaults={{ style: store.get("tables").defaultStyle, headerRow: store.get("tables").defaultInsert.headerRow, addCaption: store.get("tables").defaultInsert.addCaption, addLabel: store.get("tables").defaultInsert.addLabel }} onClose={() => setTableDialogOpen(false)} onChoose={applyTableChoice}/>, document.body)} {fileContext && <ContextMenu context={fileContext} items={fileContextItems()} onClose={() => setFileContext(undefined)}/>} {blockContext && <ContextMenu context={blockContext} items={[{ label: t("block.createFromSelection"), action: () => void createUserBlockFromSelection(blockContext.selection).catch((error: unknown) => setBlockNotice(error instanceof Error ? error.message : String(error))) }]} onClose={() => setBlockContext(undefined)}/>} {spellContextMenu && <SpellContextMenu request={spellContextMenu} onClose={() => setSpellContextMenu(undefined)}/>}</div>;
 }

@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { readCollapsedOutline, readCollapsedPreview, readExpandedFileTree, writeCollapsedOutline, writeCollapsedPreview, writeExpandedFileTree } from "../../apps/desktop/src/renderer/collapseState.js";
+import { readCollapsedOutline, readCollapsedPreview, readExpandedFileTree, writeCollapsedOutline, writeCollapsedPreview, writeExpandedFileTree, releaseCollapseStateCache, collapseStateCacheStats } from "../../apps/desktop/src/renderer/collapseState.js";
 import { DEFAULT_ENVIRONMENTS } from "../../apps/desktop/src/renderer/preview/environments.js";
 import { parsePreview } from "../../apps/desktop/src/renderer/preview/parser.js";
 import { buildPreviewRenderIndex } from "../../apps/desktop/src/renderer/preview/renderModel.js";
@@ -20,6 +20,15 @@ function indexFor(source: string) {
 afterEach(() => vi.unstubAllGlobals());
 
 describe("collapsed document state", () => {
+  it("bounds cached files and reclaims project memory while preserving stored choices", () => {
+    mockStorage();
+    for (let index = 0; index < 500; index++) writeCollapsedOutline("long-running-project", `file-${index}.tex`, new Set(["section"]));
+    expect(collapseStateCacheStats().entries).toBeLessThanOrEqual(128);
+    expect(collapseStateCacheStats().characters).toBeLessThanOrEqual(2 * 1024 * 1024);
+    releaseCollapseStateCache("long-running-project");
+    expect(readCollapsedOutline("long-running-project", "file-0.tex")).toEqual(new Set(["section"]));
+    releaseCollapseStateCache("long-running-project");
+  });
   it("starts folders closed, persists expansion across reloads and isolates projects", async () => {
     mockStorage();
     expect(readExpandedFileTree("tree-project-a").size).toBe(0);

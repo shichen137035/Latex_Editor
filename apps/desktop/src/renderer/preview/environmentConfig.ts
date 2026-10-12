@@ -6,20 +6,11 @@ import { settings } from "../settings/service.js";
 import { environmentTitleTypography, titleNumericFields, validTitleNumber, type TitleNumericField } from "./environment-typography.js";
 import { environmentPreview, previewNumericFields, previewRenderers, imageClickActions, tableToolbarModes, validPreviewNumber, type PreviewNumericField } from "./environment-preview.js";
 import type { EnvironmentBehavior } from "./types.js";
-import { validLocalizedNames } from "@latex-editor/contracts";
-
-
-const families: EnvironmentDefinition["family"][] = ["section", "theorem", "definition", "proof", "equation", "remark", "example", "figure", "table", "list", "quote", "code", "virtual", "generic"];
-
-function isDefinition(value: unknown): value is EnvironmentDefinition {
-  if (!value || typeof value !== "object") return false;
-  const item = value as Partial<EnvironmentDefinition>;
-  return typeof item.id === "string" && typeof item.enabled === "boolean" && typeof item.builtIn === "boolean" && typeof item.labelKey === "string" && validLocalizedNames(item.labels) && Boolean(item.match) && Boolean(item.style) && Boolean(item.behavior) && families.includes(item.family as EnvironmentDefinition["family"]);
-}
+import { environmentFamilies, validEnvironmentDefinition, validEnvironmentDefinitions } from "@latex-editor/contracts";
 
 export function loadGlobalEnvironments(): EnvironmentDefinition[] {
   const parsed = settings.global("environments");
-  if (parsed.length && parsed.every(isDefinition)) return cloneEnvironmentDefinitions(parsed);
+  if (parsed.length && validEnvironmentDefinitions(parsed)) return cloneEnvironmentDefinitions(parsed as EnvironmentDefinition[]);
   return cloneEnvironmentDefinitions();
 }
 
@@ -44,10 +35,13 @@ export function createCustomEnvironment(existing: EnvironmentDefinition[]): Envi
 }
 
 export function duplicateEnvironment(definition: EnvironmentDefinition, existing: EnvironmentDefinition[]): EnvironmentDefinition {
-  const base = `${definition.id}-copy`;
+  const base = `${definition.id.slice(0, 58)}-copy`;
   let id = base;
   let suffix = 2;
-  while (existing.some(item => item.id === id)) id = `${base}-${suffix++}`;
+  while (existing.some(item => item.id === id)) {
+    const suffixText = `-${suffix++}`;
+    id = `${base.slice(0, 64 - suffixText.length)}${suffixText}`;
+  }
   const names = environmentNames(definition);
   if (!Object.keys(names).length) names[getLocale()] = environmentName(definition);
   const labels = Object.fromEntries(Object.entries(names).map(([locale, name]) => {
@@ -95,7 +89,9 @@ ${names ? names + "\n" : ""}    <match type="${definition.match.kind}" value="${
 
 function booleanAttribute(element: Element, name: string, fallback: boolean): boolean {
   const value = element.getAttribute(name);
-  return value === null ? fallback : value === "true";
+  if (value === null) return fallback;
+  if (value !== "true" && value !== "false") throw new Error(t("ui.environmentConfig.invalid_for_environment", { value1: name, value2: element.getAttribute("id") ?? element.closest("environment")?.getAttribute("id") ?? "?" }));
+  return value === "true";
 }
 
 function parseMatch(kind: string, value: string): EnvironmentMatchRule {
@@ -117,7 +113,7 @@ export function parseEnvironmentXml(xml: string): EnvironmentDefinition[] {
     const matchElement = element.querySelector(":scope > match");
     const styleElement = element.querySelector(":scope > style");
     const behaviorElement = element.querySelector(":scope > behavior");
-    if (!id || !family || !families.includes(family) || !matchElement || !styleElement || !behaviorElement) throw new Error(t("ui.environmentConfig.environment_is_incomplete", { value1: id || "?" }));
+    if (!id || !family || !environmentFamilies.includes(family) || !matchElement || !styleElement || !behaviorElement) throw new Error(t("ui.environmentConfig.environment_is_incomplete", { value1: id || "?" }));
     const label = element.getAttribute("label")?.trim();
     const labels: Record<string, string> = {};
     for (const name of Array.from(element.querySelectorAll(":scope > name"))) {
@@ -205,8 +201,10 @@ export function parseEnvironmentXml(xml: string): EnvironmentDefinition[] {
   const ids = new Set<string>();
   for (const definition of definitions) {
     if (ids.has(definition.id)) throw new Error(t("ui.environmentConfig.duplicate_environment_id", { value1: definition.id }));
+    if (!validEnvironmentDefinition(definition)) throw new Error(t("ui.environmentConfig.invalid_for_environment", { value1: "configuration", value2: definition.id }));
     ids.add(definition.id);
   }
+  if (!validEnvironmentDefinitions(definitions)) throw new Error(t("ui.environmentConfig.invalid_xml"));
   if (!definitions.length) throw new Error(t("ui.environmentConfig.at_least_one_environment_definition_is_required"));
   return definitions;
 }

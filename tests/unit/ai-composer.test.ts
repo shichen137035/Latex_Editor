@@ -16,7 +16,7 @@ describe("AI composer attachments and reasoning", () => {
     roots.push(root);
     let listener: Parameters<CodexAppServer["onEvent"]>[0] = () => undefined;
     let input: Parameters<CodexAppServer["startTurn"]>[0] | undefined;
-    let completed = false;
+    let completed: string | undefined;
     const codex = {
       onEvent: (callback: typeof listener) => { listener = callback; return () => undefined; },
       startTurn: async (turn: NonNullable<typeof input>) => {
@@ -36,12 +36,13 @@ describe("AI composer attachments and reasoning", () => {
       compileWorkspace: async () => { throw new Error("Unexpected compile"); },
       createBlockApi: ({ projectId, workspaceRoot }) => createWorkspaceBlockApi({ id: projectId, name: "Test", canonicalPath: workspaceRoot, createdAt: "", registeredAt: "", writable: true, missing: false }, workspaceRoot),
       onUpdate: (kind, payload) => {
-        if (kind === "conversation" && (payload as { messages: Array<{ status?: string }> }).messages.at(-1)?.status === "complete") completed = true;
+        const last = (payload as { messages?: Array<{ id: string; status?: string }> }).messages?.at(-1);
+        if (kind === "conversation" && last?.status === "complete") completed = last.id;
       }
     });
     await service.initialize();
     const conversation = await service.create({ projectId: "project", mode: "codex" });
-    return { root, service, conversation, codex, input: () => input!, startedTurn: () => input !== undefined, finished: () => completed, emit: (method: string, params: Record<string, unknown>) => listener({ method, params: { threadId: "thread", ...params } }) };
+    return { root, service, conversation, codex, input: () => input!, startedTurn: () => input !== undefined, finished: (messageId?: string) => messageId ? completed === messageId : Boolean(completed), emit: (method: string, params: Record<string, unknown>) => listener({ method, params: { threadId: "thread", ...params } }) };
   }
 
   it("keeps early summary events, section boundaries and authoritative summaries separate from the answer", async () => {
@@ -57,9 +58,35 @@ describe("AI composer attachments and reasoning", () => {
     expect(message.reasoning?.every((part) => part.complete)).toBe(true);
     expect(message.content).toBe("Done.");
     expect(message.activity).toBe("responding");
+    f.emit("item/reasoning/summaryTextDelta", { itemId: "next-reason", delta: "Verify the result." });
+    f.emit("item/agentMessage/delta", { itemId: "final", delta: "Verified." });
+    f.emit("item/completed", { item: { id: "final", type: "agentMessage", text: "Verified completely." } });
+    const ordered = f.service.snapshot("project").conversations[0]!.messages.at(-1)!;
+    expect(ordered.responseParts?.map(part => [part.kind, part.text])).toEqual([
+      ["reasoning", "Inspect the sources."], ["reasoning", "Check labels."], ["text", "Done."],
+      ["reasoning", "Verify the result."], ["text", "Verified completely."]
+    ]);
+    expect(ordered.content).toBe("Done.\n\nVerified completely.");
+    expect(ordered.completedAt).toBeUndefined();
     f.emit("turn/completed", { turn: { status: "completed" } });
     await vi.waitFor(() => expect(f.finished()).toBe(true));
+    expect(f.service.snapshot("project").conversations[0]!.messages.at(-1)!.completedAt).toBeGreaterThanOrEqual(ordered.createdAt);
     await f.service.dispose();
+  });
+
+  it("preserves source line endings and excludes newline-only rewrites from AI proposals", async () => {
+    for (const edit of [false, true]) {
+      const f = await fixture();
+      const original = "First paragraph.\r\nSecond paragraph.\r\n";
+      const started = await f.service.send({ conversationId: f.conversation.id, content: "Edit", snapshot: [{ path: "main.tex", content: original }] });
+      await writeFile(join(f.input().cwd, "main.tex"), edit ? "First paragraph.\nChanged paragraph.\n" : original.replaceAll("\r\n", "\n"));
+      f.emit("turn/completed", { turn: { status: "completed" } });
+      await vi.waitFor(() => expect(f.finished(started.conversation.messages.at(-1)!.id)).toBe(true));
+      const changes = f.service.snapshot("project").changeSets;
+      if (edit) expect(changes[0]?.files[0]?.proposedContent).toBe("First paragraph.\r\nChanged paragraph.\r\n");
+      else expect(changes).toEqual([]);
+      await f.service.dispose();
+    }
   });
 
   it("stops an active Codex turn and immediately clears its running state", async () => {
@@ -80,6 +107,27 @@ describe("AI composer attachments and reasoning", () => {
     expect(started.conversation.messages.at(-1)?.status).toBe("complete");
     expect(started.conversation.messages.at(-1)?.content).toBe("Generation stopped.");
     expect(f.startedTurn()).toBe(false);
+    await f.service.dispose();
+  });
+
+  it("only edits the most recent user message and starts a fresh provider thread", async () => {
+    const f = await fixture();
+    const first = await f.service.send({ conversationId: f.conversation.id, content: "First request" });
+    const firstMessageId = first.conversation.messages[0]!.id;
+    f.emit("turn/completed", { turn: { status: "completed" } });
+    await vi.waitFor(() => expect(f.finished()).toBe(true));
+    const later = await f.service.send({ conversationId: f.conversation.id, content: "Later request" });
+    const laterMessageId = later.conversation.messages.at(-2)!.id;
+    f.emit("turn/completed", { turn: { status: "completed" } });
+    await vi.waitFor(() => expect(f.finished(later.conversation.messages.at(-1)!.id)).toBe(true));
+
+    await expect(f.service.editAndResend({ conversationId: f.conversation.id, messageId: firstMessageId, content: "Revised request" })).rejects.toThrow("most recent message");
+    await f.service.editAndResend({ conversationId: f.conversation.id, messageId: laterMessageId, content: "Revised request" });
+    expect(f.input().threadId).toBeUndefined();
+    expect(f.input().prompt).toContain("Revised request");
+    expect(f.input().prompt).not.toContain("Later request");
+    expect(f.input().prompt).toContain("First request");
+    expect(f.service.snapshot("project").conversations[0]!.messages.map(message => message.content)).toEqual(["First request", "", "Revised request", ""]);
     await f.service.dispose();
   });
 

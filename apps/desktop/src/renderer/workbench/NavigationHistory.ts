@@ -1,3 +1,5 @@
+import { sourceLabelOffset } from "../editor/ProjectReferenceIndex.js";
+
 export interface NavigationLocation {
   path: string;
   offset: number;
@@ -8,17 +10,18 @@ export interface NavigationLocation {
     rightPane: "preview" | "pdf";
   };
   /** A jump that started on a link can only return while that link survives. */
-  link?: { start: number; text: string; targetLabel: string };
+  link?: { start: number; text: string; targetLabel: string; targetPath?: string };
 }
 
 interface NavigationStep { from: NavigationLocation; to: NavigationLocation }
 type TextEdit = { start: number; end: number; newLength: number };
 
-export function navigationLocationValid(location: NavigationLocation, content: string | undefined): boolean {
+export function navigationLocationValid(location: NavigationLocation, content: string | undefined, readTarget?: (path: string) => string | undefined): boolean {
   if (content === undefined || location.offset > content.length) return false;
   const link = location.link;
+  const target = link?.targetPath && link.targetPath !== location.path ? readTarget?.(link.targetPath) : content;
   return !link || (content.slice(link.start, link.start + link.text.length) === link.text
-    && content.includes(`\\label{${link.targetLabel}}`));
+    && target !== undefined && sourceLabelOffset(target, link.targetLabel) !== undefined);
 }
 
 function mapOffset(offset: number, edits: TextEdit[]): number {

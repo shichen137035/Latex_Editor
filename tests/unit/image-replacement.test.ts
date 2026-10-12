@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { mkdtemp, writeFile, unlink, rmdir } from "node:fs/promises";
+import { mkdtemp, readFile, stat, writeFile, unlink, rmdir } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { ProjectImageService } from "../../apps/desktop/src/main/images.js";
@@ -33,6 +33,35 @@ describe("image replacement", () => {
     await createDocumentInsertions(test.options).applyImageChoice({ kind: "project", path: "figures/new.png" });
     expect(test.changed).not.toHaveBeenCalled();
   });
+  it("imports clipboard images into the configured directory and only replaces the selected slot", async () => {
+    const test = controller();
+    const paste = vi.fn(async () => ({ relativePath: "assets/clipboard.png", kind: "file" }));
+    test.options.api = { images: { paste } } as unknown as NonNullable<typeof test.options.api>;
+    test.options.store = { get: () => ({ defaultDirectory: "assets" }) } as unknown as typeof test.options.store;
+    test.options.refreshTree = vi.fn(async () => undefined);
+    await createDocumentInsertions(test.options).applyImageChoice({ kind: "clipboard" });
+    expect(paste).toHaveBeenCalledWith("p", "assets");
+    expect(test.changed).toHaveBeenCalledWith(figure.replace("figures/b.png", "assets/clipboard.png") + " newer paragraph");
+    paste.mockResolvedValueOnce(undefined as never);
+    test.changed.mockClear();
+    await expect(createDocumentInsertions(test.options).applyImageChoice({ kind: "clipboard" })).rejects.toThrow("clipboard");
+    expect(test.changed).not.toHaveBeenCalled();
+  });
+});
+
+it("uses the existing import pipeline for clipboard bytes and releases temporary files on success and failure", async () => {
+  const bytes = Buffer.from("clipboard image bytes");
+  let temporary = "";
+  const files = { resolveFilePath: vi.fn(), listTree: vi.fn(async () => []), createDirectory: vi.fn(async () => undefined), importEntry: vi.fn(async (_project: string, source: string) => {
+    temporary = source;
+    expect(await readFile(source)).toEqual(bytes);
+  }) };
+  const service = new ProjectImageService(files);
+  expect(await service.importClipboardImage("p", bytes, "assets")).toMatchObject({ relativePath: expect.stringMatching(/^assets\/clipboard-\d+\.png$/), kind: "file" });
+  await expect(stat(temporary)).rejects.toMatchObject({ code: "ENOENT" });
+  files.importEntry.mockImplementationOnce(async (_project, source) => { temporary = source; throw new Error("Read-only project"); });
+  await expect(service.importClipboardImage("p", bytes, "assets")).rejects.toThrow("Read-only");
+  await expect(stat(temporary)).rejects.toMatchObject({ code: "ENOENT" });
 });
 
 it("resolves parent-relative images inside the project and never attempts paths outside it", async () => {

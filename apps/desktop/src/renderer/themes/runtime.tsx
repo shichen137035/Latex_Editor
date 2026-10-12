@@ -7,7 +7,7 @@ import { configureSemanticColors, ensureSemanticColorSeeds } from "./semanticCol
 const customThemeStyleId = "texweave-custom-theme";
 
 export function editorThemeName(themeId: string): string {
-  return themeId === "dark" ? "texweave-dark" : themeId === "tech-light" ? "texweave-tech-light" : themeId === "light" ? "texweave-light" : "texweave-custom";
+  return themeId === "dark" ? "texweave-dark" : themeId === "tech-dark" ? "texweave-tech-dark" : themeId === "tech-light" ? "texweave-tech-light" : themeId === "pink-light" ? "texweave-pink-light" : themeId === "light" ? "texweave-light" : "texweave-custom";
 }
 
 /** Loads user CSS after the built-in token sheets so custom variables win. */

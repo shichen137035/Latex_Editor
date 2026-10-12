@@ -15,6 +15,8 @@ import "./themes/tokens.css";
 import "./project-directory.css";
 import "./relations/relations.css";
 import "./themes/tech-light.css";
+import "./themes/pink-light.css";
+import "./themes/tech-dark.css";
 
 // Keep the editor fully local. The default Monaco React loader uses a CDN,
 // which would violate TeXWeave's offline-first desktop requirement.
@@ -46,6 +48,17 @@ monaco.editor.defineTheme("texweave-dark", {
   ],
   colors: { "editor.background": "#182432" }
 });
+monaco.editor.defineTheme("texweave-tech-dark", {
+  base: "vs-dark",
+  inherit: true,
+  rules: [
+    { token: "delimiter.math", foreground: "55E6F2", fontStyle: "bold" },
+    { token: "keyword.math", foreground: "C39BFF" },
+    { token: "number.math", foreground: "FFC36B" },
+    { token: "string.math", foreground: "8DDCE2" }
+  ],
+  colors: { "editor.background": "#0B1220", "editorLineNumber.foreground": "#60758F", "editorLineNumber.activeForeground": "#55E6F2", "editorCursor.foreground": "#55E6F2", "editor.selectionBackground": "#1F496A" }
+});
 monaco.editor.defineTheme("texweave-tech-light", {
   base: "vs",
   inherit: true,
@@ -56,6 +69,17 @@ monaco.editor.defineTheme("texweave-tech-light", {
     { token: "string.math", foreground: "176B85" }
   ],
   colors: { "editor.background": "#F8FCFF" }
+});
+monaco.editor.defineTheme("texweave-pink-light", {
+  base: "vs",
+  inherit: true,
+  rules: [
+    { token: "delimiter.math", foreground: "B64D83", fontStyle: "bold" },
+    { token: "keyword.math", foreground: "8052A5" },
+    { token: "number.math", foreground: "A96336" },
+    { token: "string.math", foreground: "8C536F" }
+  ],
+  colors: { "editor.background": "#FFFBFD" }
 });
 monaco.languages.register({ id: "latex" });
 monaco.languages.setMonarchTokensProvider("latex", {

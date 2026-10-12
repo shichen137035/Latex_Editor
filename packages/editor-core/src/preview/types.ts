@@ -1,4 +1,4 @@
-import type { BlockKind } from "@latex-editor/contracts";
+import type { BlockKind, EnvironmentFamily } from "@latex-editor/contracts";
 
 export interface SourceSpan {
   filePath: string;
@@ -108,7 +108,7 @@ export interface EnvironmentDefinition {
   labels?: Record<string, string>;
   /** Original/default name, also retained as a fallback for existing authored names. */
   label?: string;
-  family: "section" | "theorem" | "definition" | "proof" | "equation" | "remark" | "example" | "figure" | "table" | "list" | "quote" | "code" | "virtual" | "generic";
+  family: EnvironmentFamily;
   style: EnvironmentStyle;
   behavior: EnvironmentBehavior;
 }

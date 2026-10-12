@@ -49,18 +49,19 @@ export function createDocumentInsertions(options: DocumentInsertionOptions) {
   } = options;
 
   const insertImageSnippets = (generated: Array<{ text: string; cursorOffset: number }>, requestedAnchor?: number) => {
-    if (!activeTab || !generated.length) return;
-    const snippets = generated.map((snippet) => uniqueFigureLabels(snippet, activeTab.content));
+    const current = options.getActiveTab ? options.getActiveTab() : activeTab;
+    if (!activeTab || !current || current.path !== activeTab.path || !generated.length) return;
+    const snippets = generated.map((snippet) => uniqueFigureLabels(snippet, current.content));
     const joined = snippets.map((item) => item.text).join("\n\n");
     const firstCursor = snippets[0]?.cursorOffset;
     const editor = editorRef.current;
     if (sourceEditorVisible && editor?.getModel() && editor.getSelection()) { insertText(joined, firstCursor); return; }
     const insertionAnchor = previewInsertionAnchor.current?.fileId === activeTab.path ? previewInsertionAnchor.current.offset : undefined;
     const anchor = requestedAnchor ?? insertionAnchor ?? (previewViewportAnchor.current?.fileId === activeTab.path ? previewViewportAnchor.current.offset : activeTab.content.length);
-    const prefix = anchor > 0 && !activeTab.content.slice(0, anchor).endsWith("\n") ? "\n\n" : "";
-    const suffix = anchor < activeTab.content.length && !activeTab.content.slice(anchor).startsWith("\n") ? "\n\n" : "";
+    const prefix = anchor > 0 && !current.content.slice(0, anchor).endsWith("\n") ? "\n\n" : "";
+    const suffix = anchor < current.content.length && !current.content.slice(anchor).startsWith("\n") ? "\n\n" : "";
     previewInsertionAnchor.current = undefined;
-    setEditorContent(activeTab.content.slice(0, anchor) + prefix + joined + suffix + activeTab.content.slice(anchor));
+    setEditorContent(current.content.slice(0, anchor) + prefix + joined + suffix + current.content.slice(anchor));
   };
   const importImages = async (paths: string[], type: "figure" | "inline", requestedAnchor?: number) => {
     if (!api || !activeTab || !paths.length) return;
@@ -70,9 +71,15 @@ export function createDocumentInsertions(options: DocumentInsertionOptions) {
     if (!relativePaths.length) return;
     insertImageSnippets(type === "figure" && relativePaths.length > 1 ? [multiImageInsertion(relativePaths, store.get("images"))] : relativePaths.map((path) => imageInsertion(path, store.get("images"), type)), requestedAnchor);
   };
-  const chooseImagePath = async (choice: Extract<ImageInsertChoice, { kind: "project" | "local" }>): Promise<string | undefined> => {
+  const chooseImagePath = async (choice: Extract<ImageInsertChoice, { kind: "project" | "local" | "clipboard" }>): Promise<string | undefined> => {
     if (!api || !activeTab) return undefined;
     if (choice.kind === "project") return choice.path;
+    if (choice.kind === "clipboard") {
+      const image = await api.images.paste(project.id, store.get("images").defaultDirectory);
+      if (!image) throw new Error(t("image.clipboard.empty"));
+      await refreshTree();
+      return image.relativePath;
+    }
     const picked = await api.images.pick(false);
     if (!picked.length) return undefined;
     const [imported] = await api.images.import(project.id, picked, store.get("images").defaultDirectory);
@@ -80,20 +87,19 @@ export function createDocumentInsertions(options: DocumentInsertionOptions) {
     await refreshTree();
     return imported.relativePath;
   };
-  const applyImageChoice = async (choice: ImageInsertChoice) => {
-    const dialog = imageDialog;
+  const applyImageChoice = async (choice: ImageInsertChoice, dialog = imageDialog, anchor?: number) => {
     if (!activeTab || !dialog || !project.writable) return;
     if (dialog.kind === "insert") {
       if (choice.kind === "empty") insertImageSnippets([emptyFigureInsertion(store.get("images"))]);
       else if (choice.kind === "multi") insertImageSnippets([emptyMultiImageInsertion(choice.rows, choice.columns, store.get("images"))]);
       else {
         const path = await chooseImagePath(choice);
-        if (path) insertImageSnippets([imageInsertion(path, store.get("images"), "figure")]);
+        if (path) insertImageSnippets([imageInsertion(path, store.get("images"), "figure")], anchor);
       }
       setImageDialog(undefined);
       return;
     }
-    if (choice.kind !== "project" && choice.kind !== "local") return;
+    if (choice.kind !== "project" && choice.kind !== "local" && choice.kind !== "clipboard") return;
     const path = await chooseImagePath(choice);
     const current = options.getActiveTab ? options.getActiveTab() : activeTab;
     if (!path || !current || current.path !== dialog.selection.fileId) { setImageDialog(undefined); return; }
@@ -195,5 +201,16 @@ export function createDocumentInsertions(options: DocumentInsertionOptions) {
     }
   };
 
-  return { applyImageChoice, applyPreviewTableChange, applyTableChoice, dropImages, dropImagesToProject, insertEnvironment };
+  const pasteImage = async (selection?: FigureSelection, allowEmpty = false, anchor?: number): Promise<boolean> => {
+    if (!api || !activeTab || !project.writable) return false;
+    const image = await api.images.paste(project.id, store.get("images").defaultDirectory);
+    if (!image) {
+      if (allowEmpty) return false;
+      throw new Error(t("image.clipboard.empty"));
+    }
+    await refreshTree();
+    await applyImageChoice({ kind: "project", path: image.relativePath }, imageDialog ?? (selection ? { kind: "replace", selection, imageIndex: selection.imageIndex ?? 0 } : { kind: "insert" }), anchor);
+    return true;
+  };
+  return { applyImageChoice, pasteImage, applyPreviewTableChange, applyTableChoice, dropImages, dropImagesToProject, insertEnvironment };
 }

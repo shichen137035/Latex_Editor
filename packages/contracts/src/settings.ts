@@ -223,6 +223,114 @@ export function validLocalizedNames(value: unknown): boolean {
   return value === undefined || !!value && typeof value === "object" && !Array.isArray(value)
     && Object.entries(value).every(([locale, name]) => !!locale.trim() && typeof name === "string");
 }
+
+export const environmentFamilies = ["section", "theorem", "definition", "proof", "equation", "remark", "example", "figure", "table", "list", "quote", "code", "virtual", "generic"] as const;
+export type EnvironmentFamily = typeof environmentFamilies[number];
+const environmentRenderers = ["auto", "content", "math", "code", "list", "figure", "table"] as const;
+const environmentColorProperties = ["accentToken", "fillToken", "borderToken", "selectedBorderToken", "labelBackgroundToken", "labelTextToken"] as const;
+const environmentColorModeValues = ["adaptive", "fixed"] as const;
+const environmentTitleRanges = {
+  titleFontSize: [10, 72], titleFontWeight: [100, 900], titleLineHeight: [1, 2.5], titleLetterSpacing: [-0.05, 0.15]
+} as const;
+const environmentPreviewRanges = {
+  captionFontSize: [10, 36], imageMaxHeightVh: [10, 100], imageGridMinWidth: [60, 800], imageGridGap: [0, 80],
+  tableCellMaxHeightEm: [2, 40], tableEditorMaxHeight: [48, 800], tableExpandedFontSize: [10, 36]
+} as const;
+const environmentLocales = new Set(["en", "ja", "zh-CN", "zh-TW", "ko", "fr", "kk"]);
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return !!value && typeof value === "object" && !Array.isArray(value);
+}
+
+function validEnvironmentColor(value: unknown, depth = 0): value is string {
+  if (typeof value !== "string" || !value.trim() || value.length > 256 || /[\0-\x1f;{}<>]/.test(value) || /(?:url|expression)\s*\(/i.test(value)) return false;
+  const color = value.trim();
+  if (/^--[\w-]+$/.test(color) || /^#[\da-f]{3,8}$/i.test(color) || /^[a-z]+$/i.test(color)) return true;
+  const variable = /^var\((--[\w-]+)(?:\s*,\s*(.+))?\)$/i.exec(color);
+  if (variable) return depth < 2 && (!variable[2] || validEnvironmentColor(variable[2], depth + 1));
+  return /^(?:rgb|rgba|hsl|hsla|hwb|lab|lch|oklab|oklch|color|color-mix)\([\w.%\s,#()+/-]+\)$/i.test(color);
+}
+
+function validEnvironmentPattern(value: unknown): value is string {
+  if (typeof value !== "string" || !value.trim() || value.length > 256 || value.includes("\0")) return false;
+  // Avoid common catastrophic-backtracking expressions before these patterns
+  // are run against a full document in the preview parser.
+  if (/\((?:\\.|[^()])*(?:[*+{])(?:\\.|[^()])*\)\s*(?:[*+{])/.test(value)) return false;
+  try { new RegExp(value, "gm"); return true; } catch { return false; }
+}
+
+/** Shared deep validator for environment records received from settings, presets, or XML. */
+export function validEnvironmentDefinition(value: unknown): boolean {
+  if (!isRecord(value)) return false;
+  const item = value;
+  if (typeof item.id !== "string" || !/^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/.test(item.id)
+    || typeof item.enabled !== "boolean" || typeof item.builtIn !== "boolean"
+    || typeof item.labelKey !== "string" || item.labelKey.length > 160 || item.labelKey !== "" && !/^[A-Za-z0-9._-]+$/.test(item.labelKey)
+    || item.label !== undefined && (typeof item.label !== "string" || item.label.length > 500)
+    || !environmentFamilies.includes(item.family as typeof environmentFamilies[number])) return false;
+  if (item.labels !== undefined) {
+    if (!validLocalizedNames(item.labels)) return false;
+    const labels = item.labels as Record<string, string>;
+    if (Object.keys(labels).some(locale => !environmentLocales.has(locale)) || Object.values(labels).some(name => name.length > 500)) return false;
+  }
+
+  if (!isRecord(item.match)) return false;
+  const match = item.match;
+  switch (match.kind) {
+    case "latex-environment":
+      if (typeof match.name !== "string" || !/^[A-Za-z0-9][A-Za-z0-9*@:_-]{0,127}$/.test(match.name)) return false;
+      break;
+    case "command":
+      if (typeof match.command !== "string" || !/^[A-Za-z@]+\*?$/.test(match.command)) return false;
+      break;
+    case "display-math":
+      break;
+    case "virtual-block":
+      if (typeof match.type !== "string" || !/^[A-Za-z][A-Za-z0-9._-]{0,63}$/.test(match.type)) return false;
+      break;
+    case "custom-pattern":
+      if (!validEnvironmentPattern(match.pattern)) return false;
+      break;
+    default:
+      return false;
+  }
+
+  if (!isRecord(item.style) || !environmentColorModeValues.includes((item.style.colorMode ?? "adaptive") as typeof environmentColorModeValues[number])) return false;
+  const style = item.style;
+  if (!environmentColorProperties.every(key => validEnvironmentColor(style[key]))
+    || style.baseColor !== undefined && !validEnvironmentColor(style.baseColor)
+    || style.titleFontFamily !== undefined && (typeof style.titleFontFamily !== "string" || !style.titleFontFamily.trim() || style.titleFontFamily.length > 256 || /[\0-\x1f;{}<>]/.test(style.titleFontFamily))) return false;
+  for (const [field, [min, max]] of Object.entries(environmentTitleRanges)) {
+    const number = style[field];
+    if (number !== undefined && (typeof number !== "number" || !Number.isFinite(number) || number < min || number > max)) return false;
+  }
+  for (const [field, [min, max]] of Object.entries(environmentPreviewRanges)) {
+    const number = style[field];
+    if (number !== undefined && (typeof number !== "number" || !Number.isFinite(number) || number < min || number > max)) return false;
+  }
+
+  if (!isRecord(item.behavior)) return false;
+  const behavior = item.behavior;
+  if (!["inlineEditable", "allowChildren", "showHeader", "showLabel"].every(key => typeof behavior[key] === "boolean")) return false;
+  for (const key of ["showOptionBrackets", "showCaption", "captionEditable", "allowExpandedEditor", "expandedToolbar", "listItemEditing", "listShowCount"]) {
+    if (behavior[key] !== undefined && typeof behavior[key] !== "boolean") return false;
+  }
+  if (behavior.renderer !== undefined && !environmentRenderers.includes(behavior.renderer as typeof environmentRenderers[number])) return false;
+  if (behavior.imageClickAction !== undefined && !["settings", "replace", "source", "inspect"].includes(String(behavior.imageClickAction))) return false;
+  if (behavior.tableToolbar !== undefined && !["selected", "always", "hidden"].includes(String(behavior.tableToolbar))) return false;
+  if (behavior.blockHandler !== undefined && (typeof behavior.blockHandler !== "string" || behavior.blockHandler !== "" && !/^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/.test(behavior.blockHandler))) return false;
+  if (behavior.listStyle !== undefined && !["ordered", "unordered", "description"].includes(String(behavior.listStyle))) return false;
+  if (behavior.listItemCommand !== undefined && (typeof behavior.listItemCommand !== "string" || !/^[A-Za-z@]+$/.test(behavior.listItemCommand))) return false;
+  if (behavior.listMarker !== undefined && !["decimal", "lower-alpha", "lower-roman", "disc", "circle", "square", "none"].includes(String(behavior.listMarker))) return false;
+  return true;
+}
+
+export function validEnvironmentDefinitions(value: unknown): boolean {
+  if (!Array.isArray(value) || value.length > 512 || !value.every(validEnvironmentDefinition)) return false;
+  const ids = value.map(item => (item as { id: string }).id);
+  return new Set(ids).size === ids.length;
+}
+
 export function validPreference(key: string, value: unknown): boolean {
   switch (key) {
     case "locale": case "blockNameLanguage": return ["en", "ja", "zh-CN", "zh-TW", "ko", "fr", "kk"].includes(String(value));
@@ -256,15 +364,7 @@ export function validPreference(key: string, value: unknown): boolean {
     case "aiReasoningEffort": case "aiCopilotReasoningEffort": return typeof value === "string" && (value === "" || /^[a-z][a-z0-9_-]{0,31}$/.test(value));
     case "visibleFilterGroups": return Array.isArray(value) && value.every((item) => ["blockType", "location", "file", "properties"].includes(String(item)));
     case "keybindings": return !!value && typeof value === "object" && !Array.isArray(value) && Object.values(value).every((v) => typeof v === "string");
-    case "environments": return Array.isArray(value) && value.every((entry) => {
-      if (!entry || typeof entry !== "object") return false;
-      const e = entry as Record<string, unknown>;
-      const style = e.style as Record<string, unknown> | undefined;
-      return typeof e.id === "string" && typeof e.enabled === "boolean" && typeof e.labelKey === "string" && typeof e.family === "string" && !!e.match && !!e.style && !!e.behavior
-        && (style?.colorMode === undefined || style.colorMode === "adaptive" || style.colorMode === "fixed")
-        && (style?.baseColor === undefined || typeof style.baseColor === "string")
-        && validLocalizedNames(e.labels);
-    });
+    case "environments": return validEnvironmentDefinitions(value);
     case "previewDirectives": return Array.isArray(value) && value.length <= 256 && value.every((entry) => {
       if (!entry || typeof entry !== "object") return false;
       const item = entry as Partial<PreviewDirectiveDefinition>;

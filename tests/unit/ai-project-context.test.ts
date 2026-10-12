@@ -12,7 +12,7 @@ import type { CodexAppServer } from "../../apps/desktop/src/main/ai/codex-app-se
 import type { CopilotChatService } from "../../apps/desktop/src/main/ai/copilot-chat.js";
 import { createWorkspaceBlockApi } from "../../apps/desktop/src/main/ai/workspace-block-api.js";
 import { isSnapshotTextPath, isWorkspaceAssetPath } from "../../apps/desktop/src/main/ai/workspaceFiles.js";
-import { collectGraphicDependencies } from "../../apps/desktop/src/main/ai/tex-dependencies.js";
+import { collectGraphicDependencies } from "../../apps/desktop/src/main/graphic-dependencies.js";
 import { isAIEditableProjectPath, isAIReviewableProjectPath } from "@latex-editor/contracts/ai-paths";
 
 describe("AI project context and workspace reads", () => {

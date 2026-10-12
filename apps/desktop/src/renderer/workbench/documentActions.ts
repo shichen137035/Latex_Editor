@@ -3,6 +3,7 @@ import type { Dispatch, SetStateAction } from "react";
 import { t } from "../i18n/index.js";
 import { projectFilePaths, type PersistedLayout } from "./layout.js";
 import { compilationTargets } from "./compileTargets.js";
+import { compileResultMetadata } from "./compileResultMetadata.js";
 export interface CompileGuard { busy: boolean; alive: boolean; }
 type DisplayCompileResult = CompileResult & { pdfDataUrl?: string | undefined };
 
@@ -63,7 +64,7 @@ export function createDocumentActions(options: DocumentActionsOptions) {
       }
       const result = results.at(-1)!;
       options.onCompileBatch?.(results);
-      options.setCompileResult(result);
+      options.setCompileResult(compileResultMetadata(result));
       if (result.status === "succeeded" && result.pdfDataUrl && options.onPdfReady?.(result) !== false) options.setPdfDataUrl(result.pdfDataUrl);
       options.setLayout((value) => value.mode === "single" ? { ...value, singlePane: "pdf" } : { ...value, rightPane: "pdf" });
       options.setBottomTab(results.some(item => item.diagnostics.length) ? "problems" : "compileLog");
@@ -72,7 +73,7 @@ export function createDocumentActions(options: DocumentActionsOptions) {
       if (!current(mainFile)) return;
       const result = failed(mainFile, reason);
       options.onCompileBatch?.([result]);
-      options.setCompileResult(result);
+      options.setCompileResult(compileResultMetadata(result));
       options.setBottomTab("problems");
       options.setBottomVisible(true);
     } finally {
@@ -81,38 +82,32 @@ export function createDocumentActions(options: DocumentActionsOptions) {
     }
   };
 
-  const exportSourceArchive = async () => {
-    if (!options.api || options.compileState === "running") return;
+  const exportSourceArchive = async (scope: "all" | "main" = "all") => {
+    if (!options.api || options.compileState === "running" || options.guard?.busy || !alive()) return;
+    if (scope === "main" && !options.project.mainFile) { window.alert(t("export.noMainTex")); return; }
+    if (options.guard) options.guard.busy = true;
     try {
       await options.saveAll();
-      const path = await options.api.exports.sourceArchive(options.project.id, resolveMainTexFile());
-      if (path) window.alert(t("export.saved", { path }));
-    } catch (error) { window.alert(error instanceof Error ? error.message : String(error)); }
-  };
-
-  const exportMainTex = async () => {
-    if (!options.api || options.compileState === "running") return;
-    const mainFile = resolveMainTexFile();
-    if (!mainFile) { window.alert(t("export.noMainTex")); return; }
-    try {
-      await options.saveAll();
-      const path = await options.api.exports.mainTex(options.project.id, mainFile);
-      if (path) window.alert(t("export.saved", { path }));
-    } catch (error) { window.alert(error instanceof Error ? error.message : String(error)); }
+      if (!alive()) return;
+      const path = await options.api.exports[scope === "main" ? "mainSourceArchive" : "sourceArchive"](options.project.id);
+      if (path && alive()) window.alert(t("export.saved", { path }));
+    } catch (error) { if (alive()) window.alert(error instanceof Error ? error.message : String(error)); }
+    finally { if (options.guard) options.guard.busy = false; if (alive()) options.onIdle?.(); }
   };
 
   const exportPdf = async () => {
     if (!options.api || options.compileState === "running" || options.guard?.busy || options.guard?.alive === false) return;
-    const mainFile = resolveMainTexFile();
+    const mainFile = options.project.mainFile;
     if (!mainFile) { window.alert(t("export.noMainTex")); return; }
     if (options.guard) options.guard.busy = true;
     options.setCompileState("running");
     try {
       await options.saveAll();
-      const result = await options.api.exports.pdf(options.project.id, mainFile);
+      if (!current(mainFile)) return;
+      const result = await options.api.exports.pdf(options.project.id);
       if (!current(mainFile)) return;
       if (result.status === "cancelled") return;
-      options.setCompileResult(result.compilation);
+      options.setCompileResult(compileResultMetadata(result.compilation));
       options.onCompileBatch?.([result.compilation]);
       if (result.status === "failed") {
         options.setBottomTab("problems");
@@ -130,5 +125,5 @@ export function createDocumentActions(options: DocumentActionsOptions) {
     finally { if (options.guard) options.guard.busy = false; if (alive()) { options.setCompileState("idle"); options.onIdle?.(); } }
   };
 
-  return { compile, resolveMainTexFile, exportSourceArchive, exportMainTex, exportPdf };
+  return { compile, resolveMainTexFile, exportSourceArchive, exportMainSourceArchive: () => exportSourceArchive("main"), exportPdf };
 }

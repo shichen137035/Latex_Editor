@@ -1,8 +1,33 @@
 import type { PreviewRenderIndex } from "./preview/renderModel.js";
 
 type PreviewCollapseRecord = { key: string; fingerprint: string };
-const memoryRecords = new Map<string, unknown[]>();
+const memoryRecords = new Map<string, { records: unknown[]; characters: number }>();
+let cachedCharacters = 0;
+const maxCachedEntries = 128;
+const maxCachedCharacters = 2 * 1024 * 1024;
 type CollapseStorageKind = "preview" | "outline" | "file-tree";
+
+function forgetRecords(key: string): void {
+  cachedCharacters -= memoryRecords.get(key)?.characters ?? 0;
+  memoryRecords.delete(key);
+}
+
+function rememberRecords(key: string, records: unknown[], serialized: string): void {
+  forgetRecords(key);
+  const characters = key.length + serialized.length;
+  if (characters > maxCachedCharacters) return;
+  memoryRecords.set(key, { records, characters });
+  cachedCharacters += characters;
+  while (memoryRecords.size > maxCachedEntries || cachedCharacters > maxCachedCharacters) forgetRecords(memoryRecords.keys().next().value!);
+}
+
+export function collapseStateCacheStats(): { entries: number; characters: number } { return { entries: memoryRecords.size, characters: cachedCharacters }; }
+
+/** Persistent fold choices stay on disk when a project's in-memory copies leave. */
+export function releaseCollapseStateCache(projectId: string): void {
+  const identity = encodeURIComponent(projectId);
+  for (const key of memoryRecords.keys()) if (key === `texweave.expanded.file-tree.v1:${identity}` || key.startsWith(`texweave.collapsed.preview.v1:${identity}:`) || key.startsWith(`texweave.collapsed.outline.v1:${identity}:`)) forgetRecords(key);
+}
 
 function storageKey(kind: CollapseStorageKind, projectId: string, filePath: string): string {
   if (kind === "file-tree") return `texweave.expanded.file-tree.v1:${encodeURIComponent(projectId)}`;
@@ -12,20 +37,22 @@ function storageKey(kind: CollapseStorageKind, projectId: string, filePath: stri
 function readRecords(kind: CollapseStorageKind, projectId: string, filePath: string): unknown[] {
   const key = storageKey(kind, projectId, filePath);
   const cached = memoryRecords.get(key);
-  if (cached) return cached;
+  if (cached) { memoryRecords.delete(key); memoryRecords.set(key, cached); return cached.records; }
   try {
-    const parsed: unknown = JSON.parse(localStorage.getItem(key) ?? "[]");
+    const serialized = localStorage.getItem(key) ?? "[]";
+    const parsed: unknown = JSON.parse(serialized);
     const records = Array.isArray(parsed) ? parsed : [];
-    memoryRecords.set(key, records);
+    rememberRecords(key, records, serialized);
     return records;
   } catch { return []; }
 }
 
 function writeRecords(kind: CollapseStorageKind, projectId: string, filePath: string, records: unknown[]): void {
   const key = storageKey(kind, projectId, filePath);
-  memoryRecords.set(key, records);
+  const serialized = JSON.stringify(records);
+  rememberRecords(key, records, serialized);
   try {
-    if (records.length) localStorage.setItem(key, JSON.stringify(records));
+    if (records.length) localStorage.setItem(key, serialized);
     else localStorage.removeItem(key);
   } catch { /* Storage may be unavailable or full; collapse still works for this session. */ }
 }

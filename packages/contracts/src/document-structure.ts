@@ -75,6 +75,8 @@ export interface FindBlocksInput {
   fileId?: string; limit?: number;
 }
 export interface ReplaceBlockContentInput { blockId: string; expectedRevision: number; content: string }
+/** Offsets relative to get_block_source.content, UTF-16 and half-open. */
+export interface ReplaceBlockRangeInput extends ReplaceBlockContentInput { start: number; end: number; expectedText: string }
 export interface InsertBlockInput {
   parentId: string | null;
   position: "start" | "end" | { before: string } | { after: string };
@@ -100,6 +102,7 @@ export interface DocumentBlockApi {
   get_blocks(input: { blockIds: string[] }): Promise<BlockApiResult<BlockDetail[]>>;
   get_block_source(input: { blockId: string }): Promise<BlockApiResult<BlockSourceResult>>;
   replace_block_content(input: ReplaceBlockContentInput): Promise<BlockApiResult<BlockDetail>>;
+  replace_block_range(input: ReplaceBlockRangeInput): Promise<BlockApiResult<BlockDetail>>;
   insert_block(input: InsertBlockInput): Promise<BlockApiResult<BlockDetail>>;
   delete_block(input: DeleteBlockInput): Promise<BlockApiResult<{ deletedIds: string[] }>>;
   set_block_semantic(input: SetBlockSemanticInput): Promise<BlockApiResult<BlockDetail>>;

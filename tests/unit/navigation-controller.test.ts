@@ -41,6 +41,24 @@ function fixture() {
 }
 
 describe("document navigation transactions", () => {
+  it("restores both files and exact positions after a prefixed external reference jump", async () => {
+    const f = fixture();
+    f.options.onNavigationPosition = vi.fn();
+    const text = String.raw`\ref{S-thm:result}`;
+    f.tabsRef.current[0]!.content = `Intro. ${text}`;
+    const target = String.raw`Intro.\label {thm:result}`;
+    f.read.mockResolvedValue({ content: target });
+    await f.controller.navigateTo("supplement.tex", { offset: 6 }, "preview", true, { path: "main.tex", offset: 7, layout: f.layout, link: { start: 7, text, targetLabel: "thm:result", targetPath: "supplement.tex" } });
+    expect(f.history.canBack).toBe(true);
+    expect(f.options.onNavigationPosition).toHaveBeenLastCalledWith("supplement.tex", 6);
+    await f.controller.navigateBack();
+    expect(f.request).toMatchObject({ path: "main.tex", offset: 7 });
+    expect(f.options.onNavigationPosition).toHaveBeenLastCalledWith("main.tex", 7);
+    await f.controller.navigateForward();
+    expect(f.request).toMatchObject({ path: "supplement.tex", offset: 6 });
+    await f.controller.navigateBack();
+    expect(f.request).toMatchObject({ path: "main.tex", offset: 7 });
+  });
   it("preserves Visual mode and restores both the origin and destination", async () => {
     const f = fixture();
     await f.controller.navigateTo("notes.tex", { line: 2, column: 3 });

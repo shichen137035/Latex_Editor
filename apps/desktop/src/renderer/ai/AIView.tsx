@@ -1,10 +1,11 @@
-import { useEffect, useMemo, useRef, useState, type ClipboardEvent } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ClipboardEvent } from "react";
+import { createPortal } from "react-dom";
 import type { AIChangeSet, AIConversation, AIContextSnapshotFile, AIStatus, AIModelOption, AIMode } from "@latex-editor/contracts";
 import { t } from "../i18n/index.js";
 import { useSettings } from "../settings/service.js";
 import { ConversationPicker } from "./ConversationPicker.js";
 import { AIMessageContent } from "./AIMessageContent.js";
-import { AIReasoning } from "./AIReasoning.js";
+import { AIResponse } from "./AIResponse.js";
 import "./ai.css";
 import type { AIApprovalRequest } from "@latex-editor/contracts";
 import { PermissionPicker } from "./PermissionPicker.js";
@@ -16,7 +17,7 @@ import { newestConversation } from "./conversationState.js";
 import { useAttachmentDraft } from "./attachmentDraft.js";
 
 const AI_LONG_INPUT_THRESHOLD = 12_000;
-const AI_COMPOSER_MAX_HEIGHT = 320;
+const AI_COMPOSER_HEIGHT_RATIO = 2.5;
 
 type Props = {
   projectId: string;
@@ -48,10 +49,18 @@ export function AIView(props: Props) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
-  const [draft, setDraft] = useState("");
+  // Keep native typing outside transcript renders; publish only changes needed by composer controls.
+  const draftRef = useRef("");
+  const [draftSummary, setDraftSummary] = useState({ hasText: false, long: false });
+  const [editingMessageId, setEditingMessageId] = useState<string>();
+  const [editedContent, setEditedContent] = useState("");
   const { client: attachmentDraft, attachments, loading: attachmentsLoading } = useAttachmentDraft(api, props.projectId, activeId, reason => setError(messageOf(reason)));
   const [sending, setSending] = useState(false);
   const composerRef = useRef<HTMLTextAreaElement | null>(null);
+  const [composerExpanded, setComposerExpanded] = useState(false);
+  const composerExpandedRef = useRef(false);
+  composerExpandedRef.current = composerExpanded;
+  const composerCaret = useRef<{ start: number; end: number; scrollTop: number } | undefined>(undefined);
   const longDraftFileRef = useRef<{ content: string; path: string } | undefined>(undefined);
   const [taskId, setTaskId] = useState<string>();
   const [canceling, setCanceling] = useState(false);
@@ -80,6 +89,7 @@ export function AIView(props: Props) {
   const activeChanges = useMemo(() => snapshot.changeSets.filter(item => item.conversationId === activeId && item.files.some(file => file.hunks.some(hunk => hunk.decision === "pending"))), [snapshot.changeSets, activeId]);
   const latestMessageContent = activeConversation?.messages[activeConversation.messages.length - 1]?.content;
   const latestReasoning = activeConversation?.messages.at(-1)?.reasoning?.map((part) => part.text).join("\n");
+  const lastUserMessageId = [...(activeConversation?.messages ?? [])].reverse().find(message => message.role === "user")?.id;
   const responseRunning = Boolean(taskId) || Boolean(activeConversation?.messages.some((message) => message.status === "streaming"));
 
   useEffect(() => {
@@ -165,21 +175,77 @@ export function AIView(props: Props) {
   }, [api, activeMode, copilotStatus?.auth]);
 
   useEffect(() => { setIncludeSelection(Boolean(props.selectedText)); }, [props.selectedText]);
-  useEffect(() => {
-    const textarea = composerRef.current;
-    if (!textarea) return;
-    const resize = () => {
-      const maxHeight = Math.min(AI_COMPOSER_MAX_HEIGHT, Math.max(100, window.innerHeight * 0.42));
+  useEffect(() => { setEditingMessageId(undefined); setEditedContent(""); }, [activeId, props.projectId]);
+  const composerResizeFrame = useRef<number | undefined>(undefined);
+  const resizeComposer = useCallback(() => {
+    if (composerResizeFrame.current !== undefined) return;
+    composerResizeFrame.current = window.requestAnimationFrame(() => {
+      composerResizeFrame.current = undefined;
+      const textarea = composerRef.current;
+      if (!textarea) return;
+      const minHeight = parseFloat(getComputedStyle(textarea).minHeight) || 44;
+      const maxHeight = composerExpandedRef.current ? Math.max(minHeight, Math.min(560, window.innerHeight * 0.56)) : minHeight * AI_COMPOSER_HEIGHT_RATIO;
       textarea.style.height = "auto";
       const contentHeight = textarea.scrollHeight;
-      textarea.style.height = `${Math.min(contentHeight, maxHeight)}px`;
+      textarea.style.height = `${composerExpandedRef.current ? maxHeight : Math.min(contentHeight, maxHeight)}px`;
       textarea.style.overflowY = contentHeight > maxHeight ? "auto" : "hidden";
+    });
+  }, []);
+  const setDraft = useCallback((value: string) => {
+    draftRef.current = value;
+    if (composerRef.current && composerRef.current.value !== value) composerRef.current.value = value;
+    const trimmed = value.trim();
+    const hasText = Boolean(trimmed), long = trimmed.length > AI_LONG_INPUT_THRESHOLD;
+    setDraftSummary(previous => previous.hasText === hasText && previous.long === long ? previous : { hasText, long });
+    if (longDraftFileRef.current && longDraftFileRef.current.content !== trimmed) longDraftFileRef.current = undefined;
+    resizeComposer();
+  }, [resizeComposer]);
+  useEffect(() => {
+    resizeComposer();
+    window.addEventListener("resize", resizeComposer);
+    return () => {
+      window.removeEventListener("resize", resizeComposer);
+      if (composerResizeFrame.current !== undefined) window.cancelAnimationFrame(composerResizeFrame.current);
+      composerResizeFrame.current = undefined;
     };
-    resize();
-    window.addEventListener("resize", resize);
-    return () => window.removeEventListener("resize", resize);
-  }, [draft]);
-  useEffect(() => { followTranscriptRef.current = true; setTranscriptAtBottom(true); }, [activeId]);
+  }, [resizeComposer, activeStatus?.auth, activeId]);
+  const toggleComposer = (expanded: boolean) => {
+    const input = composerRef.current;
+    if (input) composerCaret.current = { start: input.selectionStart, end: input.selectionEnd, scrollTop: input.scrollTop };
+    setComposerExpanded(expanded);
+  };
+  useLayoutEffect(() => {
+    resizeComposer();
+    const input = composerRef.current;
+    if (input && composerCaret.current) {
+      input.focus({ preventScroll: true });
+      input.setSelectionRange(composerCaret.current.start, composerCaret.current.end);
+      input.scrollTop = composerCaret.current.scrollTop;
+    }
+  }, [composerExpanded, resizeComposer]);
+  useEffect(() => {
+    if (!composerExpanded) return;
+    const escape = (event: KeyboardEvent) => {
+      if (event.key === "Escape") { event.preventDefault(); event.stopPropagation(); toggleComposer(false); }
+    };
+    window.addEventListener("keydown", escape, true);
+    return () => window.removeEventListener("keydown", escape, true);
+  }, [composerExpanded]);
+  useEffect(() => { setComposerExpanded(false); }, [activeId, props.projectId]);
+  useLayoutEffect(() => {
+    followTranscriptRef.current = true;
+    setTranscriptAtBottom(true);
+    let secondFrame = 0;
+    const firstFrame = window.requestAnimationFrame(() => {
+      const transcript = transcriptRef.current;
+      if (transcript) transcript.scrollTop = transcript.scrollHeight;
+      secondFrame = window.requestAnimationFrame(() => {
+        const current = transcriptRef.current;
+        if (current) current.scrollTop = current.scrollHeight;
+      });
+    });
+    return () => { window.cancelAnimationFrame(firstFrame); window.cancelAnimationFrame(secondFrame); };
+  }, [activeId, props.projectId]);
   useEffect(() => {
     const transcript = transcriptRef.current;
     if (!transcript) return;
@@ -257,6 +323,7 @@ export function AIView(props: Props) {
   };
 
   const send = async () => {
+    const draft = draftRef.current;
     if (!api || (!draft.trim() && !attachments.length) || responseRunning || busy || attachmentsLoading) return;
     const requestedTaskId = crypto.randomUUID();
     activeTaskIdRef.current = requestedTaskId;
@@ -308,6 +375,27 @@ export function AIView(props: Props) {
       setDraft("");
       if (attachmentPayload) attachmentDraft?.sent(attachmentPayload);
       longDraftFileRef.current = undefined;
+    } catch (reason) { activeTaskIdRef.current = undefined; setTaskId(undefined); setCanceling(false); setError(messageOf(reason)); }
+    finally { setBusy(false); setSending(false); }
+  };
+
+  const editAndResend = async (messageId: string) => {
+    if (!api || !activeConversation || !editedContent.trim() || responseRunning || busy) return;
+    const requestedTaskId = crypto.randomUUID();
+    activeTaskIdRef.current = requestedTaskId;
+    setTaskId(requestedTaskId); setCanceling(false); setBusy(true); setSending(true); setError("");
+    try {
+      const started = await api.send({ conversationId: activeConversation.id, taskId: requestedTaskId, projectId: props.projectId, content: editedContent, overrides: props.overrides, editMessageId: messageId });
+      if (!started) throw new Error(t("ai.editUnavailable"));
+      const newest = newestConversation(snapshotRef.current.conversations.find(item => item.id === started.conversation.id), started.conversation);
+      const stillRunning = newest.messages.some(message => message.status === "streaming");
+      const currentTaskId = stillRunning ? started.taskId || requestedTaskId : undefined;
+      activeTaskIdRef.current = currentTaskId; setTaskId(currentTaskId); setCanceling(false);
+      const cutoff = activeConversation.messages.find(message => message.id === messageId)?.createdAt ?? 0;
+      const nextSnapshot = { ...snapshotRef.current, conversations: [newest, ...snapshotRef.current.conversations.filter(item => item.id !== newest.id)], changeSets: snapshotRef.current.changeSets.filter(item => item.conversationId !== newest.id || item.createdAt < cutoff) };
+      snapshotRef.current = nextSnapshot;
+      setSnapshot(nextSnapshot);
+      setEditingMessageId(undefined); setEditedContent("");
     } catch (reason) { activeTaskIdRef.current = undefined; setTaskId(undefined); setCanceling(false); setError(messageOf(reason)); }
     finally { setBusy(false); setSending(false); }
   };
@@ -398,6 +486,19 @@ export function AIView(props: Props) {
 
   if (!api) return null;
 
+  const composer = <div className={`ai-composer${composerExpanded ? " expanded" : ""}`}>
+          <button type="button" className="ai-composer-expand" aria-expanded={composerExpanded} title={t(composerExpanded ? "ai.composerCollapse" : "ai.composerExpand")} aria-label={t(composerExpanded ? "ai.composerCollapse" : "ai.composerExpand")} onMouseDown={event => event.preventDefault()} onClick={() => toggleComposer(!composerExpanded)}><svg viewBox="0 0 24 24" aria-hidden="true"><path d={composerExpanded ? "M9 3v6H3m18 6h-6v6M3 9l6-6m6 18 6-6" : "M15 3h6v6M3 15v6h6M21 3l-7 7M3 21l7-7"}/></svg></button>
+          <textarea ref={composerRef} rows={1} defaultValue={draftRef.current} onChange={(event) => setDraft(event.target.value)} onPaste={handleComposerPaste} onKeyDown={(event) => { if (event.key === "Enter" && !event.shiftKey && !event.nativeEvent.isComposing) { event.preventDefault(); void send(); } }} placeholder={t("ai.messagePlaceholder")} aria-label={t("ai.messagePlaceholder")}/>
+          {attachments.length > 0 && <div className="ai-draft-attachments">{attachments.map((attachment) => <span className="ai-attachment-chip" key={attachment.id} title={`${attachment.name} · ${(attachment.size / 1024).toFixed(1)} KB`}><span>▧ {attachment.name}</span><button aria-label={t("ai.removeAttachment", { name: attachment.name })} disabled={sending} onClick={() => void attachmentDraft?.remove(attachment.id)}>×</button></span>)}</div>}
+          <div className="ai-composer-actions">
+            <button className="ai-add-attachment" title={t("ai.addAttachment")} aria-label={t("ai.addAttachment")} disabled={busy || attachmentsLoading || responseRunning} onClick={() => void addAttachments()}><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg></button>
+            <PermissionPicker value={preferences.global("aiPermissionMode")} disabled={busy || responseRunning} onChange={mode => void preferences.set("aiPermissionMode", mode)}/>
+            <select className="ai-composer-model" aria-label={t("ai.model")} title={t("ai.model")} value={selectedModelId} disabled={modelsLoading || busy || responseRunning} onChange={(event) => void preferences.set(activeMode === "chat" ? "aiCopilotModel" : "aiModel", event.target.value)}><option value="">{t(modelsLoading ? "ai.loadingModels" : "ai.defaultModel")}</option>{models.map((model) => <option key={model.id} value={model.id}>{model.name}{model.isDefault ? ` (${t("ai.recommended")})` : ""}</option>)}</select>
+            <ReasoningEffortPicker value={selectedEffort} defaultEffort={selectedModel?.defaultReasoningEffort} efforts={efforts} modelName={selectedModel?.name ?? t("ai.defaultModel")} disabled={modelsLoading || busy || responseRunning} onChange={effort => void preferences.set(effortKey, effort)}/>
+            {responseRunning ? <button className="ai-send-button stopping" title={t(canceling ? "ai.stopping" : "ai.stop")} aria-label={t(canceling ? "ai.stopping" : "ai.stop")} disabled={!taskId || canceling} onClick={() => void cancel()}><svg width="16" height="16" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true"><rect x="4" y="4" width="12" height="12" rx="2"/></svg></button> : <button className="ai-send-button" title={t("ai.send")} aria-label={t("ai.send")} disabled={busy || attachmentsLoading || (!draftSummary.hasText && !attachments.length)} onClick={() => void send()}><svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M12 19V5m-6 6 6-6 6 6"/></svg></button>}
+          </div>
+        </div>;
+
   return <section className="ai-sidebar" aria-label={t("ai.title")}>
     <div className="ai-workspace-controls ai-conversation-heading">
       <ConversationPicker key={`${props.projectId}:${activeMode}`} conversations={modeConversations} activeId={activeId} disabled={busy || historyDeleting || Boolean(taskId)} protectedId={busy || taskId ? activeId : undefined} onSelect={(id) => { setActiveId(id); setMode(activeMode); }} onNew={() => void newConversation(activeMode)} onRename={renameConversation} onDelete={removeConversations}/>
@@ -420,10 +521,11 @@ export function AIView(props: Props) {
       <div className="ai-transcript-shell">
       <div ref={transcriptRef} className="ai-conversation-body" aria-live="polite" onScroll={(event) => { const element = event.currentTarget; const atBottom = element.scrollHeight - element.scrollTop - element.clientHeight < 80; followTranscriptRef.current = atBottom; setTranscriptAtBottom(atBottom); }}>
         <div className="ai-message-list">{activeConversation?.messages.map((message) => <article key={message.id} className={`ai-message ${message.role} ${message.status ?? ""}`}>
-          <small>{message.role === "user" ? t("ai.you") : message.role === "assistant" ? t("ai.assistant") : message.role}</small>
-          {message.role === "assistant" && <AIReasoning message={message} projectRoot={props.projectRoot} {...(props.mathContext ? { mathContext: props.mathContext } : {})} onOpenFile={props.onOpenFile}/>}
-          {message.content && <div className="ai-message-content"><AIMessageContent content={message.content} projectRoot={props.projectRoot} {...(props.mathContext ? { mathContext: props.mathContext } : {})} {...(props.onOpenFile ? { onOpenFile: props.onOpenFile } : {})}/></div>}
+          <div className="ai-message-heading"><small>{message.role === "user" ? t("ai.you") : message.role === "assistant" ? t("ai.assistant") : message.role}</small></div>
+          {message.role === "assistant" && <AIResponse message={message} projectRoot={props.projectRoot} {...(props.mathContext ? { mathContext: props.mathContext } : {})} onOpenFile={props.onOpenFile}/>}
+          {editingMessageId === message.id ? <div className="ai-message-edit"><textarea value={editedContent} onChange={event => setEditedContent(event.target.value)} aria-label={t("ai.editMessage")} autoFocus/><div><button type="button" disabled={busy || !editedContent.trim()} onClick={() => void editAndResend(message.id)}>{t("ai.editResend")}</button><button type="button" disabled={busy} onClick={() => { setEditingMessageId(undefined); setEditedContent(""); }}>{t("ai.cancelEdit")}</button></div></div> : message.role !== "assistant" && message.content && <div className="ai-message-content"><AIMessageContent content={message.content} projectRoot={props.projectRoot} {...(props.mathContext ? { mathContext: props.mathContext } : {})} {...(props.onOpenFile ? { onOpenFile: props.onOpenFile } : {})}/></div>}
           {!!message.attachments?.length && <div className="ai-message-attachments">{message.attachments.map((attachment) => <span key={attachment.id} title={attachment.name}>▧ {attachment.name}</span>)}</div>}
+          <div className="ai-message-actions"><button type="button" className="ai-edit-message" disabled={!message.content} title={t("editor.context.copy")} aria-label={t("editor.context.copy")} onClick={() => { void navigator.clipboard.writeText(message.content).catch(reason => setError(messageOf(reason))); }}><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="8" y="8" width="12" height="12" rx="2"/><path d="M16 8V4a2 2 0 0 0-2-2H4a2 2 0 0 0-2 2v10a2 2 0 0 0 2 2h4"/></svg></button>{message.role === "user" && message.id === lastUserMessageId && !responseRunning && !sending && editingMessageId !== message.id && <button type="button" className="ai-edit-message" disabled={busy} title={t("ai.editMessage")} aria-label={t("ai.editMessage")} onClick={() => { setEditingMessageId(message.id); setEditedContent(message.content); setError(""); }}><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m15 5 4 4M4 20l4-1L20 7a2.8 2.8 0 0 0-4-4L4 15z"/></svg></button>}</div>
         </article>)}{!activeConversation?.messages.length && !sending && <p className="ai-empty-chat">{t(activeMode === "chat" ? "ai.chatReady" : "ai.codexReady")}</p>}
         {sending && responseRunning && !activeConversation?.messages.some((message) => message.status === "streaming") && <div className="ai-task-status" role="status"><span className="ai-thinking-spinner" aria-hidden="true"/>{t("ai.thinking")}</div>}</div>
         {activeChanges.map(changeSet => <ChangesCard key={changeSet.id} changes={changeSet} busy={changesBusy || responseRunning} onKeep={ids => void reviewChanges(changeSet, ids, true)} onDiscard={ids => void reviewChanges(changeSet, ids, false)} onView={path => props.onViewChanges(changeSet, path)}/>)}
@@ -435,18 +537,8 @@ export function AIView(props: Props) {
         {props.selectedText && <div className="ai-context-options"><label><input type="checkbox" checked={includeSelection} onChange={(event) => setIncludeSelection(event.target.checked)}/>{t("ai.includeSelection")}</label></div>}
           {(error || activeStatus.error) && <div className="inline-error ai-error" role="alert">{error || activeStatus.error}</div>}
           {notice && <div className="ai-resolution-notice" role="status">{notice}</div>}
-        {draft.trim().length > AI_LONG_INPUT_THRESHOLD && <div className="ai-long-input-note">{t("ai.longMessageHint")}</div>}
-        <div className="ai-composer">
-          <textarea ref={composerRef} rows={1} value={draft} onChange={(event) => { setDraft(event.target.value); if (longDraftFileRef.current?.content !== event.target.value.trim()) longDraftFileRef.current = undefined; }} onPaste={handleComposerPaste} onKeyDown={(event) => { if (event.key === "Enter" && !event.shiftKey && !event.nativeEvent.isComposing) { event.preventDefault(); void send(); } }} placeholder={t("ai.messagePlaceholder")} aria-label={t("ai.messagePlaceholder")}/>
-          {attachments.length > 0 && <div className="ai-draft-attachments">{attachments.map((attachment) => <span className="ai-attachment-chip" key={attachment.id} title={`${attachment.name} · ${(attachment.size / 1024).toFixed(1)} KB`}><span>▧ {attachment.name}</span><button aria-label={t("ai.removeAttachment", { name: attachment.name })} disabled={sending} onClick={() => void attachmentDraft?.remove(attachment.id)}>×</button></span>)}</div>}
-          <div className="ai-composer-actions">
-            <button className="ai-add-attachment" title={t("ai.addAttachment")} aria-label={t("ai.addAttachment")} disabled={busy || attachmentsLoading || responseRunning} onClick={() => void addAttachments()}><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg></button>
-            <PermissionPicker value={preferences.global("aiPermissionMode")} disabled={busy || responseRunning} onChange={mode => void preferences.set("aiPermissionMode", mode)}/>
-            <select className="ai-composer-model" aria-label={t("ai.model")} title={t("ai.model")} value={selectedModelId} disabled={modelsLoading || busy || responseRunning} onChange={(event) => void preferences.set(activeMode === "chat" ? "aiCopilotModel" : "aiModel", event.target.value)}><option value="">{t(modelsLoading ? "ai.loadingModels" : "ai.defaultModel")}</option>{models.map((model) => <option key={model.id} value={model.id}>{model.name}{model.isDefault ? ` (${t("ai.recommended")})` : ""}</option>)}</select>
-            <ReasoningEffortPicker value={selectedEffort} defaultEffort={selectedModel?.defaultReasoningEffort} efforts={efforts} modelName={selectedModel?.name ?? t("ai.defaultModel")} disabled={modelsLoading || busy || responseRunning} onChange={effort => void preferences.set(effortKey, effort)}/>
-            {responseRunning ? <button className="ai-send-button stopping" title={t(canceling ? "ai.stopping" : "ai.stop")} aria-label={t(canceling ? "ai.stopping" : "ai.stop")} disabled={!taskId || canceling} onClick={() => void cancel()}><svg width="16" height="16" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true"><rect x="4" y="4" width="12" height="12" rx="2"/></svg></button> : <button className="ai-send-button" title={t("ai.send")} aria-label={t("ai.send")} disabled={busy || attachmentsLoading || (!draft.trim() && !attachments.length)} onClick={() => void send()}><svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M12 19V5m-6 6 6-6 6 6"/></svg></button>}
-          </div>
-        </div>
+        {draftSummary.long && <div className="ai-long-input-note">{t("ai.longMessageHint")}</div>}
+        {composerExpanded ? createPortal(<div className="ai-composer-backdrop" onMouseDown={event => { if (event.target === event.currentTarget) toggleComposer(false); }}><section className="ai-composer-expanded-panel" role="dialog" aria-modal="true" aria-label={t("ai.composerExpand")}>{composer}</section></div>, document.body) : composer}
       </footer>
     </>}
   </section>;

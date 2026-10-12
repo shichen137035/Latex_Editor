@@ -36,8 +36,11 @@ export class CopilotChatService {
   readonly #home: string;
   readonly #cliRoot: string;
   #client: CopilotClient | undefined;
+  #clientPending: Promise<CopilotClient> | undefined;
   readonly #sessions = new Map<string, CopilotSession>();
   readonly #sessionModels = new Map<string, string>();
+  readonly #sessionWorkspaces = new Map<string, string>();
+  readonly #disconnecting = new Map<string, Promise<void>>();
   readonly #workspacePermissions = new Map<string, { mode: AIPermissionMode; request?: (action: AIToolApproval) => Promise<boolean> }>();
   readonly #workspaceTools = new Map<string, Map<string, Tool<Record<string, unknown>>>>();
   #auth?: GetAuthStatusResponse;
@@ -168,17 +171,15 @@ export class CopilotChatService {
   }
 
   async session(sessionId: string | undefined, model: string | undefined, newSessionId: string, workingDirectory: string, preference?: string, tools: Tool<Record<string, unknown>>[] = [], permissionMode: AIPermissionMode = "auto", requestApproval?: (action: AIToolApproval) => Promise<boolean>): Promise<CopilotSession> {
-    // Cached sessions consult this mutable policy on each tool call. A new turn
-    // must not retain the previous permission level or approval callback.
-    this.#workspacePermissions.set(workingDirectory, { mode: permissionMode, ...(requestApproval ? { request: requestApproval } : {}) });
-    // Cached SDK sessions must dispatch into this turn's block API and snapshot tracker.
-    this.#workspaceTools.set(workingDirectory, new Map(tools.map(tool => [tool.name, tool])));
+    if (sessionId) await this.#disconnecting.get(sessionId)?.catch(() => undefined);
     const client = await this.#getClient();
     const nextModel = model ?? "auto";
     const models = this.#models ?? await this.listModels();
     const reasoningEffort = resolveReasoningEffort(models.find((item) => item.id === nextModel), preference) as ReasoningEffort | undefined;
     const reasoningOptions = reasoningEffort ? { reasoningEffort } : {};
     const modelKey = `${nextModel}:${reasoningEffort ?? ""}`;
+    this.#workspacePermissions.set(workingDirectory, { mode: permissionMode, ...(requestApproval ? { request: requestApproval } : {}) });
+    this.#workspaceTools.set(workingDirectory, new Map(tools.map(tool => [tool.name, tool])));
     let resetSession = false;
     if (sessionId) {
       const existing = this.#sessions.get(sessionId);
@@ -193,10 +194,12 @@ export class CopilotChatService {
         // keeps the previous override. An unconfigured session restores the
         // provider default; AIWorkspaceService restores the local chat context.
         resetSession = true;
-        this.#sessions.delete(sessionId);
-        this.#sessionModels.delete(sessionId);
+        await this.releaseSession(sessionId);
       }
     }
+    // Resetting a previous session releases its workspace callbacks too.
+    this.#workspacePermissions.set(workingDirectory, { mode: permissionMode, ...(requestApproval ? { request: requestApproval } : {}) });
+    this.#workspaceTools.set(workingDirectory, new Map(tools.map(tool => [tool.name, tool])));
     const config = {
       workingDirectory,
       streaming: true,
@@ -211,7 +214,8 @@ export class CopilotChatService {
           readOnly: request.kind === "url" || request.kind === "read" || (request.kind === "shell" && request.commands.length > 0 && request.commands.every(item => item.readOnly)),
           managed: request.managedApprovalRequired === true
         };
-        const policy = this.#workspacePermissions.get(workingDirectory)!;
+        const policy = this.#workspacePermissions.get(workingDirectory);
+        if (!policy) return { kind: "reject" as const, feedback: "This AI turn has finished." };
         const approved = !requiresAIApproval(policy.mode, action) || await policy.request?.(action) === true;
         return approved ? { kind: "approve-once" as const } : { kind: "reject" as const, feedback: "The user did not approve this action." };
       },
@@ -233,35 +237,64 @@ export class CopilotChatService {
       }) as NonNullable<Tool<Record<string, unknown>>["handler"]> })) } : {})
     };
     if (sessionId && !resetSession) {
+      let resumed: CopilotSession | undefined;
+      let adopted = false;
       try {
         const session = await client.resumeSession(sessionId, config);
+        resumed = session;
         await session.setModel(nextModel, reasoningOptions);
         if (reasoningEffort || !(await session.rpc.model.getCurrent()).reasoningEffort) {
           this.#sessions.set(sessionId, session);
           this.#sessionModels.set(sessionId, modelKey);
+          this.#sessionWorkspaces.set(sessionId, workingDirectory);
+          adopted = true;
           return session;
         }
       }
       catch { /* Local UI history can outlive a removed Copilot session; start a new one. */ }
+      finally { if (resumed && !adopted) await resumed.disconnect().catch(() => undefined); }
     }
-    const session = await client.createSession({ ...config, sessionId: sessionId ? randomUUID() : newSessionId });
+    let session: CopilotSession;
+    try { session = await client.createSession({ ...config, sessionId: sessionId ? randomUUID() : newSessionId }); }
+    catch (error) { this.#workspacePermissions.delete(workingDirectory); this.#workspaceTools.delete(workingDirectory); throw error; }
     this.#sessions.set(session.sessionId, session);
     this.#sessionModels.set(session.sessionId, modelKey);
+    this.#sessionWorkspaces.set(session.sessionId, workingDirectory);
     return session;
+  }
+
+  get runtimeStats(): { sessions: number; workspaces: number } { return { sessions: this.#sessions.size, workspaces: this.#workspaceTools.size }; }
+
+  /** Free SDK handlers and working-copy closures, retaining resumable disk history. */
+  releaseSession(sessionId: string): Promise<void> {
+    const pending = this.#disconnecting.get(sessionId);
+    if (pending) return pending;
+    const session = this.#sessions.get(sessionId);
+    this.#sessions.delete(sessionId); this.#sessionModels.delete(sessionId);
+    const workspace = this.#sessionWorkspaces.get(sessionId);
+    this.#sessionWorkspaces.delete(sessionId);
+    if (workspace) { this.#workspacePermissions.delete(workspace); this.#workspaceTools.delete(workspace); }
+    const release = Promise.resolve().then(() => session?.disconnect()).then(() => undefined).finally(() => {
+      if (this.#disconnecting.get(sessionId) === release) this.#disconnecting.delete(sessionId);
+    });
+    this.#disconnecting.set(sessionId, release);
+    return release;
   }
 
   async deleteSession(sessionId: string | undefined): Promise<void> {
     if (!sessionId) return;
-    this.#sessions.delete(sessionId);
-    this.#sessionModels.delete(sessionId);
+    await this.releaseSession(sessionId).catch(() => undefined);
     const client = await this.#getClient();
     await client.deleteSession(sessionId).catch(() => undefined);
   }
 
   async dispose(): Promise<void> {
+    await this.#clientPending?.catch(() => undefined);
+    await Promise.allSettled(this.#disconnecting.values());
     this.#models = undefined;
     this.#sessions.clear();
     this.#sessionModels.clear();
+    this.#sessionWorkspaces.clear();
     this.#workspacePermissions.clear();
     this.#workspaceTools.clear();
     if (!this.#client) return;
@@ -271,10 +304,18 @@ export class CopilotChatService {
 
   async #getClient(): Promise<CopilotClient> {
     if (this.#client) return this.#client;
+    if (this.#clientPending) return this.#clientPending;
+    this.#clientPending = this.#startClient();
+    try { return await this.#clientPending; }
+    finally { this.#clientPending = undefined; }
+  }
+
+  async #startClient(): Promise<CopilotClient> {
     await mkdir(this.#home, { recursive: true });
     const { CopilotClient: CopilotClientConstructor } = await import("@github/copilot-sdk");
     const client = new CopilotClientConstructor({ baseDirectory: this.#home, workingDirectory: this.#home, logLevel: "error" });
-    await client.start();
+    try { await client.start(); }
+    catch (error) { await client.stop().catch(() => undefined); throw error; }
     this.#client = client;
     return client;
   }

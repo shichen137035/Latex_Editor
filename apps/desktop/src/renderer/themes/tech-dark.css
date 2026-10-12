@@ -1,0 +1,94 @@
+:root[data-theme="tech-dark"] {
+  color-scheme: dark;
+  --color-bg-app: #0b1220;
+  --color-bg-app-top: #101d32;
+  --color-bg-app-bottom: #090f1b;
+  --color-bg-panel: #121e30;
+  --color-bg-toolbar: #14243a;
+  --color-bg-subtle: #192b43;
+  --color-bg-hover: #203954;
+  --color-primary: #51c9f2;
+  --color-primary-strong: #8be6ff;
+  --color-accent: #6ce9e0;
+  --color-link: #8be6ff;
+  --color-link-hover: #b0f3ff;
+  --color-text-primary: #e4f1fa;
+  --color-text-secondary: #a8bfd2;
+  --color-text-muted: #7892aa;
+  --color-border: #29425b;
+  --color-border-strong: #416582;
+  --color-success: #62e2b0;
+  --color-warning: #ffc76f;
+  --color-error: #ff8297;
+  --color-status-bg: #123d57;
+  --color-status-text: #e5fbff;
+  --shadow-panel: 0 8px 30px rgba(0, 0, 0, .38), 0 0 20px rgba(46, 176, 226, .07);
+  --semantic-chroma-scale: 1.12;
+  --semantic-fill-mix: .07;
+  --semantic-label-mix: .16;
+  --semantic-border-mix: .34;
+  --env-border-default: rgba(115, 177, 209, .17);
+  --env-border-hover: rgba(81, 201, 242, .44);
+  --env-border-selected: #51c9f2;
+  background:
+    radial-gradient(ellipse at 12% -6%, rgba(34, 157, 220, .19), transparent 36%),
+    radial-gradient(ellipse at 93% 8%, rgba(126, 91, 224, .14), transparent 32%),
+    linear-gradient(180deg, var(--color-bg-app-top), var(--color-bg-app) 50%, var(--color-bg-app-bottom));
+}
+
+:root[data-theme="tech-dark"] body,
+:root[data-theme="tech-dark"] .app-shell { background: transparent; }
+
+:root[data-theme="tech-dark"] .workbench-topbar {
+  box-shadow: 0 3px 20px rgba(0, 0, 0, .24), 0 1px 0 rgba(81, 201, 242, .12);
+}
+
+:root[data-theme="tech-dark"] .activity-bar button.active,
+:root[data-theme="tech-dark"] .sidebar-heading,
+:root[data-theme="tech-dark"] .outline-heading {
+  box-shadow: inset 3px 0 0 rgba(81, 201, 242, .8), 0 0 16px rgba(48, 176, 225, .08);
+}
+
+:root[data-theme="tech-dark"] .work-pane,
+:root[data-theme="tech-dark"] .sidebar,
+:root[data-theme="tech-dark"] .settings-panel,
+:root[data-theme="tech-dark"] .modal-card,
+:root[data-theme="tech-dark"] .project-card,
+:root[data-theme="tech-dark"] .project-row,
+:root[data-theme="tech-dark"] .environment-dialog,
+:root[data-theme="tech-dark"] .table-editor-dialog {
+  box-shadow: var(--shadow-panel);
+}
+
+:root[data-theme="tech-dark"] button:focus-visible,
+:root[data-theme="tech-dark"] input:focus-visible,
+:root[data-theme="tech-dark"] select:focus-visible,
+:root[data-theme="tech-dark"] textarea:focus-visible {
+  outline: 2px solid rgba(81, 201, 242, .88);
+  outline-offset: 2px;
+  box-shadow: 0 0 0 4px rgba(81, 201, 242, .16), 0 0 20px rgba(81, 201, 242, .15);
+}
+
+:root[data-theme="tech-dark"] .compile-button,
+:root[data-theme="tech-dark"] .primary-button {
+  box-shadow: 0 5px 18px rgba(31, 173, 220, .24);
+}
+
+:root[data-theme="tech-dark"] .compile-button:hover,
+:root[data-theme="tech-dark"] .primary-button:hover {
+  box-shadow: 0 7px 22px rgba(31, 173, 220, .32), 0 0 18px rgba(72, 220, 238, .16);
+}
+
+:root[data-theme="tech-dark"] .pane-placeholder {
+  background:
+    radial-gradient(ellipse at 50% 42%, rgba(42, 178, 225, .12), transparent 40%),
+    linear-gradient(150deg, #14243a, #101a2a);
+}
+
+:root[data-theme="tech-dark"] .directory-board {
+  background:
+    radial-gradient(ellipse at 78% 72%, rgba(44, 162, 225, .14), transparent 38%),
+    linear-gradient(150deg, #14243a 12%, #101827);
+}
+
+:root[data-theme="tech-dark"] .directory-board-grid { opacity: .2; }

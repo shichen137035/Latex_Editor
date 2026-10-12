@@ -1,4 +1,5 @@
 import { t } from "../i18n/index.js";
+import { lineDiffRanges } from "@latex-editor/contracts/line-diff";
 import type { AIChangeHunk, AIChangeSet, AIFileChange } from "@latex-editor/contracts";
 import { isAIEditableProjectPath } from "@latex-editor/contracts/ai-paths";
 
@@ -58,21 +59,5 @@ export function reviewFileContents(file: AIFileChange): { original: string; modi
 
 /** Exclude unchanged diff context from the compact + / - counters. */
 export function hunkLineStats(hunk: AIChangeHunk): { added: number; removed: number } {
-  const old = lines(hunk.oldText), next = lines(hunk.newText);
-  let prefix = 0, suffix = 0;
-  while (prefix < old.length && prefix < next.length && old[prefix] === next[prefix]) prefix++;
-  while (suffix < old.length - prefix && suffix < next.length - prefix && old[old.length - suffix - 1] === next[next.length - suffix - 1]) suffix++;
-  const a = old.slice(prefix, old.length - suffix), b = next.slice(prefix, next.length - suffix);
-  // Bound work for whole-file proposals from large papers.
-  if (a.length * b.length > 1_000_000) return { added: b.length, removed: a.length };
-  const row = new Uint32Array(b.length + 1);
-  for (const line of a) {
-    let diagonal = 0;
-    for (let j = 1; j <= b.length; j++) {
-      const previous = row[j]!;
-      row[j] = line === b[j - 1] ? diagonal + 1 : Math.max(row[j]!, row[j - 1]!);
-      diagonal = previous;
-    }
-  }
-  return { added: b.length - row[b.length]!, removed: a.length - row[b.length]! };
+  return lineDiffRanges(lines(hunk.oldText), lines(hunk.newText)).reduce((stats, range) => ({ added: stats.added + range.newEnd - range.newStart, removed: stats.removed + range.oldEnd - range.oldStart }), { added: 0, removed: 0 });
 }

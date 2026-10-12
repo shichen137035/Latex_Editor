@@ -10,6 +10,7 @@ import { extractMathExpression } from "../math/MathRenderService.js";
 import { installEditorContextActions } from "./editorContextActions.js";
 import { installSymbolPairing } from "../editor/symbolPairing.js";
 import { sourceReferenceAtOffset } from "../editor/sourceReferences.js";
+import type { ReferenceTarget } from "../editor/ProjectReferenceIndex.js";
 import { commands } from "../settings/commands.js";
 import { t } from "../i18n/index.js";
 import type { DocumentSelection } from "../custom-blocks/selection.js";
@@ -48,6 +49,7 @@ interface WorkbenchEditorMountOptions {
   treeRef: MutableRefObject<ProjectTreeNode[]>;
   environmentsRef: MutableRefObject<EnvironmentDefinition[]>;
   getOpenDocuments(): IndexedDocument[];
+  resolveReference(path: string, label: string): ReferenceTarget | undefined;
   onReferenceJump(jump: NonNullable<ReturnType<typeof sourceReferenceAtOffset>>): void;
   setDetectedSpellLanguage: Dispatch<SetStateAction<string>>;
   setSpellContextMenu: Dispatch<SetStateAction<SpellContextRequest | undefined>>;
@@ -233,7 +235,7 @@ export function createWorkbenchEditorMount(options: WorkbenchEditorMountOptions)
     const referenceAtPosition = (position: { lineNumber: number; column: number }) => {
       const model = editor.getModel();
       if (!model || sourceModelPath.current !== activePathRef.current || !/\.tex$/i.test(activePathRef.current ?? "")) return undefined;
-      return sourceReferenceAtOffset(model.getValue(), model.getOffsetAt(position));
+      return sourceReferenceAtOffset(model.getValue(), model.getOffsetAt(position), label => options.resolveReference(activePathRef.current!, label));
     };
     const setReferenceCursor = (enabled: boolean) => editor.getDomNode()?.classList.toggle("texweave-reference-cursor", enabled);
     let hoverPosition: { lineNumber: number; column: number } | undefined;

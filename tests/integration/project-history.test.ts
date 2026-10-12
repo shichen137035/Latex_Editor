@@ -1,7 +1,8 @@
 import { afterEach, describe, expect, it } from "vitest";
 import { mkdtemp, mkdir, readFile, readdir, rm, writeFile, symlink } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { createHash } from "node:crypto";
+import { createHash, randomBytes } from "node:crypto";
+import { DatabaseSync } from "node:sqlite";
 import { join } from "node:path";
 import { defaultHistoryPreferences, suggestHistoryVersion, type Project } from "../../packages/contracts/src/index.js";
 import { ProjectHistoryService } from "../../apps/desktop/src/main/project-history.js";
@@ -25,6 +26,84 @@ async function setup() {
 }
 
 describe("project history", () => {
+  it("compresses large text, keeps incompressible resources raw, and restores original bytes", async () => {
+    const { root, service } = await setup();
+    const text = "\\section{Results}\nReusable text and mathematics.\n".repeat(4000);
+    const image = randomBytes(8192);
+    await writeFile(join(root, "main.tex"), text);
+    await writeFile(join(root, "images", "plot.png"), image);
+    const version = await service.createVersion("paper", { versionNumber: "1.0", title: "Compressed" });
+    const objectPath = (content: Buffer | string) => join(root, ".texweave", "history", "objects", createHash("sha256").update(content).digest("hex"));
+    expect((await readFile(objectPath(text))).length).toBeLessThan(Buffer.byteLength(text) / 10);
+    expect(await readFile(objectPath(image))).toEqual(image);
+    expect(await service.readText("paper", version.id, "main.tex")).toBe(text);
+    await writeFile(join(root, "main.tex"), "current text");
+    await writeFile(join(root, "images", "plot.png"), "current image");
+    await service.restore("paper", version.id);
+    expect(await readFile(join(root, "main.tex"), "utf8")).toBe(text);
+    expect(await readFile(join(root, "images", "plot.png"))).toEqual(image);
+    // Corruption of a compressed object must fail before changing any project file.
+    const stored = await readFile(objectPath(text));
+    await writeFile(objectPath(text), stored.subarray(0, stored.length - 10));
+    await writeFile(join(root, "main.tex"), "keep this");
+    await expect(service.restore("paper", version.id)).rejects.toThrow("damaged");
+    expect(await readFile(join(root, "main.tex"), "utf8")).toBe("keep this");
+  });
+
+  it("compacts existing raw objects without changing entry IDs or shared manifests", async () => {
+    const { root, service } = await setup();
+    const text = "A long existing document with repeated structure.\n".repeat(4000);
+    await writeFile(join(root, "main.tex"), text);
+    const version = await service.createVersion("paper", { versionNumber: "1.0", title: "Existing" });
+    const temporary = await service.createTemporary("paper", { title: "Shared content" });
+    const objectPath = join(root, ".texweave", "history", "objects", createHash("sha256").update(text).digest("hex"));
+    await writeFile(objectPath, text); // The raw format used by existing histories.
+    expect(await service.readText("paper", version.id, "main.tex")).toBe(text);
+    const before = await service.storage("paper");
+    const after = await service.optimize("paper");
+    expect(after.bytes).toBeLessThan(before.bytes - Buffer.byteLength(text) * 0.8);
+    expect((await service.list("paper")).map(entry => entry.id)).toEqual([temporary.id, version.id]);
+    expect(await service.readText("paper", temporary.id, "main.tex")).toBe(text);
+    const encoded = await readFile(objectPath);
+    await service.optimize("paper");
+    expect(await readFile(objectPath)).toEqual(encoded);
+    await service.remove("paper", temporary.id);
+    expect(await service.readText("paper", version.id, "main.tex")).toBe(text);
+    await service.remove("paper", version.id);
+    expect(await readdir(join(root, ".texweave", "history", "objects"))).toEqual([]);
+  });
+
+  it("does not persist unreferenced objects when inspecting current changes", async () => {
+    const { root, service } = await setup();
+    const version = await service.createVersion("paper", { versionNumber: "1.0", title: "Baseline" });
+    const historyRoot = join(root, ".texweave", "history");
+    const beforeObjects = await readdir(join(historyRoot, "objects"));
+    const beforeManifests = await readdir(join(historyRoot, "manifests"));
+    for (const text of ["first edit", "second edit"]) {
+      await writeFile(join(root, "main.tex"), text);
+      expect((await service.details("paper", version.id)).changes).toHaveLength(1);
+    }
+    expect(await readdir(join(historyRoot, "objects"))).toEqual(beforeObjects);
+    expect(await readdir(join(historyRoot, "manifests"))).toEqual(beforeManifests);
+    const snapshot = await service.snapshot("paper", "interval");
+    expect(await service.readText("paper", snapshot!.id, "main.tex")).toBe("second edit");
+  });
+
+  it("reclaims expired objects even when a routine check finds no content changes", async () => {
+    const { root, config, service } = await setup();
+    await service.snapshot("paper", "manual");
+    await writeFile(join(root, "main.tex"), "latest");
+    const latest = await service.snapshot("paper", "manual");
+    const db = new DatabaseSync(join(root, ".texweave", "history", "history.db"));
+    try { db.prepare("UPDATE entries SET created_at = ? WHERE id <> ?").run("2020-01-01", latest!.id); }
+    finally { db.close(); }
+    config.retentionDays = 1;
+    expect(await service.snapshot("paper", "interval")).toBeUndefined();
+    expect((await service.list("paper")).map(entry => entry.id)).toEqual([latest!.id]);
+    const objects = await readdir(join(root, ".texweave", "history", "objects"));
+    expect(objects).not.toContain(createHash("sha256").update("first").digest("hex"));
+    expect(await service.readText("paper", latest!.id, "main.tex")).toBe("latest");
+  });
   it("clears all snapshots while preserving versions, temporary saves and their objects", async () => {
     const { root, service } = await setup();
     const version = await service.createVersion("paper", { versionNumber: "1.0", title: "Baseline" });
@@ -151,7 +230,6 @@ describe("project history", () => {
     await service.snapshot("paper", "manual", undefined, [{ path: "main.tex", content: "new buffer" }]);
     expect((await service.list("paper")).filter((entry) => entry.type === "snapshot")).toHaveLength(1);
     expect((await service.list("paper")).some((entry) => entry.id === permanent.id)).toBe(true);
-    await service.optimize("paper");
     const objects = await readdir(join(root, ".texweave", "history", "objects"));
     expect(objects).toHaveLength(4);
     expect(objects).not.toContain(createHash("sha256").update("unsaved").digest("hex"));

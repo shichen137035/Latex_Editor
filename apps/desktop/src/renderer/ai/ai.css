@@ -61,7 +61,22 @@
 .ai-message-list { display: flex; min-height: 0; flex-direction: column; gap: 9px; padding: 0; }
 .ai-message { padding: 10px; border: 1px solid var(--color-border); border-radius: 9px; background: var(--color-bg-panel); animation: ai-card-enter 180ms ease both; }
 .ai-message.user { margin-left: 12px; border-color: color-mix(in srgb, var(--color-primary) 18%, var(--color-border)); background: color-mix(in srgb, var(--color-primary) 7%, var(--color-bg-panel)); }
-.ai-message > small { color: var(--color-text-muted); font-size: 9px; font-weight: 700; text-transform: uppercase; letter-spacing: .06em; }
+.ai-message-heading { display: flex; align-items: center; justify-content: space-between; gap: 8px; min-height: 18px; }
+.ai-message-heading > small { color: var(--color-text-muted); font-size: 9px; font-weight: 700; text-transform: uppercase; letter-spacing: .06em; }
+.ai-message-actions { display:flex; justify-content:flex-end; gap:3px; }
+.ai-message-actions:empty { display:none; }
+.ai-edit-message { display:grid; place-items:center; width:24px; height:24px; padding:4px; border:0; border-radius:5px; color:var(--color-primary-strong); background:transparent; cursor:pointer; opacity:0; pointer-events:none; transition:opacity .12s; }
+.ai-message:hover .ai-edit-message,.ai-message:focus-within .ai-edit-message { opacity:1; pointer-events:auto; }
+.ai-edit-message svg { width:15px; height:15px; fill:none; stroke:currentColor; stroke-width:1.7; stroke-linecap:round; stroke-linejoin:round; }
+.ai-work-time { display:block; margin-top:8px; color:var(--color-text-muted); font-size:10px; font-variant-numeric:tabular-nums; }
+.ai-edit-message:hover:not(:disabled) { background: color-mix(in srgb, var(--color-primary) 10%, transparent); }
+.ai-edit-message:disabled { opacity: .5; cursor: default; }
+.ai-message-edit { display: grid; gap: 7px; margin-top: 5px; }
+.ai-message-edit textarea { box-sizing: border-box; width: 100%; min-height: 70px; resize: vertical; padding: 8px; border: 1px solid var(--color-border); border-radius: 7px; color: var(--color-text-primary); background: var(--color-bg-panel); font: inherit; font-size: 12px; line-height: 1.5; }
+.ai-message-edit > div { display: flex; justify-content: flex-end; gap: 6px; }
+.ai-message-edit button { min-height: 26px; padding: 4px 9px; border: 1px solid var(--color-border); border-radius: 6px; color: var(--color-text-secondary); background: var(--color-bg-panel); font: inherit; font-size: 10px; cursor: pointer; }
+.ai-message-edit button:first-child { border-color: transparent; color: var(--color-bg-panel); background: var(--color-primary-strong); }
+.ai-message-edit button:disabled { opacity: .45; cursor: default; }
 .ai-message-content { margin-top: 4px; color: var(--color-text-primary); font-size: 12px; line-height: 1.55; overflow-wrap: anywhere; }
 .ai-rich-message { min-width: 0; }
 .ai-rich-message > :first-child { margin-top: 0; }
@@ -104,9 +119,16 @@
 .ai-empty-chat { margin: 4px 0 12px; padding: 10px 2px; color: var(--color-text-muted); font-size: 11px; line-height: 1.55; }
 .ai-composer-dock { z-index: 1; flex: 0 0 auto; display: grid; gap: 7px; padding: 10px 14px 12px; border-top: 1px solid var(--color-border); background: var(--color-bg-panel); box-shadow: 0 -5px 16px color-mix(in srgb, var(--color-primary) 4%, transparent); }
 .ai-long-input-note { padding: 6px 9px; border: 1px solid color-mix(in srgb, var(--color-primary) 20%, var(--color-border)); border-radius: 7px; color: var(--color-text-secondary); background: color-mix(in srgb, var(--color-primary) 5%, var(--color-bg-panel)); font-size: 10px; line-height: 1.4; }
-.ai-composer { display: grid; grid-template-columns: minmax(0, 1fr); gap: 8px; padding: 11px 10px 8px; border: 1px solid var(--color-border); border-radius: 18px; background: color-mix(in srgb, var(--color-bg-subtle) 45%, var(--color-bg-panel)); transition: border-color 160ms ease, box-shadow 180ms ease; }
+.ai-composer { position:relative; display: grid; grid-template-columns: minmax(0, 1fr); gap: 8px; padding: 11px 10px 8px; border: 1px solid var(--color-border); border-radius: 18px; background: color-mix(in srgb, var(--color-bg-subtle) 45%, var(--color-bg-panel)); transition: border-color 160ms ease, box-shadow 180ms ease; }
 .ai-composer:focus-within { border-color: color-mix(in srgb, var(--color-primary) 55%, var(--color-border)); box-shadow: 0 0 0 3px color-mix(in srgb, var(--color-primary) 10%, transparent); }
-.ai-composer textarea { display: block; box-sizing: border-box; width: 100%; min-width: 0; min-height: 44px; max-height: min(42vh, 320px); padding: 3px 2px; resize: none; overflow-y: hidden; border: 0; outline: 0; color: var(--color-text-primary); background: transparent; font-family: inherit; font-size: 12px; line-height: 1.5; }
+.ai-composer textarea { display: block; box-sizing: border-box; width: 100%; min-width: 0; min-height: 44px; max-height:110px; padding:3px 27px 3px 2px; resize: none; overflow-y: hidden; overscroll-behavior:contain; border: 0; outline: 0; color: var(--color-text-primary); background: transparent; font-family: inherit; font-size: 12px; line-height: 1.5; }
+.ai-composer-expand { position:absolute; top:10px; right:9px; z-index:1; display:grid; place-items:center; width:23px; height:23px; padding:4px; border:0; border-radius:6px; color:var(--color-text-muted); background:var(--color-bg-panel); cursor:pointer; }
+.ai-composer-expand:hover { color:var(--color-primary); background:var(--color-bg-hover); }
+.ai-composer-expand svg { width:15px; height:15px; fill:none; stroke:currentColor; stroke-width:1.6; stroke-linecap:round; stroke-linejoin:round; }
+.ai-composer-backdrop { position:fixed; inset:0; z-index:1100; display:grid; place-items:center; padding:24px; background:color-mix(in srgb,var(--color-text-primary) 28%,transparent); }
+.ai-composer-expanded-panel { width:min(860px,calc(100vw - 48px)); max-height:calc(100vh - 48px); overflow:auto; border-radius:18px; background:var(--color-bg-panel); box-shadow:var(--shadow-panel); }
+.ai-composer.expanded { padding:18px 16px 12px; }
+.ai-composer.expanded textarea { max-height:min(56vh,560px); }
 .ai-composer-actions { display: grid; grid-template-columns: 28px 28px minmax(0, 1fr) minmax(65px, 90px) 34px; grid-template-rows: 32px; grid-template-areas: "add permission model effort send"; align-items: center; gap: 0 3px; min-width: 0; }
 .ai-composer-actions select { width: 100%; height: 28px; min-width: 0; padding: 0 5px; border: 0; border-radius: 8px; font-family: inherit; font-size: 11px; line-height: 1.4; color: var(--color-text-secondary); background: transparent; text-overflow: ellipsis; cursor: pointer; }
 .ai-composer-actions select:hover:not(:disabled) { background: var(--color-bg-panel); color: var(--color-text-primary); }

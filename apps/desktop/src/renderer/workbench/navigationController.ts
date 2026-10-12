@@ -39,6 +39,7 @@ export interface NavigationControllerOptions {
   setPdfTarget(target: (SyncTexPdfPosition & { requestId: number }) | undefined): void;
   openFile(path: string): Promise<void>;
   prepareNavigation?(): boolean;
+  onNavigationPosition?(path: string, offset: number): void;
 }
 
 export function createNavigationController(options: NavigationControllerOptions) {
@@ -64,7 +65,8 @@ export function createNavigationController(options: NavigationControllerOptions)
     };
   };
 
-  const validNavigationLocation = (location: NavigationLocation): boolean => navigationLocationValid(location, options.tabsRef.current.find((tab) => tab.path === location.path)?.content);
+  const readOpenTarget = (path: string) => options.tabsRef.current.find(tab => tab.path === path)?.content;
+  const validNavigationLocation = (location: NavigationLocation): boolean => navigationLocationValid(location, readOpenTarget(location.path), readOpenTarget);
 
   const openNavigationTarget = async (path: string, position: { offset?: number | undefined; line?: number | undefined; column?: number | undefined }, view: "preserve" | "source" | "preview", restoredLayout?: NavigationLocation["layout"]): Promise<NavigationLocation["layout"] | undefined> => {
     const nonce = ++options.navigationNonce.current;
@@ -86,12 +88,15 @@ export function createNavigationController(options: NavigationControllerOptions)
       leftPane: view !== "preserve" ? view : layout.leftPane, rightPane: layout.rightPane
     };
     options.setLayout((value) => ({ ...value, ...targetLayout }));
+    const content = readOpenTarget(path);
+    const offset = position.offset ?? (content !== undefined && position.line !== undefined ? sourceOffsetAtLine(content, position.line, position.column) : undefined);
+    if (content !== undefined && offset !== undefined) options.onNavigationPosition?.(path, Math.max(0, Math.min(offset, content.length)));
     return targetLayout;
   };
 
-  const navigateTo = async (path: string, position: { offset?: number | undefined; line?: number | undefined; column?: number | undefined } = {}, view: "preserve" | "source" | "preview" = "preserve", recordHistory = true) => {
+  const navigateTo = async (path: string, position: { offset?: number | undefined; line?: number | undefined; column?: number | undefined } = {}, view: "preserve" | "source" | "preview" = "preserve", recordHistory = true, referenceOrigin?: NavigationLocation) => {
     if (options.prepareNavigation?.() === false) return;
-    const origin = recordHistory && (path !== options.activePathRef.current || position.offset !== undefined || position.line !== undefined) ? currentNavigationOrigin() : undefined;
+    const origin = recordHistory && (path !== options.activePathRef.current || position.offset !== undefined || position.line !== undefined) ? referenceOrigin ?? currentNavigationOrigin() : undefined;
     const targetLayout = await openNavigationTarget(path, position, view);
     if (!targetLayout) return;
     const targetContent = options.tabsRef.current.find((tab) => tab.path === path)?.content;

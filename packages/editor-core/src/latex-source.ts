@@ -45,12 +45,14 @@ export function* latexHeadingFields(source: string, commands: Iterable<string>):
     if (!names.has(token.name) || braces) continue;
     let cursor = token.end;
     while (cursor < masked.length && /\s/.test(masked[cursor]!)) cursor++;
-    if (masked[cursor] === "[") {
+    let argumentsValid = true;
+    while (masked[cursor] === "[") {
       const optional = readLatexGroup(masked, cursor, "[", "]");
-      if (!optional) continue;
+      if (!optional) { argumentsValid = false; break; }
       cursor = optional.end + 1;
       while (cursor < masked.length && /\s/.test(masked[cursor]!)) cursor++;
     }
+    if (!argumentsValid) continue;
     const body = readLatexGroup(masked, cursor);
     if (body) yield { command: token.name, start: token.start, end: body.end + 1, body: { ...body, value: source.slice(body.start, body.end) } };
   }
@@ -82,11 +84,14 @@ export function patchLatexCommand(source: string, command: string, value: string
 }
 
 /** Static file links shared by compilation and PDF ownership discovery. */
-export function latexDocumentLinks(source: string): Array<{ kind: "include" | "external"; path: string }> {
-  return [...latexHeadingFields(source, ["input", "include", "externaldocument"])].map(field => ({
-    kind: field.command === "externaldocument" ? "external" : "include",
-    path: field.body.value.trim()
-  }));
+export function latexDocumentLinks(source: string): Array<{ kind: "include" | "external"; path: string; prefix?: string }> {
+  const masked = maskLatexComments(source);
+  return [...latexHeadingFields(source, ["input", "include", "subfile", "subfileinclude", "externaldocument"])].map(field => {
+    const external = field.command === "externaldocument";
+    const prefix = external ? /^\\[A-Za-z@]+\*?\s*\[/.exec(masked.slice(field.start)) : undefined;
+    const optional = prefix ? readLatexGroup(masked, field.start + prefix[0].length - 1, "[", "]")?.value.trim() : undefined;
+    return { kind: external ? "external" : "include", path: field.body.value.trim(), ...(optional ? { prefix: optional } : {}) };
+  });
 }
 
 export function isStandaloneLatexDocument(source: string): boolean {

@@ -12,6 +12,7 @@ export function registerStructureIpc(getService: () => ProjectDocumentStructureS
   handleIpc(endpoints.get_blocks, (_event, projectId, input) => getService().api(projectId).get_blocks(input));
   handleIpc(endpoints.get_block_source, (_event, projectId, input) => getService().api(projectId).get_block_source(input));
   handleIpc(endpoints.replace_block_content, (_event, projectId, input) => getService().api(projectId).replace_block_content(input));
+  handleIpc(endpoints.replace_block_range, (_event, projectId, input) => getService().api(projectId).replace_block_range(input));
   handleIpc(endpoints.insert_block, (_event, projectId, input) => getService().api(projectId).insert_block(input));
   handleIpc(endpoints.delete_block, (_event, projectId, input) => getService().api(projectId).delete_block(input));
   handleIpc(endpoints.set_block_semantic, (_event, projectId, input) => getService().api(projectId).set_block_semantic(input));

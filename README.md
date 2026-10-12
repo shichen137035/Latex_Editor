@@ -4,7 +4,7 @@ TeXWeave 是一款面向本地项目的 LaTeX 桌面编辑器。它将源码编�
 
 版本统一以根目录 [`package.json`](package.json) 为准，界面和安装器使用同一版本来源。这是本地优先的桌面应用，不要求把论文或项目上传到云端。
 
-开发者导航：[项目文件结构与模块边界](docs/REPOSITORY_STRUCTURE.md)、[0.6.4 体检报告](docs/HEALTH_CHECK_0.6.4.md)、[基础架构](docs/BACKEND_ARCHITECTURE.md)。
+开发者导航：[项目文件结构与模块边界](docs/REPOSITORY_STRUCTURE.md)、[0.6.6 功能清单与体检](docs/FUNCTIONAL_AUDIT_0.6.6.md)、[基础架构](docs/BACKEND_ARCHITECTURE.md)。
 
 ## 功能概览
 
@@ -17,7 +17,7 @@ TeXWeave 是一款面向本地项目的 LaTeX 桌面编辑器。它将源码编�
 - **块关系**：为结构块建立从属与前提/结果关系，支持关系浏览、图形视图、校验与项目内持久化；也可从选区创建自定义块。
 - **项目版本历史**：在左侧“历史”栏创建正式版本、临时保存和快照，比较文件差异，并恢复整个项目或选定文件。自动快照与风险操作前的快照可在设置中调整；历史数据保存在项目的 `.texweave/history/`，相同文件内容只存储一次。
 - **块结构 API 与 AI 编辑**：共享 Preview/后端解析器，以稳定 ID、直接父子索引和 revision 管理文档块；AI 可先按标题、类型、标签、编号等定位，再只读取和修改必要内容。Codex/Copilot 的块工具沿用工作副本与 diff 审查。接口、迁移和使用方式见 [v0.5.3 后端说明](docs/block-structure-api.md)。
-- **设置与本地化**：全局和项目级设置、浅色/深色及可导入主题、样式资源、环境管理、搜索与筛选、拼写检查资源配置。界面提供英语、简体中文、繁体中文、日语、韩语和法语。
+- **设置与本地化**：全局和项目级设置、浅色/深色及可导入主题、样式资源、环境管理、搜索与筛选、拼写检查资源配置。界面提供英语、简体中文、繁体中文、日语、韩语、法语和哈萨克语。
 
 ## 环境要求
 
@@ -35,7 +35,7 @@ npm run doctor
 npm run desktop:dev
 ```
 
-Windows 也可以双击根目录的 [`Start.bat`](Start.bat)。脚本会检查 Node.js/npm；若 Electron 依赖缺失，会先运行 `npm install`，然后启动桌面开发版。
+Windows 也可以双击根目录的 [`Start.bat`](Start.bat)。脚本会检查 Node.js/npm；若 Electron 依赖缺失，会先运行 `npm install`，然后构建一次并启动桌面端。运行期间不会因源码或构建文件变化而自动重启。已有构建可通过 [`Debug.bat`](Debug.bat) 快速启动；需要监听源码和热重载时，使用 `npm run desktop:dev`，主进程重建会重启 Electron。
 
 运行开发检查、资源校验和全部非桌面测试：
 

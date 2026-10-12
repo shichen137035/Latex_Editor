@@ -42,6 +42,14 @@ export class CodexAppServer {
   }
 
   getStatus(): AIStatus { return { ...this.#status }; }
+  get runtimeStats(): { threads: number; tools: number } { return { threads: this.#threadWorkspaces.size, tools: this.#dynamicToolHandlers.size }; }
+
+  #releaseThread(threadId: string): void {
+    this.#threadWorkspaces.delete(threadId);
+    this.#threadPermissions.delete(threadId);
+    for (const key of this.#dynamicToolHandlers.keys()) if (key.startsWith(`${threadId}:`)) this.#dynamicToolHandlers.delete(key);
+    for (const key of this.#fileChangePaths.keys()) if (key.startsWith(`${threadId}:`)) this.#fileChangePaths.delete(key);
+  }
 
   async listModels(): Promise<AIModelOption[]> {
     await this.#ensureStarted();
@@ -103,21 +111,23 @@ export class CodexAppServer {
     for (const path of input.imagePaths ?? []) turnInput.push({ type: "localImage", path });
     for (const skill of input.skills ?? []) turnInput.push({ type: "skill", name: skill.name, path: skill.path });
     // Register the receiver before turn/start so the first streamed events are retained.
-    input.onThreadReady?.(threadId);
-    const turnResult = asRecord(await this.#request("turn/start", {
-      threadId,
-      input: turnInput,
-      cwd: input.cwd,
-      approvalPolicy: policy.approvalPolicy,
-      // turn/start uses sandboxPolicy, not thread/start's sandbox field.
-      sandboxPolicy: policy.sandboxPolicy,
-      summary: "auto",
-      ...(input.model ? { model: input.model } : {}),
-      ...(effort ? { effort } : {})
-    }));
-    const turn = asRecord(turnResult.turn);
-    if (typeof turn.id !== "string") throw new Error("Codex did not return a turn id.");
-    return { threadId, turnId: turn.id };
+    try {
+      input.onThreadReady?.(threadId);
+      const turnResult = asRecord(await this.#request("turn/start", {
+        threadId,
+        input: turnInput,
+        cwd: input.cwd,
+        approvalPolicy: policy.approvalPolicy,
+        // turn/start uses sandboxPolicy, not thread/start's sandbox field.
+        sandboxPolicy: policy.sandboxPolicy,
+        summary: "auto",
+        ...(input.model ? { model: input.model } : {}),
+        ...(effort ? { effort } : {})
+      }));
+      const turn = asRecord(turnResult.turn);
+      if (typeof turn.id !== "string") throw new Error("Codex did not return a turn id.");
+      return { threadId, turnId: turn.id };
+    } catch (error) { this.#releaseThread(threadId); throw error; }
   }
 
   async interruptTurn(threadId: string, turnId: string): Promise<void> {
@@ -196,6 +206,7 @@ export class CodexAppServer {
     this.#threadWorkspaces.clear();
     this.#threadPermissions.clear();
     this.#fileChangePaths.clear();
+    this.#dynamicToolHandlers.clear();
     this.#setStatus({ ...this.#status, process: "stopped" });
   }
 
@@ -291,10 +302,7 @@ export class CodexAppServer {
       }
       for (const listener of this.#eventListeners) listener(event);
       if (message.method === "turn/completed" && typeof event.params.threadId === "string") {
-        this.#threadWorkspaces.delete(event.params.threadId);
-        this.#threadPermissions.delete(event.params.threadId);
-        for (const key of this.#dynamicToolHandlers.keys()) if (key.startsWith(`${event.params.threadId}:`)) this.#dynamicToolHandlers.delete(key);
-        for (const key of this.#fileChangePaths.keys()) if (key.startsWith(`${event.params.threadId}:`)) this.#fileChangePaths.delete(key);
+        this.#releaseThread(event.params.threadId);
       }
     }
     if (message.method === "account/updated") void this.#readAccount().catch(() => undefined);
@@ -379,7 +387,9 @@ export class CodexAppServer {
   }
 
   #failProcess(message: string): void {
+    const child = this.#child;
     this.#child = undefined;
+    if (child && child.exitCode === null) child.kill();
     this.#rejectPending(new Error(message));
     this.#setStatus({ ...this.#status, process: "crashed", auth: "error", error: message });
   }
@@ -394,6 +404,7 @@ export class CodexAppServer {
     this.#status = Object.fromEntries(Object.entries(status).filter(([, value]) => value !== undefined)) as unknown as AIStatus;
     this.#onStatus(this.getStatus());
     if (wasConnected && (status.process === "crashed" || status.process === "stopped")) {
+      this.#threadWorkspaces.clear(); this.#threadPermissions.clear(); this.#fileChangePaths.clear(); this.#dynamicToolHandlers.clear();
       for (const listener of this.#eventListeners) listener({ method: "transport/closed", params: { message: status.error ?? "Codex connection closed." } });
     }
   }

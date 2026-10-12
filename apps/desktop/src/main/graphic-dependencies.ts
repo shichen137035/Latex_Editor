@@ -1,5 +1,4 @@
 import { extname, posix } from "node:path";
-import type { AIContextSnapshotFile } from "@latex-editor/contracts" with { "resolution-mode": "import" };
 
 const GRAPHIC_EXTENSIONS = [".pdf", ".png", ".jpg", ".jpeg", ".eps", ".ps", ".mps", ".svg", ".webp", ".tif", ".tiff", ".bmp", ".gif", ".jbig2", ".jb2"];
 const GRAPHIC_COMMANDS = /\\(?:includegraphics|includepdf|pgfimage)\*?\s*(?:\[[^\]]*\]\s*)?\{([^{}]*)\}|\\epsfig\s*\{([^{}]*)\}/g;
@@ -10,7 +9,7 @@ export interface GraphicDependencySet {
 }
 
 /** Resolve statically declared project graphics while preserving their TeX-relative paths. */
-export function collectGraphicDependencies(files: AIContextSnapshotFile[], projectPaths: string[]): GraphicDependencySet {
+export function collectGraphicDependencies(files: Array<{ path: string; content: string }>, projectPaths: string[]): GraphicDependencySet {
   const pathByKey = new Map(projectPaths.map((path) => [normalize(path).toLowerCase(), normalize(path)]));
   const resolved = new Set<string>();
   const unresolved = new Set<string>();

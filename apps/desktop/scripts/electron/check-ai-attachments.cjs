@@ -42,7 +42,7 @@ async function run() {
   page = BrowserWindow.getAllWindows()[0];
   await until(() => evaluate("!!document.querySelector('.project-directory-v044') && !!window.latexEditor"), "home");
   const project = await evaluate(`window.latexEditor.projects.create({name:'Attachment check',parentPath:${JSON.stringify(projects)}})`);
-  await evaluate(`window.latexEditor.ai.createConversation('codex',${JSON.stringify(project.id)})`);
+  const conversation = await evaluate(`window.latexEditor.ai.createConversation('codex',${JSON.stringify(project.id)})`);
   page.reload();
   await until(() => evaluate("!!document.querySelector('.directory-project-row')"), "project list");
   await evaluate("document.querySelector('.directory-project-row').click()");
@@ -55,8 +55,62 @@ async function run() {
   for (const endpoint of [desktopInvoke.ai.models, desktopInvoke.ai.copilotModels]) {
     ipcMain.removeHandler(endpoint.channel); ipcMain.handle(endpoint.channel, () => []);
   }
+  const history = { ...conversation, messages: Array.from({length:40}, (_, index) => ({id:"history-"+index,role:"assistant",status:"complete",createdAt:Date.now()-10000,content:("## Result\n\nA formatted **paragraph** with $x^2+y^2$ and a reference.\n\n").repeat(8)})) };
+  ipcMain.removeHandler(desktopInvoke.ai.conversations.channel);
+  ipcMain.handle(desktopInvoke.ai.conversations.channel, () => ({conversations:[history],changeSets:[]}));
+  let sentContent;
+  ipcMain.removeHandler(desktopInvoke.ai.send.channel);
+  ipcMain.handle(desktopInvoke.ai.send.channel, (_event, input) => {
+    sentContent = input.content;
+    history.updatedAt = Date.now();
+    history.messages.push({id:"sent",role:"user",content:input.content,createdAt:Date.now(),status:"complete"});
+    return {conversation:history,taskId:input.taskId};
+  });
   await evaluate("document.querySelectorAll('.activity-bar > div:first-child > button')[3].click()");
   await until(() => evaluate("!!document.querySelector('.ai-composer textarea')"), "AI composer");
+  await until(() => evaluate("document.querySelectorAll('.ai-message.assistant').length === 40"), "long conversation history");
+  const typing = await evaluate(`(async () => {
+    await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+    const input = document.querySelector('.ai-composer textarea');
+    const getter = Object.getOwnPropertyDescriptor(Element.prototype, 'scrollHeight').get;
+    let reads = 0;
+    Object.defineProperty(input, 'scrollHeight', {configurable:true,get(){reads++;return getter.call(this);}});
+    const setter = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value').set;
+    const content = 'Typing with a large formula history. 中文输入检查。 Last character!';
+    const started = performance.now();
+    for (const character of content) {
+      setter.call(input,input.value+character);
+      input.dispatchEvent(new Event('input',{bubbles:true}));
+    }
+    const milliseconds = performance.now()-started;
+    await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+    delete input.scrollHeight;
+    return {content,value:input.value,reads,milliseconds,enabled:!document.querySelector('.ai-send-button').disabled};
+  })()`);
+  assert.equal(typing.value, typing.content);
+  assert.equal(typing.enabled, true);
+  assert.ok(typing.reads <= 2, 'typing in one frame batches textarea measurement');
+  await evaluate("document.querySelector('.ai-send-button').click()");
+  await until(async () => sentContent === typing.content, "send uses the entire latest draft");
+  await until(() => evaluate("document.querySelector('.ai-composer textarea').value === ''"), "clear draft after sending");
+  console.log(`PASS composer: 40 Markdown/formula messages; input batch ${typing.milliseconds.toFixed(1)}ms, ${typing.reads} height measurement(s); latest text sent intact`);
+  const longDraft = Array.from({length:40}, (_, index) => 'Draft line '+index).join('\n');
+  await evaluate(`(() => {const input=document.querySelector('.ai-composer textarea');Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype,'value').set.call(input,${JSON.stringify(longDraft)});input.dispatchEvent(new Event('input',{bubbles:true}));input.setSelectionRange(10,12);})()`);
+  await until(() => evaluate("document.querySelector('.ai-composer textarea').style.height === '110px'"), "normal composer height cap");
+  assert.equal(await evaluate("getComputedStyle(document.querySelector('.ai-composer textarea')).overflowY"), 'auto');
+  await evaluate("document.querySelector('.ai-composer-expand').click()");
+  await until(() => evaluate("!!document.querySelector('.ai-composer-backdrop') && parseFloat(document.querySelector('.ai-composer textarea').style.height)>200"), "expanded input panel");
+  assert.equal(await evaluate("document.querySelector('.ai-composer textarea').value"),longDraft);
+  assert.deepEqual(await evaluate("[document.querySelector('.ai-composer textarea').selectionStart,document.querySelector('.ai-composer textarea').selectionEnd]"),[10,12]);
+  await evaluate("(() => {const input=document.querySelector('.ai-composer textarea');Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype,'value').set.call(input,input.value+'\\nExpanded edit');input.dispatchEvent(new Event('input',{bubbles:true}));document.querySelector('.ai-composer-backdrop').dispatchEvent(new MouseEvent('mousedown',{bubbles:true}));})()");
+  await until(() => evaluate("!document.querySelector('.ai-composer-backdrop')"), "outside click collapses input");
+  assert.equal(await evaluate("document.querySelector('.ai-composer textarea').value"),longDraft+'\nExpanded edit');
+  await evaluate("document.querySelector('.ai-composer-expand').click()");
+  await until(() => evaluate("!!document.querySelector('.ai-composer-backdrop')"), "reopen expanded input");
+  await evaluate("document.querySelector('.ai-composer-expand').click()");
+  await until(() => evaluate("!document.querySelector('.ai-composer-backdrop')"), "toggle button collapses input");
+  await evaluate("(() => {const input=document.querySelector('.ai-composer textarea');Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype,'value').set.call(input,'');input.dispatchEvent(new Event('input',{bubbles:true}));})()");
+  console.log('PASS bounded composer: internal scrolling, expanded panel, preserved draft/caret, outside click and toggle collapse');
   await paste();
   await evaluate("document.querySelector('.ai-attachment-chip button').click()");
   await until(() => evaluate("document.querySelectorAll('.ai-attachment-chip').length === 0"), "removed chip");

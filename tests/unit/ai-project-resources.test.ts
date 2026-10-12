@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, expect, it } from "vitest";
 import { createProjectResources } from "../../apps/desktop/src/main/ai/project-resources.js";
-import { collectGraphicDependencies } from "../../apps/desktop/src/main/ai/tex-dependencies.js";
+import { collectGraphicDependencies } from "../../apps/desktop/src/main/graphic-dependencies.js";
 import { describeProjectSnapshot } from "../../apps/desktop/src/main/ai/workspaceFiles.js";
 
 const roots: string[] = [];

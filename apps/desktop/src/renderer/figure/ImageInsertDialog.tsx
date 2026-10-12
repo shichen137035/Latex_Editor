@@ -8,6 +8,7 @@ export type ImageInsertChoice =
   | { kind: "empty" }
   | { kind: "project"; path: string }
   | { kind: "local" }
+  | { kind: "clipboard" }
   | { kind: "multi"; rows: number; columns: number };
 
 export function projectImagePaths(nodes: ProjectTreeNode[]): string[] {
@@ -49,6 +50,7 @@ export function ImageInsertDialog({ tree, replacement = false, onChoose, onClose
         {!replacement && <button onClick={() => onChoose({ kind: "empty" })}><b>□</b><span><strong>{t("ui.ImageInsertDialog.empty_figure")}</strong><small>{t("ui.ImageInsertDialog.create_a_figure_block_without_choosing_an")}</small></span></button>}
         <button onClick={() => setView("project")}><b>▧</b><span><strong>{t("ui.ImageInsertDialog.project_image")}</strong><small>{t("ui.ImageInsertDialog.reference_an_existing_image_without_copying_it")}</small></span></button>
         <button onClick={() => onChoose({ kind: "local" })}><b>↥</b><span><strong>{t("ui.ImageInsertDialog.local_image")}</strong><small>{t("ui.ImageInsertDialog.choose_a_local_file_and_copy_it")}</small></span></button>
+        <button onClick={() => onChoose({ kind: "clipboard" })}><b>▣</b><span><strong>{t("image.clipboard.title")}</strong><small>{t("image.clipboard.description")}</small></span></button>
         {!replacement && <button onClick={() => setView("multi")}><b>⊞</b><span><strong>{t("ui.ImageInsertDialog.multiple_images")}</strong><small>{t("ui.ImageInsertDialog.create_an_empty_grid_and_fill_each")}</small></span></button>}
       </div>}
       {view === "project" && <div className="image-project-picker">

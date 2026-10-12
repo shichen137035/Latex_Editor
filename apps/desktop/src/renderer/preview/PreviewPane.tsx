@@ -29,13 +29,14 @@ import { candidateRelationState } from "../relations/model.js";
 import { convertBlockEnvironmentSource, definitionConversionGroup, environmentDefinitionsCompatible, environmentDisplayName, EnvironmentPickerPanel, environmentConversionGroup } from "./EnvironmentPicker.js";
 import { unwrapLatexEnvironment } from "./sourceOperations.js";
 import { FigurePreview } from "../figure/FigurePreview.js";
-import { parseGraphicPaths } from "../figure/parser.js";
+import { parseGraphicPaths, parseImages } from "../figure/parser.js";
 import type { FigureSelection } from "../figure/FigureInspector.js";
 import { TablePreview } from "../table/TablePreview.js";
 import type { TableSelection } from "../table/model.js";
 import { tokenizeInlineSource, type InlineSourceToken } from "./inlineSource.js";
 import { sourceOffsetAtPoint } from "./sourceMapping.js";
 import { upsertBlockLabel } from "./labels.js";
+import { sourceLabelOffset, type ReferenceTarget } from "../editor/ProjectReferenceIndex.js";
 import { PreviewLocalEditor } from "./PreviewLocalEditor.js";
 import { DocumentTitleEditor } from "./DocumentTitleEditor.js";
 import { captionSourceField, environmentOptionField, replaceSourceField, type PreviewSourceField } from "./sourceFields.js";
@@ -61,7 +62,7 @@ export interface PreviewRelationUi {
   onToggle(blockId: BlockId, x: number, y: number): void;
 }
 type PreviewSourceReader = Pick<string, "slice">;
-type PreviewEditorServices = { locale: string; nameLocale: string; onFieldEditing(id: string, active: boolean): void; getOpenDocuments?: (() => Array<{ path: string; content: string }>) | undefined; nodeRanges: Pick<ReadonlyMap<string, SourceSpan>, "get">; api: EditorApi | undefined; projectId: string; tree: ProjectTreeNode[]; currentPath: string; graphicPaths: string[]; definitions: EnvironmentDefinition[]; directives: PreviewDirectiveDefinition[]; mathContext: MathContext; searchQuery: InlineSearchQuery; activeSearchResult?: SearchResult | undefined; filterQuery: FilterQuery; filterStates: Map<string, FilterState>; visibilitySignatures: ReadonlyMap<string, string>; relation?: PreviewRelationUi | undefined; selectedBlockIds: string[]; collapsedBlockIds: ReadonlySet<string>; virtual: VirtualPreviewController; virtualRoot: { current: HTMLDivElement | null }; forcedIds: ReadonlySet<string>; forceOffset?: number; initialHeight?: number | undefined; setSelectedBlockIds(ids: string[]): void; selectBlockWithModifiers(id: string, modifiers: { toggle: boolean; range: boolean }): void; toggleCollapse(ids: string[], collapsed?: boolean, scope?: "selected" | "children" | "siblings" | "all"): void; moveBlocks(ids: string[], targetId: string, position: MovePosition): void; copyBlocks(ids: string[], cut: boolean): void; duplicateBlocks(ids: string[]): void; pasteBlocks(targetId: string, position: MovePosition): void; disableBlocks(ids: string[]): void; enableBlocks(ids: string[]): void; deleteBlocks(ids: string[]): void; removeEnvironment(id: string): void; onBoundaryDraftChange(insertion: BoundaryInsertion, value: string): void; onFigureSelect: ((selection?: FigureSelection) => void) | undefined; onFigureSlotSelect: ((selection: FigureSelection) => void) | undefined; onTableSelect: ((selection?: TableSelection) => void) | undefined; onTableChange: ((selection: TableSelection, source: string) => void) | undefined; onSpellContextMenu(request: SpellContextRequest): void; onDetectedLanguage(language: string): void; onForwardSync(path: string, line: number, column?: number): void };
+type PreviewEditorServices = { locale: string; nameLocale: string; onFieldEditing(id: string, active: boolean): void; getOpenDocuments?: (() => Array<{ path: string; content: string }>) | undefined; nodeRanges: Pick<ReadonlyMap<string, SourceSpan>, "get">; api: EditorApi | undefined; projectId: string; tree: ProjectTreeNode[]; currentPath: string; graphicPaths: string[]; canEditImages: boolean; definitions: EnvironmentDefinition[]; directives: PreviewDirectiveDefinition[]; mathContext: MathContext; searchQuery: InlineSearchQuery; activeSearchResult?: SearchResult | undefined; filterQuery: FilterQuery; filterStates: Map<string, FilterState>; visibilitySignatures: ReadonlyMap<string, string>; relation?: PreviewRelationUi | undefined; selectedBlockIds: string[]; collapsedBlockIds: ReadonlySet<string>; virtual: VirtualPreviewController; virtualRoot: { current: HTMLDivElement | null }; forcedIds: ReadonlySet<string>; forceOffset?: number; initialHeight?: number | undefined; setSelectedBlockIds(ids: string[]): void; selectBlockWithModifiers(id: string, modifiers: { toggle: boolean; range: boolean }): void; toggleCollapse(ids: string[], collapsed?: boolean, scope?: "selected" | "children" | "siblings" | "all"): void; moveBlocks(ids: string[], targetId: string, position: MovePosition): void; copyBlocks(ids: string[], cut: boolean): void; duplicateBlocks(ids: string[]): void; pasteBlocks(targetId: string, position: MovePosition): void; disableBlocks(ids: string[]): void; enableBlocks(ids: string[]): void; deleteBlocks(ids: string[]): void; removeEnvironment(id: string): void; onBoundaryDraftChange(insertion: BoundaryInsertion, value: string): void; onFigureSelect: ((selection?: FigureSelection) => void) | undefined; onFigureSlotSelect: ((selection: FigureSelection) => void) | undefined; onFigureChange: ((selection: FigureSelection, source: string) => void) | undefined; onTableSelect: ((selection?: TableSelection) => void) | undefined; onTableChange: ((selection: TableSelection, source: string) => void) | undefined; onSpellContextMenu(request: SpellContextRequest): void; onDetectedLanguage(language: string): void; onForwardSync(path: string, line: number, column?: number): void };
 
 function measurePreviewEditHeight(root: HTMLDivElement | null, id: string): number | undefined {
   if (!root) return undefined;
@@ -117,7 +118,7 @@ function registerDeleteMenuHandler(id: string, handler: (event: globalThis.Mouse
 }
 interface BoundaryInsertion { targetId: string; position: number; side: "before" | "after" }
 interface PendingPreviewScroll { fileId: string; id: string; offset?: number; align: ScrollLogicalPosition; highlight?: "reference-target" | "relation-locate-highlight" | "custom-block-created-highlight"; nonce?: number; highlightNonce?: number; relationNonce?: number }
-interface PreviewActions extends Pick<PreviewEditorServices, "setSelectedBlockIds" | "selectBlockWithModifiers" | "toggleCollapse" | "moveBlocks" | "copyBlocks" | "duplicateBlocks" | "pasteBlocks" | "disableBlocks" | "enableBlocks" | "deleteBlocks" | "removeEnvironment" | "onFigureSelect" | "onFigureSlotSelect" | "onTableSelect" | "onTableChange" | "onSpellContextMenu" | "onDetectedLanguage" | "onForwardSync"> {
+interface PreviewActions extends Pick<PreviewEditorServices, "setSelectedBlockIds" | "selectBlockWithModifiers" | "toggleCollapse" | "moveBlocks" | "copyBlocks" | "duplicateBlocks" | "pasteBlocks" | "disableBlocks" | "enableBlocks" | "deleteBlocks" | "removeEnvironment" | "onFigureSelect" | "onFigureSlotSelect" | "onFigureChange" | "onTableSelect" | "onTableChange" | "onSpellContextMenu" | "onDetectedLanguage" | "onForwardSync"> {
   select(id: string): void;
   edit(id: string, offset?: number): void;
   applyEdit(node: PreviewNode, value: string): void;
@@ -219,19 +220,20 @@ function nodeSource(node: PreviewNode, source: PreviewSourceReader): string {
 }
 
 function labelOffset(source: string, label: string): number | undefined {
-  const expression = /\\label\{([^}]+)\}/g;
-  for (const match of source.matchAll(expression)) if (match[1] === label) return match.index ?? 0;
-  return undefined;
+  return sourceLabelOffset(source, label);
 }
 
 /** One resolver controls both modifier-click navigation and its hover affordance. */
-function previewJumpTarget(target: Element | undefined, source: string, nodes: PreviewNode[]): { element: HTMLElement; offset: number; node: PreviewNode } | undefined {
+function previewJumpTarget(target: Element | undefined, source: string, nodes: PreviewNode[], filePath?: string, resolve?: (label: string) => ReferenceTarget | undefined): { element: HTMLElement; offset: number; targetPath?: string; node?: PreviewNode } | undefined {
   const element = target?.closest<HTMLElement>("[data-reference]");
   const reference = element?.dataset.reference;
   if (!element || !reference) return undefined;
-  const offset = labelOffset(source, reference);
-  const node = offset === undefined ? undefined : nodeAtOffset(nodes, offset);
-  return offset !== undefined && node ? { element, offset, node } : undefined;
+  const label = reference.split(",")[0]!.trim();
+  const destination = resolve?.(label);
+  const offset = resolve ? destination?.offset : labelOffset(source, label);
+  const remote = destination && destination.path !== filePath;
+  const node = offset === undefined || remote ? undefined : nodeAtOffset(nodes, offset);
+  return offset !== undefined && (remote || node) ? { element, offset, ...(destination ? { targetPath: destination.path } : {}), ...(node ? { node } : {}) } : undefined;
 }
 
 function nodeById(nodes: PreviewNode[], id: string): PreviewNode | undefined {
@@ -418,10 +420,11 @@ function SpecializedContent({ node, source, services, applyEdit, edit, imageMode
   }
   if (renderer === "figure") {
     const action = imageClickAction(configuration, imageMode);
-    return <FigurePreview source={nodeSource(node, source)} configuration={configuration} captionContent={captionContent} graphicPaths={services.graphicPaths} api={services.api} projectId={services.projectId} texPath={services.currentPath} imageClickLabel={action === "source" ? t("image.openSource") : action === "inspect" ? t("image.inspect") : undefined} onChooseSlot={imageIndex => {
+    return <FigurePreview source={nodeSource(node, source)} configuration={configuration} captionContent={captionContent} graphicPaths={services.graphicPaths} api={services.api} projectId={services.projectId} texPath={services.currentPath} imageClickLabel={action === "source" ? t("image.openSource") : action === "inspect" ? t("image.inspect") : undefined} onReorder={configuration.behavior.inlineEditable && services.canEditImages ? (replacement, imageIndex) => services.onFigureChange?.({ fileId: services.currentPath, start: node.source.startOffset, end: node.source.endOffset, source: nodeSource(node, source), environmentId: node.environmentId, imageIndex }, replacement) : undefined} onRemove={configuration.behavior.inlineEditable && services.canEditImages ? (replacement, imageIndex) => services.onFigureChange?.({ fileId: services.currentPath, start: node.source.startOffset, end: node.source.endOffset, source: nodeSource(node, source), environmentId: node.environmentId, imageIndex }, replacement) : undefined} onChooseSlot={imageIndex => {
       if (action === "source") { edit(node.id); return; }
-      const selection = { fileId: services.currentPath, start: node.source.startOffset, end: node.source.endOffset, source: nodeSource(node, source), imageIndex };
-      if (action === "replace") services.onFigureSlotSelect?.(selection); else services.onFigureSelect?.(selection);
+      const selection = { fileId: services.currentPath, start: node.source.startOffset, end: node.source.endOffset, source: nodeSource(node, source), imageIndex, environmentId: node.environmentId };
+      const empty = parseImages(selection.source)[imageIndex]?.sourcePath === "";
+      if (action === "replace" || empty && configuration.behavior.inlineEditable) services.onFigureSlotSelect?.(selection); else services.onFigureSelect?.(selection);
     }}/>;
   }
   if (renderer === "table") {
@@ -679,7 +682,7 @@ function BlockRenderer({ node, source, definitions, selectedId, editingId, curso
   }
   return <Fragment>
     {insertion?.side === "before" && <LocalEditor value="" sourceStartOffset={insertion.position} onApply={(value) => applyBoundary(insertion, value)} onDraftChange={(value) => services.onBoundaryDraftChange(insertion, value)} onCancel={cancelEdit} {...services}/>}
-    <section className={`preview-block env-${family} ${filterClass} ${activeSearch ? "search-result-active" : ""} ${selected ? "selected" : ""} ${selected && services.selectedBlockIds.length > 1 ? "multi-selected" : ""} ${editing ? "editing" : ""} ${collapsed ? "block-collapsed" : ""} ${semanticId === services.relation?.focusId ? "relation-focus" : ""}`} data-preview-node-id={node.id} data-environment={node.environmentId} data-color-mode={definition?.style.colorMode ?? "adaptive"} data-semantic-block-id={semanticId} data-source-line={node.source.startLine} data-source-start-offset={node.source.startOffset} data-source-end-offset={node.source.endOffset} data-drop-position={dropPosition} onDragOver={dragOver} onDragLeave={() => setDropPosition(undefined)} onDrop={drop} onClickCapture={(event) => { if (!(event.ctrlKey || event.metaKey || event.shiftKey) || editing) return; const target = event.target as Element; if (target.closest(".preview-block") !== event.currentTarget || target.closest("a, input, textarea, select, [contenteditable=true], .preview-local-editor, .structured-table, .preview-reference, .preview-block-header-actions, .preview-block-collapse, .preview-block-drag, .preview-environment-selector, .preview-block-footer-actions, .preview-block-footer-main, button:not(.preview-block-title):not(.preview-block-label)")) return; event.preventDefault(); event.stopPropagation(); services.selectBlockWithModifiers(node.id, { toggle: event.ctrlKey || event.metaKey, range: event.shiftKey }); }} onDoubleClickCapture={(event) => { const target = event.target as Element; if (target.closest("[data-preview-field], button, input, .preview-local-editor, .structured-table, .figure-preview-image-choice, .figure-preview-empty-slot") || target.closest(".preview-block") !== event.currentTarget) return; event.preventDefault(); event.stopPropagation(); if (figureBlock) { if (imageClickAction(previewConfiguration, preferences.get("images").editor.defaultMode) === "source") edit(node.id); else { select(node.id); services.onFigureSelect?.({ fileId: services.currentPath, start: node.source.startOffset, end: node.source.endOffset, source: nodeSource(node, source) }); } return; } services.onForwardSync(services.currentPath, node.source.startLine, 1); }} style={environmentBlockStyle(node.environmentId, family, definition)}>
+    <section className={`preview-block env-${family} ${filterClass} ${activeSearch ? "search-result-active" : ""} ${selected ? "selected" : ""} ${selected && services.selectedBlockIds.length > 1 ? "multi-selected" : ""} ${editing ? "editing" : ""} ${collapsed ? "block-collapsed" : ""} ${semanticId === services.relation?.focusId ? "relation-focus" : ""}`} data-preview-node-id={node.id} data-environment={node.environmentId} data-color-mode={definition?.style.colorMode ?? "adaptive"} data-semantic-block-id={semanticId} data-source-line={node.source.startLine} data-source-start-offset={node.source.startOffset} data-source-end-offset={node.source.endOffset} data-drop-position={dropPosition} onDragOver={dragOver} onDragLeave={() => setDropPosition(undefined)} onDrop={drop} onClickCapture={(event) => { if (!(event.ctrlKey || event.metaKey || event.shiftKey) || editing) return; const target = event.target as Element; if (target.closest(".preview-block") !== event.currentTarget || target.closest("a, input, textarea, select, [contenteditable=true], .preview-local-editor, .structured-table, .preview-reference, .preview-block-header-actions, .preview-block-collapse, .preview-block-drag, .preview-environment-selector, .preview-block-footer-actions, .preview-block-footer-main, button:not(.preview-block-title):not(.preview-block-label)")) return; event.preventDefault(); event.stopPropagation(); services.selectBlockWithModifiers(node.id, { toggle: event.ctrlKey || event.metaKey, range: event.shiftKey }); }} onDoubleClickCapture={(event) => { const target = event.target as Element; if (target.closest("[data-preview-field], button, input, .preview-local-editor, .structured-table, .figure-preview-image-choice, .figure-preview-empty-slot") || target.closest(".preview-block") !== event.currentTarget) return; event.preventDefault(); event.stopPropagation(); if (figureBlock) { if (imageClickAction(previewConfiguration, preferences.get("images").editor.defaultMode) === "source") edit(node.id); else { select(node.id); services.onFigureSelect?.({ fileId: services.currentPath, start: node.source.startOffset, end: node.source.endOffset, source: nodeSource(node, source), environmentId: node.environmentId }); } return; } services.onForwardSync(services.currentPath, node.source.startLine, 1); }} style={environmentBlockStyle(node.environmentId, family, definition)}>
     {(definition?.behavior.showHeader ?? true) && <div className="preview-block-header">
       {canCollapseBlock(node) && <button className="preview-block-collapse" title={t(collapsed ? "blockOperation.expand" : "blockOperation.collapse")} aria-expanded={!collapsed} onClick={(event) => { event.stopPropagation(); services.toggleCollapse([node.id]); }}>{collapsed ? "\u25B8" : "\u25BE"}</button>}
       <button className="preview-block-drag" draggable title={t("blockOperation.drag")} onDragStart={dragStart} onDragEnd={() => setDropPosition(undefined)}>{"\u22EE\u22EE"}</button>
@@ -713,7 +716,7 @@ function BlockRenderer({ node, source, definitions, selectedId, editingId, curso
        // available even when the specialized preview consumes the click afterwards.
        if (!editing && !emptyBlock && (figureBlock || tableBlock)) {
          select(node.id);
-         if (figureBlock) services.onFigureSelect?.({ fileId: services.currentPath, start: node.source.startOffset, end: node.source.endOffset, source: nodeSource(node, source) });
+         if (figureBlock) services.onFigureSelect?.({ fileId: services.currentPath, start: node.source.startOffset, end: node.source.endOffset, source: nodeSource(node, source), environmentId: node.environmentId });
          if (tableBlock) services.onTableSelect?.({ fileId: services.currentPath, start: node.source.startOffset, end: node.source.endOffset, source: nodeSource(node, source), kind: "table" });
        }
      }} onClick={(event) => {
@@ -721,7 +724,7 @@ function BlockRenderer({ node, source, definitions, selectedId, editingId, curso
          event.stopPropagation();
          if (imageClickAction(previewConfiguration, preferences.get("images").editor.defaultMode) === "source") { edit(node.id); return; }
          select(node.id);
-         services.onFigureSelect?.({ fileId: services.currentPath, start: node.source.startOffset, end: node.source.endOffset, source: nodeSource(node, source) });
+         services.onFigureSelect?.({ fileId: services.currentPath, start: node.source.startOffset, end: node.source.endOffset, source: nodeSource(node, source), environmentId: node.environmentId });
          return;
        }
        if (contentBlock && (definition?.behavior.inlineEditable ?? true)) { event.stopPropagation(); edit(node.id, sourceOffsetAtPoint(event.currentTarget, event)); }
@@ -835,7 +838,7 @@ function PreviewPerformancePanel({ virtual, timing, total }: { virtual: VirtualP
   return <details className="preview-performance-panel" open={open} onToggle={(event) => setOpen(event.currentTarget.open)}><summary>{t("ui.PreviewPane.preview_metrics")}</summary><div>{t("preview.metrics.timing", { parse: timing.current.parseMs.toFixed(1), mode: t(`preview.metrics.mode.${timing.current.parseMode}`), index: timing.current.indexMs.toFixed(1), react: timing.current.reactMs.toFixed(1) })}</div><div>{t("preview.metrics.updates", { direct: timing.current.directUpdates, local: timing.current.localReparses, full: timing.current.fullFallbacks })}</div><div>{t("preview.metrics.fallbacks", { reasons: Object.entries(timing.current.fallbackReasons).map(([reason, count]) => `${reason}: ${count}`).join(" · ") || t("ui.PreviewPane.none") })}</div><div>{t("preview.metrics.items", { visible: snapshot.visible, mounted: snapshot.mounted, total })}</div><div>{t("preview.metrics.math", { renders: snapshot.math.calls - snapshot.math.hits, cache: (snapshot.math.hitRate * 100).toFixed(0) })}</div><div>{t("preview.metrics.height", { cache: (snapshot.heightHitRate * 100).toFixed(0) })}</div></details>;
 }
 
-export function PreviewPane({ filePath, source, sourceTransaction, definitions, mathContext = EMPTY_MATH_CONTEXT, searchQuery = defaultInlineSearch, searchResults, filterQuery = defaultFilterQuery, activeSearchResult, highlightRange, locateRequest, restoreOffset, restoreScrollTop, onLocated, onHighlightLocated, relation, onSourceChange, onSelectionChange, onSelectionContextMenu, onViewportAnchorChange, onClickSourcePosition, onJumpFromPosition, onInsertionAnchorChange, onFigureSelect, onFigureSlotSelect, onTableSelect, onTableChange, api, projectId, tree, getOpenDocuments, onSpellContextMenu, onDetectedLanguage, onForwardSync }: { getOpenDocuments?: (() => Array<{ path: string; content: string }>) | undefined; filePath?: string | undefined; source?: string | undefined; sourceTransaction?: PreviewSourceTransaction | undefined; definitions: EnvironmentDefinition[]; mathContext?: MathContext; searchQuery?: SearchQuery; searchResults?: SearchResult[]; filterQuery?: FilterQuery; activeSearchResult?: SearchResult | undefined; highlightRange?: { fileId: string; start: number; end: number; nonce: number } | undefined; locateRequest?: { fileId: string; offset: number; nonce: number } | undefined; restoreOffset?: number | undefined; restoreScrollTop?: number | undefined; onLocated?(nonce: number): void; onHighlightLocated?(nonce: number): void; relation?: PreviewRelationUi | undefined; onSourceChange(next: string, changes?: PreviewTextChange[]): void; onSelectionChange?(selection?: DocumentSelection): void; onSelectionContextMenu?(selection: DocumentSelection, x: number, y: number): void; onViewportAnchorChange?(anchor: { fileId: string; offset: number; scrollTop: number }): void; onClickSourcePosition?(anchor: { fileId: string; offset: number }): void; onJumpFromPosition?(anchor: { fileId: string; offset: number; targetOffset: number; linkText: string; targetLabel: string }): void; onInsertionAnchorChange?(anchor?: { fileId: string; offset: number }): void; onFigureSelect?(selection?: FigureSelection): void; onFigureSlotSelect?(selection: FigureSelection): void; onTableSelect?(selection?: TableSelection): void; onTableChange?(selection: TableSelection, source: string): void; api: EditorApi | undefined; projectId: string; tree: ProjectTreeNode[]; onSpellContextMenu(request: SpellContextRequest): void; onDetectedLanguage(language: string): void; onForwardSync(path: string, line: number, column?: number): void }) {
+export function PreviewPane({ filePath, source, sourceTransaction, definitions, mathContext = EMPTY_MATH_CONTEXT, searchQuery = defaultInlineSearch, searchResults, filterQuery = defaultFilterQuery, activeSearchResult, highlightRange, locateRequest, restoreOffset, restoreScrollTop, onLocated, onHighlightLocated, relation, onSourceChange, onSelectionChange, onSelectionContextMenu, onViewportAnchorChange, onClickSourcePosition, resolveReference, onJumpFromPosition, onInsertionAnchorChange, onFigureSelect, onFigureSlotSelect, onFigureChange, onPasteImage, onTableSelect, onTableChange, api, projectId, tree, getOpenDocuments, onSpellContextMenu, onDetectedLanguage, onForwardSync }: { getOpenDocuments?: (() => Array<{ path: string; content: string }>) | undefined; filePath?: string | undefined; source?: string | undefined; sourceTransaction?: PreviewSourceTransaction | undefined; definitions: EnvironmentDefinition[]; mathContext?: MathContext; searchQuery?: SearchQuery; searchResults?: SearchResult[]; filterQuery?: FilterQuery; activeSearchResult?: SearchResult | undefined; highlightRange?: { fileId: string; start: number; end: number; nonce: number } | undefined; locateRequest?: { fileId: string; offset: number; nonce: number } | undefined; restoreOffset?: number | undefined; restoreScrollTop?: number | undefined; onLocated?(nonce: number): void; onHighlightLocated?(nonce: number): void; relation?: PreviewRelationUi | undefined; onSourceChange(next: string, changes?: PreviewTextChange[]): void; onSelectionChange?(selection?: DocumentSelection): void; onSelectionContextMenu?(selection: DocumentSelection, x: number, y: number): void; onViewportAnchorChange?(anchor: { fileId: string; offset: number; scrollTop: number }): void; onClickSourcePosition?(anchor: { fileId: string; offset: number }): void; resolveReference?: ((label: string) => ReferenceTarget | undefined) | undefined; onJumpFromPosition?(anchor: { fileId: string; offset: number; targetOffset: number; linkText: string; targetLabel: string }): void; onInsertionAnchorChange?(anchor?: { fileId: string; offset: number }): void; onFigureSelect?(selection?: FigureSelection): void; onFigureSlotSelect?(selection: FigureSelection): void; onTableSelect?(selection?: TableSelection): void; onFigureChange?: ((selection: FigureSelection, source: string) => void) | undefined; onPasteImage?: ((offset: number) => Promise<boolean>) | undefined; onTableChange?(selection: TableSelection, source: string): void; api: EditorApi | undefined; projectId: string; tree: ProjectTreeNode[]; onSpellContextMenu(request: SpellContextRequest): void; onDetectedLanguage(language: string): void; onForwardSync(path: string, line: number, column?: number): void }) {
   const inlineSearch = useMemo<InlineSearchQuery>(() => ({ ...searchQuery, activeMatchId: activeSearchResult?.id, ...(searchResults ? { resolvedMatches: searchResults.filter(result => result.fileId === filePath) } : {}) }), [searchQuery, searchResults, filePath, activeSearchResult?.id]);
   const preferences = useSettings();
   const referenceLinkModifier = preferences.get("referenceLinkModifier");
@@ -995,7 +998,7 @@ export function PreviewPane({ filePath, source, sourceTransaction, definitions, 
   const updateJumpCursor = (target: Element | undefined, modifierHeld: boolean) => {
     const root = previewRootRef.current;
     const jump = modifierHeld && root?.contains(target ?? null) && document && source !== undefined
-      ? previewJumpTarget(target, source, document.nodes) : undefined;
+      ? previewJumpTarget(target, source, document.nodes, filePath, resolveReference) : undefined;
     if (activeJumpElementRef.current === jump?.element) return;
     activeJumpElementRef.current?.classList.remove("preview-jump-ready");
     jump?.element.classList.add("preview-jump-ready");
@@ -1013,7 +1016,7 @@ export function PreviewPane({ filePath, source, sourceTransaction, definitions, 
       window.removeEventListener("blur", reset);
       reset();
     };
-  }, [document, source, referenceLinkModifier]);
+  }, [document, source, referenceLinkModifier, resolveReference]);
   const nodeRanges = useMemo<PreviewEditorServices["nodeRanges"]>(() => ({
     get: (id) => {
       const empty = id.startsWith("ui-empty:");
@@ -1045,6 +1048,7 @@ export function PreviewPane({ filePath, source, sourceTransaction, definitions, 
     removeEnvironment: (id) => actionsRef.current?.removeEnvironment(id),
     onFigureSelect: (selection) => actionsRef.current?.onFigureSelect?.(selection),
     onFigureSlotSelect: (selection) => actionsRef.current?.onFigureSlotSelect?.(selection),
+    onFigureChange: (selection, replacement) => actionsRef.current?.onFigureChange?.(selection, replacement),
     onTableSelect: (selection) => actionsRef.current?.onTableSelect?.(selection),
     onTableChange: (selection, replacement) => actionsRef.current?.onTableChange?.(selection, replacement),
     onSpellContextMenu: (request) => actionsRef.current?.onSpellContextMenu(request),
@@ -1413,6 +1417,8 @@ export function PreviewPane({ filePath, source, sourceTransaction, definitions, 
   const pasteBlocks = async (targetId: string, position: MovePosition) => {
     if (source === undefined || !document) return;
     try {
+      const target = nodeById(document.nodes, targetId);
+      if (onPasteImage && await onPasteImage(position === "before" ? target?.source.startOffset ?? 0 : target?.source.endOffset ?? source.length)) return;
       const payload = await readBlockClipboard();
       if (payload && payload.sourceProjectId !== projectId && payload.assets.length) {
         setOperationNotice(t("ui.PreviewPane.this_copied_block_uses_project_assets_copy"));
@@ -1452,7 +1458,7 @@ export function PreviewPane({ filePath, source, sourceTransaction, definitions, 
       })
     ];
     return () => registrations.forEach((dispose) => dispose());
-  }, [selectedId, additionalSelectedIds, editingId, boundary, source, document, filePath, operationPreview, collapsedBlockIds]);
+  }, [selectedId, additionalSelectedIds, editingId, boundary, source, document, filePath, operationPreview, collapsedBlockIds, onPasteImage]);
   // All hooks must run even while the initial file is loading or a non-TeX
   // file is active. Saved Visual layouts render both states during startup.
   if (!filePath || source === undefined) return <div className="preview-empty"><h2>{t("preview.noSourceTitle")}</h2><p>{t("preview.noSource")}</p></div>;
@@ -1511,14 +1517,14 @@ export function PreviewPane({ filePath, source, sourceTransaction, definitions, 
       setSelectedId(id); setAdditionalSelectedIds([]); setEditingId(undefined); setEditingCursorOffset(undefined); setEditingInitialHeight(undefined); setBoundary(undefined);
       setBlockToolbarPosition(undefined);
       const node = document ? nodeById(document.nodes, id) : undefined;
-      if (node?.kind === "block" && ["figure", "figure-star", "custom:figure*", "inline-image"].includes(node.environmentId)) onFigureSelect?.({ fileId: filePath, start: node.source.startOffset, end: node.source.endOffset, source: nodeSource(node, source) }); else onFigureSelect?.(undefined);
+      if (node?.kind === "block" && ["figure", "figure-star", "custom:figure*", "inline-image"].includes(node.environmentId)) onFigureSelect?.({ fileId: filePath, start: node.source.startOffset, end: node.source.endOffset, source: nodeSource(node, source), environmentId: node.environmentId }); else onFigureSelect?.(undefined);
       if (node?.kind === "block" && environmentPreview(node.environmentId, definitionForId(definitions, node.environmentId)).renderer === "table") onTableSelect?.({ fileId: filePath, start: node.source.startOffset, end: node.source.endOffset, source: nodeSource(node, source), kind: "table" }); else onTableSelect?.(undefined);
     },
     edit: (id, offset) => { revealCollapsedTargets([id]); setEditingInitialHeight(measurePreviewEditHeight(previewRootRef.current, id)); setEditingId(id); setEditingCursorOffset(offset); setSelectedId(undefined); setAdditionalSelectedIds([]); setBlockToolbarPosition(undefined); setBoundary(undefined); onFigureSelect?.(undefined); onTableSelect?.(undefined); },
     cancelEdit: () => { setEditingId(undefined); setEditingCursorOffset(undefined); setEditingInitialHeight(undefined); setBoundary(undefined); },
     setSelectedBlockIds: setBlockSelection,
     selectBlockWithModifiers, toggleCollapse, moveBlocks, copyBlocks: (ids, cut) => { void copyBlocks(ids, cut); }, duplicateBlocks, pasteBlocks: (id, position) => { void pasteBlocks(id, position); }, disableBlocks, enableBlocks,
-    applyEdit, applyBoundary, onBoundaryDraftChange, requestBoundary, deleteBlocks, removeEnvironment, onFigureSelect, onFigureSlotSelect, onTableSelect, onTableChange, onSpellContextMenu, onDetectedLanguage, onForwardSync,
+    applyEdit, applyBoundary, onBoundaryDraftChange, requestBoundary, deleteBlocks, removeEnvironment, onFigureSelect, onFigureSlotSelect, onFigureChange, onTableSelect, onTableChange, onSpellContextMenu, onDetectedLanguage, onForwardSync,
     relationFocus: (id) => relation?.onFocus(id),
     relationToggle: (id, x, y) => relation?.onToggle(id, x, y)
   };
@@ -1528,7 +1534,7 @@ export function PreviewPane({ filePath, source, sourceTransaction, definitions, 
     filterQuery, filterStates: filterEvaluation?.states ?? new Map(), visibilitySignatures,
     relation: relation ? { ...relation, transientToBlockId: mappedRelationIds, onFocus: actions.relationFocus, onToggle: actions.relationToggle } : undefined,
     onFieldEditing, selectedBlockIds: selectedBlockIds(), collapsedBlockIds, virtual, virtualRoot: previewRootRef, forcedIds, ...(pendingScroll?.offset === undefined ? {} : { forceOffset: pendingScroll.offset }), initialHeight: editingId ? editingInitialHeight : undefined, setSelectedBlockIds: actions.setSelectedBlockIds, selectBlockWithModifiers: actions.selectBlockWithModifiers, toggleCollapse: actions.toggleCollapse, moveBlocks: actions.moveBlocks, copyBlocks: actions.copyBlocks, duplicateBlocks: actions.duplicateBlocks, pasteBlocks: actions.pasteBlocks, disableBlocks: actions.disableBlocks, enableBlocks: actions.enableBlocks, deleteBlocks: actions.deleteBlocks, removeEnvironment: actions.removeEnvironment, onBoundaryDraftChange: actions.onBoundaryDraftChange,
-    onFigureSelect: actions.onFigureSelect, onFigureSlotSelect: actions.onFigureSlotSelect, onTableSelect: actions.onTableSelect, onTableChange: actions.onTableChange,
+    canEditImages: Boolean(actions.onFigureChange), onFigureSelect: actions.onFigureSelect, onFigureSlotSelect: actions.onFigureSlotSelect, onFigureChange: actions.onFigureChange, onTableSelect: actions.onTableSelect, onTableChange: actions.onTableChange,
     onSpellContextMenu: actions.onSpellContextMenu, onDetectedLanguage: actions.onDetectedLanguage, onForwardSync: actions.onForwardSync
   };
   const startBlockMarquee = (event: ReactPointerEvent<HTMLDivElement>) => {
@@ -1577,15 +1583,17 @@ export function PreviewPane({ filePath, source, sourceTransaction, definitions, 
     if (event.target instanceof Element && event.target.closest(".table-editor-backdrop, .table-floating-tools")) return;
     if (marqueeJustCompleted.current) { event.preventDefault(); event.stopPropagation(); marqueeJustCompleted.current = false; return; }
     const clickTarget = event.target instanceof Element ? event.target : undefined;
-    const jump = document && source !== undefined ? previewJumpTarget(clickTarget, source, document.nodes) : undefined;
+    const jump = document && source !== undefined ? previewJumpTarget(clickTarget, source, document.nodes, filePath, resolveReference) : undefined;
     if (jump && document && referenceModifierPressed(event, referenceLinkModifier)) {
       event.preventDefault();
       event.stopPropagation();
       const fromOffset = Number(jump.element.dataset.referenceSourceStart);
       const sourceEnd = Number(jump.element.dataset.referenceSourceEnd);
-      if (filePath && Number.isFinite(fromOffset) && Number.isFinite(sourceEnd) && sourceEnd > fromOffset) {
-        onJumpFromPosition?.({ fileId: filePath, offset: fromOffset, targetOffset: jump.offset, linkText: source.slice(fromOffset, sourceEnd), targetLabel: jump.element.dataset.reference ?? "" });
+      if (onJumpFromPosition && filePath && Number.isFinite(fromOffset) && Number.isFinite(sourceEnd) && sourceEnd > fromOffset) {
+        onJumpFromPosition({ fileId: filePath, offset: fromOffset, targetOffset: jump.offset, linkText: source.slice(fromOffset, sourceEnd), targetLabel: jump.element.dataset.reference?.split(",")[0]?.trim() ?? "" });
+        return;
       }
+      if (!jump.node) return;
       revealCollapsedTargets([jump.node.id]);
       setPendingScroll({ fileId: filePath, id: jump.node.id, offset: jump.offset, align: "start", highlight: "reference-target" });
       if (filePath) onClickSourcePosition?.({ fileId: filePath, offset: jump.offset });

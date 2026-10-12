@@ -157,8 +157,8 @@ async function run() {
 
   let saveOptions;
   dialog.showSaveDialog = async (...args) => { saveOptions = args.at(-1); return { canceled: true }; };
-  await evaluate(`window.latexEditor.exports.mainTex(${id},'main.tex')`);
-  assert.equal(saveOptions.title, '导出主 TeX 文件'); assert.equal(saveOptions.filters[0].name, 'TeX 源文件');
+  await evaluate(`window.latexEditor.exports.mainSourceArchive(${id})`);
+  assert.equal(saveOptions.title, '导出主文件相关源码'); assert.equal(saveOptions.filters[0].name, 'ZIP 压缩包');
   await evaluate(`document.querySelector('.activity-bar button[title^="文献库"]').click()`);
   await until('!!document.querySelector(".reference-quick-panel")', 'reference tool');
   assert.ok(await evaluate(`document.querySelector('.reference-quick-panel').textContent.includes('当前项目')`));

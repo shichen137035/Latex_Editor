@@ -1,11 +1,16 @@
 import { randomUUID } from "node:crypto";
-import { lstat, mkdir, open, readdir, readFile, rename, rm } from "node:fs/promises";
-import { basename, dirname, extname, relative, resolve, sep } from "node:path";
-import { deflateRawSync } from "node:zlib";
+import { lstat, mkdir, open, readdir, readFile, rename, rm, stat } from "node:fs/promises";
+import { basename, dirname, relative, resolve, sep } from "node:path";
+import { deflateRaw } from "node:zlib";
+import { promisify } from "node:util";
+import { relatedProjectPaths, ExportDependencyError } from "./project-export-dependencies.js";
+import { collectGraphicDependencies } from "./graphic-dependencies.js";
+export { ExportDependencyError } from "./project-export-dependencies.js";
 
 const zip32Limit = 0xffff_ffff;
 const excludedDirectories = new Set([".git", ".latex-editor", ".texweave", "node_modules"]);
-const generatedExtensions = /\.(?:acn|acr|alg|aux|bcf|bbl|blg|fdb_latexmk|fls|glg|glo|gls|idx|ilg|ind|ist|lof|log|lol|lot|maf|mtc\d*|nav|out|run\.xml|snm|synctex(?:\.gz)?|toc|vrb|xdv)$/i;
+const generatedExtensions = /\.(?:acn|acr|alg|aux|bcf|bbl|blg|fdb_latexmk|fls|glg|glo|gls|idx|ilg|ind|lof|log|lol|lot|maf|mtc\d*|nav|out|run\.xml|snm|synctex(?:\.gz)?|toc|vrb|xdv)$/i;
+const compress = promisify(deflateRaw);
 const crcTable = Uint32Array.from({ length: 256 }, (_, index) => {
   let value = index;
   for (let bit = 0; bit < 8; bit += 1) value = value & 1 ? 0xedb8_8320 ^ (value >>> 1) : value >>> 1;
@@ -43,16 +48,15 @@ function samePath(left: string, right: string): boolean {
     : normalizedLeft === normalizedRight;
 }
 
-function shouldExcludeFile(relativePath: string, absolutePath: string, outputPath: string, generatedPdfPath?: string): boolean {
+function shouldExcludeFile(relativePath: string, absolutePath: string, outputPath: string): boolean {
   const parts = relativePath.split(/[\\/]/);
   const name = parts.at(-1) ?? "";
   return samePath(absolutePath, outputPath)
-    || (generatedPdfPath !== undefined && samePath(absolutePath, generatedPdfPath))
     || [".DS_Store", "Thumbs.db", "desktop.ini"].includes(name)
     || generatedExtensions.test(name);
 }
 
-async function collectProjectFiles(root: string, outputPath: string, generatedPdfPath?: string): Promise<ArchiveFile[]> {
+async function collectProjectFiles(root: string, outputPath: string): Promise<ArchiveFile[]> {
   const files: ArchiveFile[] = [];
   const visit = async (directory: string): Promise<void> => {
     const entries = await readdir(directory, { withFileTypes: true });
@@ -62,14 +66,13 @@ async function collectProjectFiles(root: string, outputPath: string, generatedPd
       const relativePath = relative(root, absolutePath).split(sep).join("/");
       if (entry.isDirectory()) {
         if (!excludedDirectories.has(entry.name.toLocaleLowerCase("en-US"))) await visit(absolutePath);
-      } else if (entry.isFile() && !shouldExcludeFile(relativePath, absolutePath, outputPath, generatedPdfPath)) {
+      } else if (entry.isFile() && !shouldExcludeFile(relativePath, absolutePath, outputPath)) {
         files.push({ absolutePath, relativePath });
       }
     }
   };
   await visit(root);
   files.sort((left, right) => left.relativePath.localeCompare(right.relativePath));
-  if (files.length > 0xffff) throw new Error("This project has too many files for a ZIP archive.");
   return files;
 }
 
@@ -126,12 +129,37 @@ function makeEndRecord(entryCount: number, centralSize: number, centralOffset: n
   return record;
 }
 
-/** Creates a portable ZIP of project files, leaving compiler caches and output artifacts out. */
-export async function createProjectSourceArchive(rootPath: string, mainFile: string | undefined, outputPath: string): Promise<void> {
+/** Creates a portable ZIP without changing source files or requiring a TeX installation. */
+export async function createProjectSourceArchive(rootPath: string, mainFile: string | undefined, outputPath: string, options: {
+  scope?: "all" | "main";
+  recorder?: { inputs: string[]; modifiedAt: number };
+} = {}): Promise<void> {
   const root = resolve(rootPath);
   const output = resolve(outputPath);
-  const generatedPdfPath = mainFile ? resolve(root, `${basename(mainFile, extname(mainFile))}.pdf`) : undefined;
-  const files = await collectProjectFiles(root, output, generatedPdfPath);
+  let files = await collectProjectFiles(root, output);
+  if (options.scope === "main") {
+    if (!mainFile) throw new ExportDependencyError(["main.tex"]);
+    const byPath = new Map(files.map(file => [file.relativePath, file]));
+    let recorderInputs: string[] = [];
+    const recorder = options.recorder;
+    if (recorder?.inputs.includes(mainFile.replaceAll("\\", "/"))) {
+      // A stale recorder must not silently omit newly edited macro-based resources.
+      const tracked = recorder.inputs.filter(path => !path.split("/").some(part => excludedDirectories.has(part.toLowerCase())) && !generatedExtensions.test(path));
+      const recorded = tracked.filter(path => byPath.has(path));
+      const current = await Promise.all(recorded.map(async path => (await stat(byPath.get(path)!.absolutePath)).mtimeMs <= recorder.modifiedAt));
+      if (recorded.length === tracked.length && current.every(Boolean)) recorderInputs = recorded;
+    }
+    const selected = await relatedProjectPaths(mainFile, [...byPath.keys()], path => readFile(byPath.get(path)!.absolutePath, "utf8"), recorderInputs);
+    files = selected.map(path => byPath.get(path)!);
+  } else {
+    // Exclude all document PDFs, including secondary documents; keep image/resource PDFs.
+    const paths = new Set(files.filter(file => /\.tex$/i.test(file.relativePath)).map(file => file.relativePath.slice(0, -4).toLowerCase()));
+    if (mainFile) paths.add(basename(mainFile.replaceAll("\\", "/")).replace(/\.tex$/i, "").toLowerCase());
+    const sources = await Promise.all(files.filter(file => /\.(?:tex|sty|cls|def|cfg|ltx)$/i.test(file.relativePath)).map(async file => ({ path: file.relativePath, content: await readFile(file.absolutePath, "utf8") })));
+    const graphicPaths = new Set(collectGraphicDependencies(sources, files.map(file => file.relativePath)).resolved);
+    files = files.filter(file => !/\.pdf$/i.test(file.relativePath) || graphicPaths.has(file.relativePath) || !paths.has(file.relativePath.slice(0, -4).toLowerCase()));
+  }
+  if (files.length > 0xffff) throw new Error("This project has too many files for a ZIP archive.");
   const archiveRoot = basename(root) || "project";
   const destinationDirectory = dirname(output);
   await mkdir(destinationDirectory, { recursive: true });
@@ -151,9 +179,10 @@ export async function createProjectSourceArchive(rootPath: string, mainFile: str
   try {
     for (const source of files) {
       const info = await lstat(source.absolutePath);
-      if (!info.isFile() || info.isSymbolicLink()) continue;
+      if (!info.isFile() || info.isSymbolicLink()) throw new Error(`Project file changed during export: ${source.relativePath}`);
+      if (info.size > zip32Limit) throw new Error(`A project file is too large to add to the ZIP archive: ${source.relativePath}`);
       const content = await readFile(source.absolutePath);
-      const compressed = deflateRawSync(content);
+      const compressed = await compress(content);
       const name = Buffer.from(`${archiveRoot}/${source.relativePath}`, "utf8");
       if (name.length > 0xffff || content.length > zip32Limit || compressed.length > zip32Limit) {
         throw new Error(`A project file is too large to add to the ZIP archive: ${source.relativePath}`);

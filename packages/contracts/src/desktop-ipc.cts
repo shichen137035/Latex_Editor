@@ -62,6 +62,7 @@ export const desktopInvoke = {
     get_blocks: invoke<ProjectScoped<DocumentBlockApi["get_blocks"]>>("structure:get_blocks"),
     get_block_source: invoke<ProjectScoped<DocumentBlockApi["get_block_source"]>>("structure:get_block_source"),
     replace_block_content: invoke<ProjectScoped<DocumentBlockApi["replace_block_content"]>>("structure:replace_block_content"),
+    replace_block_range: invoke<ProjectScoped<DocumentBlockApi["replace_block_range"]>>("structure:replace_block_range"),
     insert_block: invoke<ProjectScoped<DocumentBlockApi["insert_block"]>>("structure:insert_block"),
     delete_block: invoke<ProjectScoped<DocumentBlockApi["delete_block"]>>("structure:delete_block"),
     set_block_semantic: invoke<ProjectScoped<DocumentBlockApi["set_block_semantic"]>>("structure:set_block_semantic"),
@@ -222,6 +223,7 @@ export const desktopInvoke = {
   images: {
     pick: invoke<(multiple?: boolean) => Promise<string[]>>("images:pick"),
     import: invoke<(projectId: string, sourcePaths: string[], directory: string) => Promise<ImportedImage[]>>("images:import"),
+    paste: invoke<(projectId: string, directory: string) => Promise<ImportedImage | undefined>>("images:paste"),
     resolve: invoke<(projectId: string, texPath: string, requestedPath: string, graphicPaths?: string[]) => Promise<ResolvedGraphic>>("images:resolve"),
   },
   compile: {
@@ -230,9 +232,9 @@ export const desktopInvoke = {
     readLog: invoke<(projectId: string, compilationId: string) => Promise<string>>("compile:read-log"),
   },
   exports: {
-    sourceArchive: invoke<(projectId: string, mainFile?: string) => Promise<string | undefined>>("exports:source-archive"),
-    mainTex: invoke<(projectId: string, mainFile: string) => Promise<string | undefined>>("exports:main-tex"),
-    pdf: invoke<(projectId: string, mainFile: string) => Promise<PdfExportResult>>("exports:pdf"),
+    sourceArchive: invoke<(projectId: string) => Promise<string | undefined>>("exports:source-archive"),
+    mainSourceArchive: invoke<(projectId: string) => Promise<string | undefined>>("exports:main-source-archive"),
+    pdf: invoke<(projectId: string) => Promise<PdfExportResult>>("exports:pdf"),
   },
   ai: {
     detect: invoke<() => Promise<AIStatus | undefined>>("ai:detect"),
@@ -259,7 +261,7 @@ export const desktopInvoke = {
     markChangeSetApplied: invoke<(id: string, hunkIds: string[], error?: string) => Promise<AIChangeSet | undefined>>("ai:change-set:applied"),
     approvals: invoke<(projectId?: string) => Promise<AIApprovalRequest[]>>("ai:approvals"),
     resolveApproval: invoke<(id: string, allow: boolean) => Promise<void>>("ai:approval:resolve"),
-    send: invoke<(input: { conversationId: string; taskId?: string; projectId?: string; content: string; contextText?: string; overrides?: AIContextSnapshotFile[]; attachmentIds?: string[]; attachmentDraftId?: string }) => Promise<{ conversation: AIConversation; taskId: string } | undefined>>("ai:send"),
+    send: invoke<(input: { conversationId: string; taskId?: string; projectId?: string; content: string; contextText?: string; overrides?: AIContextSnapshotFile[]; attachmentIds?: string[]; attachmentDraftId?: string; editMessageId?: string }) => Promise<{ conversation: AIConversation; taskId: string } | undefined>>("ai:send"),
     openAttachmentDraft: invoke<(projectId: string, draftId: string) => Promise<void>>("ai:attachments:open-draft"),
     closeAttachmentDraft: invoke<(projectId: string, draftId: string) => Promise<void>>("ai:attachments:close-draft"),
     removeAttachments: invoke<(projectId: string, draftId: string, ids: string[]) => Promise<void>>("ai:attachments:remove"),

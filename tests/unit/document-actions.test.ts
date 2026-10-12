@@ -1,6 +1,7 @@
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import type { CompileResult } from "@latex-editor/contracts";
 import { createDocumentActions } from "../../apps/desktop/src/renderer/workbench/documentActions.js";
+afterEach(() => vi.unstubAllGlobals());
 
 function setup() {
   const result: CompileResult & { pdfDataUrl?: string } = { compilationId: "run", status: "succeeded", exitCode: 0, mainFile: "main.tex", startedAt: "2026-01-01", finishedAt: "2026-01-01", durationMs: 1, diagnostics: [], stdoutTail: "", stderrTail: "", pdfDataUrl: "new PDF" };
@@ -10,6 +11,35 @@ function setup() {
   return { options, run, saveAll, result, actions: createDocumentActions(options) };
 }
 describe("project compilation actions", () => {
+  it("exports only the project main PDF even when another TeX is selected", async () => {
+    const test = setup(); test.options.activePath = "supplement.tex";
+    const pdf = vi.fn(async () => ({ status: "cancelled" as const }));
+    test.options.api!.exports = { pdf } as never;
+    await test.actions.exportPdf();
+    expect(test.saveAll).toHaveBeenCalledOnce();
+    expect(pdf).toHaveBeenCalledExactlyOnceWith("project");
+    expect(test.run).not.toHaveBeenCalled();
+    expect(test.options.guard?.busy).toBe(false);
+  });
+
+  it("saves once for each source export and dispatches all/main scopes to separate endpoints", async () => {
+    const test = setup(); test.options.activePath = "supplement.tex";
+    const sourceArchive = vi.fn(async () => undefined), mainSourceArchive = vi.fn(async () => undefined);
+    test.options.api!.exports = { sourceArchive, mainSourceArchive } as never;
+    await test.actions.exportSourceArchive(); await test.actions.exportMainSourceArchive();
+    expect(test.saveAll).toHaveBeenCalledTimes(2);
+    expect(sourceArchive).toHaveBeenCalledExactlyOnceWith("project");
+    expect(mainSourceArchive).toHaveBeenCalledExactlyOnceWith("project");
+  });
+
+  it("does not substitute an active secondary file when the project has no main file", async () => {
+    const test = setup(); delete test.options.project.mainFile;
+    test.options.activePath = "supplement.tex";
+    const alert = vi.fn(); vi.stubGlobal("window", { alert });
+    await test.actions.exportPdf(); await test.actions.exportMainSourceArchive();
+    expect(alert).toHaveBeenCalledTimes(2);
+    expect(test.saveAll).not.toHaveBeenCalled();
+  });
   it("saves once, compiles main then the selected TeX, and displays only the selected result", async () => {
     const test = setup(); test.options.activePath = "supplement/main.tex";
     const secondary = { ...test.result, mainFile: test.options.activePath, pdfDataUrl: "supplement PDF" };

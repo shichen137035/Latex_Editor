@@ -1,6 +1,7 @@
 const { spawn, spawnSync } = require("node:child_process");
 const fs = require("node:fs");
 const path = require("node:path");
+const { runtimeBuildFingerprint } = require("./runtime-build-state.cjs");
 
 const root = path.resolve(__dirname, "../../..");
 const mainConfig = path.join(root, "apps/desktop/tsconfig.main.json");
@@ -40,6 +41,7 @@ let stopping = false;
 let restartingElectron = false;
 let watcherInitialized = false;
 let restartTimer;
+let runningFingerprint;
 
 function stop(code = 0) {
   if (stopping) return;
@@ -77,29 +79,41 @@ function launchElectron() {
   }
   const electronExecutable = require("electron").trim();
   const electronEnvironment = { ...environment, TEXWEAVE_RENDERER_URL: rendererUrl };
-  electronProcess = spawn(electronExecutable, [path.join(root, "apps/desktop")], {
+  try { runningFingerprint = runtimeBuildFingerprint(root, mainConfig); }
+  catch (error) {
+    process.stderr.write(`Unable to inspect the runtime build: ${error.message}\n`);
+    stop(1);
+    return;
+  }
+  const launched = spawn(electronExecutable, [path.join(root, "apps/desktop")], {
     cwd: root,
     env: electronEnvironment,
     stdio: "inherit",
     windowsHide: false
   });
-  electronProcess.once("error", (error) => {
+  electronProcess = launched;
+  launched.once("error", (error) => {
     process.stderr.write(`Unable to launch Electron: ${error.message}\n`);
     stop(1);
   });
-  electronProcess.once("exit", (code, signal) => failChild("Electron", electronProcess, code, signal));
+  launched.once("exit", (code, signal) => failChild("Electron", launched, code, signal));
 }
 
 function scheduleElectronRestart() {
   if (stopping || !watcherInitialized) return;
   clearTimeout(restartTimer);
   restartTimer = setTimeout(() => {
-    if (stopping) return;
-    if (electronProcess && electronProcess.exitCode === null) {
+    if (stopping || restartingElectron || !electronProcess || electronProcess.exitCode !== null) return;
+    let nextFingerprint;
+    try { nextFingerprint = runtimeBuildFingerprint(root, mainConfig); }
+    catch (error) {
+      process.stderr.write(`Unable to inspect the runtime build; keeping Electron running: ${error.message}\n`);
+      return;
+    }
+    if (nextFingerprint !== runningFingerprint) {
+      process.stdout.write("Main-process runtime files changed. Restarting Electron in development mode...\n");
       restartingElectron = true;
       electronProcess.kill();
-    } else {
-      launchElectron();
     }
   }, 450);
 }

@@ -1,5 +1,7 @@
 import { basename, extname, posix } from "node:path";
-import { readFile, stat } from "node:fs/promises";
+import { mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import type { ImportedImage, ProjectTreeNode, ResolvedGraphic } from "@latex-editor/contracts" with { "resolution-mode": "import" };
 import type { ProjectCacheReclamationManager } from "@latex-editor/application" with { "resolution-mode": "import" };
 
@@ -94,6 +96,19 @@ export class ProjectImageService {
       imported.push({ sourcePath, relativePath, renamed: name !== original, kind: sourceInfo.isDirectory() ? "directory" : "file" });
     }
     return imported;
+  }
+
+  async importClipboardImage(projectId: string, png: Uint8Array, directory: string): Promise<ImportedImage | undefined> {
+    if (!png.length) return undefined;
+    const temporary = await mkdtemp(join(tmpdir(), "texweave-clipboard-image-"));
+    try {
+      const source = join(temporary, `clipboard-${Date.now()}.png`);
+      await writeFile(source, png);
+      const [image] = await this.importImages(projectId, [source], directory);
+      return image;
+    } finally {
+      await rm(temporary, { recursive: true, force: true });
+    }
   }
 
   async resolve(projectId: string, texPath: string, requestedPath: string, graphicPaths: string[] = []): Promise<ResolvedGraphic> {

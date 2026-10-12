@@ -5,6 +5,7 @@ import type { SyncTexPdfPosition } from "@latex-editor/contracts";
 import { t } from "../i18n/index.js";
 import "./pdf-viewer.css";
 import { capturePdfReadingPosition, pdfPageBoxes, restorePdfReadingPosition, type PdfReadingPosition } from "./position.js";
+import { releasePdfRender } from "./renderResources.js";
 
 GlobalWorkerOptions.workerSrc = workerUrl;
 type Zoom = "width" | "page" | number;
@@ -280,7 +281,12 @@ function PdfPage({ document, fallbackPage, pageNumber, target, onReverse, onRead
     }).catch((reason: unknown) => {
       if (!cancelled && (reason as { name?: string }).name !== "RenderingCancelledException") setError(String(reason));
     });
-    return () => { cancelled = true; task.cancel(); textLayer.cancel(); };
+    const host = textHost.current;
+    return () => {
+      cancelled = true;
+      host?.replaceChildren();
+      void releasePdfRender(task, textLayer, canvas).catch(() => undefined);
+    };
   }, [page, visible, scale, size.width]);
   return <div ref={shellRef} className="pdf-page" data-page={pageNumber} data-scale={scale} style={{ width: viewport?.width ?? 600, height: viewport?.height ?? 800, "--total-scale-factor": scale } as CSSProperties} onDoubleClick={(event) => {
     if ((event.target as Element).closest(".pdf-link")) return;

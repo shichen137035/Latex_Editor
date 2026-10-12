@@ -4,6 +4,7 @@ import type { EnvironmentDefinition } from "../preview/types.js";
 import type { CompletionContext } from "./context.js";
 import { parseBibtex } from "@latex-editor/editor-core/bibtex";
 import { maskLatexComments } from "@latex-editor/editor-core/latex-source";
+import { ProjectReferenceIndex } from "../editor/ProjectReferenceIndex.js";
 
 export interface IndexedDocument {
   path: string;
@@ -101,6 +102,7 @@ function addPreferred(map: Map<string, CompletionEntry>, entry: CompletionEntry)
  * a future provider.
  */
 export class ProjectIndex {
+  private references = new ProjectReferenceIndex();
   private files: IndexedFile[] = [];
   private commands: CompletionEntry[] = [];
   private environments: CompletionEntry[] = [];
@@ -110,6 +112,7 @@ export class ProjectIndex {
   private mathSymbols: CompletionEntry[] = [];
 
   rebuild(tree: ProjectTreeNode[], documents: IndexedDocument[], definitions: EnvironmentDefinition[], builtInCommands: CommandMetadata[]): void {
+    this.references.update(documents);
     this.files = flattenTree(tree);
     const commandEntries = new Map<string, CompletionEntry>();
     for (const command of builtInCommands) {
@@ -201,7 +204,14 @@ export class ProjectIndex {
     if (context.mode === "unknown") return [];
     if (context.mode === "command") return this.filterEntries(this.commands, context.prefix);
     if (context.mode === "environment") return this.filterEntries(this.environments, context.prefix);
-    if (context.mode === "reference") return this.filterEntries(this.labels.map((item) => ({ label: item.key, insertText: item.key, detail: item.detail, kind: "reference" as const, filterText: item.key, sourceRank: 0 })), context.prefix);
+    if (context.mode === "reference") {
+      const labels = new Map(this.labels.map(item => [item.key, item]));
+      for (const [key, targets] of this.references.visible(currentPath)) if (targets.length === 1) {
+        const target = targets[0]!;
+        labels.set(key, { key, detail: target.path });
+      }
+      return this.filterEntries([...labels.values()].map(item => ({ label: item.key, insertText: item.key, detail: item.detail, kind: "reference" as const, filterText: item.key, sourceRank: 0 })), context.prefix);
+    }
     if (context.mode === "citation") return this.filterEntries(this.citations.map((item) => ({ label: item.key, insertText: item.key, detail: item.detail, kind: "text" as const, filterText: item.key, sourceRank: 0 })), context.prefix);
     if (context.mode === "document-word") return this.filterEntries(this.words, context.prefix);
     if (context.mode === "math-symbol") return this.filterEntries(this.mathSymbols, context.prefix);

@@ -18,7 +18,8 @@ export function Icon({ name }: { name: string }) {
     settings: "M12 8.5a3.5 3.5 0 1 0 0 7 3.5 3.5 0 0 0 0-7Zm0-6v2m0 15v2m9-9h-2m-14 0H3m15.4-6.4L17 7.5M7 17l-1.4 1.4m12.8 0L17 17M7 7.5 5.6 6.1", image: "M4 5h16v14H4zM6 16l4-4 3 3 2-2 3 3M8 9h.01",
     help: "M9.5 9a2.7 2.7 0 1 1 4.3 2.2c-1.1.8-1.8 1.3-1.8 2.8m0 3h.01", home: "M3 11.5 12 4l9 7.5V21h-6v-6H9v6H3z",
     save: "M5 3h12l3 3v15H4V3h1Zm3 0v6h8V3M8 21v-7h8v7", play: "m8 5 11 7-11 7V5Z", panel: "M4 5h16v14H4zM4 14h16",
-    chevron: "m8 10 4 4 4-4", back: "M19 12H5m7 7-7-7 7-7", relations: "M6 4a2 2 0 1 0 0 4a2 2 0 0 0 0-4Zm12 0a2 2 0 1 0 0 4a2 2 0 0 0 0-4ZM12 16a2 2 0 1 0 0 4a2 2 0 0 0 0-4ZM8 6h8M7 8l4 8m6-8-4 8", close: "m7 7 10 10M17 7 7 17", plus: "M12 5v14M5 12h14", refresh: "M19 7v5h-5M5 17v-5h5M18 12a6 6 0 0 0-10.5-4M6 12a6 6 0 0 0 10.5 4"
+    chevron: "m8 10 4 4 4-4", back: "M19 12H5m7 7-7-7 7-7", relations: "M6 4a2 2 0 1 0 0 4a2 2 0 0 0 0-4Zm12 0a2 2 0 1 0 0 4a2 2 0 0 0 0-4ZM12 16a2 2 0 1 0 0 4a2 2 0 0 0 0-4ZM8 6h8M7 8l4 8m6-8-4 8", close: "m7 7 10 10M17 7 7 17", plus: "M12 5v14M5 12h14", refresh: "M19 7v5h-5M5 17v-5h5M18 12a6 6 0 0 0-10.5-4M6 12a6 6 0 0 0 10.5 4",
+    compiled: "M12 22a10 10 0 1 0 0-20a10 10 0 0 0 0 20Zm-4.5-10 3 3 6-6", pending: "M12 22a10 10 0 1 0 0-20a10 10 0 0 0 0 20Zm0-15v5l3 2"
   };
   return <svg viewBox="0 0 24 24" aria-hidden="true"><path d={paths[name]} /></svg>;
 }
@@ -254,13 +255,49 @@ export function Tree({ projectId, nodes, activePath, mainFile, filter, hideBuild
   >{renderNodes(nodes, 0)}</div>;
 }
 export function Placeholder({ type, pdfDataUrl, pdfTarget, pdfViewState, pdfLabel, pdfDocuments, pdfSelectedId, pdfLinkDestination, onPdfLink, onPdfSelect, onPdfDoubleClick, onPdfInteract }: { pdfViewState?: MutableRefObject<PdfViewState | undefined> | undefined; pdfLabel?: string | undefined; pdfLinkDestination?: PdfLinkDestination | undefined; onPdfLink?(href: string): void; pdfDocuments?: ProjectPdfDocument[]; pdfSelectedId?: string | undefined; onPdfSelect?(id: string): void; type: "preview" | "pdf"; pdfDataUrl?: string | undefined; pdfTarget?: SyncTexPdfPosition | undefined; onPdfDoubleClick?(page: number, x: number, y: number): void; onPdfInteract?(): void }) {
-  const picker = pdfDocuments && <select className="pdf-document-select" aria-label={t("pdf.chooseDocument")} title={t("pdf.chooseDocument")} disabled={!pdfDocuments.length} value={pdfSelectedId ?? ""} onChange={event => onPdfSelect?.(event.target.value)}>
-    {!pdfDocuments.length && <option value="">{t("pdf.loading")}</option>}
-    {pdfDocuments.map(doc => <option value={doc.id} key={doc.id}>{doc.sourceFile?.replace(/\.tex$/i, ".pdf") ?? doc.pdfFile}{doc.available ? "" : ` · ${t("pdf.notCompiled")}`}</option>)}
-  </select>;
+  const picker = pdfDocuments && <PdfDocumentPicker documents={pdfDocuments} selectedId={pdfSelectedId} onSelect={onPdfSelect}/>;
   if (type === "pdf" && pdfDataUrl) return <PdfViewer destination={pdfLinkDestination} onPdfLink={onPdfLink} toolbar={picker} viewState={pdfViewState} label={pdfLabel} dataUrl={pdfDataUrl} target={pdfTarget} onReverse={(page, x, y) => onPdfDoubleClick?.(page, x, y)} onInteract={() => onPdfInteract?.()}/>;
   const empty = <div className="pane-placeholder"><div className="placeholder-orbit"><Logo /></div><h2>{t(type === "preview" ? "placeholder.previewTitle" : "placeholder.pdfTitle")}</h2><p>{t(type === "preview" ? "placeholder.preview" : "placeholder.pdf")}</p></div>;
   return type === "pdf" && picker ? <div className="pdf-document"><div className="pdf-zoom-toolbar">{picker}</div>{empty}</div> : empty;
+}
+
+function PdfDocumentPicker({ documents, selectedId, onSelect }: { documents: ProjectPdfDocument[]; selectedId: string | undefined; onSelect: ((id: string) => void) | undefined }) {
+  const [open, setOpen] = useState(false);
+  const root = useRef<HTMLDivElement>(null);
+  const selected = documents.find(doc => doc.id === selectedId);
+  const labelFor = (doc: ProjectPdfDocument) => doc.sourceFile?.replace(/\.tex$/i, ".pdf") ?? doc.pdfFile;
+  const partsFor = (doc: ProjectPdfDocument) => {
+    const path = labelFor(doc).replace(/\\/g, "/");
+    const split = path.lastIndexOf("/");
+    return { name: split < 0 ? path : path.slice(split + 1), directory: split < 0 ? "" : path.slice(0, split) };
+  };
+  useEffect(() => {
+    if (!open) return;
+    const closeOutside = (event: PointerEvent) => { if (!root.current?.contains(event.target as Node)) setOpen(false); };
+    const closeEscape = (event: KeyboardEvent) => { if (event.key === "Escape") setOpen(false); };
+    document.addEventListener("pointerdown", closeOutside);
+    document.addEventListener("keydown", closeEscape);
+    return () => { document.removeEventListener("pointerdown", closeOutside); document.removeEventListener("keydown", closeEscape); };
+  }, [open]);
+  const selectedParts = selected ? partsFor(selected) : undefined;
+  return <div className="pdf-document-picker" ref={root}>
+    <button type="button" className="pdf-document-select" aria-label={t("pdf.chooseDocument")} aria-haspopup="listbox" aria-expanded={open} title={selected ? labelFor(selected) : t("pdf.chooseDocument")} disabled={!documents.length} onClick={() => setOpen(value => !value)}>
+      {selected && <Icon name={selected.available ? "compiled" : "pending"}/>}
+      <span className="pdf-document-selected-name">{selectedParts?.name ?? t("pdf.loading")}</span>
+      <Icon name="chevron"/>
+    </button>
+    {open && <div className="pdf-document-menu" role="group" aria-label={t("pdf.chooseDocument")}>
+      {documents.map(doc => {
+        const parts = partsFor(doc), current = doc.id === selectedId;
+        const status = doc.available ? t("pdf.compiled") : t("pdf.notCompiled");
+        return <button type="button" aria-label={`${parts.name} · ${status}`} aria-pressed={current} className={`pdf-document-option${current ? " selected" : ""}`} key={doc.id} title={`${labelFor(doc)} · ${status}`} onClick={() => { onSelect?.(doc.id); setOpen(false); }}>
+          <span className={`pdf-document-state ${doc.available ? "compiled" : "pending"}`} title={status}><Icon name={doc.available ? "compiled" : "pending"}/></span>
+          <span className="pdf-document-option-text"><strong>{parts.name}</strong>{parts.directory && <small>{parts.directory}</small>}</span>
+          {current && <span className="pdf-document-current">✓</span>}
+        </button>;
+      })}
+    </div>}
+  </div>;
 }
 
 export function EntryNameInput({ message, fallback, finish }: { message: string; fallback: string; finish(value?: string): void }) {

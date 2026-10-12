@@ -6,11 +6,13 @@ import { CopilotChatService } from "../../apps/desktop/src/main/ai/copilot-chat.
 import type { SessionConfig } from "@github/copilot-sdk";
 
 const sdk = vi.hoisted(() => {
-  const session = { sessionId: "thinking-test", setModel: vi.fn(async () => undefined) };
+  const session = { sessionId: "thinking-test", setModel: vi.fn(async () => undefined), disconnect: vi.fn(async () => undefined) };
   return {
     session,
     start: vi.fn(async () => undefined), stop: vi.fn(async () => undefined),
     createSession: vi.fn(async (config: { sessionId: string } & Pick<SessionConfig, "onPermissionRequest" | "tools">) => ({ ...session, sessionId: config.sessionId })),
+    resumeSession: vi.fn(async (sessionId: string) => ({ ...session, sessionId })),
+    deleteSession: vi.fn(async () => undefined),
     listModels: vi.fn(async () => [{ id: "reasoning-model", name: "Reasoning model", capabilities: { supports: { reasoningEffort: true } }, supportedReasoningEfforts: ["low", "medium", "high"], defaultReasoningEffort: "medium" as string | undefined }])
   };
 });
@@ -30,8 +32,50 @@ it("restores provider defaults when the catalog does not advertise a default eff
   }
 });
 vi.mock("@github/copilot-sdk", () => ({ CopilotClient: class {
-  start = sdk.start; stop = sdk.stop; createSession = sdk.createSession; listModels = sdk.listModels;
+  start = sdk.start; stop = sdk.stop; createSession = sdk.createSession; resumeSession = sdk.resumeSession; deleteSession = sdk.deleteSession; listModels = sdk.listModels;
 } }));
+
+it("releases completed sessions and callbacks without deleting resumable history", async () => {
+  const root = mkdtempSync(join(tmpdir(), "texweave-copilot-release-"));
+  const service = new CopilotChatService(root);
+  try {
+    const disconnectedBefore = sdk.session.disconnect.mock.calls.length;
+    const deletedBefore = sdk.deleteSession.mock.calls.length;
+    for (let index = 0; index < 20; index++) {
+      const session = await service.session(undefined, "reasoning-model", `idle-${index}`, join(root, String(index)), "high", [{ name: "edit", handler: () => "source snapshot" }]);
+      expect(service.runtimeStats).toEqual({ sessions: 1, workspaces: 1 });
+      await service.releaseSession(session.sessionId);
+      expect(service.runtimeStats).toEqual({ sessions: 0, workspaces: 0 });
+    }
+    expect(sdk.session.disconnect.mock.calls.length - disconnectedBefore).toBe(20);
+    expect(sdk.deleteSession.mock.calls.length).toBe(deletedBefore);
+    const resumed = await service.session("idle-19", "reasoning-model", "unused", root, "high");
+    expect(resumed.sessionId).toBe("idle-19");
+    await service.releaseSession(resumed.sessionId);
+  } finally { await service.dispose(); rmSync(root, { recursive: true, force: true }); }
+});
+
+it("reclaims turn callbacks when session creation fails", async () => {
+  const root = mkdtempSync(join(tmpdir(), "texweave-copilot-failed-"));
+  const service = new CopilotChatService(root);
+  try {
+    sdk.createSession.mockRejectedValueOnce(new Error("failed startup"));
+    await expect(service.session(undefined, "reasoning-model", "failed", root, "high", [{ name: "edit", handler: () => "snapshot" }])).rejects.toThrow("failed startup");
+    expect(service.runtimeStats).toEqual({ sessions: 0, workspaces: 0 });
+  } finally { await service.dispose(); rmSync(root, { recursive: true, force: true }); }
+});
+
+it("shares one Copilot client when background requests start concurrently", async () => {
+  const root = mkdtempSync(join(tmpdir(), "texweave-copilot-concurrent-"));
+  const service = new CopilotChatService(root);
+  try {
+    const startsBefore = sdk.start.mock.calls.length;
+    const sessions = await Promise.all(["first", "second"].map(id => service.session(undefined, "reasoning-model", id, join(root, id), "high")));
+    expect(sdk.start.mock.calls.length - startsBefore).toBe(1);
+    await Promise.all(sessions.map(session => service.releaseSession(session.sessionId)));
+    expect(service.runtimeStats).toEqual({ sessions: 0, workspaces: 0 });
+  } finally { await service.dispose(); rmSync(root, { recursive: true, force: true }); }
+});
 
 it("dispatches cached session tools through the current turn's snapshot tracker", async () => {
   const root = mkdtempSync(join(tmpdir(), "texweave-tools-"));

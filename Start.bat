@@ -27,10 +27,10 @@ if not exist "node_modules\electron\package.json" (
     echo.
 )
 
-echo Starting TeXWeave...
+echo Building TeXWeave once and starting without automatic restarts...
 echo Close this window after the application exits.
 echo.
-call npm run desktop:dev
+call npm run desktop:dev:build
 if errorlevel 1 goto :start_failed
 
 echo.

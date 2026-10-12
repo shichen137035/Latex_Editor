@@ -16,12 +16,13 @@ import type { AIToolApproval } from "./ai-approvals.js";
 import { makeHunks } from "./changeHunks.js";
 import { describeProjectSnapshot, isSnapshotTextPath, isWorkspaceAssetPath, loadSkills, MAX_SNAPSHOT_BYTES, MAX_WORKSPACE_ASSET_BYTES, MAX_WORKSPACE_ASSET_COUNT, MAX_WORKSPACE_ASSET_TOTAL_BYTES, readWorkspace, safeRelativePath, snapshotFileLimit, type ProjectSkill } from "./workspaceFiles.js";
 import { isAIEditableProjectPath, isAIStructureMetadataPath } from "@latex-editor/contracts/ai-paths";
-import { collectGraphicDependencies } from "./tex-dependencies.js";
+import { collectGraphicDependencies } from "../graphic-dependencies.js";
 import { createProjectResources, createCopilotResourceTools } from "./project-resources.js";
 import { AIAttachmentStore, attachmentLimits, type AttachmentLease } from "./attachment-store.js";
 
 type AIWorkspaceAsset = { path: string; content: Uint8Array };
-type SendInput = { conversationId: string; taskId?: string; content: string; snapshot?: AIContextSnapshotFile[]; assets?: AIWorkspaceAsset[]; projectPaths?: string[]; omittedAssets?: number; unresolvedGraphics?: string[]; contextText?: string; model?: string; reasoningEffort?: string; attachmentIds?: string[]; attachmentDraftId?: string; attachmentLease?: AttachmentLease; permissionMode?: AIPermissionMode };
+type SendInput = { conversationId: string; taskId?: string; content: string; snapshot?: AIContextSnapshotFile[]; assets?: AIWorkspaceAsset[]; projectPaths?: string[]; omittedAssets?: number; unresolvedGraphics?: string[]; contextText?: string; model?: string; reasoningEffort?: string; attachmentIds?: string[]; attachmentDraftId?: string; attachmentLease?: AttachmentLease; permissionMode?: AIPermissionMode; editMessageId?: string; retainedAttachments?: RetainedAttachment[] };
+type RetainedAttachment = { id: string; name: string; size: number; content: Uint8Array };
 type WorkspaceAttachment = AIAttachment & { path: string };
 type AICompileWorkspace = (input: { projectId: string; workspaceRoot: string; mainFile?: string }) => Promise<CompileResult>;
 
@@ -122,7 +123,12 @@ export class AIWorkspaceService {
         for (const conversation of conversations) {
           if (conversation.activeTaskId) { delete conversation.activeTaskId; interrupted = true; }
           for (const message of conversation.messages) {
-            if (message.status === "streaming") { message.status = "error"; message.content ||= "The previous AI response was interrupted when TeXWeave closed."; interrupted = true; }
+            if (message.status === "streaming") {
+              message.status = "error";
+              message.completedAt = Date.now();
+              message.content ||= "The previous AI response was interrupted when TeXWeave closed.";
+              interrupted = true;
+            }
           }
         }
         if (interrupted) await this.#persist();
@@ -351,6 +357,29 @@ export class AIWorkspaceService {
     return results.map(result => (result as PromiseFulfilledResult<WorkspaceAttachment>).value);
   }
 
+  async #readRetainedAttachments(conversation: AIConversation, message: AIMessage): Promise<RetainedAttachment[]> {
+    if (!message.attachments?.length) return [];
+    const root = join(this.#root, conversation.id);
+    return Promise.all(message.attachments.map(async attachment => {
+      const safeName = basename(attachment.name);
+      if (!safeName || safeName !== attachment.name || !/^[0-9a-f-]{36}$/i.test(attachment.id)) throw new Error("An attachment can no longer be restored. Please send it again with the edited message.");
+      const path = join(root, ".texweave", "ai-attachments", attachment.id, safeName);
+      const info = await lstat(path).catch(() => undefined);
+      if (!info?.isFile() || info.isSymbolicLink()) throw new Error("An attachment can no longer be restored. Please send it again with the edited message.");
+      const content = await readFile(path);
+      return { ...attachment, content };
+    }));
+  }
+
+  async #restoreRetainedAttachments(root: string, retained: RetainedAttachment[]): Promise<WorkspaceAttachment[]> {
+    return Promise.all(retained.map(async attachment => {
+      const path = join(root, ".texweave", "ai-attachments", attachment.id, attachment.name);
+      await mkdir(dirname(path), { recursive: true });
+      await writeFile(path, attachment.content);
+      return { id: attachment.id, name: attachment.name, size: attachment.size, path };
+    }));
+  }
+
   async send(input: SendInput): Promise<{ conversation: AIConversation; taskId: string }> {
     const attachmentLease = input.attachmentLease ?? this.acquireAttachments(input.conversationId, input.attachmentDraftId, input.attachmentIds);
     try {
@@ -358,6 +387,25 @@ export class AIWorkspaceService {
       const result = await this.#send({ ...input, ...(attachmentLease ? { attachmentLease } : {}) });
       await attachmentLease?.consume();
       return result;
+    } finally { await attachmentLease?.release(); }
+  }
+
+  async editAndResend(input: SendInput & { messageId: string }): Promise<{ conversation: AIConversation; taskId: string }> {
+    const conversation = this.#conversation(input.conversationId);
+    const messageIndex = conversation.messages.findIndex(message => message.id === input.messageId);
+    const message = conversation.messages[messageIndex];
+    if (!message || message.role !== "user") throw new Error("Only your own messages can be edited.");
+    const lastUserMessage = [...conversation.messages].reverse().find(item => item.role === "user");
+    if (lastUserMessage?.id !== input.messageId) throw new Error("Only the most recent message can be edited.");
+    if (conversation.messages.some(item => item.status === "streaming")
+      || [...this.#activeByThread.values(), ...this.#cancelingCopilot.values()].some(turn => turn.conversationId === conversation.id)) {
+      throw new Error("Stop the current response before editing a message.");
+    }
+    const retainedAttachments = await this.#readRetainedAttachments(conversation, message);
+    const attachmentLease = input.attachmentLease ?? this.acquireAttachments(input.conversationId, input.attachmentDraftId, input.attachmentIds);
+    try {
+      if (attachmentLease && attachmentLease.projectId !== conversation.projectId) throw new Error("Attachments belong to another project.");
+      return await this.#send({ ...input, ...(attachmentLease ? { attachmentLease } : {}), retainedAttachments, editMessageId: input.messageId });
     } finally { await attachmentLease?.release(); }
   }
 
@@ -369,15 +417,37 @@ export class AIWorkspaceService {
       || [...this.#activeByThread.values(), ...this.#cancelingCopilot.values()].some(turn => turn.conversationId === conversation.id)) throw new Error("Wait for or stop the current response first.");
     if (input.taskId !== undefined && !/^[0-9a-f-]{36}$/i.test(input.taskId)) throw new Error("Invalid AI task id.");
     const taskId = input.taskId ?? randomUUID();
+    let userMessage: AIMessage;
+    if (input.editMessageId) {
+      const index = conversation.messages.findIndex(message => message.id === input.editMessageId && message.role === "user");
+      if (index < 0) throw new Error("The message to edit no longer exists.");
+      const lastUserMessage = [...conversation.messages].reverse().find(message => message.role === "user");
+      if (lastUserMessage?.id !== input.editMessageId) throw new Error("Only the most recent message can be edited.");
+      userMessage = conversation.messages[index]!;
+      const cutoff = userMessage.createdAt;
+      conversation.messages.splice(index + 1);
+      this.#data.changeSets = this.#data.changeSets.filter(change => change.conversationId !== conversation.id || change.createdAt < cutoff);
+      if (conversation.mode === "chat") {
+        await this.#copilot.deleteSession(conversation.copilotSessionId);
+        delete conversation.copilotSessionId;
+      } else {
+        delete conversation.threadId;
+      }
+      userMessage.content = content;
+      userMessage.status = "complete";
+    } else {
+      userMessage = { id: randomUUID(), role: "user", content, createdAt: Date.now(), status: "complete" };
+      conversation.messages.push(userMessage);
+    }
     conversation.activeTaskId = taskId;
-    const userMessage: AIMessage = { id: randomUUID(), role: "user", content, createdAt: Date.now(), status: "complete" };
     const assistantMessage: AIMessage = { id: randomUUID(), role: "assistant", content: "", createdAt: Date.now(), status: "streaming", activity: "thinking" };
-    conversation.messages.push(userMessage, assistantMessage);
-    conversation.title = conversation.title === "New chat" ? content.slice(0, 48) : conversation.title;
+    conversation.messages.push(assistantMessage);
+    if (conversation.title === "New chat" || (input.editMessageId && conversation.messages[0]?.id === userMessage.id)) conversation.title = content.slice(0, 48);
     conversation.updatedAt = Date.now();
     try { await this.#persist(); }
     catch (error) {
       assistantMessage.status = "error";
+      assistantMessage.completedAt = Date.now();
       delete conversation.activeTaskId;
       assistantMessage.content = `Could not start AI response: ${error instanceof Error ? error.message : String(error)}`;
       this.#onUpdate("conversation", structuredClone(conversation));
@@ -390,13 +460,15 @@ export class AIWorkspaceService {
     try {
       const scratchRoot = await this.#prepareWorkspace(conversation, input.snapshot ?? [], input.assets ?? []);
       if (await this.#finishPendingCancellation(taskId, conversation, assistantMessage)) return { conversation: structuredClone(conversation), taskId };
-      const attachments = await this.#copyAttachments(scratchRoot, input.attachmentLease);
+      const attachments = input.attachmentLease
+        ? await this.#copyAttachments(scratchRoot, input.attachmentLease)
+        : await this.#restoreRetainedAttachments(scratchRoot, input.retainedAttachments ?? []);
       if (await this.#finishPendingCancellation(taskId, conversation, assistantMessage)) return { conversation: structuredClone(conversation), taskId };
-      userMessage.attachments = attachments.map(({ id, name, size }) => ({ id, name, size }));
+      if (attachments.length || input.attachmentLease) userMessage.attachments = attachments.map(({ id, name, size }) => ({ id, name, size }));
       const modeNote = conversation.mode === "codex"
         ? "Work as an editing agent in the project working copy. Locate targets with list_blocks/find_blocks, inspect with get_block, and read only necessary blocks with get_block_source. Use block editing tools where applicable; shell edits remain available for other project files. Use texweave_set_main_file if the user asks to change the configured main TeX file; the user must approve that setting change."
         : "Work as a writing and research assistant for this project. Inspect relevant project files with your shell tool when the supplied excerpts are insufficient; when the user requests changes, implement them in the working copy and summarize the edits.";
-      const structureNote = "Treat .texweave/structure.json as a derived index, not a routine edit target. Use block tools for source changes and set_block_semantic for summaries or tags. Edit structure.json directly only when the user explicitly asks to repair that metadata file. Use relation_get_scope/relation_get_display_scope to select logical context, and relation_propose_create/delete/reverse for dependency changes. Relations refer to persistent project block IDs; accept new source blocks before linking them. Each proposal requires explicit user approval even in full access mode; file diffs cannot modify relations.";
+      const structureNote = "Treat .texweave/structure.json as a derived index, not a routine edit target. Prefer replace_block_range for small source edits, using offsets and expectedText from get_block_source. Use block tools for source changes and set_block_semantic for summaries or tags. Edit structure.json directly only when the user explicitly asks to repair that metadata file. Use relation_get_scope/relation_get_display_scope to select logical context, and relation_propose_create/delete/reverse for dependency changes. Relations refer to persistent project block IDs; accept new source blocks before linking them. Each proposal requires explicit user approval even in full access mode; file diffs cannot modify relations.";
       const projectContext = describeProjectSnapshot(input.snapshot ?? [], scratchRoot, (input.assets ?? []).map((asset) => asset.path), input.omittedAssets ?? 0, input.unresolvedGraphics ?? [], input.projectPaths);
       const activeSkills = this.#skills.filter((skill) => skill.enabled);
       const skillContext = activeSkills.map((skill) => `## Skill: ${skill.name}\n${skill.content}`).join("\n\n");
@@ -418,7 +490,7 @@ export class AIWorkspaceService {
         mode: conversation.mode,
         permissionMode: active.permissionMode,
         requestApproval: action => this.#requestApproval(conversation.id, action),
-        ...(conversation.codexToolsVersion === 4 && conversation.threadId ? { threadId: conversation.threadId } : {}),
+        ...(conversation.codexToolsVersion === 5 && conversation.threadId ? { threadId: conversation.threadId } : {}),
         ...(input.model ? { model: input.model } : {}),
         ...(input.reasoningEffort ? { reasoningEffort: input.reasoningEffort } : {}),
         imagePaths: attachments.filter((item) => /\.(?:png|jpe?g|webp|gif)$/i.test(item.name)).map((item) => item.path),
@@ -440,7 +512,7 @@ export class AIWorkspaceService {
         skills: activeSkills.map(({ name, path }) => ({ name, path }))
       });
       conversation.threadId = started.threadId;
-      conversation.codexToolsVersion = 4;
+      conversation.codexToolsVersion = 5;
       await this.#persist();
       active.turnId = started.turnId;
       if (active.canceled && !active.completed) {
@@ -454,6 +526,7 @@ export class AIWorkspaceService {
       this.#cancelingThreads.delete(taskId);
       this.#cancelRequested.delete(taskId);
       assistantMessage.status = "error";
+      assistantMessage.completedAt = Date.now();
       delete conversation.activeTaskId;
       assistantMessage.content = error instanceof Error ? error.message : String(error);
       conversation.updatedAt = Date.now();
@@ -466,6 +539,7 @@ export class AIWorkspaceService {
   async #finishPendingCancellation(taskId: string, conversation: AIConversation, message: AIMessage): Promise<boolean> {
     if (!this.#cancelRequested.delete(taskId)) return false;
     message.status = "complete";
+    message.completedAt = Date.now();
     delete conversation.activeTaskId;
     message.content ||= "Generation stopped.";
     for (const part of message.reasoning ?? []) part.complete = true;
@@ -483,6 +557,7 @@ export class AIWorkspaceService {
     const message = conversation.messages.find((item) => item.id === active.messageId);
     if (message) {
       message.status = "complete";
+      message.completedAt = Date.now();
       message.content ||= "Generation stopped.";
       for (const part of message.reasoning ?? []) part.complete = true;
     }
@@ -524,10 +599,12 @@ export class AIWorkspaceService {
     try {
       const scratchRoot = await this.#prepareWorkspace(conversation, input.snapshot ?? [], input.assets ?? []);
       if (await this.#finishPendingCancellation(taskId, conversation, assistantMessage)) return { conversation: structuredClone(conversation), taskId };
-      const attachments = await this.#copyAttachments(scratchRoot, input.attachmentLease);
+      const attachments = input.attachmentLease
+        ? await this.#copyAttachments(scratchRoot, input.attachmentLease)
+        : await this.#restoreRetainedAttachments(scratchRoot, input.retainedAttachments ?? []);
       if (await this.#finishPendingCancellation(taskId, conversation, assistantMessage)) return { conversation: structuredClone(conversation), taskId };
       const userMessage = conversation.messages.at(-2);
-      if (userMessage) userMessage.attachments = attachments.map(({ id, name, size }) => ({ id, name, size }));
+      if (userMessage && (attachments.length || input.attachmentLease)) userMessage.attachments = attachments.map(({ id, name, size }) => ({ id, name, size }));
       const { api: blockApi, structure } = await this.#makeBlockApi(conversation, scratchRoot);
       if (await this.#finishPendingCancellation(taskId, conversation, assistantMessage)) return { conversation: structuredClone(conversation), taskId };
       const blockTools = await createCopilotBlockTools(blockApi);
@@ -560,6 +637,7 @@ export class AIWorkspaceService {
         clearTimeout(idleTimer);
         this.#cancelRequested.delete(taskId);
         assistantMessage.status = failure ? "error" : "complete";
+        assistantMessage.completedAt = Date.now();
         delete conversation.activeTaskId;
         for (const part of assistantMessage.reasoning ?? []) part.complete = true;
         if (failure) assistantMessage.content = [assistantMessage.content, failure].filter(Boolean).join("\n\n");
@@ -569,21 +647,26 @@ export class AIWorkspaceService {
           try { await this.#collectChanges(conversation, turn); }
           catch (error) {
             assistantMessage.status = "error";
+            assistantMessage.completedAt = Date.now();
             const detail = error instanceof Error ? error.message : String(error);
             assistantMessage.content = [assistantMessage.content, `Could not collect proposed changes: ${detail}`].filter(Boolean).join("\n\n");
           }
         }
         this.#cancelingCopilot.delete(taskId);
+        turn.base.clear();
+        turn.unsubscribe.length = 0;
+        void this.#copilot.releaseSession(session.sessionId).catch(error => console.warn("Could not release completed Copilot session", error));
         this.#onUpdate("conversation", structuredClone(conversation));
         try { await this.#persist(); }
         catch (error) {
           assistantMessage.status = "error";
+          assistantMessage.completedAt = Date.now();
           assistantMessage.content += `\n\nCould not save AI history: ${error instanceof Error ? error.message : String(error)}`;
           this.#onUpdate("conversation", structuredClone(conversation));
         }
       };
       turn.finish = finish;
-      const messageParts = new Map<string, string>();
+      
       const resetIdleTimer = () => {
         clearTimeout(idleTimer);
         if (turn.complete) return;
@@ -601,8 +684,7 @@ export class AIWorkspaceService {
         if (event.agentId || turn.complete) return;
         assistantMessage.activity = "responding";
         const id = event.data.messageId;
-        messageParts.set(id, (messageParts.get(id) ?? "") + event.data.deltaContent);
-        assistantMessage.content = [...messageParts.values()].join("\n\n");
+        updateResponseText(assistantMessage, id, event.data.deltaContent, false);
         conversation.updatedAt = Date.now();
         this.#onUpdate("conversation", structuredClone(conversation));
         this.#schedulePersist();
@@ -610,12 +692,12 @@ export class AIWorkspaceService {
       turn.unsubscribe.push(session.on("assistant.message", (event) => {
         if (event.agentId || turn.complete) return;
         assistantMessage.activity = "responding";
-        messageParts.set(event.data.messageId, event.data.content);
-        assistantMessage.content = [...messageParts.values()].join("\n\n");
+        updateResponseText(assistantMessage, event.data.messageId, event.data.content, true);
         conversation.updatedAt = Date.now();
         this.#onUpdate("conversation", structuredClone(conversation));
       }));
       const publishReasoning = (id: string, text: string, complete: boolean) => {
+        if (turn.complete) return;
         updateReasoning(assistantMessage, id, text, complete);
         conversation.updatedAt = Date.now();
         this.#onUpdate("conversation", structuredClone(conversation));
@@ -640,7 +722,7 @@ export class AIWorkspaceService {
       const projectContext = describeProjectSnapshot(input.snapshot ?? [], scratchRoot, (input.assets ?? []).map((asset) => asset.path), input.omittedAssets ?? 0, input.unresolvedGraphics ?? [], input.projectPaths);
       const skillContext = this.#skills.filter((skill) => skill.enabled).map((skill) => `## Skill: ${skill.name}\n${skill.content}`).join("\n\n");
       const prompt = [
-        "You are GitHub Copilot Chat inside TeXWeave, a local-first LaTeX editor. Locate with list_blocks/find_blocks, inspect with get_block, then read only necessary blocks with get_block_source. Use the block editing tools or normal file edits in this working copy. TeXWeave will show a diff for the user to review, accept, or reject. Use texweave_set_main_file when the user asks to change the project's configured main TeX file; this action requires their approval. Summarize changes and mention any unimplemented requests.",
+        "You are GitHub Copilot Chat inside TeXWeave, a local-first LaTeX editor. Locate with list_blocks/find_blocks, inspect with get_block, then read only necessary blocks with get_block_source. Prefer replace_block_range for precise partial edits after get_block_source; send only replacement text, relative start/end offsets and expectedText. Use the block editing tools or normal file edits in this working copy. TeXWeave will show a diff for the user to review, accept, or reject. Use texweave_set_main_file when the user asks to change the project's configured main TeX file; this action requires their approval. Summarize changes and mention any unimplemented requests.",
         "Use relation_get_scope/relation_get_display_scope for logical context and relation_propose_create/delete/reverse for dependency changes. Relations use persistent project block IDs. Each proposal needs explicit user approval, including full access mode; file diffs cannot modify relations.",
         skillContext,
         previousMessages ? `Earlier local conversation (included because this Copilot session is new):\n${previousMessages}` : "",
@@ -667,6 +749,7 @@ export class AIWorkspaceService {
         await active.finish?.();
       }
       assistantMessage.status = "error";
+      assistantMessage.completedAt = Date.now();
       delete conversation.activeTaskId;
       assistantMessage.content = error instanceof Error ? error.message : String(error);
       conversation.updatedAt = Date.now();
@@ -792,6 +875,7 @@ export class AIWorkspaceService {
       get_blocks: (input) => observe("read", () => api.get_blocks(input)),
       get_block_source: (input) => observe("read", () => api.get_block_source(input)),
       replace_block_content: (input) => observe("source", () => api.replace_block_content(input)),
+      replace_block_range: (input) => observe("source", () => api.replace_block_range(input)),
       insert_block: (input) => observe("source", () => api.insert_block(input)),
       delete_block: (input) => observe("source", () => api.delete_block(input)),
       set_block_semantic: (input) => observe("semantic", () => api.set_block_semantic(input))
@@ -813,7 +897,7 @@ export class AIWorkspaceService {
     const conversation = this.#data.conversations.find((item) => item.id === active.conversationId);
     const message = conversation?.messages.find((item) => item.id === active.messageId);
     if (!conversation || !message) return;
-    if (method === "item/agentMessage/delta" && typeof params.delta === "string") { message.activity = "responding"; message.content += params.delta; }
+    if (method === "item/agentMessage/delta" && typeof params.delta === "string") { message.activity = "responding"; updateResponseText(message, String(params.itemId ?? "answer"), params.delta, false); }
     else if (method === "item/reasoning/summaryTextDelta" && typeof params.delta === "string") {
       updateReasoning(message, `${String(params.itemId)}:${String(params.summaryIndex ?? 0)}`, params.delta, false);
     } else if (method === "item/started") {
@@ -823,13 +907,14 @@ export class AIWorkspaceService {
     }
     else if (method === "item/completed") {
       const item = params.item && typeof params.item === "object" ? params.item as Record<string, unknown> : {};
-      if (item.type === "agentMessage" && typeof item.text === "string" && !message.content) message.content = item.text;
+      if (item.type === "agentMessage" && typeof item.text === "string") updateResponseText(message, String(item.id ?? "answer"), item.text, true);
       if (item.type === "reasoning" && Array.isArray(item.summary)) {
         item.summary.forEach((text, index) => { if (typeof text === "string") updateReasoning(message, `${String(item.id)}:${index}`, text, true); });
       }
     } else if (method === "turn/completed") {
       const turn = params.turn && typeof params.turn === "object" ? params.turn as Record<string, unknown> : {};
       message.status = active.canceled ? "complete" : turn.status === "failed" ? "error" : "complete";
+      message.completedAt = Date.now();
       delete conversation.activeTaskId;
       active.completed = true;
       for (const part of message.reasoning ?? []) part.complete = true;
@@ -840,6 +925,7 @@ export class AIWorkspaceService {
         try { await this.#collectChanges(conversation, active); }
         catch (error) {
           message.status = "error";
+          message.completedAt = Date.now();
           message.content += `\n\nCould not collect proposed changes: ${error instanceof Error ? error.message : String(error)}`;
         }
       }
@@ -847,6 +933,7 @@ export class AIWorkspaceService {
       for (const [taskId, turnValue] of this.#cancelingThreads) if (turnValue === active) this.#cancelingThreads.delete(taskId);
     } else if (method === "turn/started") {
       message.status = "streaming";
+      delete message.completedAt;
       const turn = params.turn as Record<string, unknown> | undefined;
       if (typeof turn?.id === "string") active.turnId = turn.id;
     }
@@ -855,6 +942,7 @@ export class AIWorkspaceService {
     try { await this.#persist(); }
     catch (error) {
       message.status = "error";
+      message.completedAt = Date.now();
       message.content += `\n\nCould not save AI history: ${error instanceof Error ? error.message : String(error)}`;
       this.#onUpdate("conversation", structuredClone(conversation));
     }
@@ -874,6 +962,7 @@ export class AIWorkspaceService {
         const protectedMetadata = protectAIRelationMetadata(before, proposed);
         proposed = protectedMetadata.content; excludedRelations ||= protectedMetadata.excluded;
       }
+      if (before !== undefined && proposed !== undefined && /\.(?:tex|bib|sty|cls|ltx)$/i.test(path)) proposed = preserveSourceLineEndings(before, proposed);
       if (before === proposed) continue;
       const hunks = makeHunks(path, before ?? "", proposed ?? "");
       files.push({ path, type: before === undefined ? "create" : proposed === undefined ? "delete" : "modify", ...(before === undefined ? {} : { originalContent: before }), ...(proposed === undefined ? {} : { proposedContent: proposed }), hunks, status: "pending" });
@@ -929,9 +1018,29 @@ function updateReasoning(message: AIMessage, id: string, text: string, complete:
   if (!part) { part = { id, text: "", complete: false }; message.reasoning.push(part); }
   part.text = complete ? text : part.text + text;
   part.complete = complete;
+  updateResponsePart(message, "reasoning", id, part.text);
   if (!complete) message.activity = "thinking";
 }
 
 function attachmentContext(attachments: WorkspaceAttachment[]): string {
   return attachments.length ? `User-selected attachments in this working copy (read relevant files before responding):\n${attachments.map((item) => `${item.name}: ${item.path}`).join("\n")}` : "";
+}
+
+function updateResponsePart(message: AIMessage, kind: "text" | "reasoning", id: string, text: string): void {
+  message.responseParts ??= [];
+  const part = message.responseParts.find(part => part.id === id && part.kind === kind);
+  if (part) part.text = text;
+  else message.responseParts.push({ id, kind, text });
+}
+
+function updateResponseText(message: AIMessage, id: string, text: string, complete: boolean): void {
+  const previous = message.responseParts?.find(part => part.kind === "text" && part.id === id)?.text ?? "";
+  updateResponsePart(message, "text", id, complete ? text : previous + text);
+  message.content = message.responseParts!.filter(part => part.kind === "text").map(part => part.text).join("\n\n");
+}
+
+function preserveSourceLineEndings(before: string, proposed: string): string {
+  const newline = before.match(/\r?\n/g);
+  if (!newline?.length || newline.some(value => value !== newline[0])) return proposed;
+  return proposed.replaceAll("\r\n", "\n").replaceAll("\n", newline[0]!);
 }

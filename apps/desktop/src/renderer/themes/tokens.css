@@ -14,7 +14,8 @@ body, .app-shell { background: var(--color-bg-app); color: var(--color-text-prim
 .structured-preview { background: var(--color-bg-panel); }.structured-preview > article,.preview-display-math,.preview-inline-math { color: var(--color-text-primary); }
 .preview-reference { color: var(--color-link, var(--color-primary-strong)); background: color-mix(in srgb, var(--color-primary) 9%, var(--color-bg-panel)); }.preview-content-region:hover { background: var(--color-bg-hover); }
 .environment-xml-error,.inline-error { color: var(--color-error); background: var(--color-bg-panel); border-color: var(--color-error); }
-:root[data-theme="dark"] .pane-placeholder { background: var(--color-bg-panel); }
+:root[data-theme="dark"] .pane-placeholder,
+:root[data-theme="tech-dark"] .pane-placeholder { background: var(--color-bg-panel); }
 .latex-toolbar { position: relative; }.latex-toolbar .view-switch { flex-shrink: 0; margin-left: auto; }
 @media (max-width: 1450px) { .latex-toolbar > button > span { display: none; } }
 

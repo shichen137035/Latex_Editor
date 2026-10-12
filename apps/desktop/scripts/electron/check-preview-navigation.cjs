@@ -38,8 +38,8 @@ async function editParagraph(marker, insertion, apply = true) {
     await until('!document.querySelector(".preview-local-editor")', "apply local draft");
   }
 }
-const source = "\\documentclass{article}\n\\begin{document}\n" + Array.from({ length: 40 }, (_, index) =>
-  `\\section{Section ${index}}\\label{sec:${index}}\nMarker ${index}. ${"Continuous readable prose. ".repeat(12)}${index === 0 ? "See \\ref{sec:39}." : ""}\n\n`
+const source = "\\documentclass{article}\n\\usepackage{xr}\n\\externaldocument[S-]{supplement}\n\\begin{document}\n" + Array.from({ length: 40 }, (_, index) =>
+  `\\section{Section ${index}}\\label{sec:${index}}\nMarker ${index}. ${"Continuous readable prose. ".repeat(12)}${index === 0 ? "See \\ref{sec:39}. External \\ref{S-thm:external}." : ""}\n\n`
 ).join("") + "\\end{document}";
 
 async function run() {
@@ -53,6 +53,8 @@ async function run() {
   await evaluate(`window.latexEditor.settings.set("layout", {mode:"single",singlePane:"preview",leftPane:"preview",rightPane:"pdf"}, ${projectId})`);
   await evaluate(`window.latexEditor.files.write(${projectId}, "main.tex", ${JSON.stringify(source)})`);
   await evaluate(`window.latexEditor.files.write(${projectId}, "notes.txt", "Unsupported preview file")`);
+  await evaluate(`window.latexEditor.files.write(${projectId}, "supplement.tex", ${JSON.stringify("\\documentclass{article}\n\\begin{document}\n\\input{supplement-part}\n\\end{document}")})`);
+  await evaluate(`window.latexEditor.files.write(${projectId}, "supplement-part.tex", ${JSON.stringify("\\section{External target}\\label {thm:external}\nExternal reference destination.")})`);
   page.reload();
   await until('!!document.querySelector(".directory-project-row")', "project list");
   await evaluate('document.querySelector(".directory-project-row").click()');
@@ -123,6 +125,44 @@ async function run() {
   await press("S", ["control"]);
   await until(`(async () => (await window.latexEditor.files.read(${projectId}, "main.tex")).content.includes("NAV_DRAFT_TEST"))()`, "draft committed before navigation");
   console.log("PASS keyboard navigation commits the local draft before changing location");
+
+  await evaluate('document.querySelector(".structured-preview").scrollTop = 0');
+  await until('Array.from(document.querySelectorAll(".preview-reference")).some(el => el.dataset.reference === "S-thm:external")', "prefixed external reference");
+  await evaluate('Array.from(document.querySelectorAll(".preview-reference")).find(el => el.dataset.reference === "S-thm:external").dispatchEvent(new MouseEvent("click", {bubbles:true, ctrlKey:true}))');
+  await until('document.querySelector(".editor-tabs button.active")?.textContent.includes("supplement-part.tex") && document.querySelector(".structured-preview")?.textContent.includes("External reference destination")', "cross-file reference target");
+  await press("B", ["control"]);
+  await until('document.querySelector(".editor-tabs button.active")?.textContent.includes("main.tex") && document.querySelector(".structured-preview")?.scrollTop < 500', "cross-file reference back");
+  await press("R", ["control"]);
+  await until('document.querySelector(".editor-tabs button.active")?.textContent.includes("supplement-part.tex")', "cross-file reference forward");
+  await press("B", ["control"]);
+  await until('document.querySelector(".editor-tabs button.active")?.textContent.includes("main.tex")', "repeat cross-file reference back");
+  console.log("PASS prefixed external references open included target files and support repeated back/forward");
+
+  await evaluate('Array.from(document.querySelectorAll(".view-switch button")).find(button => button.textContent === "Code").click()');
+  await until('document.querySelector(".editor-surface .view-lines")?.textContent.includes("S-thm:external")', "external key visible in Code");
+  await until('!!document.querySelector(".editor-surface .monaco-editor.focused")', "Code navigation position restored");
+  await delay(100);
+  const point = await evaluate(`(() => {
+    const line = document.querySelector('.editor-surface .view-lines');
+    let offset = line.textContent.indexOf('S-thm:external') + 3;
+    const walker = document.createTreeWalker(line, NodeFilter.SHOW_TEXT);
+    for (let node = walker.nextNode(); node; node = walker.nextNode()) {
+      if (offset >= node.textContent.length) { offset -= node.textContent.length; continue; }
+      const range = document.createRange(); range.setStart(node, offset); range.setEnd(node, offset + 1);
+      const rect = range.getBoundingClientRect(); return {x: Math.round(rect.left + rect.width / 2), y: Math.round(rect.top + rect.height / 2)};
+    }
+    throw new Error('Reference character not found');
+  })()`);
+  assert.ok(point.x > 0 && point.y > 0, `Reference must be visible before clicking: ${JSON.stringify(point)}`);
+  page.webContents.sendInputEvent({ type: "mouseMove", ...point, modifiers: ["control"] });
+  page.webContents.sendInputEvent({ type: "mouseDown", ...point, button: "left", clickCount: 1, modifiers: ["control"] });
+  page.webContents.sendInputEvent({ type: "mouseUp", ...point, button: "left", clickCount: 1, modifiers: ["control"] });
+  await until('document.querySelector(".editor-tabs button.active")?.textContent.includes("supplement-part.tex") && !!document.querySelector(".editor-surface .monaco-editor")', "Code modifier-click across files");
+  await press("B", ["control"]);
+  await until('document.querySelector(".editor-tabs button.active")?.textContent.includes("main.tex")', "Code navigation back");
+  await press("R", ["control"]);
+  await until('document.querySelector(".editor-tabs button.active")?.textContent.includes("supplement-part.tex")', "Code navigation forward");
+  console.log("PASS Code Ctrl-click and back/forward navigate across files without changing editor mode");
   assert.equal(errors.length, 0, errors.join("\n"));
 }
 require("../../dist/main/index.js");

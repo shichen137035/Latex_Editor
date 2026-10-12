@@ -1,5 +1,6 @@
-import type { ReactNode } from "react";
-import { t } from "../i18n/index.js";
+import { memo, useSyncExternalStore, useMemo, type ReactNode } from "react";
+import { getLocale, t } from "../i18n/index.js";
+import { settings } from "../settings/service.js";
 import { MathRenderer } from "../preview/MathRenderer.js";
 import { extractMathExpression } from "../math/MathRenderService.js";
 import { parseMathNodes } from "../math/MathNodeLocator.js";
@@ -28,8 +29,9 @@ const INLINE_TOKEN = new RegExp(
   "g"
 );
 
-export function AIMessageContent({ content, projectRoot, mathContext = EMPTY_MATH_CONTEXT, onOpenFile }: Props) {
-  const blocks = parseBlocks(content);
+export const AIMessageContent = memo(function AIMessageContent({ content, projectRoot, mathContext = EMPTY_MATH_CONTEXT, onOpenFile }: Props) {
+  useSyncExternalStore(settings.subscribe, getLocale, getLocale);
+  const blocks = useMemo(() => parseBlocks(content), [content]);
   return <div className="ai-rich-message">
     {blocks.map((block, index) => {
       if (block.kind === "heading") {
@@ -47,7 +49,7 @@ export function AIMessageContent({ content, projectRoot, mathContext = EMPTY_MAT
       return <p key={index}>{renderInline(block.text, projectRoot, mathContext, onOpenFile)}</p>;
     })}
   </div>;
-}
+});
 
 function parseBlocks(content: string): Block[] {
   const blocks: Block[] = [];

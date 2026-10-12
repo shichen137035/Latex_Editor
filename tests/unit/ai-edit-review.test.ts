@@ -5,6 +5,31 @@ import { AIApprovalRequests } from "../../apps/desktop/src/main/ai/approval-requ
 import { codexPermissionPolicy, isReadOnlyPermissionRequest, requiresAIApproval } from "../../apps/desktop/src/main/ai/ai-approvals.js";
 import { automaticHunkIds, fileWithAppliedHunks, hunkLineStats, reviewFileContents, transitionAIFile } from "../../apps/desktop/src/renderer/ai/changeOperations.js";
 import { EditHistory, applyTextPatch } from "../../apps/desktop/src/renderer/workbench/EditHistory.js";
+import { makeHunks } from "../../apps/desktop/src/main/ai/changeHunks.js";
+
+it("reviews sparse edits in a ten-thousand-line paper without counting unchanged rewritten blocks", () => {
+  const lines = Array.from({ length: 10000 }, (_, index) => `Paragraph ${index}.\n`);
+  const before = lines.join("");
+  for (const index of [100, 3000, 9500]) lines[index] = `Edited paragraph ${index}.\n`;
+  const after = lines.join("");
+  const hunks = makeHunks("main.tex", before, after);
+  expect(hunks).toHaveLength(3);
+  expect(hunks.reduce((total, hunk) => total + hunkLineStats(hunk).added, 0)).toBe(3);
+  const file: AIFileChange = { path: "main.tex", type: "modify", originalContent: before, proposedContent: after, hunks, status: "pending" };
+  expect(fileWithAppliedHunks(file, () => true)).toBe(after);
+  expect(hunkLineStats({ ...hunks[0]!, oldText: before, newText: after })).toEqual({ added: 3, removed: 3 });
+  const dense = Array.from({ length: 3000 }, (_, index) => `line ${index}\n`);
+  const denseChanged = dense.map((line, index) => index % 2 ? `edited ${index}\n` : line).join("");
+  expect(hunkLineStats({ ...hunks[0]!, oldText: dense.join(""), newText: denseChanged })).toEqual({ added: 1500, removed: 1500 });
+  for (let seed = 0; seed < 30; seed++) {
+    const oldText = Array.from({ length: 25 }, (_, index) => `repeated ${index % 4}\n`).join("");
+    const changed = oldText.split("\n");
+    changed.splice(seed % 20, seed % 3, `inserted ${seed}`, "inserted again");
+    const newText = changed.join("\n");
+    const proposal: AIFileChange = { path: "main.tex", type: "modify", originalContent: oldText, proposedContent: newText, hunks: makeHunks("main.tex", oldText, newText), status: "pending" };
+    expect(fileWithAppliedHunks(proposal, () => true)).toBe(newText);
+  }
+});
 
 function hunk(id: string, oldStart: number, oldText: string, newText: string): AIChangeHunk {
   return { id, oldStart, newStart: oldStart, oldLines: oldText.match(/[^\n]*\n|[^\n]+$/g)?.length ?? 0, newLines: newText.match(/[^\n]*\n|[^\n]+$/g)?.length ?? 0, oldText, newText, decision: "pending" };

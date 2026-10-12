@@ -1,6 +1,6 @@
-import { latexControlSequences, maskLatexComments, patchLatexCommand } from "@latex-editor/editor-core/latex-source";
+import { latexCommandField, latexControlSequences, maskLatexComments } from "@latex-editor/editor-core/latex-source";
 import { patchGraphicOption } from "./options.js";
-import { parseFigure } from "./parser.js";
+import { maskSubfigures, parseFigure } from "./parser.js";
 import type { FigurePatch } from "./model.js";
 
 function replaceRange(source: string, start: number, end: number, value: string): string {
@@ -54,8 +54,15 @@ export function patchFigureSource(source: string, patch: FigurePatch): string {
     }
   }
   const endIndex = Math.max(0, maskLatexComments(result).search(/\\end\{figure\*?\}/));
-  result = patchLatexCommand(result, "caption", patch.caption, endIndex);
+  const patchOuter = (command: string, value: string | undefined, before: number) => {
+    if (value === undefined) return;
+    const current = parseFigure(result);
+    const field = latexCommandField(maskSubfigures(result, current?.subfigures ?? []), command);
+    if (field) result = replaceRange(result, field.body.start, field.body.end, value);
+    else if (value) result = result.slice(0, before) + `  \\${command}{${value}}\n` + result.slice(before);
+  };
+  patchOuter("caption", patch.caption, endIndex);
   const labelInsert = Math.max(0, maskLatexComments(result).search(/\\end\{figure\*?\}/));
-  result = patchLatexCommand(result, "label", patch.label, labelInsert);
+  patchOuter("label", patch.label, labelInsert);
   return result;
 }

@@ -56,32 +56,8 @@ export class ProjectDocumentStructureService {
         const block = this.#block(context, blockId);
         return { blockId, revision: block.revision, content: this.#source(context, block), textVersion: context.structure.files[block.source.fileId]?.textVersion };
       }),
-      replace_block_content: (input) => run(async (context) => {
-        const block = this.#block(context, input.blockId);
-        this.#revision(block, input.expectedRevision);
-        if (block.kind !== "content") throw new ApiError("STRUCTURAL_BLOCK_HAS_NO_DIRECT_CONTENT", "Edit the structural block's content children instead.");
-        if (typeof input.content !== "string") throw new ApiError("INVALID_GRAPH_QUERY", "content must be a string.");
-        if (block.placeholder && !input.content.trim()) return this.#detail(context, block);
-        const { start, end } = block.source.range;
-        const source = context.sources.get(block.source.fileId)!;
-        const planned = parsePreview(source.slice(0, start) + input.content + source.slice(end), block.source.fileId, context.definitions, context.directives);
-        const findContent = (nodes: PreviewNode[]): boolean => nodes.some((node) => {
-          const type = node.kind === "block" ? node.environmentId : node.contentType;
-          const contentKind = node.kind === "content" || node.semanticKind === "content";
-          const inside = node.source.startOffset >= start && node.source.startOffset < start + input.content.length;
-          return (inside && contentKind && type === block.type) || (node.kind === "block" && findContent(node.children));
-        });
-        // Explicit children of a content block are intentionally absent from the
-        // normal parser tree, so validate their source as an independent fragment.
-        const valid = block.metadata?.apiExplicitChild
-          ? parsePreview(input.content, block.source.fileId, context.definitions, context.directives).nodes.some((node) => (node.kind === "block" ? node.environmentId : node.contentType) === block.type)
-          : findContent(planned.nodes);
-        if (!valid) throw new ApiError("BLOCK_RANGE_INVALID", "Keep the content block's wrapper/type; use delete_block to remove it, or the environment conversion workflow to change type.");
-        await this.#edit(projectId, context, block.source.fileId, start, end, input.content);
-        const refreshed = await this.#refresh(projectId, context.graph);
-        // Empty placeholders materialize with the same identity when text is entered.
-        return this.#detail(refreshed, this.#block(refreshed, block.id));
-      }),
+      replace_block_content: (input) => run(context => this.#replaceContent(projectId, context, input)),
+      replace_block_range: (input) => run(context => this.#replaceContent(projectId, context, input, input)),
       insert_block: (input) => run((context) => this.#insert(projectId, context, input)),
       delete_block: (input) => run(async (context) => {
         const block = this.#block(context, input.blockId);
@@ -111,6 +87,40 @@ export class ProjectDocumentStructureService {
         return this.#detail(context, block);
       })
     };
+  }
+
+  async #replaceContent(projectId: string, context: Context, input: Parameters<DocumentBlockApi["replace_block_content"]>[0], range?: Parameters<DocumentBlockApi["replace_block_range"]>[0]) {
+    let content = input.content;
+    const block = this.#block(context, input.blockId);
+    this.#revision(block, input.expectedRevision);
+    if (block.kind !== "content") throw new ApiError("STRUCTURAL_BLOCK_HAS_NO_DIRECT_CONTENT", "Edit the structural block's content children instead.");
+    if (typeof content !== "string") throw new ApiError("INVALID_GRAPH_QUERY", "content must be a string.");
+    const original = this.#source(context, block);
+    if (range) {
+      if (!Number.isInteger(range.start) || !Number.isInteger(range.end) || range.start < 0 || range.end < range.start || range.end > original.length) throw new ApiError("BLOCK_RANGE_INVALID", "The relative range is outside the returned block source.");
+      if (typeof range.expectedText !== "string" || original.slice(range.start, range.end) !== range.expectedText) throw new ApiError("BLOCK_TEXT_MISMATCH", "The expected source does not match; refetch the block before editing.");
+      content = original.slice(0, range.start) + content + original.slice(range.end);
+    }
+    if (block.placeholder && !content.trim()) return this.#detail(context, block);
+    const { start, end } = block.source.range;
+    const source = context.sources.get(block.source.fileId)!;
+    const planned = parsePreview(source.slice(0, start) + content + source.slice(end), block.source.fileId, context.definitions, context.directives);
+    const findContent = (nodes: PreviewNode[]): boolean => nodes.some((node) => {
+      const type = node.kind === "block" ? node.environmentId : node.contentType;
+      const contentKind = node.kind === "content" || node.semanticKind === "content";
+      const inside = node.source.startOffset >= start && node.source.startOffset < start + content.length;
+      return (inside && contentKind && type === block.type) || (node.kind === "block" && findContent(node.children));
+    });
+    // Explicit children of a content block are intentionally absent from the
+    // normal parser tree, so validate their source as an independent fragment.
+    const valid = block.metadata?.apiExplicitChild
+      ? parsePreview(content, block.source.fileId, context.definitions, context.directives).nodes.some((node) => (node.kind === "block" ? node.environmentId : node.contentType) === block.type)
+      : findContent(planned.nodes);
+    if (!valid) throw new ApiError("BLOCK_RANGE_INVALID", "Keep the content block's wrapper/type; use delete_block to remove it, or the environment conversion workflow to change type.");
+    await this.#edit(projectId, context, block.source.fileId, range ? start + range.start : start, range ? start + range.end : end, range ? input.content : content);
+    const refreshed = await this.#refresh(projectId, context.graph);
+    // Empty placeholders materialize with the same identity when text is entered.
+    return this.#detail(refreshed, this.#block(refreshed, block.id));
   }
 
   async snapshot(projectId: string): Promise<BlockApiResult<DocumentStructure>> { return this.#run(projectId, (context) => structuredClone(context.structure)); }

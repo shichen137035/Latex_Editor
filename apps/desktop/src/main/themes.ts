@@ -43,7 +43,9 @@ export class ThemeRepository {
     const builtIns: ThemeDefinition[] = [
       { id: "light", name: "Light", source: "built-in" },
       { id: "dark", name: "Dark", source: "built-in" },
-      { id: "tech-light", name: "Tech Light", source: "built-in" }
+      { id: "tech-dark", name: "Tech Dark", source: "built-in" },
+      { id: "tech-light", name: "Tech Light", source: "built-in" },
+      { id: "pink-light", name: "Pink Light", source: "built-in" }
     ];
     const discovered = await Promise.all([
       this.#listRoot(this.#builtInRoot, "built-in"),

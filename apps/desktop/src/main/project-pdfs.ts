@@ -8,7 +8,7 @@ export async function projectPdfDocuments(project: Project, files: {
   resolveFilePath(projectId: string, path: string, exists?: boolean): Promise<string>;
 }): Promise<ProjectPdfDocument[]> {
   const { isStandaloneLatexDocument, latexDocumentLinks, latexDocumentPathCandidates } = await import("@latex-editor/editor-core/latex-source");
-  const { documentOutputDirectory } = await import("@latex-editor/compiler-latexmk");
+  const { documentOutputDirectory, pruneStaleDocumentOutputs } = await import("@latex-editor/compiler-latexmk");
   const paths: string[] = [];
   const walk = (nodes: ProjectTreeNode[]) => {
     for (const node of nodes) {
@@ -22,6 +22,7 @@ export async function projectPdfDocuments(project: Project, files: {
   await Promise.all(paths.filter(path => /\.tex$/i.test(path)).map(async path => {
     try { sources.set(path, (await files.readText(project.id, path)).content); } catch { /* Unreadable source stays out of ownership discovery. */ }
   }));
+  await pruneStaleDocumentOutputs(project.canonicalPath, paths.filter(path => /\.tex$/i.test(path)));
   const included = (file: string, seen = new Set<string>()): string[] => {
     if (seen.has(file)) return [];
     seen.add(file);

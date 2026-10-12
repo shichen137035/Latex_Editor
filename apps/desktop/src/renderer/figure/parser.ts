@@ -34,24 +34,50 @@ export function parseImages(source: string, baseOffset = 0): ImageObject[] {
 
 function subfigures(source: string, baseOffset: number): SubfigureObject[] {
   const result: SubfigureObject[] = [];
-  const expression = /\\begin\{subfigure\}(?:\[([^\]]*)\])?\{([^{}]+)\}([\s\S]*?)\\end\{subfigure\}/g;
-  for (const match of maskLatexComments(source).matchAll(expression)) {
-    const start = match.index ?? 0;
-    const maskedBody = match[3] ?? "";
-    const bodyOffset = match[0].indexOf(maskedBody);
-    const body = source.slice(start + bodyOffset, start + bodyOffset + maskedBody.length);
-    const bodyStart = start + bodyOffset;
-    const caption = latexCommandField(body, "caption")?.body.value.trim();
-    const label = latexCommandField(body, "label")?.body.value.trim();
+  const masked = maskLatexComments(source), tokens = [...latexControlSequences(masked)];
+  for (const token of tokens) {
+    if (token.name !== "begin" && token.name !== "subfloat") continue;
+    let cursor = token.end;
+    const space = () => { while (/\s/.test(masked[cursor] ?? "") && cursor < masked.length) cursor++; };
+    space();
+    if (token.name === "begin") {
+      const name = readLatexGroup(masked, cursor);
+      if (name?.value !== "subfigure") continue;
+      cursor = name.end + 1; space();
+    }
+    const optional: string[] = [];
+    while (masked[cursor] === "[") {
+      const value = readLatexGroup(masked, cursor, "[", "]");
+      if (!value) break;
+      optional.push(source.slice(value.start, value.end)); cursor = value.end + 1; space();
+    }
+    const argument = readLatexGroup(masked, cursor);
+    if (!argument) continue;
+    const closing = token.name === "begin" ? tokens.find(end => end.start > argument.end && end.name === "end" && end.environmentDepth === token.environmentDepth + 1 && /^\s*\{subfigure\}/.test(masked.slice(end.end))) : undefined;
+    if (token.name === "begin" && !closing) continue;
+    const end = closing ? masked.indexOf("}", closing.end) + 1 : argument.end + 1;
+    const bodyStart = closing ? argument.end + 1 : argument.start;
+    const bodyEnd = closing ? closing.start : argument.end;
+    const body = source.slice(bodyStart, bodyEnd);
+    const caption = closing ? latexCommandField(body, "caption")?.body.value.trim() : optional.at(-1)?.trim();
+    const label = latexCommandField(source.slice(token.start, end), "label")?.body.value.trim();
     result.push({
-      id: `subfigure:${baseOffset + start}`,
-      width: (match[2] ?? "").trim(),
+      id: `subfigure:${baseOffset + token.start}`, syntax: closing ? "subfigure" : "subfloat",
+      ...(closing ? { width: source.slice(argument.start, argument.end).trim(), widthRange: { start: baseOffset + argument.start, end: baseOffset + argument.end } } : {}),
+      bodyRange: { start: baseOffset + bodyStart, end: baseOffset + bodyEnd },
       ...(caption !== undefined ? { caption } : {}),
       ...(label !== undefined ? { label } : {}),
-      sourceRange: { start: baseOffset + start, end: baseOffset + start + match[0].length },
+      sourceRange: { start: baseOffset + token.start, end: baseOffset + end },
       images: parseImages(body, baseOffset + bodyStart)
     });
   }
+  return result;
+}
+
+/** Hide child metadata while retaining outer command offsets. */
+export function maskSubfigures(source: string, children: SubfigureObject[]): string {
+  let result = source;
+  for (const child of children) result = result.slice(0, child.sourceRange.start) + source.slice(child.sourceRange.start, child.sourceRange.end).replace(/[^\r\n]/g, " ") + result.slice(child.sourceRange.end);
   return result;
 }
 
@@ -68,8 +94,10 @@ export function parseFigure(source: string, baseOffset = 0): FigureObject | unde
   const knownCommands = /\\(?:begin|end|includegraphics|caption\*?|label|centering|raggedright|raggedleft|hfill|vspace|hspace|textwidth|linewidth|columnwidth)\b/;
   const unknownCommands = [...figureSource.matchAll(/\\([A-Za-z@]+)\b/g)].some((match) => !knownCommands.test(`\\${match[1]}`));
   const placement = environmentMatch?.[2]?.trim();
-  const caption = latexCommandField(figureSource, "caption")?.body.value.trim();
-  const label = latexCommandField(figureSource, "label")?.body.value.trim();
+  const outer = maskSubfigures(figureSource, nested.map(child => ({ ...child, sourceRange: { start: child.sourceRange.start - sourceRange.start, end: child.sourceRange.end - sourceRange.start } })));
+  const captionField = latexCommandField(outer, "caption"), labelField = latexCommandField(outer, "label");
+  const caption = captionField ? figureSource.slice(captionField.body.start, captionField.body.end).trim() : undefined;
+  const label = labelField ? figureSource.slice(labelField.body.start, labelField.body.end).trim() : undefined;
   return {
     id: `figure:${sourceRange.start}`,
     environment: environmentMatch ? environmentMatch[1] as "figure" | "figure*" : "inline",

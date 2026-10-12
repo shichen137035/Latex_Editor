@@ -18,6 +18,9 @@ export interface ImageObject {
 export interface SubfigureObject {
   id: string;
   width?: string;
+  syntax?: "subfigure" | "subfloat";
+  widthRange?: SourceRange;
+  bodyRange?: SourceRange;
   caption?: string;
   label?: string;
   sourceRange: SourceRange;

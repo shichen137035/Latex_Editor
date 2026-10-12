@@ -28,7 +28,7 @@ import { AIWorkspaceService } from "./ai/ai-workspace.js";
 import { createWorkspaceBlockApi } from "./ai/workspace-block-api.js";
 import { registerAiIpcHandlers } from "./ai/ipc.js";
 import { failedCompilation, publishWorkspaceCompilation } from "./compile-preview.js";
-import { createProjectSourceArchive } from "./project-export.js";
+import { createProjectSourceArchive, ExportDependencyError } from "./project-export.js";
 import { ProjectHistoryService } from "./project-history.js";
 import { registerHistoryIpc } from "./history-ipc.js";
 import { installRendererSecurity, resolveRendererTarget } from "./renderer-security.js";
@@ -153,9 +153,11 @@ async function createContext(): Promise<DesktopContext> {
       let result: CompileResult;
       try { result = await compiler.compileWorkspace({ workspaceRoot, mainFile: configuredMain, engine: preferences.project.engine ?? preferences.global.engine ?? "pdflatex" }); }
       catch (error) { result = failedCompilation(configuredMain, error); }
-      return publishWorkspaceCompilation(projectId, result, files, update => {
+      const published = await publishWorkspaceCompilation(projectId, result, files, update => {
         BrowserWindow.getAllWindows().forEach(window => sendIpc(window.webContents, desktopEvents.toRenderer.compileUpdate, update));
       });
+      if (published.logPath) await compiler.retainPublishedLog(project.canonicalPath, published.mainFile, published.compilationId);
+      return published;
     },
     setMainFile: async (projectId, relativePath) => {
       const updated = await projects.setMainFile(projectId, relativePath);
@@ -566,7 +568,7 @@ function registerIpcHandlers(): void {
     } catch (error: unknown) {
       const code = error instanceof Error && "code" in error ? String(error.code) : "";
       if (code === "ENOENT") return undefined;
-      return undefined;
+      throw error;
     }
   });
   handleIpc(desktopInvoke.files.createFile, async (_event, projectId, relativePath) => {
@@ -601,6 +603,11 @@ function registerIpcHandlers(): void {
     if (context === undefined) throw new Error(nativeText("native.contextNotReady"));
     return context.images.importImages(projectId, sourcePaths, directory);
   });
+  handleIpc(desktopInvoke.images.paste, async (_event, projectId, directory) => {
+    const image = clipboard.readImage();
+    if (image.isEmpty()) return undefined;
+    return requireContext().images.importClipboardImage(projectId, image.toPNG(), directory);
+  });
   handleIpc(desktopInvoke.images.resolve, async (_event, projectId, texPath, requestedPath, graphicPaths) => {
     if (context === undefined) throw new Error(nativeText("native.contextNotReady"));
     return context.images.resolve(projectId, texPath, requestedPath, graphicPaths);
@@ -627,50 +634,50 @@ function registerIpcHandlers(): void {
   handleIpc(desktopInvoke.compile.outputs, async (_event, projectId) => {
     if (context === undefined) throw new Error(nativeText("native.contextNotReady"));
     const { projectPdfDocuments } = await import("./project-pdfs.js");
-    return projectPdfDocuments(context.projects.getProject(projectId), context.files);
+    const project = context.projects.getProject(projectId);
+    await context.compiler.pruneBuildArtifacts(project.canonicalPath);
+    return projectPdfDocuments(project, context.files);
   });
   handleIpc(desktopInvoke.compile.readLog, (_event, projectId, compilationId) => {
     if (context === undefined) throw new Error(nativeText("native.contextNotReady"));
     return context.compiler.readLog(projectId, compilationId);
   });
-  handleIpc(desktopInvoke.exports.sourceArchive, async (event, projectId, mainFile) => {
+  const exportArchive = async (event: IpcMainInvokeEvent, projectId: string, scope: "all" | "main") => {
     if (context === undefined) throw new Error(nativeText("native.contextNotReady"));
     const project = await context.projects.openProject(projectId);
+    const mainFile = project.mainFile;
+    if (scope === "main") {
+      if (!mainFile || extname(mainFile).toLowerCase() !== ".tex") throw new Error(nativeText("export.noMainTex"));
+      await context.files.resolveFilePath(projectId, mainFile, true);
+    }
+    const name = scope === "main" ? mainFile!.split(/[\\/]/).at(-1)!.replace(/\.tex$/i, "") : project.name;
     const options = {
-      title: nativeText("native.exportSource"),
-      defaultPath: join(app.getPath("downloads"), `${project.name}-source.zip`),
+      title: nativeText(scope === "main" ? "native.exportMainSources" : "native.exportSource"),
+      defaultPath: join(app.getPath("downloads"), `${name}-source.zip`),
       filters: [{ name: nativeText("native.zipArchive"), extensions: ["zip"] }]
     };
     const owner = BrowserWindow.fromWebContents(event.sender);
     const choice = owner ? await dialog.showSaveDialog(owner, options) : await dialog.showSaveDialog(options);
     if (choice.canceled || !choice.filePath) return undefined;
-    await createProjectSourceArchive(project.canonicalPath, mainFile ?? project.mainFile, choice.filePath);
+    const { readRecorderDependencies } = await import("@latex-editor/compiler-latexmk");
+    const recorder = scope === "main" ? await readRecorderDependencies(project.canonicalPath, mainFile!, context.resources.getCompilerProfile().arguments) : undefined;
+    try {
+      await createProjectSourceArchive(project.canonicalPath, mainFile, choice.filePath, { scope, ...(recorder ? { recorder } : {}) });
+    } catch (error) {
+      if (error instanceof ExportDependencyError) {
+        throw new Error(error.needsCompilation ? nativeText("export.compileForDependencies") : `${nativeText("export.dependenciesMissing")}\n${error.paths.join("\n")}`);
+      }
+      throw error;
+    }
     return choice.filePath;
-  });
-  handleIpc(desktopInvoke.exports.mainTex, async (event, projectId, mainFile) => {
+  };
+  handleIpc(desktopInvoke.exports.sourceArchive, (event, projectId) => exportArchive(event, projectId, "all"));
+  handleIpc(desktopInvoke.exports.mainSourceArchive, (event, projectId) => exportArchive(event, projectId, "main"));
+  handleIpc(desktopInvoke.exports.pdf, async (event, projectId): Promise<PdfExportResult> => {
     if (context === undefined) throw new Error(nativeText("native.contextNotReady"));
-    if (extname(mainFile).toLowerCase() !== ".tex") throw new Error(nativeText("native.chooseMainFile"));
     const project = await context.projects.openProject(projectId);
-    const sourcePath = await context.files.resolveFilePath(projectId, mainFile, true);
-    const suggestedName = mainFile.split(/[\\/]/).at(-1) ?? `${project.name}.tex`;
-    const options = {
-      title: nativeText("native.exportMain"),
-      defaultPath: join(app.getPath("downloads"), suggestedName),
-      filters: [{ name: nativeText("native.texSource"), extensions: ["tex"] }]
-    };
-    const owner = BrowserWindow.fromWebContents(event.sender);
-    const choice = owner ? await dialog.showSaveDialog(owner, options) : await dialog.showSaveDialog(options);
-    if (choice.canceled || !choice.filePath) return undefined;
-    const targetPath = resolve(choice.filePath);
-    const normalizedSource = process.platform === "win32" ? sourcePath.toLocaleLowerCase("en-US") : sourcePath;
-    const normalizedTarget = process.platform === "win32" ? targetPath.toLocaleLowerCase("en-US") : targetPath;
-    if (normalizedSource !== normalizedTarget) await copyFile(sourcePath, targetPath);
-    return targetPath;
-  });
-  handleIpc(desktopInvoke.exports.pdf, async (event, projectId, mainFile): Promise<PdfExportResult> => {
-    if (context === undefined) throw new Error(nativeText("native.contextNotReady"));
-    if (extname(mainFile).toLowerCase() !== ".tex") throw new Error(nativeText("native.chooseMainFile"));
-    const project = await context.projects.openProject(projectId);
+    const mainFile = project.mainFile;
+    if (!mainFile || extname(mainFile).toLowerCase() !== ".tex") throw new Error(nativeText("export.noMainTex"));
     await context.files.resolveFilePath(projectId, mainFile, true);
     const texName = mainFile.split(/[\\/]/).at(-1) ?? `${project.name}.tex`;
     const pdfName = texName.replace(/\.tex$/i, ".pdf");

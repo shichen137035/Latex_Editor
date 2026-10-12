@@ -6,7 +6,7 @@ import { readFile, stat } from "node:fs/promises";
 import type { AIContextSnapshotFile, ProjectTreeNode } from "@latex-editor/contracts" with { "resolution-mode": "import" };
 import type { DesktopContext } from "../desktopContext.js";
 import type { SettingsRepository } from "../settings.js";
-import { collectGraphicDependencies } from "./tex-dependencies.js";
+import { collectGraphicDependencies } from "../graphic-dependencies.js";
 import { isSnapshotTextPath, MAX_WORKSPACE_ASSET_BYTES, MAX_WORKSPACE_ASSET_COUNT, MAX_WORKSPACE_ASSET_TOTAL_BYTES } from "./workspaceFiles.js";
 
 /** Register AI and Copilot renderer requests separately from core project IPC. */
@@ -134,7 +134,10 @@ export function registerAiIpcHandlers(context: DesktopContext | undefined, setti
       }
       const model = conversation.mode === "chat" ? settings.global.aiCopilotModel : settings.global.aiModel;
       const reasoningEffort = conversation.mode === "chat" ? settings.global.aiCopilotReasoningEffort : settings.global.aiReasoningEffort;
-      return await context.aiWorkspaces.send({ conversationId: input.conversationId, ...(attachmentLease ? { attachmentLease } : {}), ...(input.taskId ? { taskId: input.taskId } : {}), content: input.content, permissionMode: settings.global.aiPermissionMode ?? "auto", attachmentIds: input.attachmentIds ?? [], projectPaths, ...(model ? { model } : {}), ...(reasoningEffort ? { reasoningEffort } : {}), ...(snapshot.length ? { snapshot } : {}), ...(assets.length ? { assets } : {}), ...(omittedAssets ? { omittedAssets } : {}), ...(unresolvedGraphics.length ? { unresolvedGraphics } : {}), ...(input.contextText ? { contextText: input.contextText } : {}) });
+      const request = { conversationId: input.conversationId, ...(attachmentLease ? { attachmentLease } : {}), ...(input.taskId ? { taskId: input.taskId } : {}), content: input.content, permissionMode: settings.global.aiPermissionMode ?? "auto" as const, attachmentIds: input.attachmentIds ?? [], projectPaths, ...(model ? { model } : {}), ...(reasoningEffort ? { reasoningEffort } : {}), ...(snapshot.length ? { snapshot } : {}), ...(assets.length ? { assets } : {}), ...(omittedAssets ? { omittedAssets } : {}), ...(unresolvedGraphics.length ? { unresolvedGraphics } : {}), ...(input.contextText ? { contextText: input.contextText } : {}) };
+      return input.editMessageId
+        ? await context.aiWorkspaces.editAndResend({ ...request, messageId: input.editMessageId })
+        : await context.aiWorkspaces.send(request);
     } finally { await attachmentLease?.release(); }
   });
   handleIpc(desktopInvoke.ai.cancel, (_event, taskId) => context?.aiWorkspaces.cancel(taskId));

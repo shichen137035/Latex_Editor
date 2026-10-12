@@ -21,6 +21,11 @@
         "types": "./dist/ai-paths.d.cts",
         "default": "./dist/ai-paths.cjs"
       }
+    },
+    "./line-diff": {
+      "types": "./dist/line-diff.d.cts",
+      "import": "./dist/line-diff.cjs",
+      "require": "./dist/line-diff.cjs"
     }
   }
 }

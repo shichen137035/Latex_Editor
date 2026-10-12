@@ -2,7 +2,7 @@ import { consolidateProjectMetadata } from "@latex-editor/filesystem-node";
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { createWriteStream, existsSync, readdirSync } from "node:fs";
-import { access, copyFile, mkdir, readFile, readdir, realpath, rm, stat } from "node:fs/promises";
+import { access, copyFile, mkdir, readFile, readdir, realpath, rm, stat, utimes } from "node:fs/promises";
 import { basename, dirname, extname, isAbsolute, relative, resolve, sep } from "node:path";
 import {
   AppError, type CompileInput, type CompileResult, type CompilerProfile, type Project, type ToolchainStatus, type LatexToolchain, type ToolStatus
@@ -12,8 +12,10 @@ import type { Clock, IdGenerator } from "@latex-editor/domain";
 import { findSyncTexData, syncTexDirectories } from "./synctex-data.js";
 import { documentOutputDirectory, targetOutputArguments } from "./output.js";
 import { externalDocumentPlan } from "./document-dependencies.js";
+import { readRecorderInputs } from "./recorder.js";
+export { readRecorderDependencies } from "./recorder.js";
 export { findSyncTexData, syncTexDirectories, type SyncTexData } from "./synctex-data.js";
-export { documentOutputDirectory } from "./output.js";
+export { documentOutputDirectory, pruneStaleDocumentOutputs } from "./output.js";
 
 const maximumTailLength = 64 * 1024;
 const maximumTimeoutMs = 300_000;
@@ -162,40 +164,6 @@ function appendTail(current: string, chunk: Buffer): string {
   return next.length <= maximumTailLength ? next : next.slice(-maximumTailLength);
 }
 
-async function readRecorderInputs(root: string, mainFile: string, args: string[], isolated = false): Promise<string[]> {
-  const sourcePath = resolve(root, mainFile);
-  const jobName = basename(sourcePath, extname(sourcePath));
-  const readDirectory = (flags: string[]): string | undefined => {
-    for (let index = 0; index < args.length; index++) {
-      const argument = args[index]!;
-      const inline = flags.find((flag) => argument.toLowerCase().startsWith(`${flag}=`));
-      if (inline) return argument.slice(inline.length + 1);
-      if (flags.some((flag) => argument.toLowerCase() === flag) && args[index + 1]) return args[index + 1];
-    }
-    return undefined;
-  };
-  const outputDirectory = readDirectory(["-outdir", "--outdir", "-output-directory", "--output-directory"]);
-  const auxiliaryDirectory = readDirectory(["-auxdir", "--auxdir", "-aux-directory", "--aux-directory"]);
-  const candidateDirectories = [...(auxiliaryDirectory ? [resolve(root, auxiliaryDirectory)] : []), ...(outputDirectory ? [resolve(root, outputDirectory)] : []), ...(isolated ? [] : [dirname(sourcePath), root])];
-  let contents: string | undefined;
-  for (const directory of candidateDirectories) {
-    try { contents = await readFile(resolve(directory, `${jobName}.fls`), "utf8"); break; }
-    catch (error) { if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error; }
-  }
-  if (!contents) return [];
-  const inputs = new Set<string>();
-  for (const line of contents.split(/\r?\n/)) {
-    if (!line.startsWith("INPUT ")) continue;
-    const path = line.slice(6).trim();
-    if (!path) continue;
-    const absolutePath = isAbsolute(path) ? resolve(path) : resolve(root, path);
-    const relativePath = relative(root, absolutePath);
-    if (!relativePath || relativePath === ".." || relativePath.startsWith(`..${sep}`) || isAbsolute(relativePath)) continue;
-    inputs.add(relativePath.split(sep).join("/"));
-  }
-  return [...inputs].sort();
-}
-
 async function terminateProcessTree(child: ChildProcessWithoutNullStreams): Promise<void> {
   if (child.pid === undefined || child.killed) return;
   if (process.platform === "win32") {
@@ -221,6 +189,8 @@ export class LatexmkCompilerService {
   readonly #ids: IdGenerator;
   readonly #active = new Map<string, ActiveCompilation>();
   readonly #rootQueues = new Map<string, Promise<unknown>>();
+  readonly #latestArtifacts = new Map<string, { root: string; logId: string; pdfId?: string }>();
+  readonly #inFlightArtifacts = new Map<string, string>();
 
   constructor(dependencies: {
     projects: CompilerProjectPort;
@@ -309,6 +279,37 @@ export class LatexmkCompilerService {
     return readFile(logPath, "utf8");
   }
 
+  async retainPublishedLog(root: string, mainFile: string, compilationId: string): Promise<void> {
+    if (!/^[0-9a-f-]{36}$/i.test(compilationId)) return;
+    const normalizedRoot = resolve(root), key = `${normalizedRoot}\0${mainFile}`;
+    const previous = this.#latestArtifacts.get(key);
+    this.#latestArtifacts.set(key, { root: normalizedRoot, logId: compilationId, ...(previous?.pdfId ? { pdfId: previous.pdfId } : {}) });
+    if (previous && previous.logId !== compilationId) {
+      try { await rm(resolve(normalizedRoot, ".texweave", "build", `${previous.logId}.log`), { force: true }); }
+      catch { /* Removing a superseded log is best-effort. */ }
+    }
+  }
+
+  async pruneBuildArtifacts(root: string): Promise<void> {
+    const normalizedRoot = resolve(root), directory = resolve(normalizedRoot, ".texweave", "build");
+    let names: string[];
+    try { names = await readdir(directory); }
+    catch { return; }
+    const current = [...this.#latestArtifacts.values()].filter(item => item.root === normalizedRoot);
+    const inFlightIds = [...this.#inFlightArtifacts].filter(([, artifactRoot]) => artifactRoot === normalizedRoot).map(([id]) => id);
+    const retainedLogIds = new Set([...current.map(item => item.logId), ...inFlightIds]);
+    const retainedPdfIds = new Set([...current.flatMap(item => item.pdfId ? [item.pdfId] : []), ...inFlightIds]);
+    const logs = names.filter(name => /^[0-9a-f-]{36}\.log$/i.test(name) && !retainedLogIds.has(name.slice(0, -4)));
+    await Promise.all(logs.map(name => rm(resolve(directory, name), { force: true }).catch(() => undefined)));
+    const pdfs = await Promise.all(names.filter(name => /^[0-9a-f-]{36}\.pdf$/i.test(name) && !retainedPdfIds.has(name.slice(0, -4))).map(async name => {
+      try { return { name, modified: (await stat(resolve(directory, name))).mtimeMs }; }
+      catch { return undefined; }
+    }));
+    const stalePdfs = pdfs.filter((item): item is { name: string; modified: number } => item !== undefined)
+      .sort((left, right) => right.modified - left.modified).slice(8);
+    await Promise.all(stalePdfs.map(item => rm(resolve(directory, item.name), { force: true }).catch(() => undefined)));
+  }
+
   async #compileAtRoot(root: string, mainFile: string, input: { engine?: CompileInput["engine"]; timeoutMs?: number; outputDirectory?: string; projectId?: string; projectMain?: string }): Promise<CompileResult> {
     const key = await realpath(root);
     const previous = this.#rootQueues.get(key) ?? Promise.resolve();
@@ -375,6 +376,13 @@ export class LatexmkCompilerService {
   }
 
   async #runAtRoot(root: string, mainFile: string, input: { engine?: CompileInput["engine"]; timeoutMs?: number; outputDirectory?: string }): Promise<CompileResult> {
+    const compilationId = this.#ids.next();
+    this.#inFlightArtifacts.set(compilationId, resolve(root));
+    try { return await this.#executeCompilation(root, mainFile, input, compilationId); }
+    finally { this.#inFlightArtifacts.delete(compilationId); }
+  }
+
+  async #executeCompilation(root: string, mainFile: string, input: { engine?: CompileInput["engine"]; timeoutMs?: number; outputDirectory?: string }, compilationId: string): Promise<CompileResult> {
     // Reject shell escape even if a profile was edited outside the resource manager.
 
     const profile = this.#profiles.getCompilerProfile();
@@ -388,13 +396,10 @@ export class LatexmkCompilerService {
       });
     }
 
-    const compilationId = this.#ids.next();
     const started = this.#clock.now();
     const buildLogDirectory = resolve(root, ".texweave", "build");
     await mkdir(buildLogDirectory, { recursive: true });
     const logPath = resolve(buildLogDirectory, `${compilationId}.log`);
-    const logStream = createWriteStream(logPath, { encoding: "utf8", flags: "w" });
-    const logFinished = new Promise<void>((done) => logStream.once("finish", () => done()));
     const engineFlag = input.engine === "xelatex" ? "-xelatex" : input.engine === "lualatex" ? "-lualatex" : "-pdf";
     const outputDirectory = input.outputDirectory ?? root;
     await mkdir(outputDirectory, { recursive: true });
@@ -421,17 +426,26 @@ export class LatexmkCompilerService {
       windowsHide: true,
       env: environment
     });
+    const logStream = createWriteStream(logPath, { encoding: "utf8", flags: "w" });
+    let logError: Error | undefined;
+    const logFinished = new Promise<void>((done) => {
+      logStream.once("finish", done);
+      logStream.once("error", (error) => { logError = error; done(); });
+    });
+    const writeLog = (chunk: Buffer) => {
+      if (!logError && !logStream.destroyed && !logStream.writableEnded) logStream.write(chunk);
+    };
     const active: ActiveCompilation = { child };
     this.#active.set(compilationId, active);
     let stdoutTail = "";
     let stderrTail = "";
     child.stdout.on("data", (chunk: Buffer) => {
       stdoutTail = appendTail(stdoutTail, chunk);
-      logStream.write(chunk);
+      writeLog(chunk);
     });
     child.stderr.on("data", (chunk: Buffer) => {
       stderrTail = appendTail(stderrTail, chunk);
-      logStream.write(chunk);
+      writeLog(chunk);
     });
 
     const timeoutMs = Math.min(Math.max(input.timeoutMs ?? profile.timeoutMs, 1_000), maximumTimeoutMs);
@@ -440,18 +454,26 @@ export class LatexmkCompilerService {
       void terminateProcessTree(child);
     }, timeoutMs);
 
-    const exitCode = await new Promise<number | null>((done, reject) => {
-      child.once("error", (error: NodeJS.ErrnoException) => {
-        if (error.code === "ENOENT") reject(new AppError("TOOLCHAIN_NOT_FOUND", `Compiler executable not found: ${profile.executable}`, { cause: error }));
-        else reject(error);
+    let exitCode: number | null;
+    try {
+      exitCode = await new Promise<number | null>((done, reject) => {
+        let processError: NodeJS.ErrnoException | undefined;
+        child.once("error", (error: NodeJS.ErrnoException) => { processError = error; });
+        // exit may precede the last stdout/stderr data, especially for latexmk's
+        // child tools. close confirms that both output pipes have drained.
+        child.once("close", (code) => {
+          if (processError?.code === "ENOENT") reject(new AppError("TOOLCHAIN_NOT_FOUND", `Compiler executable not found: ${profile.executable}`, { cause: processError }));
+          else if (processError) reject(processError);
+          else done(code);
+        });
       });
-      child.once("exit", (code) => done(code));
-    }).finally(() => {
+    } finally {
       clearTimeout(timer);
       this.#active.delete(compilationId);
-      logStream.end();
-    });
-    await logFinished;
+      if (!logStream.destroyed && !logStream.writableEnded) logStream.end();
+      await logFinished;
+    }
+    if (logError) throw new AppError("COMPILATION_FAILED", `Could not write compilation log: ${logError.message}`, { cause: logError, details: { logPath } });
 
     const finished = this.#clock.now();
     const pdfPath = expectedPdf;
@@ -459,13 +481,12 @@ export class LatexmkCompilerService {
     try { await access(pdfPath); } catch { pdfExists = false; }
     const status = active.requestedState ?? (exitCode === 0 && pdfExists ? "succeeded" : "failed");
     const pdfArtifactPath = status === "succeeded" ? resolve(buildLogDirectory, `${compilationId}.pdf`) : undefined;
-    if (pdfArtifactPath) await copyFile(pdfPath, pdfArtifactPath);
-    // Preview artifacts are transient; bound their disk footprint independently of logs.
     if (pdfArtifactPath) {
-      const candidates = (await readdir(buildLogDirectory)).filter(name => /^[0-9a-f-]{36}\.pdf$/i.test(name));
-      const artifacts = await Promise.all(candidates.map(async name => ({ path: resolve(buildLogDirectory, name), modified: (await stat(resolve(buildLogDirectory, name))).mtimeMs })));
-      const older = artifacts.filter(item => item.path !== pdfArtifactPath).sort((a, b) => b.modified - a.modified).slice(7);
-      await Promise.all(older.map(item => rm(item.path, { force: true })));
+      await copyFile(pdfPath, pdfArtifactPath);
+      // Windows copyFile preserves the source PDF's mtime, including when
+      // latexmk reuses an unchanged PDF. Cache age belongs to this build.
+      const captured = new Date();
+      await utimes(pdfArtifactPath, captured, captured);
     }
     const rawLog = await readFile(logPath, "utf8");
     const processDiagnostics = parseLatexDiagnostics(rawLog, root, mainFile);
@@ -491,6 +512,19 @@ export class LatexmkCompilerService {
     }
     if (status === "timedOut") diagnostics.push({ severity: "fatal", source: "system", category: "build", code: "COMPILATION_TIMEOUT", message: `Compilation exceeded ${timeoutMs} ms` });
     if (status === "cancelled") diagnostics.push({ severity: "info", source: "system", category: "build", code: "COMPILATION_CANCELLED", message: "Compilation was cancelled" });
+
+    // Keep the latest log and successful immutable PDF per TeX target. A later
+    // failed build or an AI log must not evict the last successful project PDF.
+    const normalizedRoot = resolve(root);
+    const targetKey = `${normalizedRoot}\0${mainFile}`;
+    const previous = this.#latestArtifacts.get(targetKey);
+    this.#latestArtifacts.set(targetKey, { root: normalizedRoot, logId: compilationId,
+      ...(pdfArtifactPath ? { pdfId: compilationId } : previous?.pdfId ? { pdfId: previous.pdfId } : {}) });
+    if (previous && previous.logId !== compilationId) {
+      try { await rm(resolve(buildLogDirectory, `${previous.logId}.log`), { force: true }); }
+      catch { /* A stale log is harmless; cleanup must not fail a completed build. */ }
+    }
+    await this.pruneBuildArtifacts(normalizedRoot);
 
     return {
       compilationId,

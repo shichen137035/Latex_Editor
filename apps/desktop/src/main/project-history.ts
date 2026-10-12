@@ -3,6 +3,7 @@ import { DatabaseSync } from "node:sqlite";
 import { mkdir, readFile, readdir, realpath, rename, rm, stat, writeFile } from "node:fs/promises";
 import { dirname, isAbsolute, join, relative, sep } from "node:path";
 import { historyStructureContent } from "./history-content.js";
+import { decodeHistoryObject, encodeHistoryObject } from "./history-object.js";
 import type { HistoryFileChange, HistoryPreferences, Project, ProjectHistoryDetails, ProjectHistoryEntry, ProjectHistoryStorage, ProjectHistoryType, SnapshotReason } from "@latex-editor/contracts" with { "resolution-mode": "import" };
 
 type Manifest = Record<string, string>;
@@ -115,6 +116,17 @@ export class ProjectHistoryService {
   private objectPath(store: Store, id: string): string { return join(store.historyRoot, "objects", id); }
   private manifestPath(store: Store, id: string): string { return join(store.historyRoot, "manifests", `${id}.json`); }
 
+  private async writeObject(store: Store, id: string, content: Buffer): Promise<void> {
+    const path = this.objectPath(store, id);
+    try { await stat(path); return; }
+    catch (error) { if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error; }
+    await writeOnce(path, await encodeHistoryObject(content));
+  }
+
+  private async readObject(store: Store, id: string): Promise<Buffer> {
+    return decodeHistoryObject(await readFile(this.objectPath(store, id)), id);
+  }
+
   private async capture(store: Store, overrides: Array<{ path: string; content: string }> = [], persist = true): Promise<{ id: string; files: Manifest; structureContent?: string }> {
     const files: Manifest = Object.create(null) as Manifest;
     let structureContent: string | undefined;
@@ -127,7 +139,7 @@ export class ProjectHistoryService {
       if (override !== undefined) {
         const content = Buffer.from(override, "utf8");
         const id = hash(content);
-        if (persist) await writeOnce(this.objectPath(store, id), content);
+        if (persist) await this.writeObject(store, id, content);
         if (file.path === ".texweave/structure.json") structureContent = content.toString("utf8");
         files[file.path] = id;
         overrideMap.delete(file.path);
@@ -142,7 +154,7 @@ export class ProjectHistoryService {
       }
       const content = await readFile(file.absolute);
       const id = hash(content);
-      if (persist) await writeOnce(this.objectPath(store, id), content);
+      if (persist) await this.writeObject(store, id, content);
       if (file.path === ".texweave/structure.json") structureContent = content.toString("utf8");
       update.run(file.path, size, mtime, ctime, id);
       files[file.path] = id;
@@ -151,7 +163,7 @@ export class ProjectHistoryService {
       await safeProjectPath(store.root, path, false);
       const bytes = Buffer.from(content, "utf8");
       const id = hash(bytes);
-      if (persist) await writeOnce(this.objectPath(store, id), bytes);
+      if (persist) await this.writeObject(store, id, bytes);
       if (path === ".texweave/structure.json") structureContent = content;
       files[path] = id;
     }
@@ -194,15 +206,18 @@ export class ProjectHistoryService {
     let captured = await this.capture(store, overrides, !routine);
     const previous = this.rows(store)[0];
     if (reason !== "manual" && reason !== "pre-restore" && previous) {
-      if (previous.manifest_id === captured.id) return undefined;
-      if (routine && await this.sameRoutineContent(store, await this.manifest(store, previous.manifest_id), captured.files, captured.structureContent)) return undefined;
+      const unchanged = previous.manifest_id === captured.id || (routine && await this.sameRoutineContent(store, await this.manifest(store, previous.manifest_id), captured.files, captured.structureContent));
+      if (unchanged) {
+        if (routine && this.prune(store, config)) await this.collectUnusedHistory(store, false);
+        return undefined;
+      }
     }
     // Do not leave unreferenced megabyte-sized index objects for skipped checks.
     if (routine) captured = await this.capture(store, overrides);
     const entry = this.add(store, { type: "snapshot", manifestId: captured.id, fileCount: Object.keys(captured.files).length, reason, ...(description ? { title: description.trim().slice(0, 200) } : {}) });
     // A restore must not evict either its source snapshot or its undo point.
     // Retention runs on the next routine snapshot or explicit optimization.
-    if (reason !== "pre-restore") this.prune(store, config);
+    if (reason !== "pre-restore" && this.prune(store, config)) await this.collectUnusedHistory(store, false);
     return entry;
   }
 
@@ -211,20 +226,24 @@ export class ProjectHistoryService {
     for (const path of new Set([...Object.keys(before), ...Object.keys(after)])) {
       if (before[path] === after[path]) continue;
       if (path !== structurePath) return false;
-      const read = async (id: string | undefined) => id ? historyStructureContent(await readFile(this.objectPath(store, id), "utf8")) : undefined;
+      const read = async (id: string | undefined) => id ? historyStructureContent((await this.readObject(store, id)).toString("utf8")) : undefined;
       const afterContent = structureContent === undefined ? await read(after[path]) : historyStructureContent(structureContent);
       if (await read(before[path]) !== afterContent) return false;
     }
     return true;
   }
 
-  private prune(store: Store, config: HistoryPreferences): void {
+  private prune(store: Store, config: HistoryPreferences): boolean {
     const snapshots = this.rows(store).filter((row) => row.type === "snapshot");
     const cutoff = Date.now() - config.retentionDays * 86_400_000;
+    let removed = false;
     for (const [index, row] of snapshots.entries()) {
-      if (index >= config.maxSnapshots || Date.parse(row.created_at) < cutoff)
+      if (index >= config.maxSnapshots || Date.parse(row.created_at) < cutoff) {
         store.db.prepare("DELETE FROM entries WHERE id = ?").run(row.id);
+        removed = true;
+      }
     }
+    return removed;
   }
 
   list(projectId: string): Promise<ProjectHistoryEntry[]> { return this.run(projectId, async (store) => this.rows(store).map(entryFromRow)); }
@@ -254,7 +273,7 @@ export class ProjectHistoryService {
     return this.run(projectId, async (store) => {
       const entry = entryFromRow(this.row(store, entryId));
       const historical = await this.manifest(store, entry.manifestId);
-      const current = (await this.capture(store)).files;
+      const current = (await this.capture(store, [], false)).files;
       const changes: HistoryFileChange[] = [...new Set([...Object.keys(historical), ...Object.keys(current)])].sort().flatMap((path) => {
         if (historical[path] === current[path]) return [];
         return [{ path, status: historical[path] === undefined ? "added" : current[path] === undefined ? "removed" : "modified", inHistory: historical[path] !== undefined }];
@@ -268,8 +287,7 @@ export class ProjectHistoryService {
       const manifest = await this.manifest(store, this.row(store, entryId).manifest_id);
       const id = manifest[validateRelativePath(path)];
       if (!id) return undefined;
-      const content = await readFile(this.objectPath(store, id));
-      if (hash(content) !== id) throw new Error("History object is damaged");
+      const content = await this.readObject(store, id);
       if (content.length > 4_000_000) return undefined;
       try { return new TextDecoder("utf-8", { fatal: true }).decode(content); } catch { return undefined; }
     });
@@ -282,8 +300,7 @@ export class ProjectHistoryService {
       if (!shouldKeep(path)) throw new Error("This file is excluded from project history");
       const id = historical[path];
       if (!id) continue;
-      const content = await readFile(this.objectPath(store, id));
-      if (hash(content) !== id) throw new Error(`History object is damaged: ${path}`);
+      const content = await this.readObject(store, id);
       writes.push({ path, content });
     }
     for (const { path, content } of writes) await replaceFile(await safeProjectPath(store.root, path, false), content);
@@ -307,8 +324,7 @@ export class ProjectHistoryService {
       for (const path of paths) {
         await safeProjectPath(store.root, path, historical[path] === undefined && current[path] !== undefined);
         if (historical[path]) {
-          const content = await readFile(this.objectPath(store, historical[path]));
-          if (hash(content) !== historical[path]) throw new Error(`History object is damaged: ${path}`);
+          await this.readObject(store, historical[path]);
         }
       }
       const config = await this.preferences(projectId);
@@ -342,7 +358,11 @@ export class ProjectHistoryService {
   }
 
   remove(projectId: string, entryId: string): Promise<void> {
-    return this.run(projectId, async (store) => { this.row(store, entryId); store.db.prepare("DELETE FROM entries WHERE id = ?").run(entryId); });
+    return this.run(projectId, async (store) => {
+      this.row(store, entryId);
+      store.db.prepare("DELETE FROM entries WHERE id = ?").run(entryId);
+      await this.collectUnusedHistory(store, false);
+    });
   }
 
   clearSnapshots(projectId: string): Promise<void> {
@@ -393,21 +413,35 @@ export class ProjectHistoryService {
     return this.run(projectId, async (store) => {
       this.prune(store, await this.preferences(projectId));
       await this.collectUnusedHistory(store);
+      // Compact existing raw objects too; shared files are processed only once.
+      for (const name of await readdir(join(store.historyRoot, "objects")).catch((error: NodeJS.ErrnoException) => {
+        if (error.code === "ENOENT") return [];
+        throw error;
+      })) {
+        if (!/^[a-f0-9]{64}$/.test(name)) continue;
+        const path = this.objectPath(store, name);
+        const stored = await readFile(path);
+        const encoded = await encodeHistoryObject(await decodeHistoryObject(stored, name));
+        if (encoded.length < stored.length) await replaceFile(path, encoded);
+      }
       return this.storageInStore(store);
     });
   }
 
-  private async collectUnusedHistory(store: Store): Promise<void> {
+  private async collectUnusedHistory(store: Store, compactDatabase = true): Promise<void> {
     const manifests = new Set(this.rows(store).map((row) => row.manifest_id));
     const objects = new Set<string>();
     for (const id of manifests) for (const objectId of Object.values(await this.manifest(store, id))) objects.add(objectId);
     for (const [folder, keep, suffix] of [["manifests", manifests, ".json"], ["objects", objects, ""]] as const) {
       try { for (const name of await readdir(join(store.historyRoot, folder))) {
         const id = suffix ? name.replace(/\.json$/, "") : name;
-        if (!keep.has(id) && /^[a-f0-9]{64}$/.test(id)) await rm(join(store.historyRoot, folder, name));
+        if (!keep.has(id) && /^[a-f0-9]{64}$/.test(id)) {
+          await rm(join(store.historyRoot, folder, name));
+          if (folder === "objects") store.db.prepare("DELETE FROM file_index WHERE hash = ?").run(id);
+        }
       } } catch (error) { if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error; }
     }
-    store.db.prepare("DELETE FROM file_index").run();
-    store.db.exec("PRAGMA wal_checkpoint(TRUNCATE); VACUUM;");
+    store.db.exec("UPDATE entries SET parent_history_id = NULL WHERE parent_history_id NOT IN (SELECT id FROM entries);");
+    if (compactDatabase) store.db.exec("PRAGMA wal_checkpoint(TRUNCATE); VACUUM;");
   }
 }

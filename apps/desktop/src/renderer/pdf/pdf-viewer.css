@@ -2,11 +2,26 @@
 .pdf-origin-label { color: var(--color-text-muted); }
 .pdf-page .pdf-link { position:absolute; z-index:2; border:0; border-radius:2px; padding:0; min-width:0; min-height:0; background:transparent; cursor:pointer; }
 .pdf-page .pdf-link:is(:hover,:focus-visible) { background:color-mix(in srgb,var(--color-primary) 14%,transparent); outline:1px solid var(--color-primary); }
-.pdf-zoom-toolbar .pdf-document-select { margin-left:auto; min-width:80px; max-width:min(46%,320px); flex:0 1 260px; text-overflow:ellipsis; }
+.pdf-zoom-toolbar .pdf-document-picker { position:relative; margin-left:auto; min-width:0; max-width:min(46%,360px); flex:0 1 320px; }
+.pdf-zoom-toolbar .pdf-document-select { width:100%; min-width:0; max-width:100%; min-height:30px; display:flex; align-items:center; gap:8px; padding:4px 8px; border:1px solid var(--color-border); border-radius:6px; background:var(--color-bg-panel); text-align:left; }
+.pdf-document-selected-name { min-width:0; flex:1; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.pdf-document-select > svg:last-child { flex:0 0 16px; width:16px; height:16px; }
+.pdf-document-select > svg:first-child { flex:0 0 17px; width:17px; height:17px; color:var(--color-text-muted); }
+.pdf-document-menu { position:absolute; z-index:30; top:calc(100% + 6px); right:0; width:max(100%, 300px); max-width:min(560px, calc(100vw - 32px)); max-height:min(58vh, 440px); overflow:auto; padding:5px; border:1px solid var(--color-border-strong); border-radius:9px; background:var(--color-bg-panel); color:var(--color-text-primary); box-shadow:0 10px 32px rgba(0,0,0,.26); }
+.pdf-document-option { width:100%; min-width:0; display:flex; align-items:center; gap:10px; padding:8px 10px !important; border-radius:6px !important; text-align:left; }
+.pdf-document-option:hover,.pdf-document-option.selected { background:var(--color-bg-hover) !important; }
+.pdf-document-option-text { min-width:0; flex:1; display:flex; flex-direction:column; gap:2px; }
+.pdf-document-option-text strong { overflow:hidden; color:var(--color-text-primary); font-size:12px; font-weight:500; text-overflow:ellipsis; white-space:nowrap; }
+.pdf-document-option-text small { overflow:hidden; color:var(--color-text-muted); font-size:10px; text-overflow:ellipsis; white-space:nowrap; }
+.pdf-document-state { width:18px; height:18px; flex:0 0 18px; display:grid; place-items:center; }
+.pdf-document-state svg { width:16px; height:16px; }
+.pdf-document-state.compiled { color:var(--color-success); }
+.pdf-document-state.pending { color:var(--color-text-muted); }
+.pdf-document-current { flex:0 0 auto; color:var(--color-primary); font-size:15px; font-weight:700; }
 .pdf-origin-label { min-width:0; max-width:180px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 .pdf-update-error { padding: 6px 12px; color: var(--color-error); background: var(--color-bg-panel); }
 .pdf-document > .pdf-viewer { overflow-anchor: none; }
-.pdf-zoom-toolbar { display: flex; align-items: center; justify-content: center; flex: 0 0 auto; gap: 8px; padding: 6px 10px; border-bottom: 1px solid var(--color-border); background: var(--color-bg-panel); color: var(--color-text-primary); }
+.pdf-zoom-toolbar { position:relative; z-index:5; display: flex; align-items: center; justify-content: center; flex: 0 0 auto; gap: 8px; padding: 6px 10px; border-bottom: 1px solid var(--color-border); background: var(--color-bg-panel); color: var(--color-text-primary); }
 .pdf-zoom-toolbar button { padding: 3px 8px; border-radius: 5px; color: inherit; }
 .pdf-zoom-toolbar button:hover { background: var(--color-bg-hover); }
 .pdf-zoom-toolbar select { max-width: 180px; padding: 4px 8px; border: 1px solid var(--color-border); border-radius: 5px; background: var(--color-bg-panel); color: inherit; }

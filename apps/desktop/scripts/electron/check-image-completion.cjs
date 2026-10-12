@@ -1,4 +1,4 @@
-const { app, BrowserWindow } = require("electron");
+const { app, BrowserWindow, clipboard, nativeImage } = require("electron");
 const { mkdtempSync, mkdirSync, writeFileSync } = require("node:fs");
 const { tmpdir } = require("node:os");
 const { resolve } = require("node:path");
@@ -8,6 +8,7 @@ const projects = resolve(root, "projects"); mkdirSync(projects);
 app.setPath("userData", resolve(root, "profile"));
 const delay = ms => new Promise(done => setTimeout(done, ms));
 let page;
+let restoreClipboard;
 const errors = [];
 const evaluate = script => page.webContents.executeJavaScript(script, true);
 app.on("web-contents-created", (_event, contents) => contents.on("console-message", ({ level, message }) => {
@@ -19,12 +20,13 @@ async function until(script, label) {
     if (await evaluate(script)) return;
     await delay(50);
   }
-  console.error(await evaluate('document.querySelector(".block-notice")?.textContent'));
+  console.error(await evaluate('JSON.stringify({notice:document.querySelector(".block-notice")?.textContent,layoutError:document.querySelector(".figure-layout-controls [role=alert]")?.textContent,grids:Array.from(document.querySelectorAll(".figure-preview-grid")).map(el => ({rows:el.dataset.figureRows,columns:el.dataset.figureColumns,slots:Array.from(el.children).map(cell => ({image:cell.querySelector("img")?.alt,empty:!!cell.querySelector(".figure-preview-empty-slot")}))}))})'));
   throw new Error(`Timed out: ${label}`);
 }
 async function press(keyCode, modifiers = []) {
   page.webContents.sendInputEvent({ type: "keyDown", keyCode, modifiers });
   page.webContents.sendInputEvent({ type: "keyUp", keyCode, modifiers });
+  await delay(30);
 }
 async function reloadProject() {
   await evaluate('document.querySelector(".save-status").click()');
@@ -115,6 +117,8 @@ async function run() {
     const block = `.preview-block[data-environment="${environment}"]`;
     await evaluate(`document.querySelector(${JSON.stringify(block + ' .preview-block-options')}).click()`);
     await until(`!!document.querySelector(${JSON.stringify(block + ' .preview-block-title-editor')})`, 'option editor');
+    await evaluate('new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))');
+    await evaluate(`document.querySelector(${JSON.stringify(block + ' .preview-block-title-editor')}).focus()`);
     await press('A', ['control']); await page.webContents.insertText(newOption); await press('ENTER');
     await press('S', ['control']);
     expectedSource = expectedSource.replace(`\\begin{${environment}}[${oldOption}]`, `\\begin{${environment}}[${newOption}]`);
@@ -185,6 +189,36 @@ async function run() {
   await evaluate(`(() => { const input = document.querySelector('.figure-inspector-fields input'); Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set.call(input, 'figures/new.svg'); input.dispatchEvent(new Event('input', {bubbles:true})); })()`);
   await until('document.querySelector(".preview-figure img")?.alt === "figures/new.svg"', 'property edit uses the clamped image index');
   console.log('PASS inspector remains editable after removing the previously selected image');
+  const setGrid = async value => {
+    await evaluate(`(() => { const select = document.querySelector('.figure-layout-controls > label select'); select.value = ${JSON.stringify(value)}; select.dispatchEvent(new Event('change', {bubbles:true})); })()`);
+    const [rows, columns] = value.split('x').map(Number);
+    await until(`document.querySelector('.preview-figure .figure-preview-grid')?.dataset.figureRows === ${JSON.stringify(String(rows))} && document.querySelector('.preview-figure .figure-preview-grid')?.dataset.figureColumns === ${JSON.stringify(String(columns))}`, 'grid layout ' + value);
+  };
+  await setGrid('2x1');
+  await until('document.querySelectorAll(".preview-block[data-environment=figure] .preview-figure .figure-preview-cell").length === 2 && document.querySelectorAll(".preview-figure .figure-preview-empty-slot").length === 1', 'single figure converted to vertical grid');
+  await press('S', ['control']);
+  await until(`window.latexEditor.files.read(${id}, 'main.tex').then(file => file.content.includes('\\\\usepackage{subcaption}') && (file.content.match(/\\\\begin\\{subfigure\\}/g) ?? []).length === 2)`, 'subfigure package and source saved');
+  await evaluate(`(() => { const cells = document.querySelectorAll('.preview-block[data-environment=figure] .preview-figure .figure-preview-cell'); const dataTransfer = new DataTransfer(); cells[0].dispatchEvent(new DragEvent('dragstart', {bubbles:true,dataTransfer})); cells[1].dispatchEvent(new DragEvent('dragover', {bubbles:true,cancelable:true,dataTransfer})); cells[1].dispatchEvent(new DragEvent('drop', {bubbles:true,cancelable:true,dataTransfer})); cells[0].dispatchEvent(new DragEvent('dragend', {bubbles:true,dataTransfer})); })()`);
+  await until('Array.from(document.querySelectorAll(".preview-block[data-environment=figure] .preview-figure .figure-preview-cell")).find(el => el.dataset.figureSlot === "1")?.querySelector("img")?.alt === "figures/new.svg" && !!Array.from(document.querySelectorAll(".preview-block[data-environment=figure] .preview-figure .figure-preview-cell")).find(el => el.dataset.figureSlot === "0")?.querySelector(".figure-preview-empty-slot")', 'drag image into empty second row');
+  await evaluate('document.querySelector(".preview-figure .figure-preview-empty-slot").click()');
+  await until('!!document.querySelector(".image-insert-dialog")', 'empty cell opens the existing image picker');
+  await evaluate('Array.from(document.querySelectorAll(".image-insert-choices button")).find(button => button.textContent.includes("Project image")).click()');
+  await until('!!document.querySelector(".image-project-list")', 'grid project image picker');
+  await evaluate('Array.from(document.querySelectorAll(".image-project-list button")).find(button => button.textContent.includes("figures/old.svg")).dispatchEvent(new MouseEvent("dblclick", {bubbles:true}))');
+  await until('document.querySelectorAll(".preview-figure img").length === 2 && !document.querySelector(".image-insert-dialog")', 'fill a grid cell without inserting another figure');
+  await evaluate('document.querySelector(".preview-figure img").click()');
+  await until('!!document.querySelector(".figure-layout-controls")', 'reopen inspector after filling grid');
+  await setGrid('1x2');
+  await press('S', ['control']);
+  await until('!!document.querySelector(".save-status.saved")', 'horizontal grid saved');
+  const beforeShrink = (await evaluate(`window.latexEditor.files.read(${id}, 'main.tex')`)).content;
+  await evaluate(`(() => { const select = document.querySelector('.figure-layout-controls > label select'); select.value = '1x1'; select.dispatchEvent(new Event('change', {bubbles:true})); })()`);
+  await until('document.querySelector(".figure-layout-controls [role=alert]")?.textContent.includes("cannot hold")', 'shrinking does not discard existing images');
+  await press('S', ['control']);
+  assert.equal((await evaluate(`window.latexEditor.files.read(${id}, 'main.tex')`)).content, beforeShrink);
+  await evaluate(`(() => { const cells = document.querySelectorAll('.figure-layout-slot'); const dataTransfer = new DataTransfer(); cells[1].dispatchEvent(new DragEvent('dragstart', {bubbles:true,dataTransfer})); cells[0].dispatchEvent(new DragEvent('dragover', {bubbles:true,cancelable:true,dataTransfer})); cells[0].dispatchEvent(new DragEvent('drop', {bubbles:true,cancelable:true,dataTransfer})); })()`);
+  await until('Array.from(document.querySelectorAll(".preview-block[data-environment=figure] .preview-figure .figure-preview-cell")).find(el => el.dataset.figureSlot === "0")?.querySelector("img")?.alt === "figures/new.svg"', 'inspector drag also changes source order');
+  console.log('PASS single-to-grid conversion, source geometry, drag swaps, empty-slot replacement and safe shrinking');
   configuredFigure.behavior.imageClickAction = 'source';
   await evaluate(`window.latexEditor.settings.set("environments", ${JSON.stringify(definitions)}, ${id})`);
   await reloadProject();
@@ -198,9 +232,36 @@ async function run() {
   await evaluate('document.querySelector(".preview-figure img").click()');
   assert.equal(await evaluate('!!document.querySelector(".image-insert-dialog, .preview-local-editor")'), false);
   console.log('PASS image policy, caption editing, label visibility and image dimensions follow configuration');
+  configuredFigure.behavior.inlineEditable = true;
+  await evaluate(`window.latexEditor.settings.set("environments", ${JSON.stringify(definitions)}, ${id})`);
+  await reloadProject();
+  const previousClipboard = { text:clipboard.readText(), html:clipboard.readHTML(), rtf:clipboard.readRTF(), image:clipboard.readImage() };
+  restoreClipboard = () => clipboard.write(previousClipboard);
+  clipboard.writeImage(nativeImage.createFromBitmap(Buffer.from([0, 0, 255, 255]), {width:1,height:1}));
+  assert.equal(clipboard.readImage().isEmpty(), false, 'system clipboard contains the test bitmap');
+  await evaluate('document.querySelector(".preview-figure img").click()');
+  await until('!!document.querySelector(".image-insert-dialog")', 'clipboard replacement dialog');
+  await evaluate('Array.from(document.querySelectorAll(".image-insert-choices button")).find(button => button.textContent.includes("Paste from clipboard")).click()');
+  await until('!document.querySelector(".image-insert-dialog") && document.querySelector(".preview-figure img")?.alt.includes("clipboard-")', 'clipboard replaces the chosen slot');
+  await press('S', ['control']);
+  const pasted = (await evaluate(`window.latexEditor.files.read(${id}, 'main.tex')`)).content;
+  assert.match(pasted, /figures\/clipboard-\d+\.png/);
+  assert.ok(pasted.includes('Edited figure'), 'clipboard replacement preserves the existing outer caption');
+  const beforeFigures = (pasted.match(/\\begin\{figure\}/g) ?? []).length;
+  await evaluate('document.querySelector(".preview-block[data-environment=figure] .preview-block-header-main").click()');
+  await press('V', ['control']);
+  await until(`document.querySelectorAll('.preview-block[data-environment=figure]').length === ${beforeFigures + 1}`, 'preview Ctrl+V inserts a new figure');
+  await evaluate('Array.from(document.querySelectorAll(".view-switch button")).find(button => button.textContent === "Code").click()');
+  await until('!!document.querySelector(".editor-surface .monaco-editor textarea")', 'source clipboard paste editor');
+  await evaluate('new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))');
+  await evaluate('document.querySelector(".editor-surface .monaco-editor textarea").focus()');
+  await press('END', ['control']); await press('HOME'); await press('V', ['control']);
+  await press('S', ['control']);
+  await until(`window.latexEditor.files.read(${id}, 'main.tex').then(file => (file.content.match(/\\\\begin\\{figure\\}/g) ?? []).length === ${beforeFigures + 2})`, 'source Ctrl+V saves another figure with its image asset');
+  console.log('PASS clipboard picker replaces one slot; preview and Code Ctrl+V create figure blocks and project PNG copies');
   assert.deepEqual(errors, []);
 }
 app.whenReady().then(() => {
   require('../../dist/main/index.js');
-  run().then(() => { console.log(`Artifacts: ${root}`); app.exit(0); }).catch(error => { console.error(error); console.error(errors); console.error(`Artifacts: ${root}`); app.exit(1); });
+  run().then(() => { restoreClipboard?.(); console.log(`Artifacts: ${root}`); app.exit(0); }).catch(error => { restoreClipboard?.(); console.error(error); console.error(errors); console.error(`Artifacts: ${root}`); app.exit(1); });
 });

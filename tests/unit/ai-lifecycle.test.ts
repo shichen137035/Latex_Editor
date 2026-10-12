@@ -29,7 +29,7 @@ async function fixture(mode: "chat" | "codex") {
   const codex = { onEvent: (callback: typeof listener) => { listener = callback; return () => undefined; }, startTurn: async (input: Parameters<CodexAppServer["startTurn"]>[0]) => { workspace = input.cwd; input.onThreadReady?.("thread"); return { threadId: "thread", turnId: "turn" }; } } as unknown as CodexAppServer;
   const updates: AIConversation[] = [];
   const service = new AIWorkspaceService({ userDataPath: root, codex,
-    copilot: { dispose: async () => undefined, session: async (_id: unknown, _model: unknown, _newId: unknown, path: string) => { workspace = path; return session; } } as unknown as CopilotChatService,
+    copilot: { dispose: async () => undefined, releaseSession: async () => undefined, session: async (_id: unknown, _model: unknown, _newId: unknown, path: string) => { workspace = path; return session; } } as unknown as CopilotChatService,
     projectFiles: { resolveFilePath: async (_id, path) => join(root, "project", path) }, projectExists: () => true,
     builtInSkillsRoot: join(root, "skills"), compileWorkspace: async () => { throw new Error("Unexpected compile"); }, setMainFile: async () => undefined,
     createBlockApi: ({ projectId, workspaceRoot }) => createWorkspaceBlockApi({ id: projectId, name: "Test", canonicalPath: workspaceRoot, createdAt: "", registeredAt: "", writable: true, missing: false }, workspaceRoot),

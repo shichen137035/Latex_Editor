@@ -1,0 +1,48 @@
+:root[data-theme="pink-light"] {
+  color-scheme: light;
+  --color-bg-app: #fbf1f6;
+  --color-bg-app-top: #fffafd;
+  --color-bg-app-bottom: #f8eaf2;
+  --color-bg-panel: #fffdfd;
+  --color-bg-toolbar: #fff8fb;
+  --color-bg-subtle: #f9edf3;
+  --color-bg-hover: #f7e4ee;
+  --color-primary: #bd4e83;
+  --color-primary-strong: #92345f;
+  --color-accent: #e58ab1;
+  --color-link: #92345f;
+  --color-link-hover: #bd4e83;
+  --color-text-primary: #432b39;
+  --color-text-secondary: #806577;
+  --color-text-muted: #a990a0;
+  --color-border: #ead5e0;
+  --color-border-strong: #d9b8ca;
+  --color-status-bg: #92345f;
+  --color-status-text: #fff7fb;
+  --shadow-panel: 0 6px 22px rgba(128, 52, 92, .09);
+  --env-border-default: rgba(145, 74, 111, .16);
+  --env-border-hover: rgba(189, 78, 131, .38);
+  --env-border-selected: #bd4e83;
+  background:
+    radial-gradient(ellipse at 8% 0%, rgba(230, 143, 181, .10), transparent 34%),
+    linear-gradient(180deg, var(--color-bg-app-top), var(--color-bg-app) 55%, var(--color-bg-app-bottom));
+}
+
+:root[data-theme="pink-light"] body,
+:root[data-theme="pink-light"] .app-shell { background: transparent; }
+
+:root[data-theme="pink-light"] .directory-board {
+  background:
+    radial-gradient(ellipse at 78% 70%, rgba(218, 117, 162, .11), transparent 38%),
+    linear-gradient(150deg, #fffdfd 12%, #f9edf3);
+}
+
+:root[data-theme="pink-light"] .directory-board-grid { opacity: .12; }
+
+:root[data-theme="pink-light"] button:focus-visible,
+:root[data-theme="pink-light"] input:focus-visible,
+:root[data-theme="pink-light"] select:focus-visible,
+:root[data-theme="pink-light"] textarea:focus-visible {
+  outline-color: rgba(189, 78, 131, .78);
+  box-shadow: 0 0 0 3px rgba(229, 138, 177, .18);
+}

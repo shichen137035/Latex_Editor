@@ -3,7 +3,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, it, expect } from "vitest";
 import { SettingsRepository } from "../../apps/desktop/src/main/settings.js";
-import { preferenceDefaults, sanitizePreferences } from "../../packages/contracts/src/settings.js";
+import { preferenceDefaults, sanitizePreferences, validPreference } from "../../packages/contracts/src/settings.js";
+import { DEFAULT_ENVIRONMENTS } from "../../apps/desktop/src/renderer/preview/environments.js";
 import { setLocale, t } from "../../apps/desktop/src/renderer/i18n/index.js";
 
 describe("v0.2.3 foundations", () => {
@@ -40,6 +41,28 @@ describe("v0.2.3 foundations", () => {
     expect(sanitizePreferences({ referenceLinkModifier: "mouse" })).toEqual({});
     expect(sanitizePreferences({ spellCheckMode: "manual", spellCheckLanguage: "not a language" }, true)).toEqual({});
     expect(sanitizePreferences({ theme: "dark", keybindings: {}, toolchain: { latexmk: "C:/tool.exe" }, fontSize: 20 }, true)).toEqual({ keybindings: {}, fontSize: 20 });
+  });
+  it("deeply validates environment matching, style and behavior before settings are stored", () => {
+    const environment = structuredClone(DEFAULT_ENVIRONMENTS.find(item => item.id === "section")!);
+    environment.labels = { en: "", "zh-CN": "" };
+    expect(validPreference("environments", [environment])).toBe(true);
+    expect(sanitizePreferences({ environments: [environment] }).environments).toHaveLength(1);
+
+    const malformed = [
+      { ...environment, match: { kind: "unknown", name: "section" } },
+      { ...environment, match: { kind: "latex-environment", name: "bad environment name" } },
+      { ...environment, match: { kind: "custom-pattern", pattern: "(" } },
+      { ...environment, match: { kind: "custom-pattern", pattern: "(a+)+$" } },
+      { ...environment, style: { ...environment.style, titleFontSize: 1000 } },
+      { ...environment, style: { ...environment.style, accentToken: "red; background: url(https://invalid)" } },
+      { ...environment, behavior: { ...environment.behavior, renderer: "webview" } },
+      { ...environment, behavior: { ...environment.behavior, showHeader: "yes" } }
+    ];
+    for (const entry of malformed) {
+      expect(validPreference("environments", [entry])).toBe(false);
+      expect(sanitizePreferences({ environments: [entry] })).toEqual({});
+    }
+    expect(validPreference("environments", [environment, { ...environment }])).toBe(false);
   });
   it("persists concurrent updates atomically, isolates projects and resets overrides", async () => {
     const root = await mkdtemp(join(tmpdir(), "texweave-settings-"));

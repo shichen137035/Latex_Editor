@@ -43,6 +43,8 @@ export type AIMessageRole = "user" | "assistant" | "system" | "tool";
 export interface AIAttachment { id: string; name: string; size: number }
 /** Provider-returned, displayable reasoning summaries, separate from the answer. */
 export interface AIReasoningPart { id: string; text: string; complete: boolean }
+/** Public provider output in arrival order; reasoning contains only supplied summaries. */
+export interface AIResponsePart { id: string; kind: "text" | "reasoning"; text: string }
 export interface AIMessage {
   id: string;
   role: AIMessageRole;
@@ -51,6 +53,8 @@ export interface AIMessage {
   status?: "streaming" | "complete" | "error";
   activity?: "thinking" | "responding" | "working";
   reasoning?: AIReasoningPart[];
+  responseParts?: AIResponsePart[];
+  completedAt?: number;
   attachments?: AIAttachment[];
 }
 export interface AIConversation {
@@ -361,3 +365,4 @@ export interface CompilerProfile { id: string; executable: string; arguments: st
 
 export * from "./installation.js";
 export type { DesktopApi, DesktopInvokeApi } from "./desktop-ipc.cjs";
+

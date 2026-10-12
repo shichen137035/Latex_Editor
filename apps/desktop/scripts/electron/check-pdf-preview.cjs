@@ -21,6 +21,8 @@ async function until(script, label) {
     if (await evaluate(script)) return;
     await delay(100);
   }
+  console.error('PDF failure state:', await evaluate(`JSON.stringify({ label: document.querySelector('.pdf-origin-label')?.textContent, errors: Array.from(document.querySelectorAll('.pdf-viewer-error')).map(node=>node.textContent), pages: Array.from(document.querySelectorAll('.pdf-page')).map(node=>({page:node.dataset.page,top:node.getBoundingClientRect().top,canvas:!!node.querySelector('canvas'),text:node.querySelector('.textLayer')?.textContent?.slice(0,90)})) })`));
+  await writeFile(join(root, 'failure.png'), (await page.webContents.capturePage()).toPNG());
   throw new Error(`Timed out: ${label}`);
 }
 function source(marker, count = 6) {
@@ -73,6 +75,7 @@ async function run() {
   await until('document.querySelectorAll(".pdf-page").length===6 && !!document.querySelector(".pdf-page canvas")','six-page PDF');
   await evaluate(`(() => { const root=document.querySelector('.pdf-viewer'); const page=root.querySelector('[data-page="4"]'); root.scrollTop=page.getBoundingClientRect().top-root.getBoundingClientRect().top+root.scrollTop+page.clientHeight*.35; })()`);
   await delay(200); const before=await readingPosition(); assert.equal(before.page,4);
+  await until(`!document.querySelector('.pdf-page[data-page="1"] canvas') && !!document.querySelector('.pdf-page[data-page="4"] canvas')`, 'offscreen PDF bitmap released while the visible page remains rendered');
   const recompiledSource=source('Recompiled');
   await replaceSource(recompiledSource);
   await compileUi(recompiledSource,id);
@@ -154,7 +157,8 @@ async function run() {
   await evaluate(`window.latexEditor.files.createFile(${id},"nested/alternate.tex")`);
   await evaluate(`window.latexEditor.files.write(${id},"nested/alternate.tex",${JSON.stringify(source('Alternate',1))})`);
   await evaluate(`window.latexEditor.projects.setMainFile(${id},"nested/alternate.tex")`);
-  await until('Array.from(document.querySelector(".pdf-document-select")?.options??[]).some(option=>option.value==="nested/alternate.tex")','main file change refreshes the PDF catalog');
+  await until(`(() => { const trigger=document.querySelector('.pdf-document-select'); if (!trigger) return false; if (trigger.getAttribute('aria-expanded') !== 'true') { trigger.click(); return false; } return Array.from(document.querySelectorAll('.pdf-document-option')).some(option=>option.title.startsWith('nested/alternate.pdf')); })()`, 'main file change refreshes the PDF catalog');
+  await evaluate(`document.querySelector('.pdf-document-select').click()`);
   await evaluate(`document.querySelector('.activity-bar button[title^="Files"]').click()`);
   await evaluate(`document.querySelector('.sidebar-heading button[title="Refresh file tree"]').click()`);
   await until(`!!document.querySelector('.tree-row[data-path="nested"]')`,'nested directory in file tree');
