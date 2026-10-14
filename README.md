@@ -2,7 +2,7 @@
 
 TeXWeave is a local-first desktop editor for LaTeX projects. It brings source editing, structured previews, PDF compilation and navigation, bibliography management, and block-relation tools into one workspace. Project files remain in the folders chosen by the user. The application is built with Electron, React, TypeScript, and Monaco Editor.
 
-During the 0.6.x testing period, TeXWeave is proprietary software and has no public open-source license. See the [testing and licensing policy](docs/TEST_DISTRIBUTION_AND_LICENSE.md) for internal source access and external beta distribution. Third-party dependencies remain subject to their own licenses.
+TeXWeave is licensed under the [PolyForm Internal Use License 1.0.0](LICENSE). It permits use and modification for the internal business operations of the recipient and their company; it does not grant redistribution rights. See the [testing and licensing policy](docs/TEST_DISTRIBUTION_AND_LICENSE.md) for source access and beta distribution. Third-party dependencies remain subject to their own licenses.
 
 The root [`package.json`](package.json) is the single source of truth for the application version. TeXWeave is local-first and does not require papers or projects to be uploaded to a cloud service.
 
@@ -147,7 +147,7 @@ AI supports Codex and Copilot conversations. The composer offers three permissio
 
 TeXWeave 是一款面向本地项目的 LaTeX 桌面编辑器。它将源码编辑、结构化预览、PDF 编译与定位、文献管理和块关系工具整合在一个工作区中。项目文件保留在用户选择的文件夹里；应用使用 Electron、React、TypeScript 和 Monaco Editor 构建。
 
-当前 0.6.x 测试阶段为专有软件，尚未授予公开开源许可。内部源码访问和外部测试版分发规则见[测试与许可说明](docs/TEST_DISTRIBUTION_AND_LICENSE.md)；第三方依赖仍分别受其各自许可证约束。
+TeXWeave 采用 [PolyForm Internal Use License 1.0.0](LICENSE)，允许接收者为自己及其公司的内部业务使用和修改软件，不授予再分发权限。源码访问和测试版分发规则见[测试与许可说明](docs/TEST_DISTRIBUTION_AND_LICENSE.md)；第三方依赖仍分别受其各自许可证约束。
 
 应用版本以根目录 [`package.json`](package.json) 为唯一来源。TeXWeave 采用本地优先设计，不要求将论文或项目上传到云端。
 

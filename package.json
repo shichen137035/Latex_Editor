@@ -4,7 +4,7 @@
   "main": "apps/desktop/dist/main/index.js",
   "private": true,
   "author": "Shi Chen",
-  "license": "UNLICENSED",
+  "license": "SEE LICENSE IN LICENSE",
   "description": "Local-first LaTeX editor foundation",
   "type": "module",
   "workspaces": [
@@ -106,10 +106,12 @@
       "apps/desktop/package.json",
       "node_modules/**/*",
       "package.json",
+      "LICENSE",
       "!**/*.map",
       "!**/*.d.ts",
       "!**/*.d.cts"
     ],
+    "extraFiles": [{ "from": "LICENSE", "to": "LICENSE" }],
     "extraResources": [
       {
         "from": "resources",
