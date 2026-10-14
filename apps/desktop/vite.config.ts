@@ -6,6 +6,10 @@ export default defineConfig(({ command }) => ({
   // Relative asset URLs work both with Vite's dev server and Electron's
   // production file:// load, where absolute /assets URLs resolve incorrectly.
   base: "./",
+  // Linked workspace CommonJS exports need conversion in the dev server too.
+  optimizeDeps: {
+    include: ["@latex-editor/contracts/line-diff", "@latex-editor/contracts/desktop-ipc"]
+  },
   plugins: [react(), {
     name: "texweave-content-security-policy",
     transformIndexHtml(html) {

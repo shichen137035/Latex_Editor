@@ -1,3 +1,4 @@
+import { packageSmokeEnabled, finishPackageSmoke, checkPackageWindow } from "./package-smoke.js";
 import { registerBlockGraphIpc } from "./block-graph-ipc.js";
 import { removeProjectData } from "./project-removal-data.js";
 import { registerStructureIpc } from "./structure-ipc.js";
@@ -757,7 +758,7 @@ function registerIpcHandlers(): void {
 function createWindow(): BrowserWindow {
   // Isolated UI regression tests need an active compositor without opening a
   // visible helper window. Normal launches retain the native window behavior.
-  const offscreenTest = process.env.TEXWEAVE_UI_TEST_OFFSCREEN === "1";
+  const offscreenTest = packageSmokeEnabled || process.env.TEXWEAVE_UI_TEST_OFFSCREEN === "1";
   const window = new BrowserWindow({
     show: false,
     width: 1280,
@@ -778,6 +779,13 @@ function createWindow(): BrowserWindow {
   });
   const rendererFile = resolve(__dirname, "../renderer/index.html");
   const rendererTarget = resolveRendererTarget(rendererFile, process.env.TEXWEAVE_RENDERER_URL, app.isPackaged);
+  if (!app.isPackaged && process.env.TEXWEAVE_RENDERER_URL) {
+    window.webContents.on("console-message", (details) => {
+      if (details.level === "error" || details.level === "warning") console.error(`[renderer:${details.level}] ${details.message}`);
+    });
+    window.webContents.on("preload-error", (_event, _path, error) => console.error("Preload failed:", error));
+    window.webContents.on("did-fail-load", (_event, code, description) => console.error(`Renderer load failed (${code}): ${description}`));
+  }
   installRendererSecurity(window, rendererTarget, (url) => shell.openExternal(url));
   const closeState = { pending: undefined as string | undefined, approved: false, ready: false };
   closeStates.set(window.id, closeState);
@@ -797,6 +805,7 @@ function createWindow(): BrowserWindow {
     if (settings.global.maximize !== false) window.maximize();
     window.show();
   });
+  checkPackageWindow(window);
   if (rendererTarget.startsWith("file:")) void window.loadFile(rendererFile);
   else void window.loadURL(rendererTarget);
   return window;
@@ -811,6 +820,7 @@ app.whenReady().then(() => {
     registerIpcHandlers();
     createWindow();
   }).catch((error: unknown) => {
+    if (packageSmokeEnabled) { finishPackageSmoke(error); return; }
     const message = error instanceof Error ? error.message : String(error);
     console.error("Failed to initialize desktop application", error);
     dialog.showErrorBox(nativeText("native.startFailed"), message);

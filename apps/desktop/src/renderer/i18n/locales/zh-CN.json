@@ -303,6 +303,7 @@
   "placeholder.pdfTitle": "PDF 预览",
   "placeholder.pdf": "编译后将在此显示 PDF。",
   "editor.noFile": "从文件树中打开一个文件",
+  "editor.toggleWhitespace": "显示空白符",
   "editor.formatSource": "格式化源码",
   "editor.formatSourceHint": "格式化 LaTeX 源代码",
   "preview.changeEnvironment": "转换环境",

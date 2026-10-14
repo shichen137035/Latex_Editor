@@ -184,6 +184,7 @@
   "placeholder.pdfTitle": "Aperçu PDF",
   "placeholder.pdf": "Le PDF compilé apparaîtra ici.",
   "editor.noFile": "Ouvrez un fichier depuis l’arborescence",
+  "editor.toggleWhitespace": "Afficher les espaces",
   "preview.changeEnvironment": "Changer d’environnement",
   "preview.changeEnvironmentHint": "Convertissez ce bloc avec un environnement compatible activé dans le projet.",
   "editor.quick.section": "Section",

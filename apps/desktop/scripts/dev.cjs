@@ -8,7 +8,7 @@ const mainConfig = path.join(root, "apps/desktop/tsconfig.main.json");
 const preloadBuildScript = path.join(root, "apps/desktop/scripts/build-preload.cjs");
 const tsc = path.join(root, "node_modules/typescript/bin/tsc");
 const vite = path.join(root, "node_modules/vite/bin/vite.js");
-const rendererUrl = "http://127.0.0.1:5173/";
+let rendererUrl;
 
 if (!fs.existsSync(tsc) || !fs.existsSync(vite)) {
   process.stderr.write("Desktop dependencies are missing. Run npm install first.\n");
@@ -34,7 +34,8 @@ const inheritedPaths = pathKeys.map((key) => environment[key]).filter(Boolean);
 for (const key of pathKeys) delete environment[key];
 environment.PATH = [...perlPaths, ...inheritedPaths].join(path.delimiter);
 
-let viteProcess;
+let viteServer;
+let preloadWatcher;
 let watcherProcess;
 let electronProcess;
 let stopping = false;
@@ -47,7 +48,9 @@ function stop(code = 0) {
   if (stopping) return;
   stopping = true;
   clearTimeout(restartTimer);
-  for (const child of [electronProcess, watcherProcess, viteProcess]) {
+  preloadWatcher?.close();
+  void viteServer?.close();
+  for (const child of [electronProcess, watcherProcess]) {
     if (child && child.exitCode === null) child.kill();
   }
   process.exitCode = code;
@@ -99,7 +102,7 @@ function launchElectron() {
   launched.once("exit", (code, signal) => failChild("Electron", launched, code, signal));
 }
 
-function scheduleElectronRestart() {
+function scheduleElectronRestart(force = false) {
   if (stopping || !watcherInitialized) return;
   clearTimeout(restartTimer);
   restartTimer = setTimeout(() => {
@@ -110,7 +113,7 @@ function scheduleElectronRestart() {
       process.stderr.write(`Unable to inspect the runtime build; keeping Electron running: ${error.message}\n`);
       return;
     }
-    if (nextFingerprint !== runningFingerprint) {
+    if (force || nextFingerprint !== runningFingerprint) {
       process.stdout.write("Main-process runtime files changed. Restarting Electron in development mode...\n");
       restartingElectron = true;
       electronProcess.kill();
@@ -162,39 +165,28 @@ function watchMainProcess() {
   watcherProcess.once("exit", (code, signal) => failChild("TypeScript watcher", watcherProcess, code, signal));
 }
 
-async function waitForRenderer() {
-  while (!stopping) {
-    try {
-      const response = await fetch(rendererUrl, { signal: AbortSignal.timeout(800) });
-      if (response.ok) return;
-    } catch {
-      // Vite is still starting; keep polling until it serves the renderer.
-    }
-    await new Promise((resolve) => setTimeout(resolve, 150));
-  }
-}
-
 process.on("SIGINT", () => stop(0));
 process.on("SIGTERM", () => stop(0));
 
-viteProcess = spawn(process.execPath, [vite, "--config", "apps/desktop/vite.config.ts", "--host", "127.0.0.1", "--port", "5173", "--strictPort"], {
-  cwd: root,
-  env: environment,
-  stdio: "inherit",
-  windowsHide: true
-});
-viteProcess.once("error", (error) => {
-  process.stderr.write(`Unable to start Vite: ${error.message}\n`);
-  stop(1);
-});
-viteProcess.once("exit", (code, signal) => failChild("Vite", viteProcess, code, signal));
-
-watchMainProcess();
-waitForRenderer().then(() => {
-  if (stopping) return;
+// Own the server instead of polling a fixed port that may belong to another run.
+async function start() {
+  const { createServer } = await import("vite");
+  viteServer = await createServer({
+    configFile: path.join(root, "apps/desktop/vite.config.ts"),
+    server: { host: "127.0.0.1", port: 5173, strictPort: false },
+    optimizeDeps: { force: true }
+  });
+  await viteServer.listen();
+  if (stopping) { await viteServer.close(); return; }
+  rendererUrl = viteServer.resolvedUrls.local[0];
+  if (!rendererUrl) throw new Error("Vite did not provide a local renderer URL");
+  viteServer.printUrls();
+  watchMainProcess();
+  preloadWatcher = fs.watch(path.join(root, "apps/desktop/src/preload"), { recursive: true }, () => scheduleElectronRestart(true));
   process.stdout.write("Renderer ready. Starting TeXWeave with hot reload.\n");
   launchElectron();
-}).catch((error) => {
-  process.stderr.write(`Unable to start the renderer: ${error.message}\n`);
+}
+start().catch(error => {
+  console.error("Unable to start Debug:", error);
   stop(1);
 });

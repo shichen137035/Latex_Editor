@@ -266,6 +266,7 @@
   "placeholder.pdfTitle": "PDF output",
   "placeholder.pdf": "Compile the project to produce and display its PDF here.",
   "editor.noFile": "Select a text file from the Files sidebar to begin editing.",
+  "editor.toggleWhitespace": "Show whitespace",
   "editor.formatSource": "Format source",
   "editor.formatSourceHint": "Format LaTeX source code",
   "editor.quick.section": "Section",

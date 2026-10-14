@@ -315,6 +315,7 @@
   "placeholder.pdfTitle": "PDF 出力",
   "placeholder.pdf": "プロジェクトをコンパイルすると、ここに PDF が表示されます。",
   "editor.noFile": "ファイルサイドバーからテキストファイルを選択して編集を始めてください。",
+  "editor.toggleWhitespace": "空白文字を表示",
   "editor.quick.section": "セクション",
   "editor.quick.sectionShort": "節",
   "editor.environmentPicker.title": "環境を挿入",

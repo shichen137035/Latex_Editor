@@ -129,6 +129,7 @@
   "build.compiling": "Компиляциялануда…",
   "build.log": "Журнал",
   "editor.noFile": "Ашу үшін файлды таңдаңыз",
+  "editor.toggleWhitespace": "Бос орындарды көрсету",
   "spell.status.off": "Емлені тексеру өшірулі",
   "spell.menu.disable": "Емлені тексеруді өшіру",
   "common.sortAscending": "Өсу реті",

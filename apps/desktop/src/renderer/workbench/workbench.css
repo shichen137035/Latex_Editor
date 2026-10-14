@@ -167,6 +167,7 @@
 .split-toolbar .latex-toolbar, .split-toolbar .output-toolbar { background: transparent; }
 .split-toolbar-right { border-color: var(--workbench-edge); }
 .latex-toolbar button:not(.active):not(:disabled):hover, .output-toolbar button:not(.compile-button):not(:disabled):hover { background: var(--workbench-control-fill); box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--color-primary) 22%, var(--color-border)); }
+.latex-toolbar > button.active { color: var(--color-primary); background: color-mix(in srgb, var(--color-primary) 10%, var(--color-bg-panel)); box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--color-primary) 22%, var(--color-border)); }
 .view-switch { border-color: var(--workbench-edge); border-radius: 8px; background: var(--color-bg-subtle); }
 .view-switch button.active { background: var(--color-bg-panel); box-shadow: 0 1px 4px color-mix(in srgb, var(--color-text-primary) 12%, transparent), inset 0 0 0 1px color-mix(in srgb, var(--color-primary) 18%, var(--color-border)); }
 .work-pane { background: var(--color-bg-panel); }
