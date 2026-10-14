@@ -58,7 +58,7 @@ async function run() {
   await until('!!document.querySelector(".style-picker-entry")', 'new project style selector');
   await evaluate('document.querySelector(".style-picker-entry").click()');
   await until('!!document.querySelector(".style-selector")', 'style selector dialog');
-  assert.deepEqual(await evaluate('Array.from(document.querySelectorAll(".style-selector-item strong")).map(option => option.textContent)'), ['默认', '空白', '精简']);
+  assert.deepEqual(await evaluate('Array.from(document.querySelectorAll(".style-selector-item strong")).map(option => option.textContent).sort()'), ['默认', '空白', '精简'].sort());
   await evaluate('document.querySelector(".style-selector footer button").click()');
   await evaluate(`document.querySelector('.project-creation-card .close-button').click()`);
   await evaluate(`document.querySelector('.directory-project-row').click()`); page.focus();

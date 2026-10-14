@@ -1,9 +1,15 @@
-import { mkdir, readFile, symlink, writeFile } from "node:fs/promises";
+import { mkdir, readFile, readdir, rename, symlink, writeFile } from "node:fs/promises";
+import type * as FileSystem from "node:fs/promises";
 import { resolve } from "node:path";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { NodeProjectFileService } from "../../packages/filesystem-node/src/index.js";
 import type { TestBackend } from "../helpers/backend.js";
 import { createTestBackend } from "../helpers/backend.js";
+
+vi.mock("node:fs/promises", async importOriginal => {
+  const actual = await importOriginal<typeof FileSystem>();
+  return { ...actual, rename: vi.fn(actual.rename) };
+});
 
 describe("Project Manager and file service", () => {
   let backend: TestBackend;
@@ -38,6 +44,35 @@ describe("Project Manager and file service", () => {
     expect(await backend.files.readText(project.id, "chapters/intro.tex")).toMatchObject({ content: "hello", encoding: "utf8" });
     await expect(backend.files.writeText(project.id, "../outside.tex", "bad")).rejects.toMatchObject({ code: "INVALID_RELATIVE_PATH" });
   });
+
+  for (const permanent of [false, true]) {
+    it(`keeps atomic saves safe when a file lock is ${permanent ? "persistent" : "temporary"}`, async () => {
+      const folder = resolve(backend.root, "locked-project");
+      await mkdir(folder);
+      const path = resolve(folder, "main.tex");
+      await writeFile(path, "Original source");
+      const project = await backend.projects.registerExistingFolder(folder);
+      const actual = await vi.importActual<typeof FileSystem>("node:fs/promises");
+      let attempts = 0;
+      const locked = Object.assign(new Error("File temporarily locked"), { code: "EPERM" });
+      vi.mocked(rename).mockImplementation(async (source, destination) => {
+        if (destination === path && (++attempts <= 2 || permanent)) throw locked;
+        return actual.rename(source, destination);
+      });
+      try {
+        if (permanent) {
+          await expect(backend.files.writeText(project.id, "main.tex", "Revised source")).rejects.toBe(locked);
+          expect(await readFile(path, "utf8")).toBe("Original source");
+          expect(attempts).toBeLessThanOrEqual(8);
+        } else {
+          await backend.files.writeText(project.id, "main.tex", "Revised source");
+          expect(await readFile(path, "utf8")).toBe("Revised source");
+          expect(attempts).toBe(3);
+        }
+        expect((await readdir(folder)).some(name => name.endsWith(".tmp"))).toBe(false);
+      } finally { vi.mocked(rename).mockImplementation(actual.rename); }
+    });
+  }
 
   it("renames and removes project entries without leaving the project root", async () => {
     const folder = resolve(backend.root, "project");

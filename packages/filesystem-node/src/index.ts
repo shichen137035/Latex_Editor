@@ -3,6 +3,7 @@ export { consolidateProjectMetadata } from "./project-metadata.js";
 import { constants } from "node:fs";
 import { access, cp, lstat, mkdir, open, readdir, readFile, realpath, rename, rm, stat, writeFile } from "node:fs/promises";
 import { basename, dirname, isAbsolute, parse, relative, resolve, sep } from "node:path";
+import { setTimeout as delay } from "node:timers/promises";
 import { AppError, type FileWriteResult, type Project, type ProjectTreeNode, type TextFileContent } from "@latex-editor/contracts";
 
 export interface DirectoryInspection {
@@ -22,6 +23,20 @@ export interface ProjectLookup {
 
 export function hashText(content: string): string {
   return createHash("sha256").update(content, "utf8").digest("hex");
+}
+
+async function replaceSavedFile(tempPath: string, filePath: string): Promise<void> {
+  // Windows readers (including a TeX engine or virus scanner) can briefly deny replacement.
+  // Keep the original intact; retry only sharing/permission errors, with a finite wait.
+  const waits = [25, 50, 100, 200, 400, 800];
+  for (let attempt = 0; ; attempt++) {
+    try { await rename(tempPath, filePath); return; }
+    catch (error: unknown) {
+      const code = (error as NodeJS.ErrnoException)?.code;
+      if (!code || !["EPERM", "EACCES", "EBUSY"].includes(code) || attempt === waits.length) throw error;
+      await delay(waits[attempt]);
+    }
+  }
 }
 
 function isWithin(root: string, candidate: string): boolean {
@@ -144,7 +159,7 @@ export class NodeProjectEnvironment {
       } finally {
         await handle.close();
       }
-      await rename(tempPath, filePath);
+      await replaceSavedFile(tempPath, filePath);
     } catch (error: unknown) {
       await rm(tempPath, { force: true }).catch(() => undefined);
       throw error;
@@ -239,7 +254,7 @@ export class NodeProjectFileService {
       } finally {
         await handle.close();
       }
-      await rename(tempPath, filePath);
+      await replaceSavedFile(tempPath, filePath);
     } catch (error: unknown) {
       await rm(tempPath, { force: true }).catch(() => undefined);
       throw error;

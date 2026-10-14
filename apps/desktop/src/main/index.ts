@@ -1,4 +1,5 @@
 import { packageSmokeEnabled, finishPackageSmoke, checkPackageWindow } from "./package-smoke.js";
+import { LatexToolchainInstaller } from "./toolchain-installer.js";
 import { registerBlockGraphIpc } from "./block-graph-ipc.js";
 import { removeProjectData } from "./project-removal-data.js";
 import { registerStructureIpc } from "./structure-ipc.js";
@@ -6,7 +7,7 @@ import { registerWorkingDocumentIpc } from "./working-document-ipc.js";
 import { registerRelationIpc } from "./relation-ipc.js";
 import { desktopInvoke, desktopEvents, type UnsavedDialogLabels, type UnsavedDialogChoice } from "@latex-editor/contracts/desktop-ipc";
 import { handleIpc, onIpc, sendIpc } from "./ipc.js";
-import { app, BrowserWindow, clipboard, dialog, Menu, shell } from "electron";
+import { app, BrowserWindow, clipboard, dialog, Menu, net, shell } from "electron";
 import type { IpcMainInvokeEvent } from "electron";
 import { randomUUID } from "node:crypto";
 import { copyFile, readFile, stat, writeFile } from "node:fs/promises";
@@ -40,6 +41,7 @@ import { projectDirectorySize } from "./project-directory-size.js";
 
 let context: DesktopContext | undefined;
 let settings: SettingsRepository;
+let toolchainInstaller: LatexToolchainInstaller;
 const nativeText = (key: string) => translateNative(settings?.global.locale ?? "en", key);
 const closeStates = new Map<number, { pending: string | undefined; approved: boolean; ready: boolean }>();
 let quitRequested = false;
@@ -112,6 +114,16 @@ async function createContext(): Promise<DesktopContext> {
   relations.onEvent((projectId, event) => BrowserWindow.getAllWindows().forEach(window => sendIpc(window.webContents, desktopEvents.toRenderer.relationUpdate, { projectId, event })));
   await themes.setDirectory(settings.global.themeDirectory ?? "");
   const { discoverToolchain } = await import("@latex-editor/compiler-latexmk");
+  toolchainInstaller = new LatexToolchainInstaller({
+    defaultDirectory: join(app.getPath("userData"), "tools", "TinyTeX"),
+    fetch: (input, options) => net.fetch(input as string, options),
+    detect: discoverToolchain,
+    activate: async (toolchain, directory) => {
+      await settings.saveToolchain(toolchain);
+      await installation.recordEnvironment(toolchain);
+      await installation.recordComponent({ id: "latex-runtime", version: toolchain.version ?? "unknown", ownership: "installed-by-texweave", path: directory, source: "https://github.com/rstudio/tinytex-releases" });
+    }
+  });
   let detected = await discoverToolchain(settings.toolchain?.latexmk ?? settings.toolchain?.binDirectory);
   if (!detected.available) detected = await discoverToolchain();
   await settings.saveToolchain(detected);
@@ -411,7 +423,7 @@ function registerIpcHandlers(): void {
     return context.themes.remove(id);
   });
   handleIpc(desktopInvoke.settings.detectToolchain, async (_event, manual) => {
-    let path: string | undefined;
+    let path = settings.toolchain?.latexmk ?? settings.toolchain?.binDirectory;
     if (manual) {
       const selected = await dialog.showOpenDialog({ properties: [manual === "directory" ? "openDirectory" : "openFile"] });
       if (selected.canceled) return settings.toolchain;
@@ -423,6 +435,9 @@ function registerIpcHandlers(): void {
     if (context) await context.installation.recordEnvironment(detected);
     return detected;
   });
+  handleIpc(desktopInvoke.settings.toolchainInstallStatus, () => toolchainInstaller.status());
+  handleIpc(desktopInvoke.settings.installToolchain, (_event, directory) => toolchainInstaller.start(directory));
+  handleIpc(desktopInvoke.settings.cancelToolchainInstall, () => toolchainInstaller.cancel());
   handleIpc(desktopInvoke.projects.list, async () => {
     if (!context) return [];
     const projects = await context.projects.listProjects();
@@ -838,7 +853,7 @@ app.on("window-all-closed", () => {
     let shutdownTimer: ReturnType<typeof setTimeout> | undefined;
     const deadline = new Promise<void>(resolve => { shutdownTimer = setTimeout(resolve, 5000); });
     // An unresponsive provider must not prevent exit; orphan staging files are cleaned on next startup.
-    await Promise.race([Promise.allSettled([current?.ai.stop(), current?.aiWorkspaces.dispose()]), deadline]);
+    await Promise.race([Promise.allSettled([current?.ai.stop(), current?.aiWorkspaces.dispose(), toolchainInstaller?.dispose()]), deadline]);
     clearTimeout(shutdownTimer);
     try { await current?.blockGraph.reclaimAllProjectCaches({ kind: "shutdown" }); }
     catch (error) { console.warn("Unable to release every project cache during shutdown", error); }

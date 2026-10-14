@@ -74,8 +74,11 @@ export class AIWorkspaceService {
   #cancelingCopilot = new Map<string, ActiveCopilotTurn>();
   #writeChain = Promise.resolve();
   #saveTimer: ReturnType<typeof setTimeout> | undefined;
+  #conversationUpdateTimer: ReturnType<typeof setTimeout> | undefined;
+  #pendingConversationUpdates = new Map<string, AIConversation>();
   #queuedSends = new Map<string, QueuedSend>();
   #startingSends = new Map<string, { taskId: string; done: Promise<void> }>();
+  #queueDispatches = new Set<Promise<void>>();
   #queueControls = new Set<string>();
   #disposed = false;
   readonly #prepareContext: ((projectId: string | undefined, overrides: AIContextSnapshotFile[]) => Promise<PreparedContext>) | undefined;
@@ -160,16 +163,22 @@ export class AIWorkspaceService {
 
   async dispose(): Promise<void> {
     this.#disposed = true;
+    clearTimeout(this.#conversationUpdateTimer); this.#conversationUpdateTimer = undefined;
+    this.#pendingConversationUpdates.clear();
     for (const conversation of this.#data.conversations) if (conversation.queuedMessages?.length) {
       conversation.queuePaused = true;
       for (const queued of conversation.queuedMessages) queued.error = "ai.queueInterrupted";
     }
     await Promise.all([...this.#queuedSends.values()].map(entry => entry.lease?.release()));
     this.#queuedSends.clear();
-    await this.attachments.dispose();
     this.approvals.cancel(); this.#unsubscribe();
+    for (const entry of this.#startingSends.values()) this.#cancelRequested.add(entry.taskId);
     for (const turn of new Set([...this.#activeByThread.values(), ...this.#cancelingCopilot.values()])) if (turn.incremental.timer) clearInterval(turn.incremental.timer);
     for (const turn of this.#cancelingCopilot.values()) { turn.canceled = true; await turn.finish?.(); }
+    // Context preparation can outlive a close request. Its queue recovery must finish before the last save.
+    await Promise.all([...this.#startingSends.values()].map(entry => entry.done).concat([...this.#queueDispatches]));
+    await this.attachments.dispose();
+    this.#cancelRequested.clear();
     clearTimeout(this.#saveTimer); this.#saveTimer = undefined;
     try { await this.#persist(); }
     finally { await this.#copilot.dispose(); }
@@ -505,14 +514,15 @@ export class AIWorkspaceService {
     const entry = this.#queuedSends.get(metadata.id);
     if (!entry?.ready) return;
     this.#queuedSends.delete(entry.id); conversation.queuedMessages!.shift();
-    void this.#startSend(entry).catch(async error => {
-      metadata.error = error instanceof Error ? error.message : String(error);
+    const dispatch = this.#startSend(entry).then(() => undefined).catch(async error => {
+      metadata.error = this.#disposed ? "ai.queueInterrupted" : error instanceof Error ? error.message : String(error);
       // Consumed attachments cannot be retried after a failed dispatch.
       conversation.queuedMessages ??= [];
       conversation.queuedMessages.unshift(metadata); conversation.queuePaused = true;
       this.#publishConversation(conversation);
-      await this.#persist();
-    }).catch(error => console.error("Could not save queued AI message", error));
+      if (!this.#disposed) await this.#persist();
+    }).catch(error => console.error("Could not save queued AI message", error)).finally(() => { this.#queueDispatches.delete(dispatch); });
+    this.#queueDispatches.add(dispatch);
   }
 
   #queueTurnFinished(conversation: AIConversation, success: boolean): void {
@@ -564,9 +574,28 @@ export class AIWorkspaceService {
     this.#drainQueue(conversation);
   }
 
-  #publishConversation(conversation: AIConversation): void {
+  #publishConversation(conversation: AIConversation, streaming = false): void {
+    if (this.#disposed) return;
     conversation.revision = (conversation.revision ?? 0) + 1;
     conversation.updatedAt = Math.max(Date.now(), conversation.updatedAt + 1);
+    // Coalesce before cloning/IPC: renderer batching cannot recover the cost of copying history per token.
+    if (streaming) {
+      this.#pendingConversationUpdates.set(conversation.id, conversation);
+      if (!this.#conversationUpdateTimer) {
+        this.#conversationUpdateTimer = setTimeout(() => {
+          this.#conversationUpdateTimer = undefined;
+          const pending = [...this.#pendingConversationUpdates.values()];
+          this.#pendingConversationUpdates.clear();
+          for (const value of pending) this.#onUpdate("conversation", structuredClone(value));
+        }, 50);
+        this.#conversationUpdateTimer.unref?.();
+      }
+      return;
+    }
+    this.#pendingConversationUpdates.delete(conversation.id);
+    if (!this.#pendingConversationUpdates.size) {
+      clearTimeout(this.#conversationUpdateTimer); this.#conversationUpdateTimer = undefined;
+    }
     this.#onUpdate("conversation", structuredClone(conversation));
   }
 
@@ -878,7 +907,7 @@ export class AIWorkspaceService {
         const id = event.data.messageId;
         updateResponseText(assistantMessage, id, event.data.deltaContent, false);
         conversation.updatedAt = Date.now();
-        this.#publishConversation(conversation);
+        this.#publishConversation(conversation, true);
         this.#schedulePersist();
       }));
       turn.unsubscribe.push(session.on("assistant.message", (event) => {
@@ -892,7 +921,7 @@ export class AIWorkspaceService {
         if (turn.complete) return;
         updateReasoning(assistantMessage, id, text, complete);
         conversation.updatedAt = Date.now();
-        this.#publishConversation(conversation);
+        this.#publishConversation(conversation, !complete);
         this.#schedulePersist();
       };
       turn.unsubscribe.push(session.on("assistant.reasoning_delta", (event) => {
@@ -1096,13 +1125,14 @@ export class AIWorkspaceService {
       const item = params.item as Record<string, unknown> | undefined;
       if (item?.type === "reasoning") message.activity = "thinking";
       else if (item?.type === "commandExecution" || item?.type === "mcpToolCall" || item?.type === "dynamicToolCall") message.activity = "working";
+      else return;
     }
     else if (method === "item/completed") {
       const item = params.item && typeof params.item === "object" ? params.item as Record<string, unknown> : {};
       if (item.type === "agentMessage" && typeof item.text === "string") updateResponseText(message, String(item.id ?? "answer"), item.text, true);
-      if (item.type === "reasoning" && Array.isArray(item.summary)) {
+      else if (item.type === "reasoning" && Array.isArray(item.summary)) {
         item.summary.forEach((text, index) => { if (typeof text === "string") updateReasoning(message, `${String(item.id)}:${index}`, text, true); });
-      }
+      } else return;
     } else if (method === "turn/completed") {
       const turn = params.turn && typeof params.turn === "object" ? params.turn as Record<string, unknown> : {};
       message.status = active.canceled ? "complete" : turn.status === "failed" ? "error" : "complete";
@@ -1128,8 +1158,8 @@ export class AIWorkspaceService {
       delete message.completedAt;
       const turn = params.turn as Record<string, unknown> | undefined;
       if (typeof turn?.id === "string") active.turnId = turn.id;
-    }
-    this.#publishConversation(conversation);
+    } else return;
+    this.#publishConversation(conversation, method === "item/agentMessage/delta" || method === "item/reasoning/summaryTextDelta");
     if (method !== "turn/completed") { this.#schedulePersist(); return; }
     try { await this.#persist(); }
     catch (error) {
@@ -1251,7 +1281,7 @@ export class AIWorkspaceService {
   }
 
   #schedulePersist(): void {
-    if (this.#saveTimer) return;
+    if (this.#disposed || this.#saveTimer) return;
     this.#saveTimer = setTimeout(() => {
       this.#saveTimer = undefined;
       void this.#persist().catch(error => console.error("Could not save AI progress", error));

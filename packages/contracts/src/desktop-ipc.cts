@@ -3,6 +3,7 @@ import type { AIStatus, AIModelOption, AIConversation, AIChangeSet, AIContextSna
 import type { BlockApiResult, DocumentBlockApi, DocumentStructure, AIApprovalRequest, WorkingDocumentInput, WorkingDocumentResult } from "./index.js" with { "resolution-mode": "import" };
 
 import type { InstallationState, InstalledComponent, RemoveUserDataOptions } from "./installation.js" with { "resolution-mode": "import" };
+import type { ToolchainInstallStatus } from "./toolchain-install.js" with { "resolution-mode": "import" };
 import type { ProjectPdfDocument } from "./index.js" with { "resolution-mode": "import" };
 import type { RelationAPI, RelationEvent } from "./relations.js" with { "resolution-mode": "import" };
 
@@ -84,6 +85,9 @@ export const desktopInvoke = {
     get: invoke<(projectId?: string) => Promise<SettingsSnapshot>>("settings:get"),
     set: invoke<(key: PreferenceKey, value: unknown, projectId?: string) => Promise<SettingsSnapshot>>("settings:set"),
     detectToolchain: invoke<(manual?: "directory" | "executable") => Promise<LatexToolchain | undefined>>("toolchain:detect"),
+    toolchainInstallStatus: invoke<() => Promise<ToolchainInstallStatus>>("toolchain:install-status"),
+    installToolchain: invoke<(directory: string) => Promise<ToolchainInstallStatus>>("toolchain:install"),
+    cancelToolchainInstall: invoke<() => Promise<ToolchainInstallStatus>>("toolchain:install-cancel"),
   },
   installation: {
     state: invoke<() => Promise<InstallationState | undefined>>("installation:state"),

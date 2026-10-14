@@ -35,6 +35,7 @@ export function windowsLatexPathCandidates(environment: NodeJS.ProcessEnv = proc
     `${programFiles}\\MiKTeX\\miktex\\bin\\x64`, `${programFiles}\\MiKTeX\\miktex\\bin`,
     `${programFilesX86}\\MiKTeX\\miktex\\bin\\x64`, `${programFilesX86}\\MiKTeX\\miktex\\bin`,
     ...(roaming ? [`${roaming}\\TinyTeX\\bin\\windows`] : []),
+    ...(roaming ? [`${roaming}\\TeXWeave\\tools\\TinyTeX\\bin\\windows`, `${roaming}\\TeXWeave\\tools\\TinyTeX\\tlpkg\\tlperl\\bin`] : []),
     "C:\\Strawberry\\perl\\bin", "C:\\Strawberry\\c\\bin"
   ];
   const texLiveRoot = "C:\\texlive";
@@ -72,6 +73,7 @@ export interface CompilerProjectPort {
 type DetectedTool = "latexmk" | "pdflatex" | "xelatex" | "lualatex" | "bibtex" | "biber" | "makeindex";
 
 async function inspectExecutable(executable: string, env: NodeJS.ProcessEnv): Promise<{ ok: boolean; version?: string }> {
+  env = environmentWithToolRuntime(executable, env);
   const output = await new Promise<{ code: number | null; text: string }>((done) => {
     const child = spawn(executable, ["--version"], { shell: false, windowsHide: true, env });
     let text = "";
@@ -81,8 +83,11 @@ async function inspectExecutable(executable: string, env: NodeJS.ProcessEnv): Pr
     child.once("error", () => { clearTimeout(timer); done({ code: null, text }); });
     child.once("close", (code) => { clearTimeout(timer); done({ code, text }); });
   });
-  const version = output.text.match(/\b\d{4}(?:\.\d+)*\b|\b\d+\.\d+(?:\.\d+)*\b/)?.[0];
-  return { ok: output.code === 0, ...(version ? { version } : {}) };
+  const version = output.text.match(/\bVersion[ :]+(\d+(?:\.\d+)+)/i)?.[1] ?? output.text.match(/\b\d{4}(?:\.\d+)*\b|\b\d+\.\d+(?:\.\d+)*\b/)?.[0];
+  // TeX Live MakeIndex has no --version option; its usage response confirms
+  // that the executable runs. MiKTeX supports --version and returns zero.
+  const makeindexUsage = /^(?:makeindex)(?:\.exe)?$/i.test(basename(executable)) && output.code === 1 && /Usage: makeindex\s/.test(output.text);
+  return { ok: output.code === 0 || makeindexUsage, ...(version ? { version } : {}) };
 }
 
 function toolDirectories(preferred: string | undefined, env: NodeJS.ProcessEnv): string[] {
@@ -141,9 +146,23 @@ export async function discoverToolchain(preferred?: string): Promise<LatexToolch
   };
 }
 
+/** Portable TeX Live carries the Perl runtime used by latexmk in its own tree. */
+export function environmentWithToolRuntime(executable: string, env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
+  if (!isAbsolute(executable)) return env;
+  const bin = dirname(executable);
+  const perl = resolve(bin, "../../tlpkg/tlperl/bin");
+  const result = { ...env };
+  const inherited = Object.entries(env).find(([key]) => key.toLowerCase() === "path")?.[1] ?? "";
+  for (const key of Object.keys(result)) if (key.toLowerCase() === "path") delete result[key];
+  result.PATH = [bin, ...(process.platform === "win32" && existsSync(perl) ? [perl] : []), inherited].join(delimiter);
+  if (process.platform === "win32" && existsSync(perl)) {
+    for (const key of Object.keys(result)) if (key === "LANG" || key.startsWith("LC_")) delete result[key];
+  }
+  return result;
+}
+
 function profileEnvironment(executable: string): NodeJS.ProcessEnv {
-  const env = compilerEnvironment();
-  return isAbsolute(executable) ? { ...env, PATH: [dirname(executable), env.PATH ?? env.Path ?? ""].join(delimiter) } : env;
+  return environmentWithToolRuntime(executable, compilerEnvironment());
 }
 
 export interface CompilerFilePort {

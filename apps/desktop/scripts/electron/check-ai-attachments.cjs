@@ -122,10 +122,10 @@ async function run() {
   console.log(`PASS composer: 40 Markdown/formula messages; input batch ${typing.milliseconds.toFixed(1)}ms, ${typing.reads} height measurement(s); latest text sent intact`);
   const longDraft = Array.from({length:40}, (_, index) => 'Draft line '+index).join('\n');
   await evaluate(`(() => {const input=document.querySelector('.ai-composer textarea');Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype,'value').set.call(input,${JSON.stringify(longDraft)});input.dispatchEvent(new Event('input',{bubbles:true}));input.setSelectionRange(10,12);})()`);
-  await until(() => evaluate("document.querySelector('.ai-composer textarea').style.height === '110px'"), "normal composer height cap");
+  await until(() => evaluate("(() => {const input=document.querySelector('.ai-composer textarea');return Math.abs(input.getBoundingClientRect().height-110)<1 && input.scrollHeight>input.clientHeight;})()"), "normal composer height cap and internal scrolling");
   assert.equal(await evaluate("getComputedStyle(document.querySelector('.ai-composer textarea')).overflowY"), 'auto');
   await evaluate("document.querySelector('.ai-composer-expand').click()");
-  await until(() => evaluate("!!document.querySelector('.ai-composer-backdrop') && parseFloat(document.querySelector('.ai-composer textarea').style.height)>200"), "expanded input panel");
+  await until(() => evaluate("!!document.querySelector('.ai-composer-backdrop') && document.querySelector('.ai-composer textarea').getBoundingClientRect().height>200"), "expanded input panel");
   assert.equal(await evaluate("document.querySelector('.ai-composer textarea').value"),longDraft);
   assert.deepEqual(await evaluate("[document.querySelector('.ai-composer textarea').selectionStart,document.querySelector('.ai-composer textarea').selectionEnd]"),[10,12]);
   await evaluate("(() => {const input=document.querySelector('.ai-composer textarea');Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype,'value').set.call(input,input.value+'\\nExpanded edit');input.dispatchEvent(new Event('input',{bubbles:true}));document.querySelector('.ai-composer-backdrop').dispatchEvent(new MouseEvent('mousedown',{bubbles:true}));})()");

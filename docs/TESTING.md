@@ -66,6 +66,36 @@ repeatable and never consumes account quota. `npm run desktop:ai-probe` remains
 an optional live-service check; it requires an authenticated local profile and
 may use service quota, so it is not part of automated release verification.
 
+Performance regressions use separate evidence: `source-performance` checks
+long-file scrolling and full-document reads; `ai-review` checks history render
+counts and input timing; AI lifecycle unit tests check that bursts of streamed
+text/reasoning produce bounded history snapshots for both providers, preserve
+all text and flush completion without delayed stale updates. Queue shutdown
+tests hold context preparation open while closing and verify that final history
+retains the interrupted request. File integration tests inject temporary and
+persistent replacement locks, checking successful recovery or preservation of
+the original source and cleanup of temporary files. `ai-attachments`
+checks the actual composer dimensions and scroll overflow rather than assuming
+JavaScript sets an inline height.
+
+Keep each desktop check's catalog environment when running it. Do not force
+`TEXWEAVE_UI_TEST_OFFSCREEN=1` across the whole suite: maximization assertions
+and PDF reading-position checks depend on the real viewport. A small hidden
+window can clamp scrolling before the last page reaches the top. Reproduce
+such failures in the normal window before diagnosing an application defect.
+
+性能回归分别检查：`source-performance` 的长文件滚动和全文读取次数、
+`ai-review` 的历史消息渲染次数及输入耗时，以及 AI 生命周期单元测试中
+两种接口的流式更新合并、完整文字保留和结束通知。`ai-attachments` 检查
+输入框实际尺寸及内部滚动，不依赖某一种高度实现。队列退出测试模拟准备上下文时
+关闭程序，验证最终历史仍保留被中断的请求；文件集成测试模拟临时和持续的替换锁，
+验证恢复保存，或在失败时保留原文并清理临时文件。
+
+桌面检查应使用目录中各自的运行环境，不要统一强制
+`TEXWEAVE_UI_TEST_OFFSCREEN=1`。最大化状态与 PDF 阅读位置依赖实际窗口尺寸；
+较小的隐藏窗口可能让最后一页无法滚动到顶部。此类失败应先在正常窗口中复现，
+再判断是否属于软件问题。
+
 `multi-compile` covers independent PDF targets, the preview document selector,
 per-document reading positions, automatic following and its settings toggle,
 included-file ownership, and local PDF links. The real compiler suite separately

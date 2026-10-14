@@ -78,6 +78,7 @@ apps/desktop/
 | 文献与图片 | `references.ts`、`images.ts`、`graphic-dependencies.ts` | 文献库、项目图片导入和图片依赖 |
 | 设置与资源 | `settings.ts`、`themes.ts`、`style-resources.ts`、`spellcheck*.ts`、`i18n.ts` | 设置持久化、主题、样式资源、拼写检查和界面语言 |
 | 安全与安装 | `renderer-security.ts`、`installation.ts`、`app-info.ts` | 窗口安全策略、安装状态、版本和应用信息 |
+| LaTeX 环境安装 | `toolchain-installer.ts`、Renderer `settings/ToolchainInstallPanel.tsx` | 后台下载与校验 TinyTeX、补装引擎、取消与修复、完成后启用工具链；详见 [安装接口说明](../LATEX_TOOLCHAIN_INSTALLATION.md) |
 
 `ai/` 中的 `ai-workspace.ts` 协调对话和任务；`codex-app-server.ts`、`copilot-chat.ts` 适配不同供应商；`block-tools.ts`、`relation-tools.ts`、`project-resources.ts` 定义工具接口；`ai-approvals.ts`、`approval-requests.ts`、`relation-review.ts` 处理审批；`attachment-store.ts`、`workspaceFiles.ts`、`send-context.ts` 管理附件、工作副本和上下文。
 

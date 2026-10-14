@@ -216,7 +216,7 @@ function ProjectDirectory({ projects, onProjectsChange, onOpen, onOpenLibrary, s
       else setError(reason instanceof Error ? reason.message : String(reason));
     } finally { setBusy(false); }
   };
-  const createProject = async () => { if (!api || !name.trim() || !parentPath.trim()) return; setBusy(true); try { const project = await api.projects.create({ name: name.trim(), parentPath: parentPath.trim(), styleResourceIds: [baseResource, ...extraResources] }); onProjectsChange([project, ...projects]); setCreateOpen(false); setName(""); setQuery(""); setPreferences((value) => ({ ...value, tab: "all" })); } catch (reason) { setError(reason instanceof Error ? reason.message : String(reason)); } finally { setBusy(false); } };
+  const createProject = async () => { if (!api || !name.trim() || !parentPath.trim()) return; setBusy(true); try { const project = await api.projects.create({ name: name.trim(), parentPath: parentPath.trim(), styleResourceIds: [baseResource, ...extraResources].filter(id => id && id !== "empty") }); onProjectsChange([project, ...projects]); setCreateOpen(false); setName(""); setQuery(""); setPreferences((value) => ({ ...value, tab: "all" })); } catch (reason) { setError(reason instanceof Error ? reason.message : String(reason)); } finally { setBusy(false); } };
   const updateEntry = async (project: Project, patch: { displayName?: string; isFavorite?: boolean; isPinned?: boolean }) => {
     if (!api) return;
     try { const updated = await api.projects.updateDirectoryEntry(project.id, patch); onProjectsChange((current) => current.map((item) => item.id === updated.id ? { ...item, settings: updated.settings } : item)); setError(undefined); }

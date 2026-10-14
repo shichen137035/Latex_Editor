@@ -101,6 +101,28 @@ async function run() {
   await reopen('dark');
   const tokenColors = await colors(), tokenText = luminosity(tokenColors.fixedBody), tokenFill = luminosity(tokenColors.fixedFill);
   assert.ok((Math.max(tokenText, tokenFill) + .05) / (Math.min(tokenText, tokenFill) + .05) >= 4.45, 'explicit CSS variable fill resolves after theme role update');
+  for (const managerTheme of ['dark', 'tech-dark']) {
+    await reopen(managerTheme);
+    page.webContents.sendInputEvent({ type: 'keyDown', keyCode: ',', modifiers: ['control'] });
+    page.webContents.sendInputEvent({ type: 'keyUp', keyCode: ',', modifiers: ['control'] });
+    await until('!!document.querySelector(".preferences-body")', 'manager settings');
+    await evaluate(`document.querySelector('[data-section="projectBuild"]').click(); document.querySelectorAll('.settings-level-switch button')[1].click()`);
+    await until('!!document.querySelector("[data-manager=blockEnvironments]")', 'block manager entry');
+    await evaluate('document.querySelector("[data-manager=blockEnvironments]").click()');
+    await until('!!document.querySelector(".environment-catalog-toolbar")', 'block manager');
+    for (const selector of ['.environment-catalog-toolbar', '.environment-catalog-search input', '.environment-catalog-filters select', '.environment-editor', '.environment-form-grid input', '.color-token-picker', '.environment-preview-sample-button']) {
+      const background = await evaluate(`getComputedStyle(document.querySelector(${JSON.stringify(selector)})).backgroundColor`);
+      assert.ok(luminosity(background) < .25, `${managerTheme} ${selector} must not retain a light background: ${background}`);
+    }
+    writeFileSync(join(root, `manager-${managerTheme}.png`), (await page.webContents.capturePage()).toPNG());
+    await evaluate('document.querySelectorAll(".environment-manager-mode button")[1].click()');
+    await until('!!document.querySelector(".environment-xml textarea")', 'XML editor');
+    const xmlBackground = await evaluate('getComputedStyle(document.querySelector(".environment-xml textarea")).backgroundColor');
+    assert.ok(luminosity(xmlBackground) < .25, `${managerTheme} XML editor must use a dark surface`);
+    await evaluate('document.querySelector(".settings-manager-return").click()');
+    await until('!!document.querySelector(".settings-dialog-header")', 'return from block manager');
+    await evaluate('document.querySelector(".settings-dialog-header .settings-close").click()');
+  }
   assert.deepEqual(errors, []);
   console.log('PASS light/dark/custom adaptation, fixed colors, commands, live parameter editing and theme switching in manager');
   console.log(`Artifacts: ${root}`);

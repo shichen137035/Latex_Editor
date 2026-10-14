@@ -381,5 +381,6 @@ export interface ReferenceImportResult {
 export interface CompilerProfile { id: string; executable: string; arguments: string[]; timeoutMs: number }
 
 export * from "./installation.js";
+export * from "./toolchain-install.js";
 export type { DesktopApi, DesktopInvokeApi } from "./desktop-ipc.cjs";
 

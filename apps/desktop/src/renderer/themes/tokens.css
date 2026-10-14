@@ -14,6 +14,14 @@ body, .app-shell { background: var(--color-bg-app); color: var(--color-text-prim
 .structured-preview { background: var(--color-bg-panel); }.structured-preview > article,.preview-display-math,.preview-inline-math { color: var(--color-text-primary); }
 .preview-reference { color: var(--color-link, var(--color-primary-strong)); background: color-mix(in srgb, var(--color-primary) 9%, var(--color-bg-panel)); }.preview-content-region:hover { background: var(--color-bg-hover); }
 .environment-xml-error,.inline-error { color: var(--color-error); background: var(--color-bg-panel); border-color: var(--color-error); }
+/* Legacy controls share theme surfaces in normal, empty and hover states. */
+.check-box,.coming-card { background: var(--color-bg-panel); border-color: var(--color-border); }
+.settings-navigation,.menu-icon,.empty-icon { background: var(--color-bg-subtle); border-color: var(--color-border); }
+.menu-icon,.empty-icon { color: var(--color-primary); }
+.new-menu button,.empty-state h2 { color: var(--color-text-primary); }
+.empty-state p,.table-head { color: var(--color-text-secondary); }
+.secondary-button:hover { background: var(--color-bg-hover); border-color: var(--color-primary); }
+.dashboard-library-button { background: color-mix(in srgb, var(--color-bg-panel) 76%, transparent); border-color: var(--color-border); color: var(--color-primary-strong); }
 :root[data-theme="dark"] .pane-placeholder,
 :root[data-theme="tech-dark"] .pane-placeholder { background: var(--color-bg-panel); }
 .latex-toolbar { position: relative; }.latex-toolbar .view-switch { flex-shrink: 0; margin-left: auto; }

@@ -1,5 +1,5 @@
 const { app, BrowserWindow, dialog } = require("electron");
-const { mkdtempSync, mkdirSync, readFileSync, writeFileSync, existsSync } = require("node:fs");
+const { mkdtempSync, mkdirSync, readFileSync, readdirSync, writeFileSync, existsSync } = require("node:fs");
 const { tmpdir } = require("node:os");
 const { resolve } = require("node:path");
 const assert = require("node:assert/strict");
@@ -20,11 +20,55 @@ const click = async (selector) => {
 };
 const select = (selector, value) => js(`(() => { const el=document.querySelector(${JSON.stringify(selector)}); el.value=${JSON.stringify(value)}; el.dispatchEvent(new Event('change',{bubbles:true})); })()`);
 function key(keyCode, modifiers) { page.webContents.sendInputEvent({type:"keyDown",keyCode,modifiers}); page.webContents.sendInputEvent({type:"keyUp",keyCode,modifiers}); }
+async function checkStylePicker() {
+  const imported = [];
+  for (let index = 0; index < 40; index++) {
+    const stem = 'journal-' + String(index).padStart(2, '0'), path = resolve(root, stem + '.sty');
+    writeFileSync(path, '\\ProvidesPackage{' + stem + '}\n');
+    imported.push(await js(`window.latexEditor.styleResources.importFiles([${JSON.stringify(path)}],${JSON.stringify('Template ' + index + ' — A long journal style name for checking truncation and large collections')})`));
+  }
+  page.reload(); await until('!!document.querySelector(".directory-new-main")', 'styles refreshed');
+  await click('.directory-new-main'); await click('.style-picker-entry');
+  await until('document.querySelectorAll(".style-selector-list input").length === 42', 'forty user styles and two built-in styles');
+  await click('.style-selector-item[data-resource-id="default"] input');
+  assert.equal(await js('document.querySelector(".style-selector-empty").getAttribute("aria-pressed")'), 'true');
+  await click(`.style-selector-item[data-resource-id="${imported[0].id}"] input`);
+  assert.equal(await js('document.querySelector(".style-selector-item[data-resource-id=default] input").checked'), false);
+  await click('.style-selector-item[data-resource-id="light"] input');
+  await click('.style-selector-item[data-resource-id="default"] input');
+  assert.equal(await js('document.querySelector(".style-selector-item[data-resource-id=light] input").checked'), false);
+  await js(`(() => { const input=document.querySelector('.style-selector-search'); Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value').set.call(input,'journal-37.sty'); input.dispatchEvent(new Event('input',{bubbles:true})); })()`);
+  await until('document.querySelectorAll(".style-selector-list input").length === 1', 'search by .sty filename');
+  await click('.style-selector-list input');
+  await js(`(() => { const input=document.querySelector('.style-selector-search'); Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value').set.call(input,''); input.dispatchEvent(new Event('input',{bubbles:true})); })()`);
+  await click('.style-selector-tools > div button:last-child');
+  await until('document.querySelectorAll(".style-selector-list input").length === 3', 'selected-only view');
+  await click('.style-selector-tools > div button:first-child');
+  const bounds = await js(`(() => { const dialog=document.querySelector('.style-selector'), list=document.querySelector('.style-selector-list'), rect=dialog.getBoundingClientRect(); return {top:rect.top,bottom:rect.bottom,height:innerHeight,scrolls:list.scrollHeight>list.clientHeight,overflow:dialog.scrollWidth-dialog.clientWidth}; })()`);
+  assert.ok(bounds.top >= 0 && bounds.bottom <= bounds.height && bounds.scrolls && bounds.overflow <= 1, JSON.stringify(bounds));
+  writeFileSync(resolve(root, 'style-picker-many.png'), (await page.webContents.capturePage()).toPNG());
+  await click('.style-selector-item[data-resource-id="default"] input');
+  await click('.style-selector footer button');
+  const summary = await js(`(() => { const text=document.querySelector('.style-picker-summary strong'), card=document.querySelector('.project-creation-card').getBoundingClientRect(); return {font:parseFloat(getComputedStyle(text).fontSize),ellipsis:getComputedStyle(text).textOverflow,truncated:text.scrollWidth>text.clientWidth,badge:document.querySelector('.style-picker-count')?.textContent,fits:card.left>=0 && card.right<=innerWidth}; })()`);
+  assert.ok(summary.font <= 15 && summary.truncated && summary.fits, JSON.stringify(summary)); assert.equal(summary.ellipsis, 'ellipsis'); assert.equal(summary.badge, '+1');
+  await click('.style-picker-entry'); await click('.style-selector-clear');
+  assert.equal(await js('document.querySelectorAll(".style-selector-list input:checked").length'), 0);
+  await click('.style-selector footer button');
+  assert.equal(await js('document.querySelector(".style-picker-summary strong").textContent'), 'Empty');
+  await js(`(() => { const inputs=document.querySelectorAll('.project-creation-card .field-label input'); for (const [index,value] of ${JSON.stringify(['foundation-empty-ui', resolve(root, 'projects')])}.entries()) { Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value').set.call(inputs[index],value); inputs[index].dispatchEvent(new Event('input',{bubbles:true})); } })()`);
+  await click('.project-creation-card .modal-actions .primary-button');
+  await until('!document.querySelector(".project-creation-card")', 'create project with no selected styles');
+  const folder = resolve(root, 'projects/foundation-empty-ui');
+  assert.equal(readdirSync(folder).some(name => name.endsWith('.sty')), false);
+  assert.doesNotMatch(readFileSync(resolve(folder, 'main.tex'), 'utf8'), /\\usepackage/);
+  console.log('PASS optional/Empty styles, custom-only selection, built-in exclusivity, filename search, selected-only view, bounded 40-style list and compact summary');
+}
 async function run() {
   for (let i = 0; i < 150 && !BrowserWindow.getAllWindows().length; i++) await delay(100);
   page = BrowserWindow.getAllWindows()[0];
   assert.ok(page);
   await until('!!document.querySelector(".directory-topbar")', "directory");
+  await checkStylePicker();
   await click('.directory-actions > .icon-button:last-child');
   await click('[data-section="general"]');
   await select('[data-setting="locale"] select', 'ja');

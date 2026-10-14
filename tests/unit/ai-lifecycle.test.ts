@@ -50,6 +50,73 @@ async function fixture(mode: "chat" | "codex", prepareContext?: ConstructorParam
 }
 
 for (const mode of ["chat", "codex"] as const) {
+  it(`${mode} batches streamed history updates and delivers completion without stale trailing updates`, async () => {
+    const f = await fixture(mode);
+    await f.send();
+    f.updates.length = 0;
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    for (let index = 0; index < 100; index++) {
+      f.emit(mode === "chat" ? "assistant.message_delta" : "item/agentMessage/delta",
+        mode === "chat" ? { messageId: "answer", deltaContent: "x" } : { itemId: "answer", delta: "x" });
+      f.emit(mode === "chat" ? "assistant.reasoning_delta" : "item/reasoning/summaryTextDelta",
+        mode === "chat" ? { reasoningId: "reason", deltaContent: "y" } : { itemId: "reason", delta: "y" });
+    }
+    // IPC snapshots include the whole history, so a token burst must not copy it per token.
+    expect(f.updates.length).toBeLessThanOrEqual(1);
+    await vi.advanceTimersByTimeAsync(50);
+    expect(f.updates.length).toBe(1);
+    expect(f.updates[0]!.messages.at(-1)!.content).toBe("x".repeat(100));
+    expect(f.updates[0]!.messages.at(-1)!.reasoning?.[0]?.text).toBe("y".repeat(100));
+    if (mode === "codex") {
+      for (let index = 0; index < 100; index++) f.emit("item/commandExecution/outputDelta", { delta: "Log output" });
+      await vi.advanceTimersByTimeAsync(50);
+      expect(f.updates.length).toBe(1);
+    }
+    f.emit(mode === "chat" ? "assistant.message_delta" : "item/agentMessage/delta",
+      mode === "chat" ? { messageId: "answer", deltaContent: "last" } : { itemId: "answer", delta: "last" });
+    f.finish();
+    await vi.waitFor(() => expect(f.updates.at(-1)?.messages.at(-1)?.status).toBe("complete"));
+    expect(f.updates.at(-1)!.messages.at(-1)!.content).toBe("x".repeat(100) + "last");
+    const completedCount = f.updates.length;
+    await vi.advanceTimersByTimeAsync(100);
+    expect(f.updates.length).toBe(completedCount);
+    await f.service.dispose();
+    const closing = await fixture(mode);
+    await closing.send();
+    closing.emit(mode === "chat" ? "assistant.message_delta" : "item/agentMessage/delta",
+      mode === "chat" ? { messageId: "next", deltaContent: "Pending at shutdown" } : { itemId: "next", delta: "Pending at shutdown" });
+    const shutdownCount = closing.updates.length;
+    await closing.service.dispose();
+    await vi.advanceTimersByTimeAsync(100);
+    expect(closing.updates.length).toBe(shutdownCount);
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it(`${mode} settles a queued context preparation before saving final shutdown history`, async () => {
+    let release!: () => void;
+    const gate = new Promise<void>(resolve => { release = resolve; });
+    let preparations = 0;
+    const f = await fixture(mode, async () => { if (++preparations === 2) await gate; return {}; });
+    try {
+      await f.send("First request");
+      await f.send("Keep this queued request");
+      f.finish();
+      await vi.waitFor(() => expect(preparations).toBe(2));
+      const shutdown = f.service.dispose();
+      // The queue dispatch is already preparing context when shutdown begins.
+      let shutdownFinished = false;
+      void shutdown.then(() => { shutdownFinished = true; });
+      await new Promise(resolve => setTimeout(resolve, 100));
+      expect(shutdownFinished).toBe(false);
+      release();
+      await shutdown;
+      const saved = JSON.parse(await readFile(join(f.root, "ai/conversations.json"), "utf8")) as { conversations: AIConversation[] };
+      expect(saved.conversations[0]!.queuedMessages).toEqual([expect.objectContaining({ content: "Keep this queued request", error: "ai.queueInterrupted" })]);
+      expect(saved.conversations[0]!.queuePaused).toBe(true);
+      expect(mode === "chat" ? f.session.send : f.codexMock.startTurn).toHaveBeenCalledTimes(1);
+    } finally { release(); await f.service.dispose(); }
+  });
+
   it(`${mode} keeps a send lease alive when its draft closes during context preparation`, async () => {
     const f = await fixture(mode);
     const draftId = randomUUID(); f.service.openAttachmentDraft("project", draftId);

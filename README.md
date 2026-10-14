@@ -25,7 +25,7 @@ Developer documentation: [feature catalog and help gaps](docs/FEATURE_CATALOG_AN
 
 - Node.js 22 or later; npm is included with Node.js.
 - Install project dependencies before developing or launching the desktop application.
-- Compiling LaTeX requires `latexmk`, Perl, and a TeX distribution such as MiKTeX or TeX Live. The Windows app checks common installation locations; add tools to `PATH` for nonstandard installations.
+- Compiling LaTeX requires a TeX toolchain. On Windows x64, Settings → Project build → Advanced → Local LaTeX toolchain can automatically install TinyTeX (TeX Live), the standard engines, latexmk, bibliography/index tools and its Perl runtime into a chosen folder. Existing MiKTeX and TeX Live installations can also be detected or located manually. See [automatic LaTeX installation](docs/LATEX_TOOLCHAIN_INSTALLATION.md).
 
 ## Develop and run
 
@@ -170,7 +170,7 @@ TeXWeave 采用 [PolyForm Internal Use License 1.0.0](LICENSE)，允许接收者
 
 - Node.js 22 或更新版本；npm 随 Node.js 一同安装。
 - 开发或启动桌面应用前，需要安装项目依赖。
-- 编译 LaTeX 需要 `latexmk`、Perl 和 TeX 发行版，例如 MiKTeX 或 TeX Live。Windows 应用会检查常见安装位置；非标准安装请将工具加入 `PATH`。
+- 编译 LaTeX 需要 TeX 工具链。Windows x64 用户可在设置 → 项目构建 → 高级 → 本地 LaTeX 工具链中，选择目录自动安装 TinyTeX（TeX Live）、标准引擎、latexmk、文献与索引工具及其 Perl 环境。也可检测或手动定位已有的 MiKTeX 和 TeX Live。详见[自动安装 LaTeX 环境](docs/LATEX_TOOLCHAIN_INSTALLATION.md)。
 
 ## 开发与启动
 
