@@ -25,7 +25,6 @@ function verify() {
     throw new Error(`package-lock version (${lock.packages?.[""]?.version ?? "missing"}) does not match package.json (${manifest.version}).`);
   }
 
-  requireFile(path.join(appDirectory, "TeXWeave.exe"), "unpacked application executable");
   requireFile(archivePath, "application archive");
   const entries = new Set(asar.listPackage(archivePath).map((entry) => entry.replaceAll("\\", "/").replace(/^\/+/, "")));
   const packagedManifest = JSON.parse(asar.extractFile(archivePath, "package.json").toString("utf8"));
@@ -50,22 +49,18 @@ function verify() {
     const packageManifestPath = path.join(packageRoot, "package.json");
     if (!fs.existsSync(packageManifestPath)) continue;
     const packageManifest = JSON.parse(fs.readFileSync(packageManifestPath, "utf8"));
+    if (packageManifest.name === "@latex-editor/test-support") continue;
     requireArchiveEntry(entries, `packages/${directory.name}/package.json`, `${packageManifest.name} workspace manifest`);
     requireArchiveEntry(entries, `packages/${directory.name}/dist/index.js`, `${packageManifest.name} runtime entry`);
+  }
+  if ([...entries].some((entry) => entry.startsWith("packages/test-support/"))) {
+    throw new Error("Development-only test support was included in the runtime package.");
   }
 
   for (const relativePath of [
     "resources/resources/commands/latex-commands.json",
     "resources/resources/environments/preview-environments.json",
-    "resources/resources/ai/skills/latex-project/SKILL.md",
-    "resources/resources/installer/manifests/languages.json",
-    "resources/resources/installer/manifests/latex.json",
-    "resources/resources/installer/manifests/spellcheck.json",
-    "resources/resources/installer/profiles/texlive-full.profile",
-    "resources/resources/installer/scripts/detect-environment.ps1",
-    "resources/resources/installer/scripts/verify-environment.ps1",
-    "resources/resources/installer/scripts/install-texlive.ps1",
-    "resources/resources/installer/scripts/install-miktex.ps1"
+    "resources/resources/ai/skills/latex-project/SKILL.md"
   ]) requireFile(path.join(appDirectory, relativePath), `runtime resource ${relativePath}`);
 
   const themeDirectory = path.join(appDirectory, "resources", "themes");
@@ -73,12 +68,9 @@ function verify() {
     throw new Error("No built-in theme CSS files were copied to the packaged resources.");
   }
 
-  const artifacts = [
-    `TeXWeave-${manifest.version}-x64-setup.exe`,
-    `TeXWeave-${manifest.version}-x64-portable.exe`
-  ];
+  const artifacts = [`TeXWeave-${manifest.version}-x64-portable.exe`];
   for (const artifact of artifacts) requireFile(path.join(outputDirectory, artifact), `release artifact ${artifact}`);
-  process.stdout.write(`Package verified: TeXWeave ${manifest.version} (Windows x64 installer + portable).\n`);
+  process.stdout.write(`Package verified: TeXWeave ${manifest.version} (Windows x64 portable).\n`);
 }
 
 try {

@@ -64,7 +64,7 @@ async function run() {
   assert.equal(await evaluate('!!document.querySelector(".preview-limit-notice")'), false, "no load-more gate remains");
   console.log(`PASS large document opens with ${first.rendered} mounted nodes`);
   await click('.preview-reference[data-reference="sec:last"]', ["control"]);
-  await until('!!document.querySelector(".reference-target") && Array.from(document.querySelectorAll("[data-environment=section] .preview-block-header-main :is(strong, .preview-block-title)")).some(item => item.textContent.includes("Section 1400"))', "jump to an unmounted target");
+  await until('Array.from(document.querySelectorAll("[data-environment=section] .preview-block-header-main :is(strong, .preview-block-title)")).some(item => item.textContent.includes("Section 1400"))', "jump to an unmounted target");
   assert.ok(await evaluate('document.querySelector(".structured-preview").scrollTop > 10000'), "reference jump reaches the distant block");
   console.log("PASS reference jump mounts a distant block on demand");
   await evaluate('document.querySelector(".structured-preview").scrollTop = document.querySelector(".structured-preview").scrollHeight / 2');

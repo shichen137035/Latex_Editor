@@ -27,6 +27,46 @@ export function BibtexPreviewPane({ source, filePath, projectId, documents, rest
   const [duplicateKey, setDuplicateKey] = useState("");
   const [duplicateKeyError, setDuplicateKeyError] = useState("");
   const [removeRequest, setRemoveRequest] = useState<BibEntryPreview>();
+  const [pasteOpen, setPasteOpen] = useState(false);
+  const [pasteDraft, setPasteDraft] = useState("");
+  const [pasteError, setPasteError] = useState("");
+  const pasteReadId = useRef(0);
+  const closePaste = () => { pasteReadId.current += 1; setPasteOpen(false); };
+  useEffect(() => { closePaste(); setPasteDraft(""); setPasteError(""); return () => { pasteReadId.current += 1; }; }, [filePath]);
+  useEffect(() => {
+    if (!pasteOpen) return;
+    const escape = (event: KeyboardEvent) => { if (event.key === "Escape") { event.preventDefault(); event.stopPropagation(); closePaste(); } };
+    window.addEventListener("keydown", escape, true);
+    return () => window.removeEventListener("keydown", escape, true);
+  }, [pasteOpen]);
+  const openPaste = async () => {
+    const requestId = ++pasteReadId.current;
+    setPasteDraft(""); setPasteError(""); setLibraryPickerOpen(false); setPasteOpen(true);
+    try {
+      const text = await navigator.clipboard.readText();
+      if (requestId === pasteReadId.current && parseBibtex(text).entries.length) setPasteDraft(current => current || text);
+    } catch { /* Manual paste remains available when clipboard reading is unavailable. */ }
+  };
+  const addPastedEntries = () => {
+    if (!onSourceChange) return;
+    const incoming = parseBibtex(pasteDraft);
+    if (!incoming.entries.length || incoming.invalid.length || incoming.entries.some(entry => !entry.valid)) {
+      setPasteError(t(incoming.entries.length ? "ui.ReferenceLibraryPage.the_bibtex_source_is_not_valid" : "ui.ReferenceLibraryPage.paste_at_least_one_valid_bibtex_entry")); return;
+    }
+    const used = new Set(parsed.entries.map(entry => citationKeyIdentity(entry.citationKey)));
+    for (const entry of incoming.entries) {
+      if (!isValidCitationKey(entry.citationKey)) { setPasteError(t("ui.BibtexPreviewPane.use_a_key_without_spaces_commas_or")); return; }
+      const key = citationKeyIdentity(entry.citationKey);
+      if (used.has(key)) { setPasteError(t("ui.BibtexPreviewPane.citation_key_is_already_used_in_this", { value1: entry.citationKey })); return; }
+      used.add(key);
+    }
+    const newline = source.match(/\r\n|\n|\r/)?.[0] ?? pasteDraft.match(/\r\n|\n|\r/)?.[0] ?? "\n";
+    const prefix = !source.length || source.endsWith(newline + newline) ? "" : source.endsWith(newline) ? newline : newline + newline;
+    const raw = pasteDraft.trim().replace(/\r\n|\r|\n/g, newline);
+    onSourceChange(`${source}${prefix}${raw}${newline}`);
+    setNotice(t("ui.BibtexPreviewPane.pasted_entries_added", { count: incoming.entries.length, file: filePath }));
+    closePaste(); setPasteDraft(""); setPasteError("");
+  };
   const reload = async () => { if (api) setSnapshot(await api.references.snapshot(projectId)); };
   useEffect(() => { void reload(); }, [projectId]);
 
@@ -166,9 +206,18 @@ export function BibtexPreviewPane({ source, filePath, projectId, documents, rest
   };
 
   return <section ref={paneRef} className="bib-preview-pane" onScroll={(event) => onScrollPositionChange?.(event.currentTarget.scrollTop)}>
-    <header className="bib-preview-header"><div><p className="reference-eyebrow">{t("ui.BibtexPreviewPane.bibtex_preview")}</p><h2>{filePath}</h2><p>{parsed.entries.length} {t("ui.BibtexPreviewPane.entries")}{parsed.invalid.length} {t("ui.BibtexPreviewPane.warnings_source_order_preserved")}</p></div><div className="bib-preview-actions"><button onClick={() => setOnlyCited((value) => !value)} className={onlyCited ? "active" : ""}>{onlyCited ? t("ui.BibtexPreviewPane.cited_only") : t("ui.BibtexPreviewPane.all_entries")}</button><button onClick={() => { setLibraryQuery(""); setLibraryPickerOpen((value) => !value); }} disabled={busy || !onSourceChange}>{t("ui.BibtexPreviewPane.add_from_library")}</button><button onClick={() => void addAll()} disabled={busy}>{t("ui.BibtexPreviewPane.import_valid_to_library")}</button></div></header>
+    <header className="bib-preview-header"><div><p className="reference-eyebrow">{t("ui.BibtexPreviewPane.bibtex_preview")}</p><h2>{filePath}</h2><p>{parsed.entries.length} {t("ui.BibtexPreviewPane.entries")}{parsed.invalid.length} {t("ui.BibtexPreviewPane.warnings_source_order_preserved")}</p></div><div className="bib-preview-actions"><button onClick={() => setOnlyCited((value) => !value)} className={onlyCited ? "active" : ""}>{onlyCited ? t("ui.BibtexPreviewPane.cited_only") : t("ui.BibtexPreviewPane.all_entries")}</button><button onClick={() => { setLibraryQuery(""); setLibraryPickerOpen((value) => !value); }} disabled={busy || !onSourceChange}>{t("ui.BibtexPreviewPane.add_from_library")}</button><button onClick={() => void openPaste()} disabled={busy || !onSourceChange}>{t("ui.BibtexPreviewPane.paste_bibtex")}</button><button onClick={() => void addAll()} disabled={busy}>{t("ui.BibtexPreviewPane.import_valid_to_library")}</button></div></header>
     <div className="bib-preview-toolbar"><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder={t("ui.BibtexPreviewPane.search_citation_key_title_author")}/><span>{entries.length} {t("ui.BibtexPreviewPane.shown")}</span></div>
     {notice && <p className="bib-preview-notice" role="status">{notice}</p>}
+    {pasteOpen && <div className="bib-operation-backdrop" onMouseDown={event => { if (event.target === event.currentTarget) closePaste(); }}>
+      <section className="bib-operation-dialog bib-paste-dialog" role="dialog" aria-modal="true" aria-labelledby="bib-paste-title">
+        <h2 id="bib-paste-title">{t("ui.BibtexPreviewPane.paste_bibtex")}</h2>
+        <p>{t("ui.BibtexPreviewPane.paste_bibtex_description")} <code>{filePath}</code></p>
+        <textarea autoFocus aria-label={t("ui.ReferenceLibraryPage.bibtex_source")} spellCheck={false} value={pasteDraft} onChange={event => { pasteReadId.current += 1; setPasteDraft(event.target.value); setPasteError(""); }} onKeyDown={event => { if (event.key === "Enter" && (event.ctrlKey || event.metaKey)) { event.preventDefault(); addPastedEntries(); } }} placeholder={'@article{key,\n  title = {...},\n  author = {...},\n  year = {2026}\n}'}/>
+        {pasteError && <p className="bib-operation-error" role="alert">{pasteError}</p>}
+        <div><button onClick={closePaste}>{t("settings.aiSkillsCancel")}</button><button className="primary" onClick={addPastedEntries} disabled={!pasteDraft.trim() || busy || !onSourceChange}>{t("ui.BibtexPreviewPane.add_to_bib")}</button></div>
+      </section>
+    </div>}
     {duplicateKeys.length > 0 && <div className="bib-warning-card bib-duplicate-warning" role="alert"><strong>{t("ui.BibtexPreviewPane.duplicate_citation_keys")}</strong><span>{t("ui.BibtexPreviewPane.this_file_contains_repeated_keys")}{duplicateKeys.join(", ")}{t("ui.BibtexPreviewPane.imports_will_not_add_another_entry_with")}</span></div>}
     {libraryPickerOpen && <section className="bib-library-picker" aria-label={t("ui.BibtexPreviewPane.add_a_reference_from_the_library")}><header><div><strong>{t("ui.BibtexPreviewPane.add_from_library_2")}</strong><span>{t("ui.BibtexPreviewPane.choose_an_entry_to_append_to_this")}</span></div><button onClick={() => setLibraryPickerOpen(false)} aria-label={t("ai.history.close")}>×</button></header><input value={libraryQuery} onChange={(event) => setLibraryQuery(event.target.value)} placeholder={t("ui.BibtexPreviewPane.search_title_author_or_citation_key")}/>{availableLibraryEntries.length ? <div className="bib-library-picker-list">{availableLibraryEntries.map((entry) => { const duplicate = parsed.entries.some((item) => citationKeyIdentity(item.citationKey) === citationKeyIdentity(entry.citationKey)); return <article key={entry.id}><div><strong>{field(entry, "title") || t("ui.BibtexPreviewPane.untitled_reference")}</strong><span>{entry.citationKey} · {field(entry, "author") || entry.entryType} {duplicate && <em>{t("ui.BibtexPreviewPane.key_already_exists")}</em>}</span></div><button onClick={() => selectLibraryEntry(entry)}>{duplicate ? t("ui.BibtexPreviewPane.resolve_duplicate") : t("ui.BibtexPreviewPane.add_to_bib")}</button></article>; })}</div> : <p className="bib-library-picker-empty">{snapshot ? t("ui.BibtexPreviewPane.no_matching_references_in_the_library") : t("ui.BibtexPreviewPane.loading_library")}</p>}</section>}
     {parsed.invalid.map((item, index) => <div className="bib-warning-card" key={`${item.start}-${index}`}><strong>{t("ui.BibtexPreviewPane.parse_warning")}</strong><span>{item.message}</span><button onClick={() => onLocate?.({ filePath, offset: item.start })}>{t("ui.BibtexPreviewPane.open_source")}</button></div>)}

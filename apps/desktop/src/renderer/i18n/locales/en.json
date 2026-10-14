@@ -1,4 +1,7 @@
 {
+  "ui.BibtexPreviewPane.paste_bibtex": "Paste BibTeX",
+  "ui.BibtexPreviewPane.paste_bibtex_description": "Paste one or more BibTeX entries to add to this file.",
+  "ui.BibtexPreviewPane.pasted_entries_added": "Added {{count}} entries to {{file}}.",
   "ai.queueTitle": "Message queue",
   "ai.queueMessage": "Add to queue",
   "ai.queuePaused": "Paused",
@@ -971,6 +974,7 @@
   "ai.permission.full": "Full access",
   "ai.permission.full.confirm": "Full access allows AI to modify files anywhere on this computer and use the network without asking. External actions cannot be undone through the project editor. Continue?",
   "ai.editedFiles": "Edited {{count}} files",
+  "ai.clearChangeReport": "Clear change report",
   "ai.keepAll": "Accept all",
   "ai.viewChanges": "View changes",
   "ai.reviewFile": "Review {{path}}",

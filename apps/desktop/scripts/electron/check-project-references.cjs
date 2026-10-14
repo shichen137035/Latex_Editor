@@ -29,6 +29,37 @@ async function press(keyCode, modifiers = []) {
 const setInput = (selector, value) => evaluate(`(() => { const input = document.querySelector(${JSON.stringify(selector)}); Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set.call(input, ${JSON.stringify(value)}); input.dispatchEvent(new Event('input', {bubbles:true})); })()`);
 const cite = key => evaluate(`Array.from(document.querySelectorAll('.project-reference-browser .reference-quick-entry')).find(entry => entry.querySelector('code')?.textContent === ${JSON.stringify(key)}).querySelector('.reference-quick-cite').click()`);
 
+async function checkBibPaste(id) {
+  await evaluate(`Array.from(document.querySelectorAll('.project-reference-source')).find(button=>button.textContent.includes('references.bib') && !button.textContent.includes('.texweave')).click()`);
+  await until('!!document.querySelector(".bib-preview-pane") || !!document.querySelector(".editor-surface .monaco-editor")', 'bibliography opened');
+  if (!await evaluate('!!document.querySelector(".bib-preview-pane")')) await evaluate(`Array.from(document.querySelectorAll('.view-switch button')).find(button=>button.textContent.trim()==='Visual').click()`);
+  await until('!!document.querySelector(".bib-preview-pane")', 'bibliography preview');
+  const original = (await evaluate(`window.latexEditor.files.read(${id},'references.bib')`)).content;
+  const pasted = '@string{venue = "Example journal"}\n@article{pastedA,title={Pasted paper},journal=venue}\n@book{pastedB,title={Pasted book}}';
+  // Mock clipboard in this disposable renderer; preserve the user's system clipboard.
+  await evaluate(`Object.defineProperty(navigator,'clipboard',{configurable:true,value:{readText:async()=>${JSON.stringify(pasted)}}})`);
+  const open = () => evaluate(`Array.from(document.querySelectorAll('.bib-preview-actions button')).find(button=>button.textContent.trim()==='Paste BibTeX').click()`);
+  const setDraft = value => evaluate(`(()=>{const input=document.querySelector('.bib-paste-dialog textarea');Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype,'value').set.call(input,${JSON.stringify(value)});input.dispatchEvent(new Event('input',{bubbles:true}));})()`);
+  await open();
+  await until('document.querySelector(".bib-paste-dialog textarea")?.value.includes("pastedA")', 'clipboard prefill');
+  await setDraft('@book{localKey,title={Duplicate}}');
+  await evaluate('document.querySelector(".bib-paste-dialog button.primary").click()');
+  await until('document.querySelector(".bib-paste-dialog [role=alert]")?.textContent.includes("localKey")', 'duplicate citation key rejected');
+  await setDraft('@article{incomplete,');
+  await evaluate('document.querySelector(".bib-paste-dialog button.primary").click()');
+  await until('!!document.querySelector(".bib-paste-dialog [role=alert]")', 'incomplete source rejected');
+  assert.equal((await evaluate(`window.latexEditor.files.read(${id},'references.bib')`)).content, original);
+  await setDraft(pasted);
+  await evaluate('document.querySelector(".bib-paste-dialog button.primary").click()');
+  await until('!document.querySelector(".bib-paste-dialog") && document.querySelector(".bib-preview-pane")?.textContent.includes("Pasted book")', 'pasted entries appended');
+  await press('S',['control']);
+  await until(`window.latexEditor.files.read(${id},'references.bib').then(file=>file.content.includes('pastedB'))`, 'pasted bibliography saved');
+  const saved = (await evaluate(`window.latexEditor.files.read(${id},'references.bib')`)).content;
+  assert.ok(saved.startsWith(original));
+  assert.ok(saved.includes(pasted));
+  console.log('PASS BibTeX paste: clipboard prefill, multiple entries and string definitions appended; duplicate and malformed source rejected; original content preserved.');
+}
+
 async function run() {
   while (!BrowserWindow.getAllWindows().length) await delay(50);
   page = BrowserWindow.getAllWindows()[0];
@@ -54,6 +85,7 @@ async function run() {
   page.focus();
   await evaluate(`document.querySelector('.activity-bar button[title^="Library"]').click()`);
   await until('document.querySelector(".project-reference-browser")?.textContent.includes("Local only book") && document.querySelector(".project-reference-browser")?.textContent.includes("Nested paper")', "project bib entries");
+  if (process.argv.includes('--bib-paste-only')) { await checkBibPaste(id); assert.deepEqual(errors, []); return; }
   await setInput('.project-reference-browser input', 'Bob');
   await until('document.querySelectorAll(".project-reference-browser .reference-quick-entry").length === 1', "search all project files");
   await setInput('.project-reference-browser input', '');
@@ -117,6 +149,7 @@ async function run() {
   await until(`window.latexEditor.files.read(${id}, ".texweave/generated-references.bib").then(file => file.content.includes('UNSAVED_GENERATED'))`, "save generated bibliography");
   assert.ok((await evaluate(`window.latexEditor.files.read(${id}, ".texweave/generated-references.bib")`)).content.includes('UNSAVED_GENERATED'));
   console.log('PASS failed library writes preserve dirty buffers and roll back project links');
+  await checkBibPaste(id);
   assert.deepEqual(errors, []);
 }
 app.whenReady().then(() => {

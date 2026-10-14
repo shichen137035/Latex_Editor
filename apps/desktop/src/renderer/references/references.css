@@ -9,6 +9,9 @@
 /* Keep BibTeX preview content inside narrow split panes; long metadata can wrap. */
 .bib-preview-pane { min-width: 0; width: 100%; }
 .bib-preview-header > div:first-child { min-width: 0; }
+.bib-preview-actions { flex-wrap: wrap; justify-content: flex-end; min-width: 0; }
+.bib-operation-dialog.bib-paste-dialog { width: min(680px, 100%); max-height: calc(100vh - 40px); overflow: auto; }
+.bib-paste-dialog textarea { display: block; box-sizing: border-box; width: 100%; min-height: 220px; max-height: 50vh; margin: 14px 0; resize: vertical; padding: 10px 12px; border: 1px solid var(--color-border); border-radius: 8px; color: var(--color-text-primary); background: var(--color-bg-panel); font: 13px/1.55 Consolas, "Cascadia Code", monospace; }
 .bib-preview-header h2, .bib-preview-header p:not(.reference-eyebrow) { overflow-wrap: anywhere; }
 .bib-entry-list { width: 100%; min-width: 0; }
 .bib-entry-card { min-width: 0; }

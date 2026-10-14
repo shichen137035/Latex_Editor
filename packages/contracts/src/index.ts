@@ -111,6 +111,8 @@ export interface AIFileChange {
 export interface AIChangeSet {
   id: string;
   conversationId: string;
+  /** Assistant response owning these checkpoints; one response has one visible report. */
+  messageId?: string;
   createdAt: number;
   files: AIFileChange[];
   status: "pending" | "partially_accepted" | "accepted" | "rejected";

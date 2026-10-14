@@ -60,6 +60,69 @@ async function run() {
   await until('document.querySelector(".editor-surface .view-lines")?.textContent.includes("alpha")', 'source editor');
   page.focus();
   await focusEditor();
+  if (process.argv.includes('--latex-boundaries-only')) {
+    await evaluate(`(() => {
+      const surface = document.querySelector('.editor-surface');
+      let fiber = surface[Object.keys(surface).find(key => key.startsWith('__reactFiber$'))];
+      for (; fiber; fiber = fiber.return) for (let hook = fiber.memoizedState; hook; hook = hook.next) {
+        const value = hook.memoizedState?.current;
+        if (value && typeof value.getModel === 'function' && typeof value.setScrollTop === 'function') { window.sourceTestEditor = value; return; }
+      }
+      throw new Error('Source editor not found');
+    })()`);
+    await evaluate(`window.sourceTestEditor.getModel().setValue(''); window.sourceTestEditor.setPosition({lineNumber:1,column:1}); window.sourceTestEditor.focus()`);
+    await delay(200);
+    await press('$');
+    await delay(100);
+    assert.deepEqual(await evaluate(`({text:window.sourceTestEditor.getValue(),column:window.sourceTestEditor.getPosition().column})`), { text:'$$', column:2 });
+    await press('$');
+    await delay(100);
+    assert.deepEqual(await evaluate(`({text:window.sourceTestEditor.getValue(),column:window.sourceTestEditor.getPosition().column})`), { text:'$$$$', column:3 });
+    await press('ENTER');
+    await delay(100);
+    assert.deepEqual(await evaluate(`({text:window.sourceTestEditor.getValue().replace(/\\r\\n/g,'\\n'),position:window.sourceTestEditor.getPosition()})`), { text:'$$\n\n$$', position:{lineNumber:2,column:1} });
+    console.log('PASS actual dollar key presses produce paired display math with a blank content line');
+    for (const opener of ['{', '(', '[']) {
+      await evaluate(`window.sourceTestEditor.getModel().setValue(''); window.sourceTestEditor.setPosition({lineNumber:1,column:1}); window.sourceTestEditor.focus()`);
+      await delay(100);
+      await press(opener);
+      await press('BACKSPACE');
+      await delay(100);
+      assert.equal(await evaluate('window.sourceTestEditor.getValue()'), '');
+      await evaluate(`window.sourceTestEditor.trigger('regression', 'undo', null)`);
+      await delay(100);
+      assert.equal((await evaluate('window.sourceTestEditor.getValue()')).length, 2);
+    }
+    console.log('PASS Backspace removes both empty brackets and Undo restores the pair');
+    await evaluate(`window.sourceTestEditor.updateOptions({tabSize:2,insertSpaces:true,detectIndentation:false}); window.sourceTestEditor.getModel().setValue(''); window.sourceTestEditor.setPosition({lineNumber:1,column:1}); window.sourceTestEditor.focus()`);
+    await delay(100);
+    await press('{');
+    await press('ESC');
+    await delay(100);
+    await evaluate('window.sourceTestEditor.focus()');
+    await press('ENTER');
+    page.webContents.sendInputEvent({type:'char',keyCode:'\r'});
+    await delay(100);
+    assert.deepEqual(await evaluate(`({text:window.sourceTestEditor.getValue().replace(/\\r\\n/g,'\\n'),position:window.sourceTestEditor.getPosition()})`), { text:'{\n  \n}', position:{lineNumber:2,column:3} });
+    const environmentPair = '\\begin{align}\\end{align}';
+    await evaluate(`window.sourceTestEditor.getModel().setValue(${JSON.stringify(environmentPair)}); window.sourceTestEditor.setPosition({lineNumber:1,column:14}); window.sourceTestEditor.focus()`);
+    await delay(100);
+    await press('ENTER');
+    page.webContents.sendInputEvent({type:'char',keyCode:'\r'});
+    await delay(100);
+    assert.deepEqual(await evaluate(`({text:window.sourceTestEditor.getValue().replace(/\\r\\n/g,'\\n'),position:window.sourceTestEditor.getPosition()})`), { text:'\\begin{align}\n  \n\\end{align}', position:{lineNumber:2,column:3} });
+    console.log('PASS bracket and LaTeX environment Enter indent the body and align the closing line');
+    const foldingSource = '\\begin{custom}\nUNINDENTED_BODY\n\\end{custom}\nOUTSIDE_ENVIRONMENT';
+    await evaluate(`window.sourceTestEditor.getModel().setValue(${JSON.stringify(foldingSource)}); window.sourceTestEditor.setPosition({lineNumber:1,column:1})`);
+    await delay(700);
+    await evaluate(`window.sourceTestEditor.getAction('editor.foldAll').run()`);
+    await until(`document.querySelector('.editor-surface .view-lines')?.textContent.includes('OUTSIDE_ENVIRONMENT') && !document.querySelector('.editor-surface .view-lines')?.textContent.includes('UNINDENTED_BODY')`, 'syntax folding without indentation');
+    await evaluate(`window.sourceTestEditor.getAction('editor.unfoldAll').run()`);
+    await until(`document.querySelector('.editor-surface .view-lines')?.textContent.includes('UNINDENTED_BODY')`, 'unfold environment');
+    console.log('PASS actual source folding uses matched environment boundaries and unfolds normally');
+    assert.deepEqual(errors, []);
+    return;
+  }
   await press('HOME', ['control']);
   await press('RIGHT');
   await press('END');

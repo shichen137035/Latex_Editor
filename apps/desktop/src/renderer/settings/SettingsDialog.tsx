@@ -119,7 +119,7 @@ function ManagerGlyph({ manager }: { manager: ManagerId }) {
 }
 
 function ManagerEntry({ manager, title, description, onOpen }: { manager: ManagerId; title: string; description: string; onOpen(): void }) {
-  return <div className="settings-manager-entry"><div className="settings-manager-entry-copy"><strong>{title}</strong><small>{description}</small></div><button className="settings-manager-entry-open" type="button" aria-label={title} title={title} onClick={onOpen}><ManagerGlyph manager={manager}/></button></div>;
+  return <div className="settings-manager-entry"><div className="settings-manager-entry-copy"><strong>{title}</strong><small>{description}</small></div><button className="settings-manager-entry-open" type="button" data-manager={manager} aria-label={title} title={title} onClick={onOpen}><ManagerGlyph manager={manager}/></button></div>;
 }
 
 function WheelAccelerationSettingsPanel({ store, scope, level }: { store: ReturnType<typeof useSettings>; scope: "global" | "project"; level: SettingsLevel }) {

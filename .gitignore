@@ -2,6 +2,7 @@ node_modules/
 dist/
 release/
 coverage/
+.tmp/
 .latex-editor/
 .latex-editor-data/
 /Update_tech_file/

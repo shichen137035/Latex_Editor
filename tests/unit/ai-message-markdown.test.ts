@@ -1,8 +1,9 @@
-import { createElement } from "react";
+import { createElement, type ComponentProps } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 import { AIMessageContent } from "../../apps/desktop/src/renderer/ai/AIMessageContent.js";
 import { AIResponse } from "../../apps/desktop/src/renderer/ai/AIResponse.js";
+import { groupAdjacentReasoningParts } from "../../apps/desktop/src/renderer/ai/responseParts.js";
 
 describe("AI message Markdown rendering", () => {
   it("renders tables, task lists, and common inline formatting", () => {
@@ -48,7 +49,7 @@ describe("AI message Markdown rendering", () => {
   });
 
   it("groups adjacent thought summaries into one item while keeping response order", () => {
-    const html = renderToStaticMarkup(createElement(AIResponse, {
+    const props: ComponentProps<typeof AIResponse> = {
       projectRoot: "",
       message: {
         id: "assistant-1",
@@ -70,15 +71,45 @@ describe("AI message Markdown rendering", () => {
           { id: "r4", kind: "reasoning", text: "Final thought." }
         ]
       }
-    }));
+    };
+    const html = renderToStaticMarkup(createElement(AIResponse, props));
 
     const groups = html.match(/<details class="ai-reasoning"[\s\S]*?<\/details>/g) ?? [];
     expect(groups).toHaveLength(2);
-    expect(groups[0]).toContain("First thought.");
-    expect(groups[0]).toContain("Second thought.");
-    expect(groups[1]).toContain("Later thought.");
-    expect(groups[1]).toContain("Final thought.");
-    expect(html.indexOf("Second thought.")).toBeLessThan(html.indexOf("The answer."));
-    expect(html.indexOf("The answer.")).toBeLessThan(html.indexOf("Later thought."));
+    const parts = groupAdjacentReasoningParts(props.message.responseParts!);
+    expect(parts.map(part => part.text)).toEqual(["First thought.\n\nSecond thought.", "The answer.", "Later thought.\n\nFinal thought."]);
+    expect(html).not.toContain("ai-reasoning-content"); // Closed summaries are parsed only when expanded.
+    expect(html.indexOf("<details")).toBeLessThan(html.indexOf("The answer."));
+    expect(html.indexOf("The answer.")).toBeLessThan(html.lastIndexOf("<details"));
+  });
+
+  it("keeps Copilot thought chunks in one group when empty stream events separate them", () => {
+    const props: ComponentProps<typeof AIResponse> = {
+      projectRoot: "",
+      message: {
+        id: "assistant-copilot",
+        role: "assistant",
+        content: "\n\nThe answer.",
+        createdAt: 1,
+        status: "complete",
+        reasoning: [
+          { id: "r1", text: "First thought.", complete: true },
+          { id: "r2", text: "Second thought.", complete: true }
+        ],
+        responseParts: [
+          { id: "r1", kind: "reasoning", text: "First thought." },
+          { id: "empty-message", kind: "text", text: "" },
+          { id: "r2", kind: "reasoning", text: "Second thought." },
+          { id: "answer", kind: "text", text: "The answer." }
+        ]
+      }
+    };
+    const html = renderToStaticMarkup(createElement(AIResponse, props));
+
+    const groups = html.match(/<details class="ai-reasoning"[\s\S]*?<\/details>/g) ?? [];
+    expect(groups).toHaveLength(1);
+    expect(groupAdjacentReasoningParts(props.message.responseParts!)[0]!.text).toBe("First thought.\n\nSecond thought.");
+    expect(html).not.toContain("ai-reasoning-content");
+    expect(html).toContain("The answer.");
   });
 });

@@ -1,4 +1,7 @@
 {
+  "ui.BibtexPreviewPane.paste_bibtex": "BibTeX を貼り付け",
+  "ui.BibtexPreviewPane.paste_bibtex_description": "このファイルに追加する BibTeX エントリを貼り付けてください。複数のエントリを追加できます。",
+  "ui.BibtexPreviewPane.pasted_entries_added": "{{file}} に {{count}} 件のエントリを追加しました。",
   "ai.queueTitle": "メッセージの送信待ち",
   "ai.queueMessage": "送信待ちに追加",
   "ai.queuePaused": "一時停止中",
@@ -18,6 +21,7 @@
   "ai.permission.full": "フルアクセス",
   "ai.permission.full.confirm": "AI が確認なしで任意のファイルを変更し、ネットワークを使用できるようになります。プロジェクト外の操作はエディターで元に戻せません。続行しますか？",
   "ai.editedFiles": "{{count}} ファイルを変更",
+  "ai.clearChangeReport": "変更レポートを閉じる",
   "ai.keepAll": "すべて採用",
   "ai.viewChanges": "変更を表示",
   "ai.reviewFile": "{{path}} を確認",

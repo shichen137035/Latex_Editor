@@ -1,11 +1,43 @@
 import { describe, expect, it, vi } from "vitest";
-import type { AIApprovalRequest, AIFileChange, AIChangeHunk } from "@latex-editor/contracts";
+import type { AIApprovalRequest, AIChangeSet, AIFileChange, AIChangeHunk } from "@latex-editor/contracts";
 import { preferenceDefaults, validPreference } from "@latex-editor/contracts";
 import { AIApprovalRequests } from "../../apps/desktop/src/main/ai/approval-requests.js";
 import { codexPermissionPolicy, isReadOnlyPermissionRequest, requiresAIApproval } from "../../apps/desktop/src/main/ai/ai-approvals.js";
 import { automaticHunkIds, fileWithAppliedHunks, hunkLineStats, reviewFileContents, transitionAIFile } from "../../apps/desktop/src/renderer/ai/changeOperations.js";
 import { EditHistory, applyTextPatch } from "../../apps/desktop/src/renderer/workbench/EditHistory.js";
 import { makeHunks } from "../../apps/desktop/src/main/ai/changeHunks.js";
+import { groupChangeReports } from "../../apps/desktop/src/renderer/ai/changeReports.js";
+
+it("merges checkpoints of one response into a stable report with cumulative file differences", () => {
+  const checkpoint = (id: string, createdAt: number, originalContent: string, proposedContent: string): AIChangeSet => ({
+    id, conversationId: "conversation", messageId: "response", createdAt, status: "pending", files: [{
+      path: "main.tex", type: "modify", originalContent, proposedContent, status: "pending",
+      hunks: makeHunks("main.tex", originalContent, proposedContent).map(hunk => ({ ...hunk, applied: true }))
+    }]
+  });
+  const first = checkpoint("first", 1, "Original\n", "Intermediate\n");
+  const second = checkpoint("second", 2, "Intermediate\n", "Final\n");
+  const initialReport = groupChangeReports([first])[0]!;
+  const reports = groupChangeReports([second, first]);
+  expect(reports).toHaveLength(1);
+  const report = reports[0]!;
+  expect(report.id).toBe(initialReport.id);
+  expect(report.createdAt).toBe(1);
+  expect(report.members.map(member => member.id)).toEqual(["first", "second"]);
+  expect(report.files).toHaveLength(1);
+  expect(report.files[0]).toMatchObject({ originalContent: "Original\n", proposedContent: "Final\n" });
+  expect(report.fileStats["main.tex"]).toEqual({ added: 1, removed: 1 });
+  expect(groupChangeReports([second, first])[0]).toBe(report);
+  let current: string | undefined = "Final\n";
+  for (const member of report.members.slice().reverse()) current = transitionAIFile(member.files[0]!, current, new Set(member.files[0]!.hunks.map(hunk => hunk.id)), false);
+  expect(current).toBe("Original\n");
+  const nextTurn = { ...checkpoint("third", 3, "Final\n", "Next\n"), messageId: "next-response" };
+  expect(groupChangeReports([first, second, nextTurn])).toHaveLength(2);
+  expect(groupChangeReports([first, { ...second, conversationId: "other" }])).toHaveLength(2);
+  const legacy = structuredClone([first, second]);
+  for (const member of legacy) delete member.messageId;
+  expect(groupChangeReports(legacy)).toHaveLength(2);
+});
 
 it("reviews sparse edits in a ten-thousand-line paper without counting unchanged rewritten blocks", () => {
   const lines = Array.from({ length: 10000 }, (_, index) => `Paragraph ${index}.\n`);
@@ -74,6 +106,28 @@ describe("VS Code-style AI review", () => {
     expect(() => transitionAIFile(file, "user's text", new Set(["a"]), true)).toThrow("AI_CHANGE_CONFLICT");
     const created: AIFileChange = { ...file, type: "create", originalContent: undefined, proposedContent: "new" };
     expect(() => transitionAIFile(created, "already exists", new Set(["a"]), true)).toThrow("AI_CHANGE_CONFLICT");
+  });
+  it("auto-applies non-overlapping hunks while preserving newer edits elsewhere in the file", () => {
+    const original = "Title\n\nFirst paragraph.\n\nSecond paragraph.\n";
+    const file: AIFileChange = {
+      path: "main.tex", type: "modify", originalContent: original, proposedContent: original.replace("First paragraph.", "Revised paragraph."), status: "pending",
+      hunks: [hunk("edit", 2, "First paragraph.\n", "Revised paragraph.\n")]
+    };
+    const current = original.replace("Title", "New title");
+    expect(transitionAIFile(file, current, new Set(["edit"]), true)).toBe(current.replace("First paragraph.", "Revised paragraph."));
+  });
+  it("undoes an auto-applied hunk without reverting unrelated newer edits", () => {
+    const original = "Title\n\nFirst paragraph.\n\nSecond paragraph.\n";
+    const file: AIFileChange = {
+      path: "main.tex", type: "modify", originalContent: original, proposedContent: original.replace("First paragraph.", "Revised paragraph."), status: "pending",
+      hunks: [{ ...hunk("edit", 2, "First paragraph.\n", "Revised paragraph.\n"), newStart: 2, applied: true }]
+    };
+    const current = original.replace("Title", "New title").replace("First paragraph.", "Revised paragraph.");
+    expect(transitionAIFile(file, current, new Set(["edit"]), false)).toBe(current.replace("Revised paragraph.", "First paragraph."));
+  });
+  it("keeps overlapping edits as conflicts instead of overwriting newer user text", () => {
+    const file: AIFileChange = { path: "main.tex", type: "modify", originalContent: "A\nB\nC\n", proposedContent: "A\nAI edit\nC\n", status: "pending", hunks: [hunk("edit", 1, "B\n", "AI edit\n")] };
+    expect(() => transitionAIFile(file, "A\nUser edit\nC\n", new Set(["edit"]), true)).toThrow("AI_CHANGE_CONFLICT");
   });
   it("allows acknowledgement retries but refuses to keep changes that were undone after auto-apply", () => {
     const file: AIFileChange = { path: "main.tex", type: "modify", originalContent: "old", proposedContent: "new", status: "pending", hunks: [hunk("a", 0, "old", "new")] };

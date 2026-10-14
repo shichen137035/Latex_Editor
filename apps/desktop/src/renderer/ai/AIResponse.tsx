@@ -1,10 +1,11 @@
 import { memo, useSyncExternalStore, useEffect, useState } from "react";
-import type { AIMessage, AIResponsePart } from "@latex-editor/contracts";
+import type { AIMessage } from "@latex-editor/contracts";
 import type { MathContext } from "../math/types.js";
 import { getLocale, t } from "../i18n/index.js";
 import { settings } from "../settings/service.js";
 import { AIMessageContent } from "./AIMessageContent.js";
 import { AIReasoning } from "./AIReasoning.js";
+import { groupAdjacentReasoningParts } from "./responseParts.js";
 
 export const AIResponse = memo(function AIResponse({ message, projectRoot, mathContext, onOpenFile }: { message: AIMessage; projectRoot: string; mathContext?: MathContext; onOpenFile?: ((path: string, line?: number) => void) | undefined }) {
   useSyncExternalStore(settings.subscribe, getLocale, getLocale);
@@ -22,22 +23,6 @@ export const AIResponse = memo(function AIResponse({ message, projectRoot, mathC
     <AIWorkTime message={message}/>
   </>;
 });
-
-type DisplayResponsePart = AIResponsePart & { sourceIds: string[] };
-
-function groupAdjacentReasoningParts(parts: AIResponsePart[]): DisplayResponsePart[] {
-  const grouped: DisplayResponsePart[] = [];
-  for (const part of parts) {
-    const previous = grouped.at(-1);
-    if (part.kind === "reasoning" && previous?.kind === "reasoning") {
-      previous.text = [previous.text, part.text].filter(Boolean).join("\n\n");
-      previous.sourceIds.push(part.id);
-    } else {
-      grouped.push({ ...part, sourceIds: [part.id] });
-    }
-  }
-  return grouped;
-}
 
 function AIWorkTime({ message }: { message: AIMessage }) {
   const [now, setNow] = useState(Date.now);

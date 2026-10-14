@@ -33,7 +33,7 @@ async function fill(selector, value) {
 }
 async function assertLanguageChoices(selector) {
   assert.deepEqual(await evaluate(`Array.from(document.querySelector(${JSON.stringify(selector)}).options).map(option => [option.value, option.textContent])`), [
-    ['en', 'English'], ['ja', '日本語'], ['zh-CN', '简体中文'], ['zh-TW', '繁體中文'], ['ko', '한국어'], ['fr', 'Français']
+    ['en', 'English'], ['ja', '日本語'], ['zh-CN', '简体中文'], ['zh-TW', '繁體中文'], ['ko', '한국어'], ['fr', 'Français'], ['kk', 'Қазақша']
   ]);
 }
 async function manager(section, label) {

@@ -1,23 +1,23 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ClipboardEvent } from "react";
 import { createPortal } from "react-dom";
-import type { AIChangeSet, AIConversation, AIContextSnapshotFile, AIStatus, AIModelOption, AIMode } from "@latex-editor/contracts";
+import type { AIChangeSet, AIConversation, AIMessage, AIContextSnapshotFile, AIStatus, AIModelOption, AIMode } from "@latex-editor/contracts";
 import { t } from "../i18n/index.js";
 import { useSettings } from "../settings/service.js";
 import { ConversationPicker } from "./ConversationPicker.js";
-import { AIMessageContent } from "./AIMessageContent.js";
-import { AIResponse } from "./AIResponse.js";
+import { AITranscript, type AITranscriptActions } from "./AITranscript.js";
 import "./ai.css";
 import type { AIApprovalRequest } from "@latex-editor/contracts";
 import { PermissionPicker } from "./PermissionPicker.js";
-import { ChangesCard } from "./ChangesCard.js";
 import type { AIApplyResult } from "./changeOperations.js";
+import { groupChangeReports, type AIChangeReport } from "./changeReports.js";
 import { ReasoningEffortPicker } from "./ReasoningEffortPicker.js";
 import type { MathContext } from "../math/types.js";
-import { newestConversation } from "./conversationState.js";
+import { mergeConversation, newestConversation } from "./conversationState.js";
 import { useAttachmentDraft } from "./attachmentDraft.js";
+import { readAIDraft, writeAIDraft } from "./draftStorage.js";
 
 const AI_LONG_INPUT_THRESHOLD = 12_000;
-const AI_COMPOSER_HEIGHT_RATIO = 2.5;
+const EMPTY_MESSAGES: AIMessage[] = [];
 
 type Props = {
   projectId: string;
@@ -50,16 +50,18 @@ export function AIView(props: Props) {
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
   // Keep native typing outside transcript renders; publish only changes needed by composer controls.
-  const draftRef = useRef("");
-  const [draftSummary, setDraftSummary] = useState({ hasText: false, long: false });
+  const [initialDraft] = useState(() => readAIDraft(props.projectId));
+  const draftProjectIdRef = useRef(props.projectId);
+  const draftRef = useRef(initialDraft);
+  const [draftSummary, setDraftSummary] = useState(() => summarizeDraft(initialDraft));
+  const draftSummaryRef = useRef(draftSummary);
   const [editingMessageId, setEditingMessageId] = useState<string>();
   const [editedContent, setEditedContent] = useState("");
   const { client: attachmentDraft, attachments, loading: attachmentsLoading } = useAttachmentDraft(api, props.projectId, activeId, reason => setError(messageOf(reason)));
   const [sending, setSending] = useState(false);
   const composerRef = useRef<HTMLTextAreaElement | null>(null);
   const [composerExpanded, setComposerExpanded] = useState(false);
-  const composerExpandedRef = useRef(false);
-  composerExpandedRef.current = composerExpanded;
+  const draftPersistenceTimer = useRef<number | undefined>(undefined);
   const composerCaret = useRef<{ start: number; end: number; scrollTop: number } | undefined>(undefined);
   const longDraftFileRef = useRef<{ content: string; path: string } | undefined>(undefined);
   const [taskId, setTaskId] = useState<string>();
@@ -72,10 +74,7 @@ export function AIView(props: Props) {
   const snapshotRef = useRef(snapshot);
   snapshotRef.current = snapshot;
   const activeIdRef = useRef(activeId);
-  const transcriptRef = useRef<HTMLDivElement>(null);
   const activeTaskIdRef = useRef<string | undefined>(undefined);
-  const followTranscriptRef = useRef(true);
-  const [transcriptAtBottom, setTranscriptAtBottom] = useState(true);
   activeIdRef.current = activeId;
   const activeConversation = snapshot.conversations.find((item) => item.id === activeId);
   const activeMode = activeConversation?.mode ?? mode;
@@ -87,26 +86,53 @@ export function AIView(props: Props) {
   const efforts = selectedModel?.supportedReasoningEfforts ?? [];
   const preferredEffort = preferences.global(effortKey);
   const selectedEffort = efforts.some((option) => option.effort === preferredEffort) ? preferredEffort : "";
-  const activeChanges = useMemo(() => snapshot.changeSets.filter(item => item.conversationId === activeId && item.files.some(file => file.hunks.some(hunk => hunk.decision === "pending"))), [snapshot.changeSets, activeId]);
-  const latestMessageContent = activeConversation?.messages[activeConversation.messages.length - 1]?.content;
-  const latestReasoning = activeConversation?.messages.at(-1)?.reasoning?.map((part) => part.text).join("\n");
-  const lastUserMessageId = [...(activeConversation?.messages ?? [])].reverse().find(message => message.role === "user")?.id;
+  const activeChanges = useMemo(() => groupChangeReports(snapshot.changeSets.filter(item => item.conversationId === activeId)), [snapshot.changeSets, activeId]);
   const responseRunning = Boolean(taskId || activeConversation?.activeTaskId) || Boolean(activeConversation?.messages.some((message) => message.status === "streaming"));
+  const transcriptMathContext = useRef(props.mathContext);
+  if (!sameMathDefinitions(transcriptMathContext.current, props.mathContext)) transcriptMathContext.current = props.mathContext;
 
   useEffect(() => {
     if (!api) return;
     let active = true;
+    const pending = new Map<string, AIConversation>();
+    let updateTimer: number | undefined;
+    const flushConversations = () => {
+      if (updateTimer !== undefined) window.clearTimeout(updateTimer);
+      updateTimer = undefined;
+      if (!active || !pending.size) return;
+      const updates = new Map(pending);
+      pending.clear();
+      setSnapshot(current => {
+        const byId = new Map(current.conversations.map(conversation => [conversation.id, conversation]));
+        let changed = false;
+        for (const [id, incoming] of updates) {
+          const previous = byId.get(id);
+          const conversation = mergeConversation(previous, incoming);
+          if (conversation !== previous) { byId.set(id, conversation); changed = true; }
+        }
+        if (!changed) return current;
+        const next = { ...current, conversations: [...byId.values()].sort((a, b) => b.updatedAt - a.updatedAt) };
+        snapshotRef.current = next;
+        return next;
+      });
+      const incoming = activeIdRef.current ? updates.get(activeIdRef.current) : undefined;
+      const conversation = incoming ? newestConversation(snapshotRef.current.conversations.find(item => item.id === incoming.id), incoming) : undefined;
+      if (conversation?.activeTaskId) { activeTaskIdRef.current = conversation.activeTaskId; setTaskId(conversation.activeTaskId); }
+      else if (conversation && !conversation.messages.some(message => message.status === "streaming")) { activeTaskIdRef.current = undefined; setTaskId(undefined); setCanceling(false); }
+    };
     const unsubscribeStatus = api.onStatus((next) => { if (active) setStatus(next); });
     const unsubscribeUpdate = api.onUpdate((update) => {
       if (!active) return;
       if (update.kind === "conversation") {
         const incoming = update.payload as AIConversation;
         if (incoming.projectId !== props.projectId) return;
-        const conversation = newestConversation(snapshotRef.current.conversations.find(item => item.id === incoming.id), incoming);
-        snapshotRef.current = { ...snapshotRef.current, conversations: [conversation, ...snapshotRef.current.conversations.filter(item => item.id !== conversation.id)].sort((a, b) => b.updatedAt - a.updatedAt) };
-        setSnapshot(current => ({ ...current, conversations: [newestConversation(current.conversations.find(item => item.id === conversation.id), conversation), ...current.conversations.filter(item => item.id !== conversation.id)] }));
-        if (conversation.id === activeIdRef.current && conversation.activeTaskId) { activeTaskIdRef.current = conversation.activeTaskId; setTaskId(conversation.activeTaskId); }
-        else if (conversation.id === activeIdRef.current && !conversation.messages.some((message) => message.status === "streaming")) { activeTaskIdRef.current = undefined; setTaskId(undefined); setCanceling(false); }
+        const previous = pending.get(incoming.id) ?? snapshotRef.current.conversations.find(item => item.id === incoming.id);
+        const conversation = newestConversation(previous, incoming);
+        if (conversation === previous) return;
+        pending.set(conversation.id, conversation);
+        // Limit token-driven renders; terminal events stay immediate.
+        if (!conversation.activeTaskId && !conversation.messages.some(message => message.status === "streaming")) flushConversations();
+        else if (updateTimer === undefined) updateTimer = window.setTimeout(flushConversations, 50);
       } else if (update.kind === "changes") {
         const changeSet = update.payload as AIChangeSet;
         setSnapshot((current) => ({ ...current, changeSets: [changeSet, ...current.changeSets.filter((item) => item.id !== changeSet.id)] }));
@@ -121,7 +147,7 @@ export function AIView(props: Props) {
       if (detected.executablePath) void api.status().then((connected) => { if (active && connected) setStatus(connected); }).catch((reason: unknown) => { if (active) setError(messageOf(reason)); });
     }).catch((reason: unknown) => { if (active) setError(messageOf(reason)); });
     void api.copilotStatus().then((detected) => { if (active && detected) setCopilotStatus(detected); }).catch((reason: unknown) => { if (active) setError(messageOf(reason)); });
-    return () => { active = false; unsubscribeStatus(); unsubscribeUpdate(); };
+    return () => { active = false; if (updateTimer !== undefined) window.clearTimeout(updateTimer); pending.clear(); unsubscribeStatus(); unsubscribeUpdate(); };
   }, [api, props.projectId]);
 
   useEffect(() => {
@@ -131,7 +157,7 @@ export function AIView(props: Props) {
     void api.conversations(props.projectId).then((value) => {
       if (!active || !value) return;
       const current = snapshotRef.current;
-      const conversations = [...value.conversations.map(incoming => newestConversation(current.conversations.find(item => item.id === incoming.id), incoming)), ...current.conversations.filter(item => item.projectId === props.projectId && !value.conversations.some(incoming => incoming.id === item.id))].sort((a, b) => b.updatedAt - a.updatedAt);
+      const conversations = [...value.conversations.map(incoming => mergeConversation(current.conversations.find(item => item.id === incoming.id), incoming)), ...current.conversations.filter(item => item.projectId === props.projectId && !value.conversations.some(incoming => incoming.id === item.id))].sort((a, b) => b.updatedAt - a.updatedAt);
       snapshotRef.current = { ...value, conversations };
       setSnapshot(snapshotRef.current);
       const first = conversations.find(item => item.id === activeIdRef.current) ?? conversations[0];
@@ -177,53 +203,54 @@ export function AIView(props: Props) {
 
   useEffect(() => { setIncludeSelection(Boolean(props.selectedText)); }, [props.selectedText]);
   useEffect(() => { setEditingMessageId(undefined); setEditedContent(""); }, [activeId, props.projectId]);
-  const composerResizeFrame = useRef<number | undefined>(undefined);
-  const resizeComposer = useCallback(() => {
-    if (composerResizeFrame.current !== undefined) return;
-    composerResizeFrame.current = window.requestAnimationFrame(() => {
-      composerResizeFrame.current = undefined;
-      const textarea = composerRef.current;
-      if (!textarea) return;
-      const minHeight = parseFloat(getComputedStyle(textarea).minHeight) || 44;
-      const maxHeight = composerExpandedRef.current ? Math.max(minHeight, Math.min(560, window.innerHeight * 0.56)) : minHeight * AI_COMPOSER_HEIGHT_RATIO;
-      textarea.style.height = "auto";
-      const contentHeight = textarea.scrollHeight;
-      textarea.style.height = `${composerExpandedRef.current ? maxHeight : Math.min(contentHeight, maxHeight)}px`;
-      textarea.style.overflowY = contentHeight > maxHeight ? "auto" : "hidden";
-    });
-  }, []);
   const setDraft = useCallback((value: string) => {
     draftRef.current = value;
     if (composerRef.current && composerRef.current.value !== value) composerRef.current.value = value;
-    const trimmed = value.trim();
-    const hasText = Boolean(trimmed), long = trimmed.length > AI_LONG_INPUT_THRESHOLD;
-    setDraftSummary(previous => previous.hasText === hasText && previous.long === long ? previous : { hasText, long });
-    if (longDraftFileRef.current && longDraftFileRef.current.content !== trimmed) longDraftFileRef.current = undefined;
-    resizeComposer();
-  }, [resizeComposer]);
+    const summary = summarizeDraft(value);
+    if (draftSummaryRef.current.hasText !== summary.hasText || draftSummaryRef.current.long !== summary.long) {
+      draftSummaryRef.current = summary;
+      setDraftSummary(summary);
+    }
+    if (longDraftFileRef.current && longDraftFileRef.current.content !== value.trim()) longDraftFileRef.current = undefined;
+    if (draftPersistenceTimer.current !== undefined) window.clearTimeout(draftPersistenceTimer.current);
+    draftPersistenceTimer.current = window.setTimeout(() => {
+      draftPersistenceTimer.current = undefined;
+      writeAIDraft(draftProjectIdRef.current, value);
+    }, 500);
+  }, []);
+  useLayoutEffect(() => {
+    if (draftProjectIdRef.current === props.projectId) return;
+    if (draftPersistenceTimer.current !== undefined) window.clearTimeout(draftPersistenceTimer.current);
+    draftPersistenceTimer.current = undefined;
+    writeAIDraft(draftProjectIdRef.current, draftRef.current ?? "");
+    draftProjectIdRef.current = props.projectId;
+    setDraft(readAIDraft(props.projectId));
+  }, [props.projectId, setDraft]);
   useEffect(() => {
-    resizeComposer();
-    window.addEventListener("resize", resizeComposer);
-    return () => {
-      window.removeEventListener("resize", resizeComposer);
-      if (composerResizeFrame.current !== undefined) window.cancelAnimationFrame(composerResizeFrame.current);
-      composerResizeFrame.current = undefined;
+    const flushDraft = () => {
+      if (draftPersistenceTimer.current !== undefined) window.clearTimeout(draftPersistenceTimer.current);
+      draftPersistenceTimer.current = undefined;
+      writeAIDraft(draftProjectIdRef.current, draftRef.current ?? "");
     };
-  }, [resizeComposer, activeStatus?.auth, activeId]);
+    window.addEventListener("pagehide", flushDraft);
+    return () => {
+      window.removeEventListener("pagehide", flushDraft);
+      flushDraft();
+    };
+  }, []);
   const toggleComposer = (expanded: boolean) => {
     const input = composerRef.current;
     if (input) composerCaret.current = { start: input.selectionStart, end: input.selectionEnd, scrollTop: input.scrollTop };
     setComposerExpanded(expanded);
   };
   useLayoutEffect(() => {
-    resizeComposer();
     const input = composerRef.current;
     if (input && composerCaret.current) {
       input.focus({ preventScroll: true });
       input.setSelectionRange(composerCaret.current.start, composerCaret.current.end);
       input.scrollTop = composerCaret.current.scrollTop;
     }
-  }, [composerExpanded, resizeComposer]);
+  }, [composerExpanded]);
   useEffect(() => {
     if (!composerExpanded) return;
     const escape = (event: KeyboardEvent) => {
@@ -233,43 +260,6 @@ export function AIView(props: Props) {
     return () => window.removeEventListener("keydown", escape, true);
   }, [composerExpanded]);
   useEffect(() => { setComposerExpanded(false); }, [activeId, props.projectId]);
-  useLayoutEffect(() => {
-    followTranscriptRef.current = true;
-    setTranscriptAtBottom(true);
-    let secondFrame = 0;
-    const firstFrame = window.requestAnimationFrame(() => {
-      const transcript = transcriptRef.current;
-      if (transcript) transcript.scrollTop = transcript.scrollHeight;
-      secondFrame = window.requestAnimationFrame(() => {
-        const current = transcriptRef.current;
-        if (current) current.scrollTop = current.scrollHeight;
-      });
-    });
-    return () => { window.cancelAnimationFrame(firstFrame); window.cancelAnimationFrame(secondFrame); };
-  }, [activeId, props.projectId]);
-  useEffect(() => {
-    const transcript = transcriptRef.current;
-    if (!transcript) return;
-    if (followTranscriptRef.current) transcript.scrollTop = transcript.scrollHeight;
-    const frame = window.requestAnimationFrame(() => {
-      const atBottom = transcript.scrollHeight - transcript.scrollTop - transcript.clientHeight < 80;
-      if (followTranscriptRef.current && atBottom) setTranscriptAtBottom(true);
-      else setTranscriptAtBottom(atBottom);
-    });
-    return () => window.cancelAnimationFrame(frame);
-  }, [activeId, activeConversation?.messages.length, latestMessageContent, latestReasoning, activeChanges.length, sending]);
-  useEffect(() => {
-    const transcript = transcriptRef.current;
-    const content = transcript?.firstElementChild;
-    if (!transcript || !content || typeof ResizeObserver === "undefined") return;
-    const observer = new ResizeObserver(() => {
-      if (followTranscriptRef.current) transcript.scrollTop = transcript.scrollHeight;
-      const atBottom = transcript.scrollHeight - transcript.scrollTop - transcript.clientHeight < 80;
-      setTranscriptAtBottom(atBottom);
-    });
-    observer.observe(content);
-    return () => observer.disconnect();
-  }, [activeId]);
   useEffect(() => { props.onReviewChanges?.(snapshot.changeSets.filter((item) => item.status === "pending" || item.status === "partially_accepted")); }, [snapshot.changeSets, props.onReviewChanges]);
 
   const runStatus = async (action: () => Promise<AIStatus | undefined>, connectAfter = false, provider: AIMode = activeMode) => {
@@ -292,7 +282,7 @@ export function AIView(props: Props) {
       const created = await api.createConversation(requestedMode, props.projectId);
       if (!created) return;
       setSnapshot((current) => ({ ...current, conversations: [created, ...current.conversations] }));
-      setActiveId(created.id); setMode(requestedMode); setDraft("");
+      setActiveId(created.id); setMode(requestedMode);
     } catch (reason) { setError(messageOf(reason)); }
   };
 
@@ -360,7 +350,7 @@ export function AIView(props: Props) {
       const started = await api.send({ conversationId: conversation.id, taskId: requestedTaskId, projectId: props.projectId, content: messageContent, ...attachmentPayload, ...(contextText ? { contextText } : {}), overrides: props.overrides });
       if (started) {
         const latest = snapshotRef.current.conversations.find((item) => item.id === started.conversation.id);
-        const newest = newestConversation(latest, started.conversation);
+        const newest = mergeConversation(latest, started.conversation);
         const stillRunning = newest.messages.some((message) => message.status === "streaming");
         const currentTaskId = newest.activeTaskId ?? (stillRunning ? started.taskId || requestedTaskId : undefined);
         activeTaskIdRef.current = currentTaskId;
@@ -368,7 +358,7 @@ export function AIView(props: Props) {
         if (!stillRunning) setCanceling(false);
         setSnapshot((current) => {
           const existing = current.conversations.find((item) => item.id === started.conversation.id);
-          const newest = newestConversation(existing, started.conversation);
+          const newest = mergeConversation(existing, started.conversation);
           return { ...current, conversations: [newest, ...current.conversations.filter((item) => item.id !== started.conversation.id)] };
         });
       } else { activeTaskIdRef.current = undefined; setTaskId(undefined); setCanceling(false); }
@@ -387,7 +377,7 @@ export function AIView(props: Props) {
     try {
       const started = await api.send({ conversationId: activeConversation.id, taskId: requestedTaskId, projectId: props.projectId, content: editedContent, overrides: props.overrides, editMessageId: messageId });
       if (!started) throw new Error(t("ai.editUnavailable"));
-      const newest = newestConversation(snapshotRef.current.conversations.find(item => item.id === started.conversation.id), started.conversation);
+      const newest = mergeConversation(snapshotRef.current.conversations.find(item => item.id === started.conversation.id), started.conversation);
       const stillRunning = newest.messages.some(message => message.status === "streaming");
       const currentTaskId = stillRunning ? started.taskId || requestedTaskId : undefined;
       activeTaskIdRef.current = currentTaskId; setTaskId(currentTaskId); setCanceling(false);
@@ -416,7 +406,7 @@ export function AIView(props: Props) {
       if (immediately) {
         const started = await api.sendQueued(activeConversation.id, messageId);
         if (started) {
-          const newest = newestConversation(snapshotRef.current.conversations.find(item => item.id === started.conversation.id), started.conversation);
+          const newest = mergeConversation(snapshotRef.current.conversations.find(item => item.id === started.conversation.id), started.conversation);
           const next = { ...snapshotRef.current, conversations: [newest, ...snapshotRef.current.conversations.filter(item => item.id !== newest.id)] };
           snapshotRef.current = next; setSnapshot(next);
           activeTaskIdRef.current = newest.activeTaskId; setTaskId(newest.activeTaskId);
@@ -426,54 +416,65 @@ export function AIView(props: Props) {
     finally { setQueueBusyId(undefined); if (immediately) setCanceling(false); }
   };
 
-  const scrollTranscriptToBottom = () => {
-    const transcript = transcriptRef.current;
-    if (!transcript) return;
-    followTranscriptRef.current = true;
-    setTranscriptAtBottom(true);
-    transcript.scrollTo({ top: transcript.scrollHeight, behavior: "smooth" });
-  };
-
-  const reviewChanges = async (changeSet: AIChangeSet, ids: string[], keep: boolean) => {
+  const reviewChanges = async (report: AIChangeReport, requestedIds: string[], keep: boolean) => {
     if (!api || changesBusy) return;
     setChangesBusy(true); setError(""); setNotice("");
+    let failedChangeSet = report.members[0]!;
     try {
-      if (keep) {
-        const selected = new Set(ids);
-        const appliedIds: string[] = [];
-        const unapplied = changeSet.files.flatMap(file => file.hunks.filter(hunk => selected.has(hunk.id) && hunk.decision === "pending").map(hunk => hunk.id));
-        let staleStructureIds: string[] = [];
-        if (unapplied.length) {
-          const result = await props.onApplyChanges(changeSet, unapplied);
-          appliedIds.push(...result.appliedIds);
-          staleStructureIds = result.staleStructureIds;
+      const selectedIds = new Set(requestedIds);
+      const members = keep ? report.members : report.members.slice().reverse();
+      for (const changeSet of members) {
+        const ids = changeSet.files.flatMap(file => file.hunks.filter(hunk => hunk.decision === "pending" && selectedIds.has(hunk.id)).map(hunk => hunk.id));
+        if (!ids.length) continue;
+        failedChangeSet = changeSet;
+        if (keep) {
+          const selected = new Set(ids);
+          const appliedIds: string[] = [];
+          const unapplied = changeSet.files.flatMap(file => file.hunks.filter(hunk => selected.has(hunk.id) && hunk.decision === "pending").map(hunk => hunk.id));
+          let staleStructureIds: string[] = [];
+          if (unapplied.length) {
+            const result = await props.onApplyChanges(changeSet, unapplied);
+            appliedIds.push(...result.appliedIds);
+            staleStructureIds = result.staleStructureIds;
+          }
+          const accepted = new Set(appliedIds);
+          const stale = new Set(staleStructureIds);
+          const decisions: Record<string, "accepted" | "rejected"> = {};
+          for (const id of ids) {
+            if (accepted.has(id)) decisions[id] = "accepted";
+            else if (stale.has(id)) decisions[id] = "rejected";
+          }
+          const resolved = await api.resolveChangeSet(changeSet.id, decisions, true);
+          if (!resolved) throw new Error(t("ai.changeUnavailable"));
+          if (resolved) setSnapshot(current => ({ ...current, changeSets: current.changeSets.map(item => item.id === resolved.id ? resolved : item) }));
+          if (staleStructureIds.length) setNotice(t("ai.staleStructureDiscarded", { count: staleStructureIds.length }));
+        } else await props.onUndoChanges(changeSet, ids);
+        if (!keep) {
+          const decisions = Object.fromEntries(ids.map(id => [id, "rejected" as const]));
+          const resolved = await api.resolveChangeSet(changeSet.id, decisions, false);
+          if (!resolved) throw new Error(t("ai.changeUnavailable"));
+          if (resolved) setSnapshot(current => ({ ...current, changeSets: current.changeSets.map(item => item.id === resolved.id ? resolved : item) }));
         }
-        const accepted = new Set(appliedIds);
-        const stale = new Set(staleStructureIds);
-        const decisions: Record<string, "accepted" | "rejected"> = {};
-        for (const id of ids) {
-          if (accepted.has(id)) decisions[id] = "accepted";
-          else if (stale.has(id)) decisions[id] = "rejected";
-        }
-        const resolved = await api.resolveChangeSet(changeSet.id, decisions, true);
-        if (!resolved) throw new Error(t("ai.changeUnavailable"));
-        if (resolved) setSnapshot(current => ({ ...current, changeSets: current.changeSets.map(item => item.id === resolved.id ? resolved : item) }));
-        if (staleStructureIds.length) setNotice(t("ai.staleStructureDiscarded", { count: staleStructureIds.length }));
-      } else await props.onUndoChanges(changeSet, ids);
-      if (!keep) {
-        const decisions = Object.fromEntries(ids.map(id => [id, "rejected" as const]));
-        const resolved = await api.resolveChangeSet(changeSet.id, decisions, false);
-        if (!resolved) throw new Error(t("ai.changeUnavailable"));
-        if (resolved) setSnapshot(current => ({ ...current, changeSets: current.changeSets.map(item => item.id === resolved.id ? resolved : item) }));
       }
     } catch (reason) {
       const message = messageOf(reason);
       setError(message);
       try {
-        const failed = await api.markChangeSetApplied(changeSet.id, [], message);
+        const failed = await api.markChangeSetApplied(failedChangeSet.id, [], message);
         if (failed) setSnapshot(current => ({ ...current, changeSets: current.changeSets.map(item => item.id === failed.id ? failed : item) }));
       } catch { /* Keep the local error visible if the history service is unavailable. */ }
     }
+    finally { setChangesBusy(false); }
+  };
+  const dismissChangeReport = async (report: AIChangeReport) => {
+    if (!api || changesBusy) return;
+    setChangesBusy(true);
+    try {
+      const ids = report.members.map(changeSet => changeSet.id);
+      await api.dismissChangeSet(ids);
+      const removed = new Set(ids);
+      setSnapshot(current => ({ ...current, changeSets: current.changeSets.filter(item => !removed.has(item.id)) }));
+    } catch (reason) { setError(messageOf(reason)); }
     finally { setChangesBusy(false); }
   };
   const renameConversation = async (id: string, title: string) => {
@@ -496,11 +497,30 @@ export function AIView(props: Props) {
       setSnapshot((current) => ({ conversations: current.conversations.filter((item) => !removed.has(item.id)), changeSets: current.changeSets.filter((item) => !removed.has(item.conversationId)) }));
       if (activeIdRef.current && removed.has(activeIdRef.current)) {
         setActiveId(snapshotRef.current.conversations.find((item) => !removed.has(item.id) && item.mode === activeMode)?.id);
-        setMode(activeMode); setDraft("");
+        setMode(activeMode);
       }
       setHistoryDeleting(false);
     }
   };
+
+  const transcriptHandlers = useRef({ props, reviewChanges, dismissChangeReport, editAndResend });
+  transcriptHandlers.current = { props, reviewChanges, dismissChangeReport, editAndResend };
+  const transcriptActions = useMemo<AITranscriptActions>(() => ({
+    keep: (changes, ids) => { void transcriptHandlers.current.reviewChanges(changes, ids, true); },
+    discard: (changes, ids) => { void transcriptHandlers.current.reviewChanges(changes, ids, false); },
+    view: (changes, path) => transcriptHandlers.current.props.onViewChanges(changes, path),
+    dismiss: changes => { void transcriptHandlers.current.dismissChangeReport(changes); },
+    openFile: (path, line) => {
+      const open = transcriptHandlers.current.props.onOpenFile;
+      if (open) open(path, line);
+      else window.dispatchEvent(new CustomEvent("texweave:ai-open-file", { detail: { path, line } }));
+    },
+    startEdit: message => { setEditingMessageId(message.id); setEditedContent(message.content); setError(""); },
+    changeEdit: setEditedContent,
+    cancelEdit: () => { setEditingMessageId(undefined); setEditedContent(""); },
+    resend: id => { void transcriptHandlers.current.editAndResend(id); },
+    error: reason => setError(messageOf(reason))
+  }), []);
 
   if (!api) return null;
 
@@ -537,20 +557,10 @@ export function AIView(props: Props) {
       <button className="secondary-button ai-recheck" disabled={busy || (activeMode === "codex" && activeStatus.auth === "authenticating")} onClick={() => void runStatus(() => activeMode === "chat" ? api.copilotStatus() : api.detect(), false, activeMode)}>{t("ai.detectAgain")}</button>
     </div>{(error || activeStatus.error) && <div className="inline-error ai-error" role="alert">{error || activeStatus.error}</div>}</div>}
     {activeStatus?.auth === "signed_in" && <>
-      <div className="ai-transcript-shell">
-      <div ref={transcriptRef} className="ai-conversation-body" aria-live="polite" onScroll={(event) => { const element = event.currentTarget; const atBottom = element.scrollHeight - element.scrollTop - element.clientHeight < 80; followTranscriptRef.current = atBottom; setTranscriptAtBottom(atBottom); }}>
-        <div className="ai-message-list">{activeConversation?.messages.map((message) => <article key={message.id} className={`ai-message ${message.role} ${message.status ?? ""}`}>
-          <div className="ai-message-heading"><small>{message.role === "user" ? t("ai.you") : message.role === "assistant" ? t("ai.assistant") : message.role}</small></div>
-          {message.role === "assistant" && <AIResponse message={message} projectRoot={props.projectRoot} {...(props.mathContext ? { mathContext: props.mathContext } : {})} onOpenFile={props.onOpenFile}/>}
-          {editingMessageId === message.id ? <div className="ai-message-edit"><textarea value={editedContent} onChange={event => setEditedContent(event.target.value)} aria-label={t("ai.editMessage")} autoFocus/><div><button type="button" disabled={busy || !editedContent.trim()} onClick={() => void editAndResend(message.id)}>{t("ai.editResend")}</button><button type="button" disabled={busy} onClick={() => { setEditingMessageId(undefined); setEditedContent(""); }}>{t("ai.cancelEdit")}</button></div></div> : message.role !== "assistant" && message.content && <div className="ai-message-content"><AIMessageContent content={message.content} projectRoot={props.projectRoot} {...(props.mathContext ? { mathContext: props.mathContext } : {})} {...(props.onOpenFile ? { onOpenFile: props.onOpenFile } : {})}/></div>}
-          {!!message.attachments?.length && <div className="ai-message-attachments">{message.attachments.map((attachment) => <span key={attachment.id} title={attachment.name}>▧ {attachment.name}</span>)}</div>}
-          <div className="ai-message-actions"><button type="button" className="ai-edit-message" disabled={!message.content} title={t("editor.context.copy")} aria-label={t("editor.context.copy")} onClick={() => { void navigator.clipboard.writeText(message.content).catch(reason => setError(messageOf(reason))); }}><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="8" y="8" width="12" height="12" rx="2"/><path d="M16 8V4a2 2 0 0 0-2-2H4a2 2 0 0 0-2 2v10a2 2 0 0 0 2 2h4"/></svg></button>{message.role === "user" && message.id === lastUserMessageId && !activeConversation?.queuedMessages?.length && !responseRunning && !sending && editingMessageId !== message.id && <button type="button" className="ai-edit-message" disabled={busy} title={t("ai.editMessage")} aria-label={t("ai.editMessage")} onClick={() => { setEditingMessageId(message.id); setEditedContent(message.content); setError(""); }}><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m15 5 4 4M4 20l4-1L20 7a2.8 2.8 0 0 0-4-4L4 15z"/></svg></button>}</div>
-        </article>)}{!activeConversation?.messages.length && !sending && <p className="ai-empty-chat">{t(activeMode === "chat" ? "ai.chatReady" : "ai.codexReady")}</p>}
-        {sending && responseRunning && !activeConversation?.messages.some((message) => message.status === "streaming") && <div className="ai-task-status" role="status"><span className="ai-thinking-spinner" aria-hidden="true"/>{t("ai.thinking")}</div>}</div>
-        {activeChanges.map(changeSet => <ChangesCard key={changeSet.id} changes={changeSet} busy={changesBusy} onKeep={ids => void reviewChanges(changeSet, ids, true)} onDiscard={ids => void reviewChanges(changeSet, ids, false)} onView={path => props.onViewChanges(changeSet, path)}/>)}
-      </div>
-      {!transcriptAtBottom && <button type="button" className="ai-scroll-bottom" title={t("ai.scrollToLatest")} aria-label={t("ai.scrollToLatest")} onClick={scrollTranscriptToBottom}><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 4v15m-6-6 6 6 6-6"/></svg></button>}
-      </div>
+      <AITranscript conversationId={activeId} messages={activeConversation?.messages ?? EMPTY_MESSAGES} changes={activeChanges}
+        projectRoot={props.projectRoot} mathContext={transcriptMathContext.current} readyKey={activeMode === "chat" ? "ai.chatReady" : "ai.codexReady"}
+        busy={busy} changesBusy={changesBusy} sending={sending} responseRunning={responseRunning} hasQueuedMessages={Boolean(activeConversation?.queuedMessages?.length)}
+        editingMessageId={editingMessageId} editedContent={editedContent} actions={transcriptActions}/>
       <footer className="ai-composer-dock">
         {!!activeConversation?.queuedMessages?.length && <section className="ai-message-queue" aria-label={t("ai.queueTitle")}>
           <header><strong>{t("ai.queueTitle")}</strong><span>{activeConversation.queuedMessages.length}{activeConversation.queuePaused ? ` · ${t("ai.queuePaused")}` : ""}</span></header>
@@ -569,6 +579,22 @@ export function AIView(props: Props) {
       </footer>
     </>}
   </section>;
+}
+
+function summarizeDraft(value: string): { hasText: boolean; long: boolean } {
+  const trimmed = value.trim();
+  return { hasText: Boolean(trimmed), long: trimmed.length > AI_LONG_INPUT_THRESHOLD };
+}
+
+function sameMathDefinitions(a: MathContext | undefined, b: MathContext | undefined): boolean {
+  if (a === b) return true;
+  if (!a || !b) return false;
+  const equal = (before: Record<string, string>, after: Record<string, string>) => {
+    if (before === after) return true;
+    const keys = Object.keys(before);
+    return keys.length === Object.keys(after).length && keys.every(key => before[key] === after[key]);
+  };
+  return equal(a.macros, b.macros) && equal(a.operators, b.operators);
 }
 
 function messageOf(reason: unknown): string {

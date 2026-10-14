@@ -17,6 +17,47 @@ export function automaticHunkIds(changes: AIChangeSet): string[] {
 
 function lines(content: string): string[] { return content.match(/[^\n]*\n|[^\n]+$/g) ?? []; }
 
+function lineOffset(content: string, line: number): number {
+  let offset = 0;
+  for (let current = 0; current < line && offset < content.length; current += 1) {
+    const newline = content.indexOf("\n", offset);
+    if (newline < 0) return content.length;
+    offset = newline + 1;
+  }
+  return offset;
+}
+
+/** Apply or undo hunks in a newer buffer only when their context still matches. */
+function replaceHunksInCurrent(file: AIFileChange, current: string, selected: AIChangeHunk[], reverse = false): string {
+  let result = current;
+  for (const hunk of selected.slice().sort((a, b) => (reverse ? b.newStart - a.newStart : b.oldStart - a.oldStart))) {
+    const expected = reverse ? hunk.newText : hunk.oldText;
+    const replacement = reverse ? hunk.oldText : hunk.newText;
+    if (!expected) {
+      if (result !== "") throw new Error(`AI_CHANGE_CONFLICT:${file.path}`);
+      result = replacement;
+      continue;
+    }
+    const candidates: number[] = [];
+    let from = 0;
+    while (from <= result.length - expected.length) {
+      const found = result.indexOf(expected, from);
+      if (found < 0) break;
+      candidates.push(found);
+      from = found + 1;
+    }
+    const expectedOffset = lineOffset(result, reverse ? hunk.newStart : hunk.oldStart);
+    const ordered = candidates.slice().sort((a, b) => Math.abs(a - expectedOffset) - Math.abs(b - expectedOffset));
+    const closest = ordered[0];
+    const nextClosest = ordered[1];
+    if (closest === undefined || (nextClosest !== undefined && Math.abs(closest - expectedOffset) === Math.abs(nextClosest - expectedOffset))) {
+      throw new Error(`AI_CHANGE_CONFLICT:${file.path}`);
+    }
+    result = result.slice(0, closest) + replacement + result.slice(closest + expected.length);
+  }
+  return result;
+}
+
 /** Reconstruct a proposal subset in original-file coordinates, not shifted newStart positions. */
 export function fileWithAppliedHunks(file: AIFileChange, included: (hunk: AIChangeHunk) => boolean = isHunkApplied): string | undefined {
   const selected = file.hunks.filter(included);
@@ -38,6 +79,10 @@ export function transitionAIFile(file: AIFileChange, current: string | undefined
   // Retry after a successful edit whose acknowledgement failed is safe. A
   // stale applied flag must never accept an edit the user has since undone.
   if (current === after || (!apply && before === after)) return current;
+  if (apply && file.hunks.some(hunk => ids.has(hunk.id) && isHunkApplied(hunk))) throw new Error(`AI_CHANGE_CONFLICT:${file.path}`);
+  if (file.type === "modify" && current !== undefined) {
+    return replaceHunksInCurrent(file, current, file.hunks.filter(hunk => ids.has(hunk.id)), !apply);
+  }
   if (current !== before) throw new Error(`AI_CHANGE_CONFLICT:${file.path}`);
   return after;
 }

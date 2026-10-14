@@ -73,6 +73,7 @@ export function registerAiIpcHandlers(context: DesktopContext | undefined, setti
   handleIpc(desktopInvoke.ai.resolveApproval, (_event, id, allow) => context?.aiWorkspaces.approvals.resolve(id, allow));
   handleIpc(desktopInvoke.ai.markChangeSetApplied, (_event, id, hunkIds, error) => context?.aiWorkspaces.markChangeSetApplied(id, hunkIds, error));
   handleIpc(desktopInvoke.ai.resolveChangeSet, (_event, id, decisions, applied) => context?.aiWorkspaces.resolveChangeSet(id, decisions, applied));
+  handleIpc(desktopInvoke.ai.dismissChangeSet, (_event, id) => context?.aiWorkspaces.dismissChangeSet(id));
   handleIpc(desktopInvoke.ai.pickAttachments, async (event, projectId, draftId) => {
     if (!context) throw new Error("Application context is not ready");
     assertDraftOwner(event.sender, projectId, draftId);

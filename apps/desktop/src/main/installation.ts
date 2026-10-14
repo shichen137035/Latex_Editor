@@ -4,7 +4,7 @@ import { randomUUID } from "node:crypto";
 import type { LatexToolchain } from "@latex-editor/contracts" with { "resolution-mode": "import" };
 
 /**
- * Filesystem contract shared by the installer and the running application.
+ * Filesystem contract for application metadata and user-data cleanup.
  *
  * The installer owns the application directory. Everything below userData is
  * user data and therefore has an explicit lifetime. In particular, a project
@@ -59,17 +59,6 @@ export class InstallationStateService {
         // A corrupt state file must not prevent the editor from starting.
         this.state = defaultState(this.appVersion);
       }
-    }
-    // The NSIS page writes this small hand-off before the first launch. It is
-    // a request, not proof of installation; actual component ownership is
-    // recorded only after a component has been verified by the application.
-    try {
-      const selection = JSON.parse(await readFile(join(this.configRoot, "installer-selection.json"), "utf8")) as { installMode?: unknown; uiLanguage?: unknown; languagePacks?: unknown; spellcheck?: unknown; latexRuntime?: unknown };
-      if (selection.installMode === "recommended" || selection.installMode === "custom") this.state.installMode = selection.installMode;
-      if (typeof selection.uiLanguage === "string") this.state.installerLanguage = selection.uiLanguage;
-      this.state.requestedComponents = ["core", ...(selection.languagePacks === true ? ["language-packs" as const] : []), ...(selection.spellcheck === true ? ["spellcheck" as const] : []), ...(selection.latexRuntime === true ? ["latex-runtime" as const] : [])];
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== "ENOENT") this.state.requestedComponents = ["core"];
     }
     await this.persist();
   }

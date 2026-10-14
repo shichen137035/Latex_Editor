@@ -1,4 +1,7 @@
 {
+  "ui.BibtexPreviewPane.paste_bibtex": "粘贴 BibTeX",
+  "ui.BibtexPreviewPane.paste_bibtex_description": "粘贴一条或多条 BibTeX 内容，加入当前文件。",
+  "ui.BibtexPreviewPane.pasted_entries_added": "已向 {{file}} 添加 {{count}} 条文献。",
   "ai.queueTitle": "消息队列",
   "ai.queueMessage": "加入队列",
   "ai.queuePaused": "已暂停",
@@ -627,6 +630,7 @@
   "ai.permission.full": "完全访问",
   "ai.permission.full.confirm": "完全访问允许 AI 不经询问修改电脑上的任意文件并使用网络。项目外的操作无法通过编辑器撤销。是否继续？",
   "ai.editedFiles": "已修改 {{count}} 个文件",
+  "ai.clearChangeReport": "清除修改报告",
   "ai.keepAll": "全部接受",
   "ai.viewChanges": "查看修改",
   "ai.reviewFile": "审查 {{path}}",

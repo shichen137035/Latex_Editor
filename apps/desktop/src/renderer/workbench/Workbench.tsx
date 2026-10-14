@@ -20,7 +20,8 @@ import { unsavedChanges, useUnsavedChanges } from "../lifecycle/unsavedChanges.j
 import { EditHistory, applyTextPatch, patchFromEdits, textPatch, type HistoryDirection } from "./EditHistory.js";
 import { NavigationHistory } from "./NavigationHistory.js";
 import { ProjectReferenceIndex } from "../editor/ProjectReferenceIndex.js";
-import { automaticHunkIds, reviewFileContents } from "../ai/changeOperations.js";
+import { automaticHunkIds } from "../ai/changeOperations.js";
+import { groupChangeReports } from "../ai/changeReports.js";
 import type { EnvironmentDefinition } from "../preview/types.js";
 import type { CompletionController } from "../completion/CompletionController.js";
 import type { SpellCheckController, SpellContextRequest } from "../spellcheck/SpellCheckController.js";
@@ -195,6 +196,7 @@ export function Workbench({ project, projects, environments, onHome, onSwitch, o
   const sourcePositions = useRef(new Map(restoredWorkspace.source));
   const sourceModelPath = useRef<string | undefined>(undefined);
   const sourceRestoredFor = useRef<string | undefined>(undefined);
+  const forwardSyncToPdfRef = useRef<(path: string, line: number, column?: number) => Promise<void>>(async () => undefined);
   const navigationNonce = useRef(0);
   const navigationHistory = useRef(new NavigationHistory());
   useEffect(() => { navigationHistory.current.clear(); }, [project.id]);
@@ -210,8 +212,8 @@ export function Workbench({ project, projects, environments, onHome, onSwitch, o
     setFigureSelection(undefined); setTableSelection(undefined); setInspectorBlock(undefined);
     setPreviewSelection(undefined); setSourceSelection(undefined);
   }, [activePath]);
-  const aiReviewFile = useMemo(() => aiDiffFile ? aiReviewChanges.find(changes => changes.id === aiDiffFile.id)?.files.find(file => file.path === aiDiffFile.path && file.hunks.some(hunk => hunk.decision === "pending")) : undefined, [aiReviewChanges, aiDiffFile]);
-  const aiReviewContent = useMemo(() => aiReviewFile ? reviewFileContents(aiReviewFile) : undefined, [aiReviewFile]);
+  const aiReviewFile = useMemo(() => aiDiffFile ? groupChangeReports(aiReviewChanges).find(report => report.id === aiDiffFile.id || report.members.some(member => member.id === aiDiffFile.id))?.files.find(file => file.path === aiDiffFile.path) : undefined, [aiReviewChanges, aiDiffFile]);
+  const aiReviewContent = useMemo(() => aiReviewFile ? { original: aiReviewFile.originalContent ?? "", modified: aiReviewFile.proposedContent ?? "" } : undefined, [aiReviewFile]);
   const sourceEditorVisible = layout.mode === "single" ? layout.singlePane === "source" : layout.leftPane === "source";
   const visualEditorVisible = layout.mode === "single" ? layout.singlePane === "preview" : layout.leftPane === "preview";
   const creationSelection = sourceEditorVisible ? sourceSelection : previewSelection;
@@ -541,6 +543,7 @@ export function Workbench({ project, projects, environments, onHome, onSwitch, o
       return true;
     }
   });
+  forwardSyncToPdfRef.current = forwardSyncToPdf;
 
   const workingDocuments = useWorkingDocuments({ api, projectId: project.id, tabs, tabsRef, savedContents, activePath,
     configuration: previewEnvironments, directives: store.get("previewDirectives"), onSnapshot: setBlockSnapshot,
@@ -918,7 +921,7 @@ export function Workbench({ project, projects, environments, onHome, onSwitch, o
     api, project, store, editorRef, sourceRestoredFor, setEditorMountVersion, searchDecorationsRef,
     completionController, spellCheckController, referenceMouseListener, symbolPairingListener, activePathRef, sourceModelPath,
     setSourceMathPreview, clearHoverMathPreviewRef, mathPopoverInteracting, mathPopoverInteractionChangeRef,
-    setCursor, sourcePositions, activeContentRef, setSourceSelection, forwardSyncToPdf, treeRef, environmentsRef,
+    setCursor, sourcePositions, activeContentRef, setSourceSelection, forwardSyncToPdf: (path, line, column) => forwardSyncToPdfRef.current(path, line, column), treeRef, environmentsRef,
     getOpenDocuments: () => tabsRef.current.map(tab => ({ path: tab.path, content: tab.content })),
     resolveReference: (path, label) => referenceIndex.resolve(path, label),
     onReferenceJump: jump => { if (activePathRef.current) jumpToReference({ fileId: activePathRef.current, offset: jump.offset, linkText: jump.text, targetLabel: jump.label }, "source"); },

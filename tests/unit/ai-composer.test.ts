@@ -144,6 +144,7 @@ describe("AI composer attachments and reasoning", () => {
     const changes = f.service.snapshot("project").changeSets[0]!;
     expect(changes.permissionMode).toBe("auto");
     const ids = changes.files.flatMap(file => file.hunks.map(hunk => hunk.id));
+    await expect(f.service.dismissChangeSet(changes.id)).rejects.toThrow("Resolve all unapplied AI changes");
     const provisional = await f.service.markChangeSetApplied(changes.id, ids);
     expect(provisional.status).toBe("pending");
     expect(provisional.files.flatMap(file => file.hunks).every(hunk => hunk.applied && hunk.decision === "pending")).toBe(true);
@@ -151,8 +152,11 @@ describe("AI composer attachments and reasoning", () => {
     expect(accepted.status).toBe("accepted");
     const unchanged = await f.service.resolveChangeSet(changes.id, Object.fromEntries(ids.map(id => [id, "rejected" as const])), false);
     expect(unchanged.status).toBe("accepted");
+    await f.service.dismissChangeSet(changes.id);
+    expect(f.service.snapshot("project").changeSets).toHaveLength(0);
     const saved = JSON.parse(await readFile(join(f.root, "ai", "conversations.json"), "utf8"));
     expect(saved.conversations[0].title).toBe("My paper edits");
+    expect(saved.changeSets).toHaveLength(0);
     await f.service.dispose();
   });
 

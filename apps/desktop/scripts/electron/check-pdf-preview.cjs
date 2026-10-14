@@ -43,6 +43,8 @@ async function compileUi(expectedSource, projectId) {
   await delay(250);
 }
 async function replaceSource(text) {
+  page.focus();
+  page.webContents.focus();
   await evaluate('document.querySelector(".editor-surface .monaco-editor textarea").focus()');
   await until('!!document.querySelector(".editor-surface .monaco-editor.focused")', 'focused source editor before replace');
   await delay(80);

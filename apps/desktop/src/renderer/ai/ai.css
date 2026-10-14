@@ -60,6 +60,7 @@
 .ai-scroll-bottom svg { width: 17px; height: 17px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
 .ai-message-list { display: flex; min-height: 0; flex-direction: column; gap: 9px; padding: 0; }
 .ai-message { padding: 10px; border: 1px solid var(--color-border); border-radius: 9px; background: var(--color-bg-panel); animation: ai-card-enter 180ms ease both; }
+.ai-message:not(.streaming) { content-visibility: auto; contain-intrinsic-size: auto 140px; }
 .ai-message.user { margin-left: 12px; border-color: color-mix(in srgb, var(--color-primary) 18%, var(--color-border)); background: color-mix(in srgb, var(--color-primary) 7%, var(--color-bg-panel)); }
 .ai-message-heading { display: flex; align-items: center; justify-content: space-between; gap: 8px; min-height: 18px; }
 .ai-message-heading > small { color: var(--color-text-muted); font-size: 9px; font-weight: 700; text-transform: uppercase; letter-spacing: .06em; }
@@ -121,14 +122,14 @@
 .ai-long-input-note { padding: 6px 9px; border: 1px solid color-mix(in srgb, var(--color-primary) 20%, var(--color-border)); border-radius: 7px; color: var(--color-text-secondary); background: color-mix(in srgb, var(--color-primary) 5%, var(--color-bg-panel)); font-size: 10px; line-height: 1.4; }
 .ai-composer { position:relative; display: grid; grid-template-columns: minmax(0, 1fr); gap: 8px; padding: 11px 10px 8px; border: 1px solid var(--color-border); border-radius: 18px; background: color-mix(in srgb, var(--color-bg-subtle) 45%, var(--color-bg-panel)); transition: border-color 160ms ease, box-shadow 180ms ease; }
 .ai-composer:focus-within { border-color: color-mix(in srgb, var(--color-primary) 55%, var(--color-border)); box-shadow: 0 0 0 3px color-mix(in srgb, var(--color-primary) 10%, transparent); }
-.ai-composer textarea { display: block; box-sizing: border-box; width: 100%; min-width: 0; min-height: 44px; max-height:110px; padding:3px 27px 3px 2px; resize: none; overflow-y: hidden; overscroll-behavior:contain; border: 0; outline: 0; color: var(--color-text-primary); background: transparent; font-family: inherit; font-size: 12px; line-height: 1.5; }
+.ai-composer textarea { display: block; box-sizing: border-box; width: 100%; min-width: 0; min-height: 44px; max-height:110px; field-sizing: content; padding:3px 27px 3px 2px; resize: none; overflow-y: auto; overscroll-behavior:contain; border: 0; outline: 0; color: var(--color-text-primary); background: transparent; font-family: inherit; font-size: 12px; line-height: 1.5; }
 .ai-composer-expand { position:absolute; top:10px; right:9px; z-index:1; display:grid; place-items:center; width:23px; height:23px; padding:4px; border:0; border-radius:6px; color:var(--color-text-muted); background:var(--color-bg-panel); cursor:pointer; }
 .ai-composer-expand:hover { color:var(--color-primary); background:var(--color-bg-hover); }
 .ai-composer-expand svg { width:15px; height:15px; fill:none; stroke:currentColor; stroke-width:1.6; stroke-linecap:round; stroke-linejoin:round; }
 .ai-composer-backdrop { position:fixed; inset:0; z-index:1100; display:grid; place-items:center; padding:24px; background:color-mix(in srgb,var(--color-text-primary) 28%,transparent); }
 .ai-composer-expanded-panel { width:min(860px,calc(100vw - 48px)); max-height:calc(100vh - 48px); overflow:auto; border-radius:18px; background:var(--color-bg-panel); box-shadow:var(--shadow-panel); }
 .ai-composer.expanded { padding:18px 16px 12px; }
-.ai-composer.expanded textarea { max-height:min(56vh,560px); }
+.ai-composer.expanded textarea { height:min(56vh,560px); min-height:44px; max-height:min(56vh,560px); }
 .ai-composer-actions { display: grid; grid-template-columns: 28px 28px minmax(0, 1fr) minmax(65px, 90px) 34px; grid-template-rows: 32px; grid-template-areas: "add permission model effort send"; align-items: center; gap: 0 3px; min-width: 0; }
 .ai-composer-actions select { width: 100%; height: 28px; min-width: 0; padding: 0 5px; border: 0; border-radius: 8px; font-family: inherit; font-size: 11px; line-height: 1.4; color: var(--color-text-secondary); background: transparent; text-overflow: ellipsis; cursor: pointer; }
 .ai-composer-actions select:hover:not(:disabled) { background: var(--color-bg-panel); color: var(--color-text-primary); }
@@ -167,6 +168,8 @@
 .ai-change-set > header { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 6px; color: var(--color-text-primary); font-size: 10px; }
 .ai-change-set > header button, .ai-hunk button, .ai-undo-row button { min-height: 26px; padding: 4px 7px; border: 1px solid var(--color-border); border-radius: 5px; color: var(--color-primary-strong); background: var(--color-bg-subtle); font-size: 9px; }
 .ai-change-set > header > div { display: flex; flex-wrap: wrap; gap: 4px; }
+.ai-change-set > header button.ai-dismiss-report { display: grid; width: 26px; min-width: 26px; place-items: center; padding: 4px; color: var(--color-success, #21865a); }
+.ai-change-set > header button.ai-dismiss-report svg { width: 14px; height: 14px; fill: none; stroke: currentColor; stroke-width: 2.2; stroke-linecap: round; stroke-linejoin: round; }
 .ai-change-set button:disabled, .ai-hunk button:disabled { opacity: .45; cursor: default; }
 .ai-file-change { margin-top: 8px; border-top: 1px solid var(--color-border); padding-top: 7px; }
 .ai-file-change > strong { color: var(--color-text-secondary); font: 600 9px/1.4 Consolas, monospace; overflow-wrap: anywhere; }
@@ -200,7 +203,7 @@
 .ai-inline-diff-heading { min-height: 34px; display: flex; align-items: center; gap: 8px; padding: 0 11px; border-bottom: 1px solid var(--color-border); color: var(--color-text-primary); background: color-mix(in srgb, var(--color-primary) 7%, var(--color-bg-panel)); font-size: 10px; }
 .ai-inline-diff-heading strong { font-weight: 700; }
 .ai-inline-diff-heading span { min-width: 0; overflow: hidden; color: var(--color-text-muted); font: 9px Consolas, monospace; text-overflow: ellipsis; white-space: nowrap; }
-.ai-sidebar *, .ai-sidebar *::before, .ai-sidebar *::after { transition: border-color 160ms ease, background-color 160ms ease, box-shadow 180ms ease; }
+.ai-sidebar button, .ai-sidebar select, .ai-sidebar input { transition: border-color 160ms ease, background-color 160ms ease, box-shadow 180ms ease; }
 @keyframes ai-card-enter { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: translateY(0); } }
 @media (max-width: 430px) {
   .ai-workspace-controls, .ai-composer-dock { padding-inline: 10px; }

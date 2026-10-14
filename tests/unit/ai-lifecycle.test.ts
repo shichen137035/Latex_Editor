@@ -8,7 +8,7 @@ import { randomUUID } from "node:crypto";
 import type { CodexAppServer } from "../../apps/desktop/src/main/ai/codex-app-server.js";
 import type { CopilotChatService } from "../../apps/desktop/src/main/ai/copilot-chat.js";
 import { createWorkspaceBlockApi } from "../../apps/desktop/src/main/ai/workspace-block-api.js";
-import { newestConversation } from "../../apps/desktop/src/renderer/ai/conversationState.js";
+import { mergeConversation, newestConversation } from "../../apps/desktop/src/renderer/ai/conversationState.js";
 
 const roots: string[] = [];
 afterEach(async () => { vi.useRealTimers(); await Promise.all(roots.splice(0).map(root => rm(root, { recursive: true, force: true }))); });
@@ -73,6 +73,29 @@ it("does not resurrect completed messages when a stale send response arrives wit
   await f.service.dispose();
 });
 
+it("keeps completed history memoizable across streamed IPC snapshots without losing edits", () => {
+  const current: AIConversation = { id: "chat", mode: "codex", title: "Test", createdAt: 1, updatedAt: 1, messages: [
+    { id: "user", role: "user", content: "Please help", createdAt: 1 },
+    { id: "assistant", role: "assistant", content: "First", createdAt: 2, status: "streaming", reasoning: [{ id: "r", text: "Thought", complete: false }] }
+  ] };
+  const incoming = structuredClone(current);
+  incoming.updatedAt = 2;
+  incoming.messages[1]!.content += " response";
+  const merged = mergeConversation(current, incoming);
+  expect(merged.messages[0]).toBe(current.messages[0]);
+  expect(merged.messages[1]).toBe(incoming.messages[1]);
+  const identical = mergeConversation(merged, structuredClone(merged));
+  expect(identical.messages).toBe(merged.messages);
+  const edited = structuredClone(merged);
+  edited.updatedAt = 3;
+  edited.messages[0]!.content = "Revised request";
+  edited.messages[1]!.reasoning![0]!.complete = true;
+  const revised = mergeConversation(merged, edited);
+  expect(revised.messages[0]).toBe(edited.messages[0]);
+  expect(revised.messages[1]).toBe(edited.messages[1]);
+  expect(mergeConversation(revised, merged)).toBe(revised);
+});
+
 it("streams safe approve-for-me source edits into acknowledged checkpoints before the AI turn ends", async () => {
   const f = await fixture("codex");
   const original = "\\begin{document}\nFirst.\n\\end{document}\n";
@@ -87,9 +110,17 @@ it("streams safe approve-for-me source edits into acknowledged checkpoints befor
   f.emit("turn/completed", { turn: { id: "turn", status: "completed" } });
   await vi.waitFor(() => expect(f.service.snapshot("project").changeSets.length).toBe(2), { timeout: 4000 });
   const final = f.service.snapshot("project").changeSets.find(changes => changes.id !== first.id)!;
+  expect(final.messageId).toBe(first.messageId);
+  expect(final.messageId).toBe(f.message().id);
   expect(final.files[0]?.originalContent).toBe(checkpoint);
   expect(final.files[0]?.proposedContent).toBe(`${checkpoint}Added line.\n`);
   expect(started.taskId).toBeTruthy();
+  await expect(f.service.dismissChangeSet([first.id, final.id])).rejects.toThrow("Resolve all unapplied AI changes");
+  expect(f.service.snapshot("project").changeSets).toHaveLength(2);
+  await f.service.markChangeSetApplied(final.id, final.files.flatMap(file => file.hunks.map(hunk => hunk.id)));
+  await f.service.dismissChangeSet([first.id, final.id]);
+  expect(f.service.snapshot("project").changeSets).toHaveLength(0);
+  expect(JSON.parse(await readFile(join(f.root, "ai", "conversations.json"), "utf8")).changeSets).toHaveLength(0);
   await f.service.dispose();
 });
 

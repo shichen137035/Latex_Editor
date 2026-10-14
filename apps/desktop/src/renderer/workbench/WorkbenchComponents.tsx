@@ -281,7 +281,7 @@ function PdfDocumentPicker({ documents, selectedId, onSelect }: { documents: Pro
   }, [open]);
   const selectedParts = selected ? partsFor(selected) : undefined;
   return <div className="pdf-document-picker" ref={root}>
-    <button type="button" className="pdf-document-select" aria-label={t("pdf.chooseDocument")} aria-haspopup="listbox" aria-expanded={open} title={selected ? labelFor(selected) : t("pdf.chooseDocument")} disabled={!documents.length} onClick={() => setOpen(value => !value)}>
+    <button type="button" className="pdf-document-select" data-selected-id={selected?.id} aria-label={t("pdf.chooseDocument")} aria-haspopup="listbox" aria-expanded={open} title={selected ? labelFor(selected) : t("pdf.chooseDocument")} disabled={!documents.length} onClick={() => setOpen(value => !value)}>
       {selected && <Icon name={selected.available ? "compiled" : "pending"}/>}
       <span className="pdf-document-selected-name">{selectedParts?.name ?? t("pdf.loading")}</span>
       <Icon name="chevron"/>
@@ -290,7 +290,7 @@ function PdfDocumentPicker({ documents, selectedId, onSelect }: { documents: Pro
       {documents.map(doc => {
         const parts = partsFor(doc), current = doc.id === selectedId;
         const status = doc.available ? t("pdf.compiled") : t("pdf.notCompiled");
-        return <button type="button" aria-label={`${parts.name} · ${status}`} aria-pressed={current} className={`pdf-document-option${current ? " selected" : ""}`} key={doc.id} title={`${labelFor(doc)} · ${status}`} onClick={() => { onSelect?.(doc.id); setOpen(false); }}>
+        return <button type="button" data-document-id={doc.id} aria-label={`${parts.name} · ${status}`} aria-pressed={current} className={`pdf-document-option${current ? " selected" : ""}`} key={doc.id} title={`${labelFor(doc)} · ${status}`} onClick={() => { onSelect?.(doc.id); setOpen(false); }}>
           <span className={`pdf-document-state ${doc.available ? "compiled" : "pending"}`} title={status}><Icon name={doc.available ? "compiled" : "pending"}/></span>
           <span className="pdf-document-option-text"><strong>{parts.name}</strong>{parts.directory && <small>{parts.directory}</small>}</span>
           {current && <span className="pdf-document-current">✓</span>}

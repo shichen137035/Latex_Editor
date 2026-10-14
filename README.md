@@ -2,9 +2,11 @@
 
 TeXWeave 是一款面向本地项目的 LaTeX 桌面编辑器。它将源码编辑、结构化预览、PDF 编译与定位、文献管理和块关系工具整合在一个工作区中。项目文件保留在用户选择的文件夹里；应用使用 Electron、React、TypeScript 和 Monaco Editor 构建。
 
+当前 0.6.x 测试阶段为专有软件，尚未授予公开开源许可。内部源码访问和外部测试版分发规则见 [测试与许可说明](docs/TEST_DISTRIBUTION_AND_LICENSE.md)；第三方依赖仍分别受其各自许可证约束。
+
 版本统一以根目录 [`package.json`](package.json) 为准，界面和安装器使用同一版本来源。这是本地优先的桌面应用，不要求把论文或项目上传到云端。
 
-开发者导航：[功能总览与 Help 缺口](docs/FEATURE_CATALOG_AND_HELP_GAPS.md)、[完整工程结构与模块职责](docs/architecture/PROJECT_STRUCTURE.md)、[0.6.6 功能清单与体检](docs/FUNCTIONAL_AUDIT_0.6.6.md)、[基础架构](docs/BACKEND_ARCHITECTURE.md)。
+开发者导航：[功能总览与 Help 缺口](docs/FEATURE_CATALOG_AND_HELP_GAPS.md)、[完整工程结构与模块职责](docs/architecture/PROJECT_STRUCTURE.md)、[0.6.7 发布准备记录](docs/RELEASE_READINESS_0.6.7.md)、[基础架构](docs/BACKEND_ARCHITECTURE.md)。
 
 ## 功能概览
 
@@ -86,13 +88,13 @@ npm run desktop:diagnose-preview
 
 ## Windows 打包
 
-在 Windows 环境中生成 NSIS 安装程序和便携版：
+在 Windows 环境中生成经完整发行检查验证的 x64 便携版：
 
 ```powershell
 npm run desktop:dist:win
 ```
 
-产物位于 `release/`。安装器允许选择安装目录并创建快捷方式；卸载时默认保留用户设置和其他用户数据。打包结果的版本号来自根目录 `package.json`。
+产物位于 `release/<版本号>/`。当前流程只生成便携版，不注册文件关联或创建安装快捷方式；用户设置保存在系统用户数据目录，项目仍留在原位置。该版本尚未签名，Windows 可能显示 SmartScreen 提示。安装器会在后续重新设计。
 
 ## CLI
 

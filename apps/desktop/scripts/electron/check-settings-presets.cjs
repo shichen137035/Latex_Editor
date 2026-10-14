@@ -101,10 +101,10 @@ async function run() {
   await evaluate('document.querySelector(".settings-manager-return").click()');
   await evaluate(`document.querySelector('[aria-label="Style resource manager"]').click()`);
   await until('!!document.querySelector(".style-resources-page")', 'style manager');
-  assert.ok(await evaluate('document.querySelector(".manager-presets-button").disabled'));
+  assert.equal(await evaluate('document.querySelector(".manager-presets-button")'), null, 'style resources have no settings-preset button');
   assert.equal(await evaluate('document.querySelectorAll(".settings-manager-dialog-header h1").length'), 1);
   assert.deepEqual(errors, []);
-  console.log('PASS preset dialogs and JSON isolation; single-row manager headers, selected mode colors and resource preset placeholder');
+  console.log('PASS preset dialogs and JSON isolation; single-row manager headers, selected mode colors and no preset button for style resources');
   console.log(`Artifacts: ${root}`);
 }
 app.whenReady().then(() => { require('../../dist/main/index.js'); run().then(() => app.exit(0)).catch(error => { console.error(error); console.error(`Artifacts: ${root}`); app.exit(1); }); });

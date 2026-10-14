@@ -2,7 +2,7 @@
 export const desktopChecks = [
   { id: "ai-connection", area: "ai", script: "electron/check-ai-connection.cjs", summary: "Provider discovery, fresh-profile initialization and signed-out UI", cleanCodexPath: true },
   { id: "ai-attachments", area: "ai", script: "electron/check-ai-attachments.cjs", summary: "Long-history composer, queued sending/priority controls and attachment cleanup" },
-  { id: "ai-review", area: "ai", script: "check-ai-review.cjs", summary: "Permissions, proposed edits, per-hunk review, apply and undo", env: { TEXWEAVE_UI_TEST_OFFSCREEN: "1" } },
+  { id: "ai-review", area: "ai", script: "check-ai-review.cjs", summary: "Permissions, review, undo and long-history input performance", env: { TEXWEAVE_UI_TEST_OFFSCREEN: "1" } },
   { id: "ai-history", area: "ai", script: "check-ai-history.cjs", summary: "Conversation grouping, search, delete confirmation and persistence" },
   { id: "source-editor", area: "editor", script: "electron/check-source-editor.cjs", summary: "Source editing, undo, cursor restoration and navigation history" },
   { id: "source-performance", area: "editor", script: "electron/check-source-performance.cjs", summary: "Long-file scrolling cost and continued editability" },

@@ -1,4 +1,7 @@
 {
+  "ui.BibtexPreviewPane.paste_bibtex": "貼上 BibTeX",
+  "ui.BibtexPreviewPane.paste_bibtex_description": "貼上一筆或多筆 BibTeX 內容，加入目前檔案。",
+  "ui.BibtexPreviewPane.pasted_entries_added": "已向 {{file}} 新增 {{count}} 筆文獻。",
   "ai.queueTitle": "訊息佇列",
   "ai.queueMessage": "加入佇列",
   "ai.queuePaused": "已暫停",
@@ -363,6 +366,7 @@
   "ai.permission.full": "完整存取",
   "ai.permission.full.confirm": "完整存取允許 AI 不經詢問修改電腦上的任意檔案並使用網路。專案外的操作無法透過編輯器復原。是否繼續？",
   "ai.editedFiles": "已修改 {{count}} 個檔案",
+  "ai.clearChangeReport": "清除修改報告",
   "ai.keepAll": "全部接受",
   "ai.viewChanges": "查看修改",
   "ai.reviewFile": "審查 {{path}}",

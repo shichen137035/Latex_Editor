@@ -6,6 +6,8 @@ import EditorWorker from "monaco-editor/esm/vs/editor/editor.worker?worker";
 import JsonWorker from "monaco-editor/esm/vs/language/json/json.worker?worker";
 import { App } from "./App.js";
 import { formatLatexSource } from "./editor/latexFormatter.js";
+import { latexFoldingRanges, type LatexFold } from "./editor/latexFolding.js";
+import { latexLanguageConfiguration } from "./editor/latexLanguageConfiguration.js";
 import { settings } from "./settings/service.js";
 import "./styles.css";
 import "./themes/light.css";
@@ -82,6 +84,18 @@ monaco.editor.defineTheme("texweave-pink-light", {
   colors: { "editor.background": "#FFFBFD" }
 });
 monaco.languages.register({ id: "latex" });
+monaco.languages.setLanguageConfiguration("latex", latexLanguageConfiguration);
+const latexFoldCache = new WeakMap<monaco.editor.ITextModel, { version: number; ranges: LatexFold[] }>();
+monaco.languages.registerFoldingRangeProvider("latex", {
+  provideFoldingRanges(model, _context, cancellation) {
+    if (cancellation.isCancellationRequested) return [];
+    const previous = latexFoldCache.get(model);
+    if (previous?.version === model.getVersionId()) return previous.ranges;
+    const ranges = latexFoldingRanges(model.getValue());
+    latexFoldCache.set(model, { version: model.getVersionId(), ranges });
+    return ranges;
+  }
+});
 monaco.languages.setMonarchTokensProvider("latex", {
   tokenizer: {
     root: [

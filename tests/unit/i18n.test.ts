@@ -37,13 +37,18 @@ describe("language catalogs and diagnostics", () => {
     expect(report.unknown).toEqual([]);
     expect(report.hardcoded).toEqual([]);
   });
-  it("interpolates Chinese text, keeps unknown user keys readable and falls back for incomplete languages", () => {
+  it("interpolates Chinese text, keeps unknown user keys readable and uses available Japanese translations", () => {
     setLocale("zh-CN");
     expect(getLocale()).toBe("zh-CN");
     expect(t("status.line", { line: 4, column: 7 })).toBe("第 4 行，第 7 列");
     expect(t("custom.user.key")).toBe("custom.user.key");
     setLocale("ja");
-    expect(t("native.zipArchive")).toBe(catalogs.en["native.zipArchive"]);
+    expect(t("native.zipArchive")).toBe(catalogs.ja["native.zipArchive"]);
+    expect(t("native.zipArchive")).not.toBe(catalogs.en["native.zipArchive"]);
+  });
+  it("keeps French translations free of accidental Japanese and Chinese text", () => {
+    const untranslated = Object.entries(catalogs.fr).filter(([, value]) => /[\u3040-\u30ff\u4e00-\u9fff]/.test(value));
+    expect(untranslated).toEqual([]);
   });
   it("translates built-in environment labels after a live locale change, retaining authored overrides", () => {
     namePolicy(false);
@@ -67,8 +72,8 @@ describe("language catalogs and diagnostics", () => {
     expect(languageName("en-US")).toContain("英语");
   });
   it("shares native dialog translations with the renderer catalogs", () => {
-    expect(translateNative("zh-CN", "native.exportPdf")).toBe("编译并导出 PDF");
-    expect(translateNative("ja", "native.exportPdf")).toBe(catalogs.en["native.exportPdf"]);
+    expect(translateNative("zh-CN", "native.exportPdf")).toBe(catalogs["zh-CN"]["native.exportPdf"]);
+    expect(translateNative("ja", "native.exportPdf")).toBe(catalogs.ja["native.exportPdf"]);
   });
   it("localizes worker error keys in the host without loading language catalogs in the worker", async () => {
     setLocale("zh-CN");

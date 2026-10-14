@@ -1,4 +1,7 @@
 {
+  "ui.BibtexPreviewPane.paste_bibtex": "BibTeX қою",
+  "ui.BibtexPreviewPane.paste_bibtex_description": "Осы файлға қосу үшін бір немесе бірнеше BibTeX жазбасын қойыңыз.",
+  "ui.BibtexPreviewPane.pasted_entries_added": "{{file}} файлына {{count}} жазба қосылды.",
   "ai.queueTitle": "Хабарламалар кезегі",
   "ai.queueMessage": "Кезекке қосу",
   "ai.queuePaused": "Уақытша тоқтатылды",
@@ -1718,6 +1721,7 @@
   "ai.permission.full": "Толық қолжетімділік",
   "ai.permission.full.confirm": "Толық қолжетімділік AI-ға осы компьютердің кез келген жеріндегі файлдарды өзгертуге және желіні сұраусыз пайдалануға мүмкіндік береді. Сыртқы әрекеттерді жоба өңдегіші арқылы қайтару мүмкін емес. Жалғастырасыз ба?",
   "ai.editedFiles": "{{count}} файл өңделді",
+  "ai.clearChangeReport": "Өзгерістер есебін жабу",
   "ai.keepAll": "Барлығын қабылдау",
   "ai.viewChanges": "Өзгерістерді көру",
   "ai.reviewFile": "{{path}} файлын қарап шығу",

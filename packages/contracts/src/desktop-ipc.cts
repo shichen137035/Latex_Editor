@@ -259,6 +259,7 @@ export const desktopInvoke = {
     removeConversation: invoke<(id: string) => Promise<void>>("ai:conversation:remove"),
     resolveChangeSet: invoke<(id: string, decisions: Record<string, "accepted" | "rejected">, applied: boolean) => Promise<AIChangeSet | undefined>>("ai:change-set:resolve"),
     markChangeSetApplied: invoke<(id: string, hunkIds: string[], error?: string) => Promise<AIChangeSet | undefined>>("ai:change-set:applied"),
+    dismissChangeSet: invoke<(id: string | string[]) => Promise<void>>("ai:change-set:dismiss"),
     approvals: invoke<(projectId?: string) => Promise<AIApprovalRequest[]>>("ai:approvals"),
     resolveApproval: invoke<(id: string, allow: boolean) => Promise<void>>("ai:approval:resolve"),
     send: invoke<(input: { conversationId: string; taskId?: string; projectId?: string; content: string; contextText?: string; overrides?: AIContextSnapshotFile[]; attachmentIds?: string[]; attachmentDraftId?: string; editMessageId?: string }) => Promise<{ conversation: AIConversation; taskId: string; queued?: boolean } | undefined>>("ai:send"),

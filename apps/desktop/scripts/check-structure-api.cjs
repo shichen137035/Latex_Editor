@@ -54,7 +54,9 @@ Body paragraph.
   const legacyGraph = await evaluate(`window.latexEditor.blockGraph.snapshot(${JSON.stringify(project.id)})`);
   assert(legacyGraph.blocks.some((block) => block.id === theorem.id));
   const structuralChildren = await evaluate(`window.latexEditor.blockGraph.getStructuralChildren(${JSON.stringify(project.id)}, ${JSON.stringify(theorem.id)})`);
-  assert.deepEqual(structuralChildren, snapshot.blocks[theorem.id].childIds);
+  // The graph API returns structural child IDs in stable lexical order while
+  // the document index keeps source order; verify membership, not ordering.
+  assert.deepEqual([...structuralChildren].sort(), [...snapshot.blocks[theorem.id].childIds].sort());
   const neighborhood = await evaluate(`window.latexEditor.blockGraph.getRelationNeighborhood(${JSON.stringify(project.id)}, ${JSON.stringify(theorem.id)}, "both", 1)`);
   assert(neighborhood);
   const persisted = readFileSync(resolve(project.canonicalPath, ".texweave", "structure.json"), "utf8");

@@ -130,6 +130,11 @@ export class AIWorkspaceService {
         const changeSets = saved.changeSets.filter((item): item is AIChangeSet => Boolean(item && typeof item.id === "string" && /^[0-9a-f-]{36}$/i.test(item.id) && typeof item.conversationId === "string" && conversations.some((conversation) => conversation.id === item.conversationId) && Array.isArray(item.files)));
         this.#data = { version: 1, conversations, changeSets };
         let interrupted = false;
+        for (const changes of changeSets) if (!changes.messageId) {
+          const conversation = conversations.find(item => item.id === changes.conversationId);
+          const message = conversation?.messages.slice().reverse().find(item => item.role === "assistant" && item.createdAt <= changes.createdAt);
+          if (message) { changes.messageId = message.id; interrupted = true; }
+        }
         for (const conversation of conversations) {
           if (conversation.queuedMessages?.length) {
             conversation.queuePaused = true;
@@ -297,7 +302,12 @@ export class AIWorkspaceService {
     const checkpoint = active?.incremental.checkpoints.get(id);
     if (active && checkpoint) {
       if (error) active.incremental.failed = true;
-      else for (const [path, content] of checkpoint) content === undefined ? active.base.delete(path) : active.base.set(path, content);
+      else {
+        for (const [path, content] of checkpoint) {
+          if (content === undefined) active.base.delete(path);
+          else active.base.set(path, content);
+        }
+      }
       active.incremental.checkpoints.delete(id);
       active.incremental.waitingForApply = false;
       active.incremental.resolveAcknowledgement?.();
@@ -345,6 +355,16 @@ export class AIWorkspaceService {
     await this.#persist();
     this.#onUpdate("changes", structuredClone(changeSet));
     return structuredClone(changeSet);
+  }
+
+  async dismissChangeSet(changeSetId: string | string[]): Promise<void> {
+    const ids = new Set(typeof changeSetId === "string" ? [changeSetId] : changeSetId);
+    const changeSets = this.#data.changeSets.filter(item => ids.has(item.id));
+    if (!changeSets.length) return;
+    const hasUnappliedPendingHunks = changeSets.some(changeSet => changeSet.files.some((file) => file.hunks.some((hunk) => hunk.decision === "pending" && hunk.applied !== true)));
+    if (hasUnappliedPendingHunks) throw new Error("Resolve all unapplied AI changes before clearing this report.");
+    this.#data.changeSets = this.#data.changeSets.filter((item) => !ids.has(item.id));
+    await this.#persist();
   }
 
   openAttachmentDraft(projectId: string, draftId: string): void {
@@ -1157,7 +1177,7 @@ export class AIWorkspaceService {
       return previous === content;
     });
     if (!files.length) return;
-    const changeSet: AIChangeSet = { id: randomUUID(), conversationId: conversation.id, createdAt: Date.now(), files, status: "pending", permissionMode: "auto" };
+    const changeSet: AIChangeSet = { id: randomUUID(), conversationId: conversation.id, messageId: active.messageId, createdAt: Date.now(), files, status: "pending", permissionMode: "auto" };
     active.incremental.checkpoints.set(changeSet.id, new Map(files.map((file) => [file.path, after.get(file.path)])));
     active.incremental.waitingForApply = true;
     active.incremental.applyAcknowledgement = new Promise<void>((resolve) => { active.incremental.resolveAcknowledgement = resolve; });
@@ -1206,7 +1226,7 @@ export class AIWorkspaceService {
       this.#publishConversation(conversation);
     }
     if (!files.length) return;
-    const changeSet: AIChangeSet = { id: randomUUID(), conversationId: conversation.id, createdAt: Date.now(), files, status: "pending", permissionMode: active.permissionMode };
+    const changeSet: AIChangeSet = { id: randomUUID(), conversationId: conversation.id, messageId: active.messageId, createdAt: Date.now(), files, status: "pending", permissionMode: active.permissionMode };
     this.#data.changeSets.unshift(changeSet);
     await this.#persist();
     this.#onUpdate("changes", structuredClone(changeSet));

@@ -12,7 +12,7 @@ Latex_Editor/
 ├─ packages/                   桌面端和 CLI 共用的规则、服务与适配器
 ├─ resources/                  随应用提供的数据驱动资源
 ├─ themes/                     可导入的 CSS 主题资源
-├─ build/                      安装器、工具链和资源安装配置
+├─ release/                    本地生成的版本化 Windows 构建产物（忽略）
 ├─ tests/                      单元、集成、编译器、CLI 和类型测试
 ├─ docs/                       用户、开发、架构和功能技术文档
 │  └─ architecture/            仓库结构与架构导航
@@ -142,8 +142,9 @@ apps/desktop/
 | `resources/templates/` | 新建项目模板元数据 |
 | `resources/ai/skills/` | 随应用提供的 AI 项目技能说明 |
 | `themes/` | 可扫描/导入的 CSS 主题文件；内置主题及语义颜色基础仍由应用代码与主题令牌共同提供 |
-| `build/manifests/`、`build/profiles/`、`build/scripts/` | LaTeX、语言、拼写资源的安装清单、安装配置和环境脚本 |
-| `build/installer.nsh` | Windows NSIS 安装器扩展配置 |
+| `apps/desktop/scripts/clean-build.cjs` | 清理工作区生成输出与 TypeScript 增量状态，确保完整重建 |
+| `apps/desktop/scripts/build-distribution.cjs`、`verify-package.cjs` | 生成并检查版本化 Windows x64 便携包 |
+| `release/<version>/` | 本机生成的发行产物，不提交到源码仓库 |
 
 资源配置与程序逻辑应保持分工：稳定的执行行为放在代码中；默认条目、标签、样式和可调整属性尽量放在资源文件中。用 `npm run resources:validate` 检查资源完整性。
 

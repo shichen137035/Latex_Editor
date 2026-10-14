@@ -39,8 +39,8 @@ async function run() {
   await click('.directory-actions > .icon-button:last-child');
   await click('[data-section="projectBuild"]');
   await js('document.querySelectorAll(".settings-level-switch button")[1].click()');
-  await until('!!document.querySelector(".settings-manager-entry-open[aria-label=\\"Style resource manager\\"]")', 'advanced project managers');
-  await click('.settings-manager-entry-open[aria-label="Style resource manager"]');
+  await until('!!document.querySelector(".settings-manager-entry-open[data-manager=\\"styleResources\\"]")', 'advanced project managers');
+  await click('.settings-manager-entry-open[data-manager="styleResources"]');
   await until('document.querySelector(".style-resources-page")', 'style resource settings');
   const resources = await js('window.latexEditor.styleResources.list()');
   assert.ok(resources.some((item) => item.id === 'empty' && item.source === 'built-in'));

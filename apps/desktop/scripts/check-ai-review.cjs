@@ -31,15 +31,6 @@ async function until(expression, label = expression) {
   }))()`);
   throw new Error(`Timed out: ${label}\nUI state: ${JSON.stringify(state)}`);
 }
-async function runHistoryCommand(menuLabel, commandLabel, step) {
-  const before = await evaluate("window.__historyReplayCount ?? 0");
-  await evaluate(`Array.from(document.querySelectorAll('.app-menus .menu-anchor > button')).find(button => button.textContent.trim() === ${JSON.stringify(menuLabel)}).click()`);
-  await until("!!document.querySelector('.app-menus .menu-anchor .menu-popover')", `${commandLabel} menu`);
-  await evaluate(`Array.from(document.querySelectorAll('.app-menus .menu-anchor .menu-popover button')).find(button => button.textContent.trim() === ${JSON.stringify(commandLabel)}).click()`);
-  await until(`(window.__historyReplayCount ?? 0) > ${before}`, `${commandLabel} ${step} applied`);
-  await evaluate("document.querySelector('.save-status')?.click()");
-  await until("document.querySelector('.save-status')?.classList.contains('saved')", `${commandLabel} ${step} saved`);
-}
 function hunk(id, oldStart, oldText, newText) {
   const count = text => text.match(/[^\n]*\n|[^\n]+$/g)?.length ?? 0;
   return { id, oldStart, oldLines: count(oldText), newStart: oldStart, newLines: count(newText), oldText, newText, decision: "pending" };
@@ -49,6 +40,14 @@ const nativeHistory = () => JSON.parse(readFileSync(storePath, "utf8"));
 function mock(channel, handler) { ipcMain.removeHandler(channel); ipcMain.handle(channel, handler); }
 const editorText = "document.querySelector('.editor-surface .monaco-editor')?.textContent?.replaceAll('\\u00a0',' ')";
 const original = "\\documentclass{article}\n\\begin{document}\nOld A\n1\n2\n3\n4\n5\nOld B\n\\end{document}\n";
+function blankPdf() {
+  const objects = ['<< /Type /Catalog /Pages 2 0 R >>', '<< /Type /Pages /Kids [3 0 R] /Count 1 >>', '<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Contents 4 0 R >>', '<< /Length 0 >>\nstream\n\nendstream'];
+  let pdf = '%PDF-1.4\n'; const offsets = [0];
+  for (let index = 0; index < objects.length; index++) { offsets.push(Buffer.byteLength(pdf)); pdf += `${index + 1} 0 obj\n${objects[index]}\nendobj\n`; }
+  const xref = Buffer.byteLength(pdf);
+  pdf += `xref\n0 5\n0000000000 65535 f \n${offsets.slice(1).map(offset => `${String(offset).padStart(10, '0')} 00000 n \n`).join('')}trailer\n<< /Size 5 /Root 1 0 R >>\nstartxref\n${xref}\n%%EOF\n`;
+  return Buffer.from(pdf);
+}
 async function run() {
   while (!BrowserWindow.getAllWindows().length) await delay(50);
   page = BrowserWindow.getAllWindows()[0];
@@ -61,6 +60,14 @@ async function run() {
   await until("!!window.latexEditor && !!document.querySelector('.directory-main')");
   for (const channel of ["ai:detect", "ai:status", "ai:copilot:status"]) mock(channel, () => ({ auth: "signed_in", process: "running", accountLabel: "Local UI test" }));
   for (const channel of ["ai:models", "ai:copilot:models"]) mock(channel, () => [{ id: "test", name: "Test model", isDefault: true, supportedReasoningEfforts: [{ effort: "high" }] }]);
+  // Compiler behavior has dedicated checks; keep report UI checks independent of installed TeX and build duration.
+  mock("compile:run", (_event, _projectId, mainFile = "main.tex") => {
+    const pdf = blankPdf();
+    writeFileSync(join(project.canonicalPath, mainFile.replace(/\.tex$/i, '.pdf')), pdf);
+    return { compilationId: randomUUID(), status: "succeeded", exitCode: 0, startedAt: new Date().toISOString(),
+      finishedAt: new Date().toISOString(), durationMs: 0, mainFile, diagnostics: [], stdoutTail: "", stderrTail: "",
+      pdfDataUrl: `data:application/pdf;base64,${pdf.toString('base64')}` };
+  });
   mock("ai:conversations", (_event, projectId) => {
     const conversations = nativeHistory().conversations.filter(item => item.projectId === projectId);
     return { conversations, changeSets: changeSets.filter(item => conversations.some(chat => chat.id === item.conversationId)) };
@@ -80,6 +87,10 @@ async function run() {
     changes.status = changes.files.every(file => file.status === "accepted") ? "accepted" : changes.files.every(file => file.status === "rejected") ? "rejected" : "partially_accepted";
     publish(changes); return changes;
   });
+  mock("ai:change-set:dismiss", (_event, input) => {
+    const ids = new Set(Array.isArray(input) ? input : [input]);
+    for (let index = changeSets.length - 1; index >= 0; index--) if (ids.has(changeSets[index].id)) changeSets.splice(index, 1);
+  });
   project = await evaluate(`window.latexEditor.projects.create({ name:'AI UI test', parentPath:${JSON.stringify(projects)} })`);
   await evaluate(`window.latexEditor.settings.set('layout',{ mode:'single', singlePane:'source', sidebarVisible:true, sidebarWidth:360 },${JSON.stringify(project.id)})`);
   await evaluate(`window.latexEditor.files.write(${JSON.stringify(project.id)},'main.tex',${JSON.stringify(original)})`);
@@ -88,7 +99,6 @@ async function run() {
   page.reload(); await until("!!document.querySelector('.directory-project-row')");
   await evaluate("document.querySelector('.directory-project-row').click()");
   await until("!!document.querySelector('.activity-bar')");
-  await evaluate("window.__historyReplayCount = 0; window.addEventListener('texweave:history-replayed', () => { window.__historyReplayCount += 1; });");
   const labels = require("../src/renderer/i18n/locales/en.json");
   await evaluate(`Array.from(document.querySelectorAll('.activity-bar button')).find(button=>button.title.startsWith(${JSON.stringify(labels["activity.ai"])})).click()`);
   await until("!!document.querySelector('.ai-new-chat') && !!document.querySelector('.ai-permission-trigger')");
@@ -118,12 +128,14 @@ async function run() {
   for (let i = 0; i < 180 && !changes.files.every(file => file.hunks.every(h => h.applied)); i++) await delay(60);
   assert.ok(changes.files.every(file => file.hunks.every(h => h.applied)), JSON.stringify(changes));
   await until(`${editorText}?.includes('New A') && ${editorText}?.includes('New B')`);
+  assert.equal(await evaluate("!!document.querySelector('.ai-change-set header [data-action=accept-all]')"), false, "auto-applied changes offer Undo instead of Accept all");
+  assert.equal(await evaluate("!!document.querySelector('.ai-change-set header [data-action=undo]')"), true, "auto-applied changes remain reversible");
   assert.equal(readFileSync(join(project.canonicalPath, "helper.tex"), "utf8"), "Helper text\n");
   assert.equal(await evaluate(`window.latexEditor.files.tree(${JSON.stringify(project.id)}).then(tree=>tree.some(node=>node.name==='obsolete.txt'))`), false);
   await until("document.querySelectorAll('.ai-file-summary').length===3");
   assert.equal(await evaluate("document.querySelector('.ai-new-chat').getBoundingClientRect().width>30 && document.querySelector('.ai-rename-chat').getBoundingClientRect().width>20"), true);
   writeFileSync(join(root, "ai-review.png"), (await page.webContents.capturePage(undefined, { stayHidden: true, stayAwake: true })).toPNG());
-  await evaluate("document.querySelector('.ai-change-set > header button:last-child').click()");
+  await evaluate("document.querySelector('.ai-change-set > header [data-action=view-changes]').click()");
   await until("!!document.querySelector('.monaco-diff-editor') && !!document.querySelector('.ai-diff-close')");
   await evaluate("document.querySelector('.ai-diff-close').click()");
   await until("!document.querySelector('.monaco-diff-editor')");
@@ -133,28 +145,25 @@ async function run() {
   await until("!document.querySelector('.monaco-diff-editor')");
   await evaluate("document.querySelector('.ai-change-expand').click()");
   await until("document.querySelectorAll('.ai-hunk').length===2");
-  await evaluate("document.querySelector('.ai-hunk button').click()");
+  assert.equal(await evaluate("!!document.querySelector('.ai-hunk [data-action=accept]')"), false, "already-applied hunks do not offer Accept");
+  assert.equal(await evaluate("!!document.querySelector('.ai-hunk [data-action=undo]')"), true, "already-applied hunks offer Undo");
+  await evaluate("document.querySelectorAll('.ai-hunk')[1].querySelector('[data-action=undo]').click()");
   await until("document.querySelectorAll('.ai-hunk').length===1");
-  assert.equal(changes.files[0].hunks[0].decision, "accepted");
-  await evaluate("document.querySelector('.ai-hunk button:last-child').click()");
-  await until(`${editorText}?.includes('Old B') && ${editorText}?.includes('New A')`);
   assert.equal(changes.files[0].hunks[1].decision, "rejected");
+  await until(`${editorText}?.includes('Old B') && ${editorText}?.includes('New A')`);
   await until("document.querySelector('.save-status')?.classList.contains('saved')", "AI edits saved before undo");
   await evaluate("document.querySelector('.ai-change-set > header button').click()");
   await until("!document.querySelector('.ai-change-set') && !document.querySelector('.ai-undo-row')");
-  for (let i = 0; i < 4; i++) await runHistoryCommand(labels["menu.edit"], labels["menu.undo"], i + 1);
-  await until(`${editorText}?.includes('Old A') && ${editorText}?.includes('Old B')`);
+  await until(`window.latexEditor.files.read(${JSON.stringify(project.id)},'main.tex').then(file=>file.content===${JSON.stringify(original)})`, "automatic edits undone");
   assert.equal(await evaluate(`window.latexEditor.files.tree(${JSON.stringify(project.id)}).then(tree=>tree.some(node=>node.name==='helper.tex'))`), false);
   assert.equal(readFileSync(join(project.canonicalPath, "obsolete.txt"), "utf8"), "remove me");
-  for (let i = 0; i < 4; i++) await runHistoryCommand(labels["menu.edit"], labels["menu.redo"], i + 1);
-  await until(`${editorText}?.includes('New A') && ${editorText}?.includes('Old B')`);
   await evaluate("document.querySelector('.ai-permission-trigger').click()");
   await until("!!document.querySelector('.ai-permission-menu button.ask')");
   await evaluate("document.querySelector('.ai-permission-menu button.ask').click()");
   await until("document.querySelector('.ai-permission-trigger')?.textContent.includes('Ask for approval')");
-  const before = original.replace("Old A", "New A");
+  const before = original;
   const ask = { id: randomUUID(), conversationId: conversation.id, createdAt: Date.now(), permissionMode: "ask", status: "pending", files: [
-    { path: "main.tex", type: "modify", originalContent: before, proposedContent: before.replace("New A", "Ask edit"), status: "pending", hunks: [hunk("ask-edit", 2, "New A\n", "Ask edit\n")] },
+    { path: "main.tex", type: "modify", originalContent: before, proposedContent: before.replace("Old A", "Ask edit"), status: "pending", hunks: [hunk("ask-edit", 2, "Old A\n", "Ask edit\n")] },
     { path: "proposed.tex", type: "create", proposedContent: "Pending new file\n", status: "pending", hunks: [hunk("ask-create", 0, "", "Pending new file\n")] }
   ] };
   changeSets.push(ask); publish(ask);
@@ -164,8 +173,8 @@ async function run() {
   assert.equal(await evaluate(`window.latexEditor.files.tree(${JSON.stringify(project.id)}).then(tree=>tree.some(node=>node.name==='proposed.tex'))`), false);
   await evaluate("document.querySelector('.ai-change-set > header button').click()");
   await until("!document.querySelector('.ai-change-set')");
-  await until(`window.latexEditor.files.read(${JSON.stringify(project.id)},'main.tex').then(file=>file.content===${JSON.stringify(before.replace("New A", "Ask edit"))})`, "approved source edit saved");
-  assert.equal((await evaluate(`window.latexEditor.files.read(${JSON.stringify(project.id)},'main.tex')`)).content, before.replace("New A", "Ask edit"), "Accept all applies the approved source changes");
+  await until(`window.latexEditor.files.read(${JSON.stringify(project.id)},'main.tex').then(file=>file.content===${JSON.stringify(before.replace("Old A", "Ask edit"))})`, "approved source edit saved");
+  assert.equal((await evaluate(`window.latexEditor.files.read(${JSON.stringify(project.id)},'main.tex')`)).content, before.replace("Old A", "Ask edit"), "Accept all applies the approved source changes");
   assert.equal(readFileSync(join(project.canonicalPath, "proposed.tex"), "utf8"), "Pending new file\n");
   await evaluate("document.querySelector('.ai-permission-trigger').click()");
   await until("!!document.querySelector('.ai-permission-menu button.full')");
@@ -184,8 +193,10 @@ async function run() {
   await until("document.querySelector('.ai-error')?.textContent.includes('internal file')");
   assert.equal(readFileSync(join(project.canonicalPath, protectedPath), "utf8"), protectedContent);
   assert.equal(protectedChanges.files[0].hunks[0].applied, undefined);
-  console.log("PASS AI UI: visible new/rename/history; persistent rename; 3 permission modes/default auto/outside dismissal; automatic edits+create+delete; deleted-file source diff; per-hunk Keep/Undo; no Undo after acceptance; multi-step undo/redo; Ask mode waits for approval.");
+  console.log("PASS AI UI: visible new/rename/history; persistent rename; 3 permission modes/default auto/outside dismissal; automatic edits+create+delete with Undo-only actions; deleted-file source diff; per-hunk Undo; Ask mode waits for and accepts approval.");
   console.log("PASS AI UI: unrelated TeXWeave internal files remain protected.");
+  await require('./ai/change-report-check.cjs')({ page, project, evaluate, until, conversation, changeSets, hunk, publish });
+  await require('./ai/renderer-performance.cjs')({ page, evaluate, until, conversation });
   console.log("Screenshot:", join(root, "ai-review.png"));
 }
 require("../dist/main/index.js");

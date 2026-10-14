@@ -9,8 +9,8 @@ app.setPath("userData", resolve(root, "user-data"));
 const delay = ms => new Promise(done => setTimeout(done, ms));
 let window;
 const evaluate = code => window.webContents.executeJavaScript(code, true);
-async function until(code) {
-  for (let i = 0; i < 100; i++) { if (await evaluate(code)) return; await delay(100); }
+async function until(code, attempts = 100) {
+  for (let i = 0; i < attempts; i++) { if (await evaluate(code)) return; await delay(100); }
   throw new Error("Timeout: " + code + "\n" + await evaluate("document.body.innerText.slice(-2000)"));
 }
 async function run() {
@@ -32,15 +32,20 @@ Visible text at normal scale.
   await until("!!document.querySelector('.directory-project-row')");
   await evaluate("window.addEventListener('error', e=>console.error('CAPTURE',e.message,e.error?.stack));window.addEventListener('unhandledrejection',e=>console.error('REJECTION',String(e.reason),e.reason?.stack));");
   await evaluate("document.querySelector('.directory-project-row').click()");
-  await until("!!document.querySelector('.pdf-page canvas') && !!document.querySelector('.pdf-page .textLayer span')");
+  await until("!!document.querySelector('.pdf-page canvas') && !!document.querySelector('.pdf-page .textLayer span')", 300);
   const textLayer = await evaluate(`(() => { const span=document.querySelector('.textLayer span'); const range=document.createRange(); range.selectNodeContents(span); const selection=getSelection(); selection.removeAllRanges(); selection.addRange(range); return {text:selection.toString(),cursor:getComputedStyle(span).cursor}; })()`);
   assert.ok(textLayer.text.length > 0, "PDF text can be selected");
   assert.equal(textLayer.cursor, "text", "PDF text uses a text cursor");
+  const syncTarget = await evaluate(`window.latexEditor.synctex.forward(${JSON.stringify(project.id)}, "main.tex", "main.pdf", 3, 1)`);
+  assert.equal(syncTarget.page, 1, "SyncTeX maps the source line to a PDF page");
+  window.focus();
+  window.webContents.focus();
   const editorPoint = await evaluate(`(() => { const editor=document.querySelector('.editor-surface .monaco-editor'); const bounds=editor.getBoundingClientRect(); return {x:Math.round(bounds.left+180),y:Math.round(bounds.top+72)}; })()`);
   window.webContents.sendInputEvent({ type:"mouseDown", ...editorPoint, button:"left", clickCount:1 });
   window.webContents.sendInputEvent({ type:"mouseUp", ...editorPoint, button:"left", clickCount:1 });
   window.webContents.sendInputEvent({ type:"mouseDown", ...editorPoint, button:"left", clickCount:2 });
   window.webContents.sendInputEvent({ type:"mouseUp", ...editorPoint, button:"left", clickCount:2 });
+  await delay(100);
   await until("!!document.querySelector('.pdf-sync-marker')");
   const pdfPoint = await evaluate(`(() => { const page=document.querySelector('.pdf-page'); const bounds=page.getBoundingClientRect(); return {x:Math.round(bounds.left+220),y:Math.round(bounds.top+180)}; })()`);
   window.webContents.sendInputEvent({ type:"mouseDown", ...pdfPoint, button:"left", clickCount:1 });
