@@ -9,7 +9,7 @@ export const unitDomains = [
   { id: "projects", title: "Project registration, files, metadata, size, navigation and snapshot timing", prefixes: ["directory-", "project-", "snapshot-timer"], exclude: ["project-references.test.ts", "project-reference-navigation.test.ts"] },
   { id: "references", title: "Citation library, project references, relations and search/filter behavior", prefixes: ["reference-library", "project-references", "project-reference-navigation", "relations", "relation-workflow", "search-", "source-references"] },
   { id: "compiler", title: "Compile targets, scheduling, artifacts, PDF diagnostics and compiler messages", prefixes: ["automatic-compile", "compile-", "compiler-artifacts", "diagnostics"] },
-  { id: "settings", title: "Settings, shortcuts, localization, spell-check and desktop lifecycle/IPC/security", prefixes: ["app-info", "desktop-dev", "desktop-ipc", "i18n", "keyboard-shortcuts", "renderer-security", "settings", "spellcheck"] }
+  { id: "settings", title: "Settings, shortcuts, localization, spell-check and desktop lifecycle/IPC/security", prefixes: ["first-run-setup", "uninstall-cleanup", "app-info", "desktop-dev", "desktop-ipc", "i18n", "keyboard-shortcuts", "renderer-security", "settings", "spellcheck"] }
 ];
 
 export const testLayers = [

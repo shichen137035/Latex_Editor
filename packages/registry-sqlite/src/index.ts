@@ -132,6 +132,12 @@ export class SQLiteProjectRegistry implements ProjectRegistry {
     this.#database.prepare("DELETE FROM projects WHERE id = ?").run(id);
   }
 
+  clear(): void {
+    this.#database.exec("DELETE FROM projects;");
+    try { this.#database.exec("VACUUM;"); }
+    catch { /* Another SQLite reader may defer compaction; the registrations are already removed. */ }
+  }
+
   close(): void {
     this.#database.close();
   }

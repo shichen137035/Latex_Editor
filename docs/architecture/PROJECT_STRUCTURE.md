@@ -71,7 +71,7 @@ apps/desktop/
 
 | 能力 | 代表模块 | 职责 |
 | --- | --- | --- |
-| 项目与文件 | `project-directory-size.ts`、`project-removal-data.ts`、`project-export.ts` | 项目目录信息、移除项目时的数据处置、导出 |
+| 项目与文件 | `project-directory-size.ts`、`project-removal-data.ts`、`project-cache-cleanup.ts`、`project-export.ts` | 项目目录信息、移除项目时的数据处置、安全清理构建缓存、导出 |
 | 编译与 PDF | `compile-preview.ts`、`project-pdfs.ts`、`synctex.ts` | 编译预览协调、多 PDF 目标、源码与 PDF 定位 |
 | 历史 | `project-history.ts`、`history-object.ts`、`history-content.ts` | 快照、版本、对象存储、内容比较与回收 |
 | AI | `ai/` | Codex/Copilot 会话、AI 工具、权限审批、附件和隔离工作区 |

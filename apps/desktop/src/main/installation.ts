@@ -82,6 +82,14 @@ export class InstallationStateService {
     });
   }
 
+  async completeSetup(dictionaryIds: string[]): Promise<InstallationState> {
+    if (!Array.isArray(dictionaryIds) || dictionaryIds.length > 256 || dictionaryIds.some(id => typeof id !== "string" || !/^[A-Za-z]{2,3}(?:[-_][A-Za-z0-9]{2,8})?$/.test(id))) throw new Error("Invalid setup languages");
+    return this.update(next => {
+      next.setupCompletedAt = new Date().toISOString();
+      next.setupDictionaryIds = [...new Set(dictionaryIds)];
+    });
+  }
+
   async recordEnvironment(toolchain: LatexToolchain): Promise<InstallationState> {
     return this.update((next) => {
       next.environment = structuredClone(toolchain);

@@ -67,16 +67,22 @@ async function run() {
   const longLabel = 'sec:' + 'model-residual-'.repeat(40);
   const longCitation = Array.from({ length: 18 }, (_, index) => `author${index}2026${'longkey'.repeat(6)}`).join(',');
   const source = `\\documentclass{article}\n\\begin{document}\n\\begin{assumption}[Regularity condition]\\label{ass:one}A short condition.\\end{assumption}\n\\section{Model and Residual Structure}\\label{${longLabel}}\nA paragraph. See \\ref{${longLabel}} and \\cite{${longCitation}}.\n\\subsection{Projection Pursuit Autoregressive Model}\nAnother paragraph.\n\\end{document}`;
-  await evaluate(`window.latexEditor.files.write(${id}, "main.tex", ${JSON.stringify(source)})`);
+  const citationNotes = String.raw` Also \citep[Theorem 5.1]{munkres2000topology} and \citep*[see][\textbf{Theorem 5.1}]{munkres2000topology}.`;
+  await evaluate(`window.latexEditor.files.write(${id}, "main.tex", ${JSON.stringify(source.replace("Another paragraph.", "Another paragraph." + citationNotes))})`);
   page.reload();
   await until('!!document.querySelector(".directory-project-row")', "project list");
   await evaluate('document.querySelector(".directory-project-row").click()');
   await until(`!!document.querySelector(${JSON.stringify(titleSelector('subsection'))}) && !!document.querySelector(${JSON.stringify(titleSelector('assumption'))})`, "headings");
   page.focus();
+  const citations = await evaluate(`Array.from(document.querySelectorAll('.preview-citation')).map(element => ({text:element.textContent,title:element.title,bold:element.querySelector('strong')?.textContent}))`);
+  assert.ok(citations.some(item => item.text === '[munkres2000topology, Theorem 5.1]' && item.title === String.raw`\citep[Theorem 5.1]{munkres2000topology}`));
+  assert.ok(citations.some(item => item.text === '[see munkres2000topology, Theorem 5.1]' && item.bold === 'Theorem 5.1'));
+  console.log('PASS citation notes retain special preview styling, full source tooltips and inline formatting');
   async function checkTruncation() {
     const tokens = await evaluate(`Array.from(document.querySelectorAll('.structured-preview .preview-citation .preview-inline-reference-text, .structured-preview .preview-reference .preview-inline-reference-text, .structured-preview [data-environment="section"] > .preview-block-header .preview-block-label')).map(element => { const wrapper = element.matches('.preview-block-label') ? element : element.parentElement, style = getComputedStyle(element), rect = wrapper.getBoundingClientRect(), region = wrapper.closest('.preview-content-region, .preview-block-header').getBoundingClientRect(); return { clipped: element.scrollWidth > element.clientWidth, ellipsis: style.textOverflow, nowrap: style.whiteSpace, contained: rect.left >= region.left - 1 && rect.right <= region.right + 1, text: wrapper.textContent, title: wrapper.title }; })`);
-    assert.equal(tokens.length, 3);
-    for (const token of tokens) { assert.equal(token.ellipsis, 'ellipsis'); assert.equal(token.nowrap, 'nowrap'); assert.ok(token.clipped); assert.ok(token.contained); assert.ok(token.title.includes(token.text.replace(/^\[|\]$/g, ''))); }
+    const longTokens = tokens.filter(token => token.text.length > 100);
+    assert.equal(longTokens.length, 3);
+    for (const token of longTokens) { assert.equal(token.ellipsis, 'ellipsis'); assert.equal(token.nowrap, 'nowrap'); assert.ok(token.clipped); assert.ok(token.contained); assert.ok(token.title.includes(token.text.replace(/^\[|\]$/g, ''))); }
     assert.ok(await evaluate(`(() => { const preview = document.querySelector('.structured-preview'); return preview.scrollWidth <= preview.clientWidth + 1; })()`));
   }
   await checkTruncation();

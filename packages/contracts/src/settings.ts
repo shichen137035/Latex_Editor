@@ -200,6 +200,7 @@ export interface PreferenceValues {
   lastProject: string;
   defaultProjectDirectory: string;
   engine: "pdflatex" | "xelatex" | "lualatex";
+  texLiveAutoInstall: boolean;
   keybindings: Record<string, string>;
   environments: unknown[];
   previewDirectives: PreviewDirectiveDefinition[];
@@ -213,7 +214,7 @@ export const preferenceDefaults: PreferenceValues = {
   fixedBlockNameLanguage: true, blockNameLanguage: "en", pdfFollowActiveTex: true,
   locale: "en", theme: "light", themeDirectory: "", themeColorProfiles: {}, aiCodexExecutable: "", aiModel: "", aiCopilotModel: "", aiReasoningEffort: "", aiCopilotReasoningEffort: "", aiDefaultMode: "chat", aiPermissionMode: "auto", aiIncludeCurrentFile: false, fontSize: 15, tabSize: 2, wordWrap: true, sourceMinimap: true,
   autoSave: "off", autoSaveDelaySeconds: 3, hideBuildArtifacts: true, documentWordCompletion: true, autoPairSymbols: true, mathPreviewOnHover: false, showPreviewMetrics: false, autoEnvironmentLabels: true, confirmPreviewEdits: true, warnIncompatibleEnvironmentConversion: true, visibleFilterGroups: ["blockType", "location", "file", "properties"], referenceLinkModifier: "ctrl", spellCheckMode: "auto", spellCheckLanguage: "en-US", spellCheckActiveLanguages: ["en-US"], maximize: true, restoreProject: false,
-  lastProject: "", defaultProjectDirectory: "", engine: "pdflatex", keybindings: {}, environments: [], previewDirectives: defaultPreviewDirectives, layout: {}, sidePanelDisplay: "overlay", wheelAcceleration: defaultWheelAccelerationPreferences, images: defaultImagePreferences, tables: defaultTablePreferences, history: defaultHistoryPreferences
+  texLiveAutoInstall: true, lastProject: "", defaultProjectDirectory: "", engine: "pdflatex", keybindings: {}, environments: [], previewDirectives: defaultPreviewDirectives, layout: {}, sidePanelDisplay: "overlay", wheelAcceleration: defaultWheelAccelerationPreferences, images: defaultImagePreferences, tables: defaultTablePreferences, history: defaultHistoryPreferences
 };
 // Project overrides inherit from global preferences; machine-wide paths and workspace UI stay global.
 export const projectPreferenceKeys: PreferenceKey[] = ["fontSize", "tabSize", "wordWrap", "sourceMinimap", "pdfFollowActiveTex", "autoSave", "autoSaveDelaySeconds", "autoPairSymbols", "mathPreviewOnHover", "confirmPreviewEdits", "engine", "environments", "previewDirectives", "layout", "images", "tables", "history", "keybindings"];
@@ -360,7 +361,7 @@ export function validPreference(key: string, value: unknown): boolean {
     case "tabSize": return typeof value === "number" && [2, 4, 8].includes(value);
     case "autoSave": return value === "off" || value === "afterDelay";
     case "autoSaveDelaySeconds": return typeof value === "number" && Number.isInteger(value) && value >= 1 && value <= 3600;
-    case "pdfFollowActiveTex": case "wordWrap": case "sourceMinimap": case "hideBuildArtifacts": case "documentWordCompletion": case "autoPairSymbols": case "mathPreviewOnHover": case "showPreviewMetrics": case "autoEnvironmentLabels": case "confirmPreviewEdits": case "warnIncompatibleEnvironmentConversion": case "maximize": case "restoreProject": case "aiIncludeCurrentFile": return typeof value === "boolean";
+    case "texLiveAutoInstall": case "pdfFollowActiveTex": case "wordWrap": case "sourceMinimap": case "hideBuildArtifacts": case "documentWordCompletion": case "autoPairSymbols": case "mathPreviewOnHover": case "showPreviewMetrics": case "autoEnvironmentLabels": case "confirmPreviewEdits": case "warnIncompatibleEnvironmentConversion": case "maximize": case "restoreProject": case "aiIncludeCurrentFile": return typeof value === "boolean";
     case "aiDefaultMode": return value === "chat" || value === "codex";
     case "aiPermissionMode": return value === "ask" || value === "auto" || value === "full";
     case "referenceLinkModifier": return value === "ctrl" || value === "alt" || value === "shift" || value === "meta";

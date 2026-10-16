@@ -39,6 +39,8 @@
     "desktop:build": "npm run clean:build && npm run typecheck && npm run desktop:typecheck && vite build --config apps/desktop/vite.config.ts && tsc -p apps/desktop/tsconfig.main.json && node apps/desktop/scripts/build-preload.cjs",
     "desktop:dist:win": "npm run verify:release && node apps/desktop/scripts/build-distribution.cjs --skip-build",
     "desktop:package:win": "node apps/desktop/scripts/build-distribution.cjs",
+    "desktop:package:nsis": "node apps/desktop/scripts/build-distribution.cjs --target=nsis",
+    "desktop:dist:nsis": "npm run verify:release && node apps/desktop/scripts/build-distribution.cjs --target=nsis --skip-build",
     "desktop:verify:package": "node apps/desktop/scripts/verify-package.cjs",
     "desktop:dev": "node apps/desktop/scripts/dev.cjs",
     "desktop:dev:build": "npm run desktop:build && node apps/desktop/scripts/launch.cjs",
@@ -120,6 +122,10 @@
       {
         "from": "themes",
         "to": "themes"
+      },
+      {
+        "from": "apps/desktop/scripts/uninstall-cleanup.cjs",
+        "to": "uninstall-cleanup.cjs"
       }
     ],
     "win": {
@@ -129,6 +135,17 @@
     },
     "portable": {
       "artifactName": "TeXWeave-${version}-${arch}-portable.${ext}"
+    },
+    "nsis": {
+      "artifactName": "TeXWeave-${version}-${arch}-setup.${ext}",
+      "oneClick": false,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "runAfterFinish": true,
+      "deleteAppDataOnUninstall": false,
+      "include": "build/installer.nsh"
     }
   },
   "engines": {

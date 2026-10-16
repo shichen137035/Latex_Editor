@@ -126,8 +126,8 @@ export class OfflineSpellCheckService {
       } catch { /* A missing or stale catalog is replaced by the online registry when available. */ }
       try {
         const [directoryResponse, readmeResponse] = await Promise.all([
-          fetch(dictionaryCatalogApi, { headers: { accept: "application/vnd.github+json", "user-agent": "TeXWeave" } }),
-          fetch(dictionaryReadmeUrl, { headers: { "user-agent": "TeXWeave" } })
+          fetch(dictionaryCatalogApi, { signal: AbortSignal.timeout(10000), headers: { accept: "application/vnd.github+json", "user-agent": "TeXWeave" } }),
+          fetch(dictionaryReadmeUrl, { signal: AbortSignal.timeout(10000), headers: { "user-agent": "TeXWeave" } })
         ]);
         if (!directoryResponse.ok || !readmeResponse.ok) throw new Error("Hunspell dictionary registry is unavailable");
         const directories = await directoryResponse.json() as Array<{ name?: string; type?: string }>;

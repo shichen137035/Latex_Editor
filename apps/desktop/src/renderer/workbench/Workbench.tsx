@@ -531,7 +531,7 @@ export function Workbench({ project, projects, environments, onHome, onSwitch, o
     setNameRequest, setDeleteRequest, refreshTree, openFile, onSwitch
   });
 
-  const { currentNavigationOrigin, navigateTo, navigateBack, navigateForward, forwardSyncToPdf, reverseSyncFromPdf } = createNavigationController({
+  const { currentNavigationOrigin, requestPreviewAtSourcePosition, navigateTo, navigateBack, navigateForward, forwardSyncToPdf, reverseSyncFromPdf } = createNavigationController({
     project, api, pdfFile, layout, layoutRef, setLayout, activePathRef, tabsRef, editorRef, sourceModelPath, lastTextPane,
     sourcePositions, previewPositions, previewViewportAnchor, navigationHistory, navigationNonce, fileOpenSequence,
     setNavigationRequest, setPdfTarget, openFile,
@@ -1041,14 +1041,15 @@ export function Workbench({ project, projects, environments, onHome, onSwitch, o
   const menuItems = (menu: Exclude<MenuName, "projects">) => {
     if (menu === "file") return [{ label: t("menu.newFile"), action: () => void createEntry(false, "") }, { label: t("menu.openFile"), disabled: importingProjectEntries || !project.writable, action: () => void importFromComputer("file") }, { label: t("menu.openFolder"), disabled: importingProjectEntries || !project.writable, action: () => void importFromComputer("folder") }, { label: t("menu.save"), action: () => { commands.execute("file.save"); } }, { label: t("menu.saveAll"), action: () => { commands.execute("file.saveAll"); } }, { label: "", divider: true }, { label: t("export.pdf"), action: () => void exportPdf() }, { label: t("export.sourceArchive"), action: () => void exportSourceArchive() }, { label: t("export.mainSourceArchive"), action: () => void exportMainSourceArchive() }, { label: "", divider: true }, { label: t("menu.closeProject"), action: leaveProject }];
     if (menu === "edit") return [{ label: t("menu.undo"), action: () => { commands.execute("edit.undo"); } }, { label: t("menu.redo"), action: () => { commands.execute("edit.redo"); } }, { label: t("menu.find"), action: () => { commands.execute("edit.find"); } }, { label: t("menu.replace"), action: () => { commands.execute("edit.replace"); } }, { label: "", divider: true }, { label: t("editor.formatSource"), disabled: !isLatexSource || !project.writable, action: formatSource }];
-    if (menu === "view") return [{ label: t("menu.source"), action: () => { if ((layout.mode === "single" ? layout.singlePane === "preview" : layout.leftPane === "preview")) pendingVisualToCodeAnchor.current = previewToCodeAnchor(); setLayout((value) => ({ ...value, mode: "single", singlePane: "source" })); } }, { label: t("menu.preview"), action: () => setLayout((value) => ({ ...value, mode: "single", singlePane: "preview" })) }, { label: t("menu.pdf"), action: () => setLayout((value) => ({ ...value, mode: "single", singlePane: "pdf" })) }, { label: "", divider: true }, { label: t("menu.single"), action: () => setLayout((value) => ({ ...value, mode: "single" })) }, { label: t("menu.split"), action: () => setLayout((value) => ({ ...value, mode: "split" })) }];
+    if (menu === "view") return [{ label: t("menu.source"), action: () => switchTextView("source", true, true) }, { label: t("menu.preview"), action: () => switchTextView("preview", true, true) }, { label: t("menu.pdf"), action: () => setLayout((value) => ({ ...value, mode: "single", singlePane: "pdf" })) }, { label: "", divider: true }, { label: t("menu.single"), action: () => setLayout((value) => ({ ...value, mode: "single" })) }, { label: t("menu.split"), action: () => setLayout((value) => ({ ...value, mode: "split" })) }];
     return [{ label: t("menu.automaticHistory"), action: () => { setSidebarMode("history"); setLayout((value) => ({ ...value, sidebarVisible: true })); } }, { label: t("menu.namedVersions"), action: () => { setSidebarMode("history"); setLayout((value) => ({ ...value, sidebarVisible: true })); } }];
   };
 
-  const switchTextView = (target: "source" | "preview", single: boolean) => {
-    const switchingFromPreview = target === "source" && (single ? layout.singlePane === "preview" : layout.leftPane === "preview");
-    if (switchingFromPreview) pendingVisualToCodeAnchor.current = previewToCodeAnchor();
-    setLayout((value) => single ? { ...value, singlePane: target } : { ...value, leftPane: target });
+  const switchTextView = (target: "source" | "preview", single: boolean, forceSingle = false) => {
+    const current = layout.mode === "single" ? layout.singlePane : layout.leftPane;
+    if (target === "source" && current === "preview") pendingVisualToCodeAnchor.current = previewToCodeAnchor();
+    if (target === "preview" && current === "source" && !aiReviewFile) requestPreviewAtSourcePosition();
+    setLayout((value) => forceSingle ? { ...value, mode: "single", singlePane: target } : single ? { ...value, singlePane: target } : { ...value, leftPane: target });
   };
   const viewSwitch = (active: "source" | "preview", single = false) => <div className="editor-view-controls">
     <select className="filter-view-mode" aria-label={t("filter.unmatchedDisplay")} title={t("filter.unmatchedDisplay")} value={filterQuery.viewMode} onChange={(event) => setFilterQuery((current) => ({ ...current, viewMode: event.target.value as FilterQuery["viewMode"] }))}>

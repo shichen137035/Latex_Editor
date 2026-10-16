@@ -8,6 +8,8 @@ import { findCodexExecutable, findExecutableOnPath, getManagedCodexExecutable } 
 import { codexPermissionPolicy, isLatexCompilerCommand, isReadOnlyPermissionRequest, isWorkspacePath, requiresAIApproval, type AIToolApproval } from "./ai-approvals.js";
 import { resolveReasoningEffort } from "./reasoning-effort.js";
 
+import { installNativeCodex } from "./codex-native-install.js";
+
 type JsonRecord = Record<string, unknown>;
 type PendingRequest = { resolve(value: unknown): void; reject(reason: Error): void; timer: NodeJS.Timeout };
 type MutableAIStatus = { auth: AIStatus["auth"]; process: AIStatus["process"]; executablePath?: string | undefined; accountLabel?: string | undefined; error?: string | undefined };
@@ -24,6 +26,7 @@ export class CodexAppServer {
   #nextRequestId = 0;
   #pending = new Map<number, PendingRequest>();
   #status: AIStatus = { auth: "unknown", process: "stopped" };
+  #installPromise: Promise<AIStatus> | undefined;
   #startPromise: Promise<void> | undefined;
   #loginId: string | undefined;
   #eventListeners = new Set<(event: { method: string; params: JsonRecord }) => void>();
@@ -143,8 +146,24 @@ export class CodexAppServer {
   }
 
   /** Installs the official npm CLI into TeXWeave's user-data directory; never changes global PATH. */
-  async install(): Promise<AIStatus> {
+  async install(force = false): Promise<AIStatus> {
+    if (this.#installPromise) return this.#installPromise;
+    const existing = findCodexExecutable({ userDataPath: this.#userDataPath, configured: this.#configuredExecutable() });
+    if (existing && !force) return this.detect();
+    if (this.#child) throw new Error("Disconnect Codex before repairing its CLI environment.");
+    this.#setStatus({ auth: "unknown", process: "starting" });
+    this.#installPromise = this.#installCli().then(status => { this.#setStatus(status); return this.getStatus(); }).catch(error => {
+      this.#setStatus({ auth: "unknown", process: "not_detected", error: error instanceof Error ? error.message : String(error) }); throw error;
+    }).finally(() => { this.#installPromise = undefined; });
+    return this.#installPromise;
+  }
+  async #installCli(): Promise<AIStatus> {
     const installRoot = join(this.#userDataPath, "tools", "codex-cli");
+    if (process.platform === "win32") {
+      const { net } = await import("electron");
+      const executablePath = await installNativeCodex(installRoot, { fetch: (input, options) => net.fetch(input as string, options) });
+      return { auth: "unknown", process: "stopped", executablePath };
+    }
     const npm = await resolveNpmInvocation();
     await new Promise<void>((resolvePromise, reject) => {
       const child = spawn(npm.command, [...npm.prefixArgs, "install", "--prefix", installRoot, "--no-audit", "--no-fund", "@openai/codex@latest"], {
@@ -211,6 +230,7 @@ export class CodexAppServer {
   }
 
   async #ensureStarted(): Promise<void> {
+    if (this.#installPromise) await this.#installPromise;
     if (this.#status.process === "running" && this.#child) return;
     if (this.#startPromise) return this.#startPromise;
     this.#startPromise = this.#start();

@@ -19,6 +19,11 @@
 .theme-color-number { display: flex; align-items: center; gap: 7px; color: var(--color-text-secondary); }
 .theme-color-settings button:disabled { opacity: .4; }
 .project-creation-card .resource-picker { margin: 16px 0 0; padding: 11px 13px 12px; border: 1px solid var(--color-border); border-radius: 12px; }
+.project-cache-clear-button { flex-shrink: 0; padding: 8px 12px; border: 1px solid color-mix(in srgb, var(--color-error) 35%, var(--color-border)); border-radius: 8px; color: var(--color-error); background: var(--color-bg-panel); font: inherit; font-size: 12px; cursor: pointer; }
+.project-cache-clear-button:disabled { opacity: .5; cursor: default; }
+.project-cache-error { color: var(--color-error); }
+.preference-row[data-setting="projectCache"] { flex-wrap: wrap; }
+.project-cache-clear-button { max-width: 100%; white-space: normal; overflow-wrap: anywhere; }
 .resource-picker legend { padding: 0 5px; color: var(--color-text-secondary, #55799b); font-family: 'DM Sans', 'Segoe UI', sans-serif; font-size: 12px; font-weight: 700; }
 .resource-picker > p { margin: 0 0 9px; color: var(--color-text-secondary); font-size: 12px; }
 .resource-picker-fields { display: grid; grid-template-columns: minmax(0, 1.1fr) minmax(0, 1fr); gap: 12px; }
@@ -698,3 +703,18 @@
 .preferences-dialog .settings-manager-header-tools button { white-space: nowrap; color: var(--color-primary-strong); border-color: var(--color-border); background: var(--color-bg-subtle); }
 .preferences-dialog .settings-manager-header-tools .environment-manager-mode button.active,
 .preferences-dialog .settings-manager-header-tools button.primary { color: #fff; background: var(--color-status-bg, #18598c); border-color: var(--color-status-bg, #18598c); }
+
+.toolchain-install-components { margin: 16px 0; padding: 14px; border: 1px solid var(--color-border); border-radius: 8px; min-width: 0; }
+.toolchain-install-components legend { font-weight: 600; }
+.toolchain-install-panel .toolchain-install-check { display: flex; align-items: flex-start; gap: 10px; margin: 12px 0; cursor: pointer; }
+.toolchain-install-check input { flex: 0 0 auto; width: auto; margin-top: 4px; }
+.toolchain-install-check span { min-width: 0; overflow-wrap: anywhere; }
+.toolchain-install-check small { font-weight: normal; margin-top: 3px; }
+.toolchain-install-panel select, #latex-install-packages { width: 100%; box-sizing: border-box; }
+
+.toolchain-install-panel select { padding: 9px 12px; border: 1px solid var(--color-border); border-radius: 6px; background: var(--color-bg-panel); color: var(--color-text-primary); font: inherit; }
+
+.environment-settings > .toolchain-install-check { display: flex; align-items: flex-start; gap: 10px; margin: 16px 0; }
+.environment-settings > .toolchain-install-check small { display: block; font-weight: normal; color: var(--color-text-secondary); line-height: 1.5; }
+
+.codex-environment-settings code { display:block; overflow-wrap:anywhere; margin:8px 0; }

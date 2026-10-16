@@ -20,7 +20,7 @@ const api = {
   ...requests,
   relations: { ...requests.relations, onUpdate: (listener) => subscribe(desktopEvents.toRenderer.relationUpdate, listener) },
   compile: { ...requests.compile, onUpdate: (listener) => subscribe(desktopEvents.toRenderer.compileUpdate, listener) },
-  projects: { ...requests.projects, onUpdate: (listener) => subscribe(desktopEvents.toRenderer.projectUpdate, listener) },
+  projects: { ...requests.projects, onUpdate: (listener) => subscribe(desktopEvents.toRenderer.projectUpdate, listener), onCleared: (listener) => subscribe(desktopEvents.toRenderer.projectsCleared, listener) },
   lifecycle: {
     ...requests.lifecycle,
     onCloseRequested: (listener) => {

@@ -11,6 +11,7 @@ export interface InlineSourceToken {
   /** Generated spaces/punctuation and mathematical layouts are not character maps. */
   atomic?: boolean;
   children?: InlineSourceToken[];
+  citationNotes?: InlineSourceToken[][];
 }
 
 const formatCommands = new Set(["textbf", "textit", "emph", "texttt", "textrm", "textnormal"]);
@@ -23,16 +24,18 @@ function escaped(value: string, offset: number): boolean {
   return count % 2 === 1;
 }
 
-function argumentAt(value: string, offset: number): { start: number; end: number; next: number } | undefined {
+function argumentAt(value: string, offset: number, optional = false): { start: number; end: number; next: number } | undefined {
   while (/\s/.test(value[offset] ?? "") && offset < value.length) offset++;
-  if (value[offset] !== "{") return undefined;
+  if (value[offset] !== (optional ? "[" : "{")) return undefined;
   const start = offset + 1;
-  let depth = 1;
+  let depth = optional ? 0 : 1;
   for (let cursor = start; cursor < value.length; cursor++) {
     if (value[cursor] === "\\") { cursor++; continue; }
     if (value[cursor] === "%") { const newline = value.indexOf("\n", cursor); if (newline < 0) return undefined; cursor = newline; continue; }
     if (value[cursor] === "{") depth++;
-    else if (value[cursor] === "}" && --depth === 0) return { start, end: cursor, next: cursor + 1 };
+    else if (value[cursor] === "}") {
+      if (--depth === 0 && !optional) return { start, end: cursor, next: cursor + 1 };
+    } else if (optional && value[cursor] === "]" && depth === 0) return { start, end: cursor, next: cursor + 1 };
   }
   return undefined;
 }
@@ -89,7 +92,17 @@ export function tokenizeInlineSource(value: string, sourceStart = 0, trim = true
       continue;
     }
     const command = commandMatch[1]!;
-    const argument = argumentAt(value, cursor + commandMatch[0].length);
+    let argumentOffset = cursor + commandMatch[0].length;
+    const citationNotes: InlineSourceToken[][] = [];
+    if (/^[A-Za-z]*cite[A-Za-z]*$/.test(command)) {
+      for (let count = 0; count < 2; count++) {
+        const note = argumentAt(value, argumentOffset, true);
+        if (!note) break;
+        citationNotes.push(depth < 32 ? tokenizeInlineSource(value.slice(note.start, note.end), sourceStart + note.start, false, depth + 1) : []);
+        argumentOffset = note.next;
+      }
+    }
+    const argument = argumentAt(value, argumentOffset);
     if (argument && ["label", "begin", "end"].includes(command)) {
       flush(cursor); cursor = argument.next; textStart = cursor; continue;
     }
@@ -99,7 +112,7 @@ export function tokenizeInlineSource(value: string, sourceStart = 0, trim = true
       continue;
     }
     if (argument && /^(?:[A-Za-z]*cite[A-Za-z]*|[A-Za-z]*ref[A-Za-z]*)$/.test(command)) {
-      emit(command.includes("cite") ? "citation" : "reference", argument.next, argument.start, argument.end, { command, atomic: true });
+      emit(command.includes("cite") ? "citation" : "reference", argument.next, argument.start, argument.end, { command, atomic: true, ...(citationNotes.length ? { citationNotes } : {}) });
       continue;
     }
     if (algorithmCommands.has(command.toUpperCase())) {

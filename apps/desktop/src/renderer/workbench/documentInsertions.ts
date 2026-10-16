@@ -3,6 +3,7 @@ import type { Dispatch, DragEvent, MutableRefObject, SetStateAction } from "reac
 import type { PreferenceKey, PreferenceValues, Project } from "@latex-editor/contracts";
 import type { OnMount } from "@monaco-editor/react";
 import type { EnvironmentDefinition } from "../preview/types.js";
+import { separatedBlockInsertion } from "../preview/blockInsertion.js";
 import { environmentCursorOffset, environmentInsertion } from "../preview/EnvironmentPicker.js";
 import { addEnvironmentLabel, nextAutomaticLabel } from "../preview/labels.js";
 import type { FigureSelection } from "../figure/FigureInspector.js";
@@ -185,8 +186,9 @@ export function createDocumentInsertions(options: DocumentInsertionOptions) {
         const snippet = withAutomaticLabel(environmentInsertion(definition, selectedText) ?? "", model.getValue());
         if (!snippet) return;
         const startOffset = model.getOffsetAt(selection.getStartPosition());
-        editor.executeEdits("latex-environment-picker", [{ range: selection, text: snippet, forceMoveMarkers: true }]);
-        editor.setPosition(model.getPositionAt(startOffset + environmentCursorOffset(snippet, selectedText)));
+        const insertion = separatedBlockInsertion(model.getValue(), startOffset, model.getOffsetAt(selection.getEndPosition()), snippet);
+        editor.executeEdits("latex-environment-picker", [{ range: selection, text: insertion.text, forceMoveMarkers: true }]);
+        editor.setPosition(model.getPositionAt(startOffset + insertion.prefixLength + environmentCursorOffset(snippet, selectedText)));
         editor.focus();
         return;
       }
@@ -194,10 +196,9 @@ export function createDocumentInsertions(options: DocumentInsertionOptions) {
     const snippet = activeTab ? withAutomaticLabel(environmentInsertion(definition) ?? "", activeTab.content) : "";
     if (snippet && activeTab) {
       const anchor = previewInsertionAnchor.current?.fileId === activeTab.path ? previewInsertionAnchor.current.offset : activeTab.content.length;
-      const prefix = anchor > 0 && !activeTab.content.slice(0, anchor).endsWith("\n") ? "\n\n" : "";
-      const suffix = anchor < activeTab.content.length && !activeTab.content.slice(anchor).startsWith("\n") ? "\n\n" : "";
+      const insertion = separatedBlockInsertion(activeTab.content, anchor, anchor, snippet);
       previewInsertionAnchor.current = undefined;
-      setEditorContent(activeTab.content.slice(0, anchor) + prefix + snippet + suffix + activeTab.content.slice(anchor));
+      setEditorContent(activeTab.content.slice(0, anchor) + insertion.text + activeTab.content.slice(anchor));
     }
   };
 

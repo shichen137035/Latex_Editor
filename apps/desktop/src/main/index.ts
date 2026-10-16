@@ -2,12 +2,13 @@ import { packageSmokeEnabled, finishPackageSmoke, checkPackageWindow } from "./p
 import { LatexToolchainInstaller } from "./toolchain-installer.js";
 import { registerBlockGraphIpc } from "./block-graph-ipc.js";
 import { removeProjectData } from "./project-removal-data.js";
+import { clearRegisteredProjectCaches } from "./project-cache-cleanup.js";
 import { registerStructureIpc } from "./structure-ipc.js";
 import { registerWorkingDocumentIpc } from "./working-document-ipc.js";
 import { registerRelationIpc } from "./relation-ipc.js";
 import { desktopInvoke, desktopEvents, type UnsavedDialogLabels, type UnsavedDialogChoice } from "@latex-editor/contracts/desktop-ipc";
-import { handleIpc, onIpc, sendIpc } from "./ipc.js";
-import { app, BrowserWindow, clipboard, dialog, Menu, net, shell } from "electron";
+import { handleIpc, onIpc, sendIpc, withIpcMaintenance } from "./ipc.js";
+import { app, BrowserWindow, clipboard, dialog, Menu, net, session, shell } from "electron";
 import type { IpcMainInvokeEvent } from "electron";
 import { randomUUID } from "node:crypto";
 import { copyFile, readFile, stat, writeFile } from "node:fs/promises";
@@ -116,12 +117,14 @@ async function createContext(): Promise<DesktopContext> {
   const { discoverToolchain } = await import("@latex-editor/compiler-latexmk");
   toolchainInstaller = new LatexToolchainInstaller({
     defaultDirectory: join(app.getPath("userData"), "tools", "TinyTeX"),
+    currentToolchain: () => settings.toolchain,
+    refresh: toolchain => settings.saveToolchain(toolchain),
     fetch: (input, options) => net.fetch(input as string, options),
     detect: discoverToolchain,
     activate: async (toolchain, directory) => {
       await settings.saveToolchain(toolchain);
       await installation.recordEnvironment(toolchain);
-      await installation.recordComponent({ id: "latex-runtime", version: toolchain.version ?? "unknown", ownership: "installed-by-texweave", path: directory, source: "https://github.com/rstudio/tinytex-releases" });
+      await installation.recordComponent({ id: "latex-runtime", version: toolchain.version ?? "unknown", ownership: "installed-by-texweave", path: directory, source: toolchain.distribution === "miktex" ? "https://miktex.org/download" : "https://github.com/rstudio/tinytex-releases" });
     }
   });
   let detected = await discoverToolchain(settings.toolchain?.latexmk ?? settings.toolchain?.binDirectory);
@@ -129,7 +132,9 @@ async function createContext(): Promise<DesktopContext> {
   await settings.saveToolchain(detected);
   await installation.recordEnvironment(detected);
   const profiles = { getCompilerProfile: () => ({ ...resources.getCompilerProfile(), ...(settings.toolchain?.latexmk ? { executable: settings.toolchain.latexmk } : {}) }) };
-  const compiler = new LatexmkCompilerService({ projects, files, profiles, clock: systemClock });
+  const compiler = new LatexmkCompilerService({ projects, files, profiles, clock: systemClock,
+    repairMissingPackages: request => settings.global.texLiveAutoInstall === false ? Promise.resolve(false) : toolchainInstaller.repairMissingPackages(request)
+  });
   const spellcheck = new OfflineSpellCheckService();
   await spellcheck.initialize();
   spellcheck.configure(settings.global.spellCheckMode ?? "auto", settings.global.spellCheckLanguage ?? "en-US");
@@ -282,6 +287,21 @@ function registerIpcHandlers(): void {
     if (key === "locale" && projectId === undefined) for (const window of BrowserWindow.getAllWindows()) window.setTitle(nativeText("native.windowTitle"));
     if (key === "themeDirectory" && projectId === undefined && context) await context.themes.setDirectory(typeof value === "string" ? value : "");
     return snapshot;
+  });
+  handleIpc(desktopInvoke.installation.setupStatus, () => {
+    if (!context) throw new Error(nativeText("native.contextNotReady"));
+    const state = context.installation.snapshot();
+    return { required: process.argv.includes("--setup") || (app.isPackaged && !state.setupCompletedAt), dictionaryIds: state.setupDictionaryIds ?? [] };
+  });
+  handleIpc(desktopInvoke.installation.completeSetup, async (_event, dictionaryIds) => {
+    if (!context) throw new Error(nativeText("native.contextNotReady"));
+    const available = context.spellcheck.status().availableLanguages;
+    if (!Array.isArray(dictionaryIds) || dictionaryIds.length > 256 || dictionaryIds.some(id => typeof id !== "string" || !available.includes(id))) throw new Error(nativeText("setup.languageError"));
+    if (toolchainInstaller.status().running) throw new Error(nativeText("toolchainInstall.phase.installing"));
+    const selected = [...new Set(dictionaryIds)];
+    await settings.set("spellCheckActiveLanguages", selected);
+    if (selected.length && !selected.includes(settings.global.spellCheckLanguage ?? "en-US")) await settings.set("spellCheckLanguage", selected[0]);
+    return context.installation.completeSetup(selected);
   });
   handleIpc(desktopInvoke.installation.state, () => context?.installation.snapshot());
   handleIpc(desktopInvoke.installation.setMode, (_event, mode, installDirectory) => {
@@ -436,8 +456,33 @@ function registerIpcHandlers(): void {
     return detected;
   });
   handleIpc(desktopInvoke.settings.toolchainInstallStatus, () => toolchainInstaller.status());
-  handleIpc(desktopInvoke.settings.installToolchain, (_event, directory) => toolchainInstaller.start(directory));
+  handleIpc(desktopInvoke.settings.installToolchain, (_event, directory, selection) => toolchainInstaller.start(directory, selection));
   handleIpc(desktopInvoke.settings.cancelToolchainInstall, () => toolchainInstaller.cancel());
+  handleIpc(desktopInvoke.settings.clearProjectCaches, async () => {
+    if (!context) throw new Error(nativeText("native.contextNotReady"));
+    const current = context;
+    const assertIdle = () => {
+      if (current.documents.files.sessions.size || current.compiler.busy || current.aiWorkspaces.busy) throw new Error(nativeText("settings.projectCacheIdle"));
+    };
+    assertIdle();
+    const choice = await dialog.showMessageBox({ type: "warning", buttons: [nativeText("settings.projectCacheClear"), nativeText("project.cancel")], defaultId: 1, cancelId: 1, noLink: true, message: nativeText("settings.projectCacheConfirm"), detail: nativeText("settings.projectCacheHint") });
+    if (choice.response !== 0) return { cleared: false, projectCount: 0 };
+    return withIpcMaintenance(nativeText("settings.projectCacheIdle"), async () => {
+      assertIdle();
+      const projects = current.registry.list();
+      await clearRegisteredProjectCaches(projects, {
+        release: async id => {
+          await current.history.waitForIdle(id);
+          if (!await current.blockGraph.reclaimProjectCaches(id, { kind: "project-removed" })) throw new Error(nativeText("settings.projectCacheIdle"));
+        },
+        clearBrowserCache: async () => { await session.defaultSession.clearCache(); await settings.set("lastProject", ""); },
+        clearRegistry: () => current.registry.clear()
+      });
+      current.compiler.clearArtifactCache();
+      for (const window of BrowserWindow.getAllWindows()) sendIpc(window.webContents, desktopEvents.toRenderer.projectsCleared, projects.map(project => project.id));
+      return { cleared: true, projectCount: projects.length };
+    });
+  });
   handleIpc(desktopInvoke.projects.list, async () => {
     if (!context) return [];
     const projects = await context.projects.listProjects();

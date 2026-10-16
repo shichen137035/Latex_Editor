@@ -102,6 +102,18 @@ included-file ownership, and local PDF links. The real compiler suite separately
 verifies mutual `xr-hyper` dependencies and changed external label numbers,
 without duplicating the UI assertions.
 
+`settings-maintenance` verifies the separate project-editing and environment/build
+pages, cleanup confirmation/cancellation, removal of build/view caches and registry
+entries, source/snapshot/settings preservation, restart and re-registration.
+Unit tests also reject linked cache paths before deleting anything and block
+competing IPC operations while maintenance runs. This check always uses a disposable
+profile and generated projects; never point it at the normal user profile.
+
+`settings-maintenance` 检查项目编辑与环境/构建页面分离、清理确认和取消、
+构建及界面缓存和登记清理、源文件/快照/配置保留、重启及重新登记。
+单元测试还检查链接路径拒绝和清理期间的并发请求保护。此检查始终使用临时配置
+及生成的项目，不能用于日常用户配置目录。
+
 ## Debugging a failure
 
 ```powershell

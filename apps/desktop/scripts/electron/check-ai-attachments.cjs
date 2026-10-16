@@ -162,15 +162,21 @@ async function run() {
   await until(async () => cacheFiles().length === 0, "removed cache file");
   console.log("PASS remove: chip and temporary file are both released");
   await paste();
+  await evaluate("document.querySelectorAll('.activity-bar > div:first-child > button')[0].click()");
+  await until(() => evaluate("!document.querySelector('.ai-composer textarea')"), "leave AI for Files");
+  await evaluate("document.querySelectorAll('.activity-bar > div:first-child > button')[3].click()");
+  await until(() => evaluate("document.querySelectorAll('.ai-attachment-chip').length === 1"), "attachment restored after tool switch");
+  assert.equal(cacheFiles().length, 1);
   await evaluate("document.querySelector('.logo-button').click()");
   await until(() => evaluate("!!document.querySelector('.project-directory-v044')"), "return home");
-  await until(async () => cacheFiles().length === 0, "unmount cleanup");
-  console.log("PASS leaving project: attachment draft releases its temporary files");
+  assert.equal(cacheFiles().length, 1);
   await evaluate("document.querySelector('.directory-project-row').click()");
   await until(() => evaluate("!!document.querySelector('.activity-bar')"), "reopen project");
   await evaluate("document.querySelectorAll('.activity-bar > div:first-child > button')[3].click()");
   await until(() => evaluate("!!document.querySelector('.ai-composer textarea')"), "reopened composer");
-  await paste();
+  await until(() => evaluate("document.querySelectorAll('.ai-attachment-chip').length === 1"), "attachment restored after leaving project");
+  assert.equal(cacheFiles().length, 1);
+  console.log("PASS unsent attachments survive tool switches, home and project reopening without duplicating cached files");
   await new Promise(resolve => {
     app.once("will-quit", event => {
       try { assert.equal(cacheFiles().length, 0); console.log("PASS window destruction: backend draft cleanup completes before exit"); resolve(); }

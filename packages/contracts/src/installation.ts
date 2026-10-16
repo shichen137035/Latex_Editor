@@ -23,6 +23,8 @@ export interface InstallationState {
   components: InstalledComponent[];
   lastEnvironmentCheck?: string;
   environment?: LatexToolchain;
+  setupCompletedAt?: string;
+  setupDictionaryIds?: string[];
 }
 
 export interface RemoveUserDataOptions {

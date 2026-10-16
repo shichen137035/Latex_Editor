@@ -81,6 +81,8 @@ export class AIWorkspaceService {
   #queueDispatches = new Set<Promise<void>>();
   #queueControls = new Set<string>();
   #disposed = false;
+  #finishingTasks = new Set<Promise<void>>();
+  get busy(): boolean { return this.#finishingTasks.size > 0 || this.#startingSends.size > 0 || this.#queueDispatches.size > 0 || this.#activeByThread.size > 0 || this.#cancelingCopilot.size > 0 || this.#cancelingThreads.size > 0; }
   readonly #prepareContext: ((projectId: string | undefined, overrides: AIContextSnapshotFile[]) => Promise<PreparedContext>) | undefined;
   readonly attachments: AIAttachmentStore;
   #unsubscribe: () => void;
@@ -116,9 +118,18 @@ export class AIWorkspaceService {
     this.#relationAccess = options.relationAccess;
     this.#onUpdate = options.onUpdate ?? (() => undefined);
     this.approvals = new AIApprovalRequests(request => this.#onUpdate("approval", request));
-    this.#unsubscribe = this.#codex.onEvent((event) => { void this.#handleEvent(event.method, event.params).catch(error => {
+    this.#unsubscribe = this.#codex.onEvent((event) => {
+      const pending = this.#handleEvent(event.method, event.params);
+      if (event.method === "turn/completed" || event.method === "transport/closed") this.#trackCompletion(pending);
+      void pending.catch(error => {
       console.error("Could not process AI event", error);
     }); });
+  }
+
+  #trackCompletion(pending: Promise<void>): Promise<void> {
+    this.#finishingTasks.add(pending);
+    void pending.then(() => this.#finishingTasks.delete(pending), () => this.#finishingTasks.delete(pending));
+    return pending;
   }
 
   async initialize(): Promise<void> {
@@ -177,6 +188,7 @@ export class AIWorkspaceService {
     for (const turn of this.#cancelingCopilot.values()) { turn.canceled = true; await turn.finish?.(); }
     // Context preparation can outlive a close request. Its queue recovery must finish before the last save.
     await Promise.all([...this.#startingSends.values()].map(entry => entry.done).concat([...this.#queueDispatches]));
+    await Promise.allSettled(this.#finishingTasks);
     await this.attachments.dispose();
     this.#cancelRequested.clear();
     clearTimeout(this.#saveTimer); this.#saveTimer = undefined;
@@ -848,7 +860,7 @@ export class AIWorkspaceService {
       active = turn;
       this.#cancelingCopilot.set(taskId, turn);
       let idleTimer: ReturnType<typeof setTimeout> | undefined;
-      const finish = async (failure?: string) => {
+      const finishTurn = async (failure?: string) => {
         if (turn.complete) return;
         turn.complete = true;
         clearTimeout(idleTimer);
@@ -885,6 +897,8 @@ export class AIWorkspaceService {
         }
         this.#queueTurnFinished(conversation, !turn.canceled && assistantMessage.status === "complete");
       };
+      let finishing: Promise<void> | undefined;
+      const finish = (failure?: string): Promise<void> => finishing ??= this.#trackCompletion(finishTurn(failure));
       turn.finish = finish;
       this.#startIncrementalAutoApply(conversation, turn);
       

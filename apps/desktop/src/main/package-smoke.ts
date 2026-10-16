@@ -42,6 +42,21 @@ export function checkPackageWindow(window: BrowserWindow): void {
         await new Promise(resolve => setTimeout(resolve, 100));
       }
       await window.latexEditor.projects.list();
+      const styles = await window.latexEditor.styleResources.list();
+      for (const id of ['default', 'light', 'empty']) {
+        const resource = styles.find(item => item.id === id && item.source === 'built-in');
+        if (!resource) throw new Error('Built-in style is not listed: ' + id);
+        for (const file of resource.files) {
+          const content = await window.latexEditor.styleResources.readFile(id, file.targetPath);
+          if (!content?.content) throw new Error('Built-in style cannot be read: ' + id);
+        }
+      }
+      const setup = await window.latexEditor.installation.setupStatus();
+      if (!setup.required) throw new Error('Fresh packaged profile did not request initial setup');
+      while (!document.querySelector('.first-run-setup')) {
+        if (Date.now() >= deadline) throw new Error('Initial setup did not mount');
+        await new Promise(resolve => setTimeout(resolve, 100));
+      }
       return true;
     })()`).then(() => finishPackageSmoke(), finishPackageSmoke);
   });

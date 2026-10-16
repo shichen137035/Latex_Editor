@@ -3,7 +3,7 @@ import type { AIStatus, AIModelOption, AIConversation, AIChangeSet, AIContextSna
 import type { BlockApiResult, DocumentBlockApi, DocumentStructure, AIApprovalRequest, WorkingDocumentInput, WorkingDocumentResult } from "./index.js" with { "resolution-mode": "import" };
 
 import type { InstallationState, InstalledComponent, RemoveUserDataOptions } from "./installation.js" with { "resolution-mode": "import" };
-import type { ToolchainInstallStatus } from "./toolchain-install.js" with { "resolution-mode": "import" };
+import type { ToolchainInstallStatus, ToolchainInstallSelection } from "./toolchain-install.js" with { "resolution-mode": "import" };
 import type { ProjectPdfDocument } from "./index.js" with { "resolution-mode": "import" };
 import type { RelationAPI, RelationEvent } from "./relations.js" with { "resolution-mode": "import" };
 
@@ -76,6 +76,7 @@ export const desktopInvoke = {
     showSaveError: invoke<(title: string, message: string) => Promise<void>>("window:save-error"),
   },
   settings: {
+    clearProjectCaches: invoke<() => Promise<{ cleared: boolean; projectCount: number }>>("settings:clear-project-caches"),
     listPresets: invoke<(kind?: SettingsPresetKind) => Promise<SettingsPreset[]>>("settings:presets:list"),
     savePreset: invoke<(name: string, id?: string, kind?: SettingsPresetKind, projectId?: string) => Promise<SettingsPreset>>("settings:presets:save"),
     applyPreset: invoke<(id: string, projectId?: string) => Promise<SettingsSnapshot>>("settings:presets:apply"),
@@ -86,10 +87,12 @@ export const desktopInvoke = {
     set: invoke<(key: PreferenceKey, value: unknown, projectId?: string) => Promise<SettingsSnapshot>>("settings:set"),
     detectToolchain: invoke<(manual?: "directory" | "executable") => Promise<LatexToolchain | undefined>>("toolchain:detect"),
     toolchainInstallStatus: invoke<() => Promise<ToolchainInstallStatus>>("toolchain:install-status"),
-    installToolchain: invoke<(directory: string) => Promise<ToolchainInstallStatus>>("toolchain:install"),
+    installToolchain: invoke<(directory: string, selection?: ToolchainInstallSelection) => Promise<ToolchainInstallStatus>>("toolchain:install"),
     cancelToolchainInstall: invoke<() => Promise<ToolchainInstallStatus>>("toolchain:install-cancel"),
   },
   installation: {
+    setupStatus: invoke<() => Promise<{ required: boolean; dictionaryIds: string[] }>>("installation:setup-status"),
+    completeSetup: invoke<(dictionaryIds: string[]) => Promise<InstallationState>>("installation:complete-setup"),
     state: invoke<() => Promise<InstallationState | undefined>>("installation:state"),
     setMode: invoke<(mode: "recommended" | "custom", installDirectory?: string) => Promise<InstallationState | undefined>>("installation:set-mode"),
     recordComponent: invoke<(component: Omit<InstalledComponent, "installedAt">) => Promise<InstallationState | undefined>>("installation:record-component"),
@@ -243,7 +246,7 @@ export const desktopInvoke = {
   ai: {
     detect: invoke<() => Promise<AIStatus | undefined>>("ai:detect"),
     models: invoke<() => Promise<AIModelOption[] | undefined>>("ai:models"),
-    install: invoke<() => Promise<AIStatus | undefined>>("ai:install"),
+    install: invoke<(force?: boolean) => Promise<AIStatus | undefined>>("ai:install"),
     status: invoke<() => Promise<AIStatus | undefined>>("ai:status"),
     login: invoke<() => Promise<AIStatus | undefined>>("ai:login"),
     logout: invoke<() => Promise<AIStatus | undefined>>("ai:logout"),
@@ -299,6 +302,7 @@ const event = <Args extends unknown[]>(channel: string): EventEndpoint<Args> => 
 export const desktopEvents = {
   toRenderer: {
     projectUpdate: event<[project: Project]>("projects:update"),
+    projectsCleared: event<[projectIds: string[]]>("projects:cleared"),
     compileUpdate: event<[update: { projectId: string; origin: "ai-workspace"; result: CompileResult & { pdfDataUrl?: string } }]>("compile:update"),
     closeRequested: event<[requestId: string]>("window:close-requested"),
     aiUpdate: event<[update: { kind: "conversation" | "changes" | "approval"; payload: AIConversation | AIChangeSet | AIApprovalRequest }]>("ai:update"),
@@ -318,7 +322,7 @@ export type DesktopInvokeApi = {
 };
 /** Renderer surface includes explicit subscriptions and Electron's local File helper. */
 export type DesktopApi = Omit<DesktopInvokeApi, "lifecycle" | "ai" | "files" | "relations" | "compile" | "projects"> & {
-  projects: DesktopInvokeApi["projects"] & { onUpdate(listener: NonNullable<typeof desktopEvents.toRenderer.projectUpdate.signature>): () => void };
+  projects: DesktopInvokeApi["projects"] & { onUpdate(listener: NonNullable<typeof desktopEvents.toRenderer.projectUpdate.signature>): () => void; onCleared(listener: NonNullable<typeof desktopEvents.toRenderer.projectsCleared.signature>): () => void };
   compile: DesktopInvokeApi["compile"] & { onUpdate(listener: NonNullable<typeof desktopEvents.toRenderer.compileUpdate.signature>): () => void };
   relations: DesktopInvokeApi["relations"] & { onUpdate(listener: NonNullable<typeof desktopEvents.toRenderer.relationUpdate.signature>): () => void };
   lifecycle: DesktopInvokeApi["lifecycle"] & {

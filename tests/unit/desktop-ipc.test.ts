@@ -6,7 +6,7 @@ import type { DesktopApi } from "@latex-editor/contracts/desktop-ipc";
 import { ProjectBlockGraphService, ProjectDocumentStructureService } from "@latex-editor/application";
 import { AppError } from "@latex-editor/contracts";
 import ts from "typescript";
-import { handleIpc } from "../../apps/desktop/src/main/ipc.js";
+import { handleIpc, withIpcMaintenance } from "../../apps/desktop/src/main/ipc.js";
 import { registerStructureIpc } from "../../apps/desktop/src/main/structure-ipc.js";
 
 const electron = vi.hoisted(() => ({ handle: vi.fn(), on: vi.fn() }));
@@ -36,6 +36,17 @@ function loadPreload() {
 }
 
 describe("desktop IPC contract and adapters", () => {
+  it("blocks competing IPC requests during maintenance and restores access after a failure", async () => {
+    electron.handle.mockClear();
+    handleIpc(contract.desktopInvoke.projects.list, async () => []);
+    const handler = electron.handle.mock.calls[0]![1];
+    let release!: () => void;
+    const gate = new Promise<void>(resolve => { release = resolve; });
+    const maintenance = withIpcMaintenance("Maintenance busy", async () => { await gate; throw new Error("Failed cleanup"); });
+    await expect(handler({})).rejects.toThrow("Maintenance busy");
+    release(); await expect(maintenance).rejects.toThrow("Failed cleanup");
+    await expect(handler({})).resolves.toEqual([]);
+  });
   it("registers every declared invoke exactly once in the main adapters", () => {
     const registered: string[] = [];
     for (const path of ["index.ts", "ai/ipc.ts", "structure-ipc.ts", "working-document-ipc.ts", "block-graph-ipc.ts", "history-ipc.ts", "relation-ipc.ts"]) {

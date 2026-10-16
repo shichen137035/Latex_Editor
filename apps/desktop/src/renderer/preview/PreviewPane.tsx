@@ -1,4 +1,5 @@
 import { directiveColorStyle } from "./directive-colors.js";
+import { separatedBlockInsertion } from "./blockInsertion.js";
 import { environmentName, directiveName, blockNameLocale } from "../i18n/displayNames.js";
 import { Fragment, memo, Profiler, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type MouseEvent, type PointerEvent as ReactPointerEvent, type ReactNode } from "react";
 import { createPortal, flushSync } from "react-dom";
@@ -196,7 +197,12 @@ function inlineLatex(value: string | undefined, mathContext: MathContext, search
     else if (token.kind === "format") {
       const children = render(token.children ?? []);
       content = token.command === "textbf" ? <strong>{children}</strong> : token.command === "texttt" ? <code>{children}</code> : token.command === "textit" || token.command === "emph" ? <em>{children}</em> : children;
-    } else if (token.kind === "citation") content = map(<span className="preview-citation" title={`\\${token.command}{${token.value}}`}><span className="preview-inline-reference-text">[{token.value}]</span></span>, token);
+    } else if (token.kind === "citation") {
+      const notes = token.citationNotes ?? [];
+      const before = notes.length === 2 ? notes[0] : undefined;
+      const after = notes.at(-1);
+      content = <span className="preview-citation" title={value.slice(token.start - (sourceStartOffset ?? 0), token.end - (sourceStartOffset ?? 0))}><span className="preview-inline-reference-text">[{before?.length ? <>{render(before)} </> : null}{map(token.value, token)}{after?.length ? <>, {render(after)}</> : null}]</span></span>;
+    }
     else if (token.kind === "reference") content = map(<button type="button" className="preview-reference" data-reference={token.value} data-reference-source-start={sourceStartOffset === undefined ? undefined : token.start} data-reference-source-end={sourceStartOffset === undefined ? undefined : token.end} title={`\\${token.command}{${token.value}} · modifier-click to jump`}><span className="preview-inline-reference-text">[{token.value}]</span></button>, token);
     else content = <span className="preview-algorithm-command" data-command={token.command?.toUpperCase()}>{sourceMapped(<strong>{token.command?.toUpperCase()}</strong>, sourceStartOffset === undefined ? undefined : token.start, sourceStartOffset === undefined ? undefined : token.start + (token.command?.length ?? 0) + 1, true)}{token.children && <span className="preview-algorithm-argument">{render(token.children)}</span>}</span>;
     return <Fragment key={token.kind + ":" + token.start}>{content}</Fragment>;
@@ -1479,9 +1485,8 @@ export function PreviewPane({ filePath, source, sourceTransaction, definitions, 
   };
   const tryApplyBoundaryStructuralDraft = (insertion: BoundaryInsertion, value: string): boolean => {
     const content = value.replace(/^\n+|\n+$/g, "");
-    const prefix = insertion.side === "before" ? "" : content ? "\n\n" : "\n";
-    const insertedSource = insertion.side === "before" ? `${content}${content ? "\n" : ""}\n` : `${prefix}${content}`;
-    return commitStructuralDraft(content, insertion.position, insertion.position, insertedSource, prefix.length);
+    const separated = separatedBlockInsertion(source, insertion.position, insertion.position, content);
+    return commitStructuralDraft(content, insertion.position, insertion.position, separated.text, separated.prefixLength);
   };
   const onBoundaryDraftChange = (insertion: BoundaryInsertion, value: string) => { tryApplyBoundaryStructuralDraft(insertion, value); };
   const applyEdit = (node: PreviewNode, replacement: string) => {
@@ -1509,7 +1514,7 @@ export function PreviewPane({ filePath, source, sourceTransaction, definitions, 
   const applyBoundary = (insertion: BoundaryInsertion, value: string) => {
     if (tryApplyBoundaryStructuralDraft(insertion, value)) return;
     const content = value.replace(/^\n+|\n+$/g, "");
-    const replacement = insertion.side === "before" ? `${content}${content ? "\n" : ""}\n` : `\n${content ? `\n${content}` : ""}`;
+    const replacement = content ? separatedBlockInsertion(source, insertion.position, insertion.position, content).text : "\n\n";
     onSourceChange(source.slice(0, insertion.position) + replacement + source.slice(insertion.position), [{ from: insertion.position, to: insertion.position, insertedText: replacement }]);
     setBoundary(undefined);
   };

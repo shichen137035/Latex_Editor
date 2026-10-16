@@ -98,22 +98,72 @@ export class AttachmentDraftController {
   #publish() { if (!this.#closed) for (const listener of this.#listeners) listener({ items: this.#generation.items, loading: this.#generation.loading }); }
 }
 
+type DraftState = { items: AIAttachment[]; loading: boolean };
+type CachedDraft = { client: AttachmentDraftController; state: DraftState; users: number; errors: Set<(error: unknown) => void>; pendingError?: unknown; timer?: ReturnType<typeof setTimeout> | undefined; unsubscribe(): void };
+
+/** Project composer drafts outlive panels, conversations and project switches.
+ * Only metadata lives here; file bytes remain in the bounded backend cache. */
+export class ProjectAttachmentDrafts {
+  readonly #entries = new Map<string, CachedDraft>();
+  constructor(readonly api: Api) {}
+  get(projectId: string): AttachmentDraftController {
+    let entry = this.#entries.get(projectId);
+    if (!entry) {
+      const errors = new Set<(error: unknown) => void>();
+      const report = (error: unknown) => {
+        if (!errors.size) entry!.pendingError = error;
+        else for (const listener of errors) listener(error);
+      };
+      entry = { client: new AttachmentDraftController(this.api, projectId, report), state: { items: [], loading: false }, users: 0, errors, unsubscribe: () => {} };
+      this.#entries.set(projectId, entry);
+      const current = entry;
+      let initialized = false;
+      current.unsubscribe = current.client.subscribe(state => { current.state = state; if (initialized) this.#collectEmpty(projectId, current); });
+      initialized = true;
+    }
+    clearTimeout(entry.timer); entry.timer = undefined;
+    return entry.client;
+  }
+  subscribe(projectId: string, listener: (state: DraftState) => void, onError: (error: unknown) => void): () => void {
+    const client = this.get(projectId);
+    const entry = this.#entries.get(projectId)!;
+    entry.users++;
+    clearTimeout(entry.timer); entry.timer = undefined;
+    entry.errors.add(onError);
+    if (entry.pendingError !== undefined) { onError(entry.pendingError); entry.pendingError = undefined; }
+    const unsubscribe = client.subscribe(listener);
+    void client.start().catch(onError);
+    return () => {
+      unsubscribe(); entry.errors.delete(onError); entry.users--;
+      this.#collectEmpty(projectId, entry);
+    };
+  }
+  #collectEmpty(projectId: string, entry: CachedDraft) {
+    clearTimeout(entry.timer); entry.timer = undefined;
+    if (entry.users || entry.state.items.length || entry.state.loading) return;
+    // Deferral also allows React StrictMode's immediate effect reconnection.
+    entry.timer = setTimeout(() => {
+      this.#entries.delete(projectId); entry.unsubscribe();
+      void entry.client.dispose().catch(error => console.warn("Could not release attachment draft", error));
+    }, 0);
+  }
+}
+
+const projectDrafts = new WeakMap<Api, ProjectAttachmentDrafts>();
+function draftsFor(api: Api): ProjectAttachmentDrafts {
+  let drafts = projectDrafts.get(api);
+  if (!drafts) { drafts = new ProjectAttachmentDrafts(api); projectDrafts.set(api, drafts); }
+  return drafts;
+}
+
 export function useAttachmentDraft(api: Api | undefined, projectId: string, conversationId: string | undefined, onError: (error: unknown) => void) {
   const report = useRef(onError); report.current = onError;
-  const client = useMemo(() => api ? new AttachmentDraftController(api, projectId, error => report.current(error), conversationId) : undefined, [api, projectId]);
-  const [state, setState] = useState<{ items: AIAttachment[]; loading: boolean }>({ items: [], loading: false });
-  const timers = useRef(new Map<AttachmentDraftController, ReturnType<typeof setTimeout>>());
-  useEffect(() => {
-    if (!client) return;
-    clearTimeout(timers.current.get(client)); timers.current.delete(client);
-    const unsubscribe = client.subscribe(setState);
-    void client.start().catch(error => report.current(error));
-    const pending = timers.current;
-    return () => {
-      unsubscribe();
-      pending.set(client, setTimeout(() => { pending.delete(client); void client.dispose().catch(error => console.warn("Could not release attachment draft", error)); }, 0));
-    };
-  }, [client]);
-  useEffect(() => { client?.switchConversation(conversationId); }, [client, conversationId]);
-  return { client, attachments: state.items, loading: state.loading };
+  const drafts = useMemo(() => api ? draftsFor(api) : undefined, [api]);
+  const client = useMemo(() => drafts?.get(projectId), [drafts, projectId]);
+  const [state, setState] = useState<DraftState & { client?: AttachmentDraftController }>({ items: [], loading: false });
+  useEffect(() => drafts?.subscribe(projectId, next => setState({ ...next, ...(client ? { client } : {}) }), error => report.current(error)), [drafts, projectId, client]);
+  // Text drafts are project-scoped too. History hydration or selecting another
+  // conversation must not silently discard the composer's unsent attachments.
+  useEffect(() => { if (conversationId) client?.adoptConversation(conversationId); }, [client, conversationId]);
+  return { client, attachments: state.client === client ? state.items : [], loading: state.client === client ? state.loading : !!client };
 }

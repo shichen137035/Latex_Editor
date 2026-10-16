@@ -29,7 +29,7 @@ export function findExecutableOnPath(name: string, env = process.env, platform =
 }
 
 /** Resolve npm shims to the native binary so Windows never needs cmd.exe or shell:true. */
-function npmBinary(packageRoot: string, platform: NodeJS.Platform, arch: string): string | undefined {
+export function codexPackageExecutable(packageRoot: string, platform: NodeJS.Platform, arch: string): string | undefined {
   if (!["x64", "arm64"].includes(arch) || !["win32", "darwin", "linux"].includes(platform)) return undefined;
   const target = `${arch === "arm64" ? "aarch64" : "x86_64"}-${platform === "win32" ? "pc-windows-msvc" : platform === "darwin" ? "apple-darwin" : "unknown-linux-musl"}`;
   const platformPackage = `codex-${platform}-${arch}`;
@@ -39,7 +39,7 @@ function npmBinary(packageRoot: string, platform: NodeJS.Platform, arch: string)
 }
 
 export function getManagedCodexExecutable(installRoot: string, platform = process.platform, arch: string = process.arch): string | undefined {
-  return npmBinary(join(installRoot, "node_modules", "@openai", "codex"), platform, arch);
+  return codexPackageExecutable(join(installRoot, "native"), platform, arch) ?? codexPackageExecutable(join(installRoot, "node_modules", "@openai", "codex"), platform, arch);
 }
 
 function resolveCandidate(candidate: string, platform: NodeJS.Platform, arch: string): string | undefined {
@@ -47,7 +47,7 @@ function resolveCandidate(candidate: string, platform: NodeJS.Platform, arch: st
   if (platform !== "win32" || /\.exe$/i.test(candidate)) return candidate;
   // npm global shims and project-local node_modules/.bin shims have different roots.
   for (const packageRoot of [join(dirname(candidate), "node_modules", "@openai", "codex"), join(dirname(candidate), "..", "@openai", "codex")]) {
-    const binary = npmBinary(packageRoot, platform, arch);
+    const binary = codexPackageExecutable(packageRoot, platform, arch);
     if (binary) return binary;
   }
   return undefined;

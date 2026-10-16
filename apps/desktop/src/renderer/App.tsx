@@ -1,4 +1,6 @@
+import { FirstRunSetup } from "./setup/FirstRunSetup.js";
 import { ProjectStyleResourcePicker } from "./directory/ProjectStyleResourcePicker.js";
+import { clearProjectViewCaches } from "./workbench/workspacePosition.js";
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type Dispatch, type ReactNode, type SetStateAction } from "react";
 import type { Project, StyleResource } from "@latex-editor/contracts";
 import { t, getLocale } from "./i18n/index.js";
@@ -341,6 +343,7 @@ function ProjectDirectory({ projects, onProjectsChange, onOpen, onOpenLibrary, s
 
 export function App() {
   const store = useSettings();
+  const [setupOpen, setSetupOpen] = useState(false);
   const [projects, setProjects] = useState<Project[]>([]);
   const [activeProject, setActiveProject] = useState<Project>();
   const [libraryOpen, setLibraryOpen] = useState(false);
@@ -372,6 +375,11 @@ export function App() {
     setProjects(current => current.map(project => project.id === updated.id ? updated : project));
     setActiveProject(current => current?.id === updated.id ? updated : current);
   }), []);
+  useEffect(() => window.latexEditor!.projects.onCleared(ids => {
+    clearProjectViewCaches(ids);
+    setProjects([]); setActiveProject(undefined);
+    void settings.load();
+  }), []);
   useEffect(installShortcuts, []);
   useEffect(() => installWheelAcceleration(() => settings.global("wheelAcceleration")), []);
   useEffect(() => {
@@ -386,10 +394,10 @@ export function App() {
     });
   }, []);
   const onHome = () => { void settings.load().then(() => setActiveProject(undefined)); };
-  return <><ThemeRuntime />{activeProject && <div style={{ position: "fixed", inset: 0, overflow: "hidden", display: libraryOpen ? "none" : undefined }}><Workbench key={activeProject.id} project={activeProject} projects={projects} environments={environments} onHome={onHome} onSwitch={(project) => void openProject(project)} onOpenLibrary={() => setLibraryOpen(true)}/></div>}
+  return <><ThemeRuntime /><FirstRunSetup onActiveChange={setSetupOpen}/><div inert={setupOpen}>{activeProject && <div style={{ position: "fixed", inset: 0, overflow: "hidden", display: libraryOpen ? "none" : undefined }}><Workbench key={activeProject.id} project={activeProject} projects={projects} environments={environments} onHome={onHome} onSwitch={(project) => void openProject(project)} onOpenLibrary={() => setLibraryOpen(true)}/></div>}
     {!activeProject && !libraryOpen && <ProjectDirectory projects={projects} onProjectsChange={setProjects} onOpen={(project) => void openProject(project)} onOpenLibrary={() => setLibraryOpen(true)} styleResources={styleResources} onRefreshResources={refreshStyleResources}/>}
     {libraryOpen && <div className="app-shell library-app-shell" style={{ position: "fixed", inset: 0, zIndex: 40, overflow: "auto" }}><ReferenceLibraryPage projects={projects} returnToProject={Boolean(activeProject)} onBack={() => setLibraryOpen(false)}/></div>}
     {!warningDismissed && store.snapshot().toolchain && store.snapshot().toolchain?.overallStatus !== "ready" && <aside className="toolchain-warning"><p>{store.snapshot().toolchain?.overallStatus === "limited" ? t("settings.limitedToolchain") : t("settings.missingToolchain")}</p><button onClick={() => void store.detect()}>{t("settings.detect")}</button><button onClick={() => void store.detect("directory")}>{t("settings.locate")}</button><button onClick={() => { setCompilerSettings(true); setWarningDismissed(true); }}>{t("settings.openCompiler")}</button><button onClick={() => setWarningDismissed(true)}>{t("common.close")}</button></aside>}
     {compilerSettings && <SettingsDialog initial="compiler" onClose={() => setCompilerSettings(false)}/>}
-  </>;
+  </div></>;
 }

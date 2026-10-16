@@ -164,6 +164,21 @@ async function run() {
   await evaluate('Array.from(document.querySelectorAll(".preview-local-editor-actions button")).find(button=>button.textContent==="Cancel").click()');
   await until('!document.querySelector(".preview-local-editor")', "cancel boundary editor");
   console.log("PASS current selection, footer boundary action and cancellation after memoized updates");
+  await evaluate(`document.querySelector('.preview-block[data-environment="theorem"] > .preview-block-header .preview-block-header-main').click()`);
+  await until('!!document.querySelector(\'.preview-block.selected[data-environment="theorem"]\')', 'select theorem for adjacent block insertion');
+  await evaluate(`document.querySelector('.preview-block.selected > .preview-block-footer button[title="Insert after block"]').click()`);
+  await until('!!document.querySelector(".preview-local-editor .monaco-editor.focused")', 'new boundary editor');
+  await page.webContents.insertText("\\begin{proof}\nBLOCK_BOUNDARY_SPACING\n\\end{proof}");
+  await until('!!document.querySelector(\'.preview-block[data-environment="proof"]\')', 'structural draft promoted to proof');
+  await until('!!document.querySelector(".preview-local-editor .monaco-editor.focused")', 'promoted proof editor');
+  await press('ENTER', ['control']);
+  await until('!document.querySelector(".preview-local-editor")', 'apply promoted proof');
+  await press('S', ['control']);
+  await until('!!document.querySelector(".save-status.saved")', 'save separated blocks');
+  const separated = await evaluate(`(async () => (await window.latexEditor.files.read(${JSON.stringify(project.id)}, "main.tex")).content)()`);
+  assert.match(separated, /\\end\{theorem\}\n\n\\begin\{proof\}/);
+  assert.match(separated, /\\end\{proof\}\n\n\\begin\{quote\}/);
+  console.log('PASS generated boundary blocks have natural newlines before and after their environments');
   console.log("Artifacts:", root);
 }
 require("../../dist/main/index.js");

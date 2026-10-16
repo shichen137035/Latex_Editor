@@ -41,6 +41,41 @@ function fixture() {
 }
 
 describe("document navigation transactions", () => {
+  it("captures the live cursor after edits instead of the saved Preview scroll position", () => {
+    const f = fixture();
+    f.options.sourceModelPath.current = "main.tex";
+    f.options.sourcePositions.current.set("main.tex", { offset: 1, scrollTop: 0 });
+    f.options.editorRef.current = {
+      getDomNode: () => ({ isConnected: true }), getPosition: () => ({ lineNumber: 3, column: 2 }),
+      getModel: () => ({ getOffsetAt: () => f.source.indexOf("Third") + 1 }), getScrollTop: () => 240
+    } as unknown as NonNullable<typeof f.options.editorRef.current>;
+    f.options.onNavigationPosition = vi.fn();
+    f.controller.requestPreviewAtSourcePosition();
+    expect(f.request).toEqual({ path: "main.tex", offset: f.source.indexOf("Third") + 1, nonce: 1 });
+    expect(f.options.sourcePositions.current.get("main.tex")).toEqual({ offset: f.request!.offset, scrollTop: 240 });
+    expect(f.options.onNavigationPosition).toHaveBeenCalledWith("main.tex", f.request!.offset);
+    expect(f.history.canBack).toBe(false);
+    f.controller.requestPreviewAtSourcePosition();
+    expect(f.request?.nonce).toBe(2);
+  });
+
+  it("ignores another file's or an unmounted model and clamps the fallback after deletion", () => {
+    const f = fixture();
+    f.options.sourcePositions.current.set("main.tex", { offset: 999, scrollTop: 240 });
+    const getOffsetAt = vi.fn(() => 5);
+    f.options.editorRef.current = {
+      getDomNode: () => ({ isConnected: false }), getPosition: () => ({ lineNumber: 1, column: 1 }),
+      getModel: () => ({ getOffsetAt })
+    } as unknown as NonNullable<typeof f.options.editorRef.current>;
+    f.options.sourceModelPath.current = "main.tex";
+    f.controller.requestPreviewAtSourcePosition();
+    expect(f.request?.offset).toBe(f.source.length);
+    f.options.sourceModelPath.current = "other.tex";
+    f.controller.requestPreviewAtSourcePosition();
+    expect(getOffsetAt).not.toHaveBeenCalled();
+    expect(f.request?.path).toBe("main.tex");
+  });
+
   it("restores both files and exact positions after a prefixed external reference jump", async () => {
     const f = fixture();
     f.options.onNavigationPosition = vi.fn();

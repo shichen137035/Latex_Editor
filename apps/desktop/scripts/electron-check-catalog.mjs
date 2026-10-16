@@ -1,5 +1,6 @@
 /** One maintained index for desktop regression coverage and the release suite. */
 export const desktopChecks = [
+  { id: "codex-environment", area: "settings", script: "electron/check-codex-environment.cjs", summary: "Codex environment settings, install retry and missing-CLI action" },
   { id: "ai-connection", area: "ai", script: "electron/check-ai-connection.cjs", summary: "Provider discovery, fresh-profile initialization and signed-out UI", cleanCodexPath: true },
   { id: "ai-attachments", area: "ai", script: "electron/check-ai-attachments.cjs", summary: "Long-history composer, queued sending/priority controls and attachment cleanup" },
   { id: "ai-review", area: "ai", script: "check-ai-review.cjs", summary: "Permissions, review, undo and long-history input performance", env: { TEXWEAVE_UI_TEST_OFFSCREEN: "1" } },
@@ -34,7 +35,9 @@ export const desktopChecks = [
   { id: "table-boundaries", area: "tables", script: "check-table.cjs", summary: "Figure/table block insertion boundaries and table operation persistence" },
   { id: "search-filter", area: "search", script: "electron/check-search-filter.cjs", summary: "Search, filter semantics, replace-all and narrow sidebar behavior" },
   { id: "project-references", area: "references", script: "electron/check-project-references.cjs", summary: "Project BibTeX discovery, citation insertion and library synchronization" },
+  { id: "first-run-setup", area: "settings", script: "electron/check-first-run-setup.cjs", summary: "Initial setup, dictionary failure/retry, toolchain progress/cancel, durable completion and bundled styles" },
   { id: "settings-presets", area: "settings", script: "electron/check-settings-presets.cjs", summary: "Preset import/export dialogs and manager header layout" },
+  { id: "settings-maintenance", area: "settings", script: "electron/check-settings-maintenance.cjs", summary: "Project/environment settings split, confirmed cache and registry cleanup, source preservation and restart" },
   { id: "i18n", area: "settings", script: "electron/check-i18n.cjs", summary: "Locale switching and native/renderer language synchronization" },
   { id: "spellcheck", area: "settings", script: "run-spellcheck-check-launch.cjs", engine: "node", summary: "Dictionary results, editor decorations, actions and persistence" },
   { id: "structure-api", area: "document-api", script: "check-structure-api.cjs", summary: "Real IPC read/write, stale revision rejection and Preview compatibility" },

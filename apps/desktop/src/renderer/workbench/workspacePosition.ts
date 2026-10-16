@@ -1,3 +1,21 @@
+import { releaseCollapseStateCache } from "../collapseState.js";
+
+export function clearProjectViewCaches(projectIds: string[]): void {
+  const ids = new Set(projectIds);
+  const prefixes = projectIds.flatMap(id => [`texweave.collapsed.preview.v1:${encodeURIComponent(id)}:`, `texweave.collapsed.outline.v1:${encodeURIComponent(id)}:`]);
+  for (const id of projectIds) releaseCollapseStateCache(id);
+  try {
+    for (const storageKey of Object.keys(localStorage)) {
+      let remove = prefixes.some(prefix => storageKey.startsWith(prefix)) || projectIds.some(id => storageKey === `texweave.expanded.file-tree.v1:${encodeURIComponent(id)}`);
+      if (storageKey.startsWith("texweave.workspacePosition:")) {
+        try { remove ||= ids.has((JSON.parse(storageKey.slice("texweave.workspacePosition:".length)) as unknown[])[0] as string); }
+        catch { /* Ignore unrelated malformed state. */ }
+      }
+      if (remove) localStorage.removeItem(storageKey);
+    }
+  } catch { /* Restricted storage does not prevent registry cleanup. */ }
+}
+
 export interface FilePosition { offset: number; scrollTop: number }
 export interface WorkspacePosition { activePath?: string; source: Array<[string, FilePosition]>; preview: Array<[string, FilePosition]> }
 const key = (projectId: string, root: string) => `texweave.workspacePosition:${JSON.stringify([projectId, root])}`;

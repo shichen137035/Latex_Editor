@@ -37,9 +37,14 @@ export function registerAiIpcHandlers(context: DesktopContext | undefined, setti
     await context?.aiWorkspaces.attachments.remove({ projectId, draftId }, ids);
   });
   handleIpc(desktopInvoke.ai.detect, () => context?.ai.detect());
-  handleIpc(desktopInvoke.ai.install, async () => {
+  handleIpc(desktopInvoke.ai.install, async (_event, force) => {
+    if (force !== undefined && typeof force !== "boolean") throw new Error("Invalid installation option");
     if (context === undefined) throw new Error("Application context is not ready");
-    const status = await context.ai.install();
+    if (force) {
+      if (context.aiWorkspaces.busy) throw new Error("Wait for active AI tasks to finish before repairing the Codex environment.");
+      await context.ai.stop();
+    }
+    const status = await context.ai.install(force);
     if (status.executablePath) await settings.set("aiCodexExecutable", status.executablePath);
     return status;
   });

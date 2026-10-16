@@ -1,11 +1,12 @@
 import type { SettingsPresetKind } from "@latex-editor/contracts";
 import { SettingsPresetDialog } from "./SettingsPresets.js";
-import { ToolchainInstallPanel } from "./ToolchainInstallPanel.js";
+import { CodexEnvironmentSettings } from "./CodexEnvironmentSettings.js";
+import { LatexToolchainSettingsPanel } from "./LatexToolchainSettingsPanel.js";
 import { ThemeColorSettings } from "../themes/ThemeColorSettings.js";
 import { themeName, languageName } from "../i18n/displayNames.js";
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { createPortal } from "react-dom";
-import { includeNewBuiltInDirectives, isEnglishSpellDictionary, preferenceDefaults, projectPreferenceKeys, type AIProjectSkill, type DictionaryPackage, type HistoryPreferences, type ImagePreferences, type LatexToolchain, type PreferenceKey, type PreviewDirectiveDefinition, type TablePreferences, type TableStylePreset, type ThemeDefinition, type WheelAccelerationPreferences } from "@latex-editor/contracts";
+import { includeNewBuiltInDirectives, isEnglishSpellDictionary, preferenceDefaults, projectPreferenceKeys, type AIProjectSkill, type DictionaryPackage, type HistoryPreferences, type ImagePreferences, type PreferenceKey, type PreviewDirectiveDefinition, type TablePreferences, type TableStylePreset, type ThemeDefinition, type WheelAccelerationPreferences } from "@latex-editor/contracts";
 import type { SpellCheckStatus } from "@latex-editor/contracts";
 import { t } from "../i18n/index.js";
 import { LanguageSelect } from "../i18n/LanguageSelect.js";
@@ -21,7 +22,7 @@ import "./settings.css";
 const sectionGroups = [
   { label: "settings.group.general", sections: ["general", "appearance"] },
   { label: "settings.group.editor", sections: ["editor", "tools", "filter"] },
-  { label: "settings.group.projectBuild", sections: ["projectBuild"] },
+  { label: "settings.group.projectBuild", sections: ["projectBuild", "applicationBuild"] },
   { label: "settings.group.ai", sections: ["ai"] }
 ] as const;
 export type SettingsCategory = typeof sectionGroups[number]["sections"][number];
@@ -37,7 +38,7 @@ const managerDefinitions: Record<ManagerId, { category: SettingsCategory; title:
   blockEnvironments: { category: "projectBuild", title: "settings.manager.blockEnvironments", description: "settings.manager.blockEnvironmentsHint", keywords: ["block", "environment", "preview", "semantic"] },
   previewCommands: { category: "projectBuild", title: "settings.manager.previewCommands", description: "settings.manager.previewCommandsHint", keywords: ["command", "directive", "page break", "appendix", "bibliography", "vertical space"] },
   styleResources: { category: "projectBuild", title: "settings.manager.styleResources", description: "settings.manager.styleResourcesHint", keywords: ["style", "resource", "sty", "cls", "latex"] },
-  toolchain: { category: "projectBuild", title: "settings.manager.toolchain", description: "settings.manager.toolchainHint", keywords: ["latex", "engine", "compiler", "pdflatex", "xelatex", "lualatex", "bibtex", "biber", "makeindex"] },
+  toolchain: { category: "applicationBuild", title: "settings.manager.toolchain", description: "settings.manager.toolchainHint", keywords: ["latex", "engine", "compiler", "pdflatex", "xelatex", "lualatex", "bibtex", "biber", "makeindex"] },
   aiSkills: { category: "ai", title: "settings.manager.aiSkills", description: "settings.manager.aiSkillsHint", keywords: ["ai", "skill", "instruction", "workflow"] }
 };
 
@@ -47,7 +48,8 @@ const categoryPreferences: Record<SettingsCategory, PreferenceKey[]> = {
   editor: ["wordWrap", "sourceMinimap", "autoPairSymbols", "mathPreviewOnHover", "showPreviewMetrics", "documentWordCompletion", "autoEnvironmentLabels", "confirmPreviewEdits", "warnIncompatibleEnvironmentConversion", "spellCheckMode", "spellCheckLanguage", "spellCheckActiveLanguages", "keybindings", "referenceLinkModifier"],
   filter: ["visibleFilterGroups"],
   tools: ["images", "tables"],
-  projectBuild: ["history", "environments", "previewDirectives", "engine", "pdfFollowActiveTex", "defaultProjectDirectory"],
+  projectBuild: ["history", "environments", "previewDirectives", "pdfFollowActiveTex"],
+  applicationBuild: ["engine", "defaultProjectDirectory"],
   ai: ["aiDefaultMode", "aiPermissionMode", "aiReasoningEffort", "aiCopilotReasoningEffort"]
 };
 
@@ -76,10 +78,11 @@ const searchEntries: Array<{ id: string; category: SettingsCategory; level: Sett
   ...(["autoSnapshot", "beforeRestore", "beforeLargeDelete"] as const).map((key) => ({ id: key, category: "projectBuild" as const, level: "basic" as const, titleKey: `history.${key}`, keywords: ["history", "version", "backup"] })),
   ...(["snapshotInterval", "maxSnapshots", "retentionDays"] as const).map((key) => ({ id: key, category: "projectBuild" as const, level: "advanced" as const, titleKey: `history.${key === "snapshotInterval" ? "intervalMinutes" : key}`, keywords: ["history", "version", "retention", "cleanup"] })),
   { id: "styleResources", category: "projectBuild", level: "manager", manager: "styleResources", titleKey: managerDefinitions.styleResources.title, keywords: managerDefinitions.styleResources.keywords },
-  { id: "defaultProjectDirectory", category: "projectBuild", level: "basic", titleKey: "settings.defaultProjectDirectory", keywords: ["folder", "directory", "create", "project"] },
-  { id: "engine", category: "projectBuild", level: "basic", titleKey: "settings.engine", keywords: ["compiler", "pdflatex", "xelatex", "lualatex"] },
+  { id: "defaultProjectDirectory", category: "applicationBuild", level: "basic", titleKey: "settings.defaultProjectDirectory", keywords: ["folder", "directory", "create", "project"] },
+  { id: "engine", category: "applicationBuild", level: "basic", titleKey: "settings.engine", keywords: ["compiler", "pdflatex", "xelatex", "lualatex"] },
   { id: "pdfFollowActiveTex", category: "projectBuild", level: "basic", titleKey: "settings.pdfFollowActiveTex", keywords: ["pdf", "preview", "switch", "document"] },
-  { id: "toolchain", category: "projectBuild", level: "manager", manager: "toolchain", titleKey: managerDefinitions.toolchain.title, keywords: managerDefinitions.toolchain.keywords },
+  { id: "toolchain", category: "applicationBuild", level: "manager", manager: "toolchain", titleKey: managerDefinitions.toolchain.title, keywords: managerDefinitions.toolchain.keywords },
+  { id: "projectCache", category: "applicationBuild", level: "advanced", titleKey: "settings.projectCacheClear", keywords: ["cache", "clear", "registry", "cleanup", "build"] },
   { id: "aiDefaultMode", category: "ai", level: "basic", titleKey: "settings.aiDefaultMode", keywords: ["copilot", "codex"] },
   { id: "aiPermissionMode", category: "ai", level: "basic", titleKey: "settings.aiPermissionMode", keywords: ["permission", "access"] },
   { id: "aiSkills", category: "ai", level: "manager", manager: "aiSkills", titleKey: managerDefinitions.aiSkills.title, keywords: managerDefinitions.aiSkills.keywords }
@@ -90,8 +93,30 @@ const projectSettingsByCategory: Partial<Record<SettingsCategory, PreferenceKey[
   appearance: ["fontSize", "tabSize"],
   editor: ["wordWrap", "sourceMinimap", "autoPairSymbols", "mathPreviewOnHover", "confirmPreviewEdits", "keybindings"],
   tools: ["images", "tables"],
-  projectBuild: ["history", "environments", "previewDirectives", "engine", "pdfFollowActiveTex"]
+  projectBuild: ["history", "environments", "previewDirectives", "pdfFollowActiveTex"],
+  applicationBuild: ["engine"]
 };
+
+function ProjectCacheSettingsPanel() {
+  const store = useSettings();
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  const [clearedCount, setClearedCount] = useState<number>();
+  const clear = async () => {
+    setBusy(true); setError(""); setClearedCount(undefined);
+    try {
+      const result = await window.latexEditor!.settings.clearProjectCaches();
+      if (result.cleared) { setClearedCount(result.projectCount); await store.load(); }
+    } catch (reason) { setError(reason instanceof Error ? reason.message : String(reason)); }
+    finally { setBusy(false); }
+  };
+  return <SettingGroup title={t("settings.projectCacheTitle")}>
+    <p>{t("settings.projectCacheHint")}</p>
+    <div className="preference-row" data-setting="projectCache"><span><strong>{t("settings.projectCacheClear")}</strong><small>{t("settings.projectCacheIdle")}</small></span><button className="project-cache-clear-button" type="button" disabled={busy || Boolean(store.projectId())} onClick={() => void clear()}>{t(busy ? "settings.projectCacheClearing" : "settings.projectCacheClear")}</button></div>
+    {error && <p role="alert" className="project-cache-error">{error}</p>}
+    {clearedCount !== undefined && <p role="status">{t("settings.projectCacheDone", { count: clearedCount })}</p>}
+  </SettingGroup>;
+}
 
 function HistorySettingsPanel({ store, scope, level }: { store: ReturnType<typeof useSettings>; scope: "global" | "project"; level: SettingsLevel }) {
   const value = (scope === "global" ? store.global("history") : store.get("history")) as HistoryPreferences;
@@ -185,26 +210,6 @@ function TableSettingsPanel({ store, scope, level }: { store: ReturnType<typeof 
       <label className="preference-row"><span><strong>{t("ui.SettingsDialog.automatic_fixed_width_conversion")}</strong><small>{t("ui.SettingsDialog.allow_column_width_edits_to_convert_l")}</small></span><input type="checkbox" checked={value.editing.allowAutomaticColumnConversion} onChange={(event) => editing({ allowAutomaticColumnConversion: event.target.checked })}/></label>
       <label className="preference-row"><span><strong>{t("ui.SettingsDialog.add_row_after_final_tab")}</strong></span><input type="checkbox" checked={value.editing.autoAddRowOnTab} onChange={(event) => editing({ autoAddRowOnTab: event.target.checked })}/></label>
     </SettingGroup>}
-  </div>;
-}
-
-function LatexToolchainSettingsPanel({ store, toolbarTarget }: { store: ReturnType<typeof useSettings>; toolbarTarget?: HTMLElement | null }) {
-  const [detecting, setDetecting] = useState(false);
-  const [installing, setInstalling] = useState(false);
-  const toolchain = store.snapshot().toolchain as LatexToolchain | undefined;
-  const status = toolchain?.overallStatus ?? (toolchain?.available ? "ready" : toolchain ? "unavailable" : "unknown");
-  const tools = [["pdflatex", "pdfLaTeX"], ["xelatex", "XeLaTeX"], ["lualatex", "LuaLaTeX"], ["latexmk", "latexmk"], ["bibtex", "BibTeX"], ["biber", "Biber"], ["makeindex", "MakeIndex"]] as const;
-  const detect = async (manual?: "directory" | "executable") => { setDetecting(true); await store.detect(manual); setDetecting(false); };
-  const toolbar = <div className="toolchain-manager-toolbar"><button disabled={detecting || installing} onClick={() => void detect()}>{t("settings.recheck")}</button><button disabled={detecting || installing} onClick={() => void detect("directory")}>{t("settings.locate")}</button><button disabled={detecting || installing} onClick={() => void detect("executable")}>{t("settings.executable")}</button></div>;
-  return <div className="environment-settings">
-    {toolbarTarget !== undefined ? toolbarTarget && createPortal(toolbar, toolbarTarget) : <div className="environment-settings-header">{toolbar}</div>}
-    <section className={`environment-status-card ${status}`}><div><strong>{t("settings.environmentStatus")}</strong><b>{t(`settings.environmentStatus.${status}`)}</b></div><div><strong>{t("settings.distribution")}</strong><span>{toolchain?.distribution ?? t("settings.notChecked")}{toolchain?.version ? ` · ${toolchain.version}` : ""}</span></div><div><strong>{t("settings.installation")}</strong><code>{toolchain?.binDirectory ?? t("settings.notConfigured")}</code></div></section>
-    <section className="environment-tool-grid"><h3>{t("settings.latexTools")}</h3>{tools.map(([id, label]) => <div className="environment-tool-row" key={id}><strong>{label}</strong><span className={(toolchain?.environment ? toolchain.environment[id].status === "ready" : toolchain?.[id]) ? "status-ok" : "status-warning"}>{(toolchain?.environment ? toolchain.environment[id].status === "ready" : toolchain?.[id]) ? t("settings.found") : t("settings.notFound")}</span><code>{toolchain?.[id] ?? "—"}</code></div>)}</section>
-    {status === "limited" && <p className="spellcheck-settings-note">{t("settings.limitedToolchain")}</p>}
-    {status === "unavailable" && <p className="spellcheck-settings-note">{t("settings.missingToolchain")}</p>}
-    <details className="toolchain-install-options" open={installing || !tools.every(([id]) => toolchain?.environment ? toolchain.environment[id].status === "ready" : Boolean(toolchain?.[id]))}>
-      <summary>{t("toolchainInstall.title")}</summary><ToolchainInstallPanel store={store} onRunningChange={setInstalling}/>
-    </details>
   </div>;
 }
 
@@ -419,7 +424,8 @@ function categoryForInitial(section: Section): SettingsCategory {
   if (["editor", "spellcheck", "shortcuts"].includes(section)) return "editor";
   if (["searchFilter", "preview"].includes(section)) return "filter";
   if (["images", "tables"].includes(section)) return "tools";
-  if (["history", "styleResources", "environments", "previewCommands", "project", "build", "compiler", "environment"].includes(section)) return "projectBuild";
+  if (["history", "styleResources", "environments", "previewCommands", "project"].includes(section)) return "projectBuild";
+  if (["build", "compiler", "environment"].includes(section)) return "applicationBuild";
   if (section === "aiSkills") return "ai";
   return "general";
 }
@@ -540,8 +546,9 @@ export function SettingsDialog({ onClose, initial = "general" }: { onClose(): vo
     if (category === "editor") return <div className="settings-page"><h2>{t("settings.category.editor")}</h2>{level === "basic" ? <><SettingGroup title={t("settings.group.editorBasics")}>{row("wordWrap", "settings.wordWrap")}{row("sourceMinimap", "settings.sourceMinimap")}{row("autoPairSymbols", "settings.autoPairSymbols")}{row("documentWordCompletion", "settings.documentWordCompletion")}{row("mathPreviewOnHover", "settings.mathPreviewOnHover")}{row("confirmPreviewEdits", "settings.confirmPreviewEdits")}</SettingGroup><SpellCheckPreferencesPanel store={store} scope={scope}/><ManagerEntry manager="shortcuts" title={t(managerDefinitions.shortcuts.title)} description={t(managerDefinitions.shortcuts.description)} onOpen={() => openManager("shortcuts")}/><ManagerEntry manager="dictionaries" title={t(managerDefinitions.dictionaries.title)} description={t(managerDefinitions.dictionaries.description)} onOpen={() => openManager("dictionaries")}/></> : <SettingGroup title={t("settings.group.editorAdvanced")}>{row("autoEnvironmentLabels", "settings.autoEnvironmentLabels")}{row("warnIncompatibleEnvironmentConversion", "settings.warnIncompatibleEnvironmentConversion")}{row("showPreviewMetrics", "settings.showPreviewMetrics")}</SettingGroup>}</div>;
     if (category === "tools") return <div className="settings-page"><h2>{t("settings.category.tools")}</h2><ImageSettingsPanel store={store} scope={scope} level={level}/><TableSettingsPanel store={store} scope={scope} level={level}/></div>;
     if (category === "filter") return <div className="settings-page"><h2>{t("settings.category.filter")}</h2>{level === "basic" && <SettingGroup title={t("settings.group.filterBasics")}><p>{t("settings.filterGroupsHint")}</p>{scope === "project" && <p>{t("settings.globalOnly")}</p>}{(["blockType", "location", "file", "properties"] as const).map((group) => { const visible = store.global("visibleFilterGroups"); return <label className="preference-row" key={group}><span><strong>{t(`filter.${group}`)}</strong></span><input type="checkbox" disabled={scope === "project"} checked={visible.includes(group)} onChange={(event) => void store.set("visibleFilterGroups", event.target.checked ? [...visible, group] : visible.filter((item) => item !== group))}/></label>; })}</SettingGroup>}</div>;
-    if (category === "projectBuild") return <div className="settings-page"><h2>{t("settings.category.projectBuild")}</h2>{level === "basic" ? <><HistorySettingsPanel store={store} scope={scope} level={level}/><SettingGroup title={t("settings.group.buildBasics")}><div className="preference-row"><span><strong>{t("settings.defaultProjectDirectory")}</strong><small>{t(scope === "project" ? "settings.globalOnly" : "settings.defaultProjectDirectoryHint")}</small></span><div className="default-project-directory-control"><input aria-label={t("settings.defaultProjectDirectory")} disabled={scope !== "global"} value={store.global("defaultProjectDirectory")} onChange={(event) => void store.set("defaultProjectDirectory", event.target.value)}/><button type="button" disabled={scope !== "global"} onClick={() => { void window.latexEditor?.dialogs.pickFolder().then(folder => { if (folder) void store.set("defaultProjectDirectory", folder); }); }}>{t("project.browse")}</button>{resetButton("defaultProjectDirectory", scope === "global")}</div></div>{row("engine", "settings.engine", [["pdflatex", "pdfLaTeX"], ["xelatex", "XeLaTeX"], ["lualatex", "LuaLaTeX"]])}{row("pdfFollowActiveTex", "settings.pdfFollowActiveTex")}<p>{t("settings.mainFileHint")}</p></SettingGroup></> : <><HistorySettingsPanel store={store} scope={scope} level={level}/><ManagerEntry manager="blockEnvironments" title={t(managerDefinitions.blockEnvironments.title)} description={t(managerDefinitions.blockEnvironments.description)} onOpen={() => openManager("blockEnvironments")}/><ManagerEntry manager="previewCommands" title={t(managerDefinitions.previewCommands.title)} description={t(managerDefinitions.previewCommands.description)} onOpen={() => openManager("previewCommands")}/><ManagerEntry manager="styleResources" title={t(managerDefinitions.styleResources.title)} description={t(managerDefinitions.styleResources.description)} onOpen={() => openManager("styleResources")}/><ManagerEntry manager="toolchain" title={t(managerDefinitions.toolchain.title)} description={t(managerDefinitions.toolchain.description)} onOpen={() => openManager("toolchain")}/></>}</div>;
-    return <div className="settings-page"><h2>{t("settings.category.ai")}</h2>{level === "basic" ? <SettingGroup title={t("settings.group.aiBasics")}><p>{t("settings.aiPrivacyHint")}</p>{row("aiDefaultMode", "settings.aiDefaultMode", [["chat", "ai.copilot"], ["codex", "ai.codex"]])}{row("aiPermissionMode", "settings.aiPermissionMode", [["ask", "ai.permission.ask"], ["auto", "ai.permission.auto"], ["full", "ai.permission.full"]])}<div className="ai-phase-card"><strong>{t("settings.aiChangeReview")}</strong><p>{t("settings.aiChangeReviewDetails")}</p></div></SettingGroup> : <ManagerEntry manager="aiSkills" title={t(managerDefinitions.aiSkills.title)} description={t(managerDefinitions.aiSkills.description)} onOpen={() => openManager("aiSkills")}/>}</div>;
+    if (category === "projectBuild") return <div className="settings-page"><h2>{t("settings.category.projectBuild")}</h2><HistorySettingsPanel store={store} scope={scope} level={level}/>{level === "basic" ? <SettingGroup title={t("settings.group.projectBuild")}>{row("pdfFollowActiveTex", "settings.pdfFollowActiveTex")}<p>{t("settings.mainFileHint")}</p></SettingGroup> : <>{(["blockEnvironments", "previewCommands", "styleResources"] as const).map(id => <ManagerEntry key={id} manager={id} title={t(managerDefinitions[id].title)} description={t(managerDefinitions[id].description)} onOpen={() => openManager(id)}/>)}</>}</div>;
+    if (category === "applicationBuild") return <div className="settings-page"><h2>{t("settings.category.applicationBuild")}</h2>{level === "basic" ? <><SettingGroup title={t("settings.group.buildBasics")}><div className="preference-row"><span><strong>{t("settings.defaultProjectDirectory")}</strong><small>{t(scope === "project" ? "settings.globalOnly" : "settings.defaultProjectDirectoryHint")}</small></span><div className="default-project-directory-control"><input aria-label={t("settings.defaultProjectDirectory")} disabled={scope !== "global"} value={store.global("defaultProjectDirectory")} onChange={(event) => void store.set("defaultProjectDirectory", event.target.value)}/><button type="button" disabled={scope !== "global"} onClick={() => { void window.latexEditor?.dialogs.pickFolder().then(folder => { if (folder) void store.set("defaultProjectDirectory", folder); }); }}>{t("project.browse")}</button>{resetButton("defaultProjectDirectory", scope === "global")}</div></div>{row("engine", "settings.engine", [["pdflatex", "pdfLaTeX"], ["xelatex", "XeLaTeX"], ["lualatex", "LuaLaTeX"]])}</SettingGroup><ManagerEntry manager="toolchain" title={t(managerDefinitions.toolchain.title)} description={t(managerDefinitions.toolchain.description)} onOpen={() => openManager("toolchain")}/></> : <ProjectCacheSettingsPanel/>}</div>;
+    return <div className="settings-page"><h2>{t("settings.category.ai")}</h2>{level === "basic" ? <SettingGroup title={t("settings.group.aiBasics")}><CodexEnvironmentSettings/><p>{t("settings.aiPrivacyHint")}</p>{row("aiDefaultMode", "settings.aiDefaultMode", [["chat", "ai.copilot"], ["codex", "ai.codex"]])}{row("aiPermissionMode", "settings.aiPermissionMode", [["ask", "ai.permission.ask"], ["auto", "ai.permission.auto"], ["full", "ai.permission.full"]])}<div className="ai-phase-card"><strong>{t("settings.aiChangeReview")}</strong><p>{t("settings.aiChangeReviewDetails")}</p></div></SettingGroup> : <ManagerEntry manager="aiSkills" title={t(managerDefinitions.aiSkills.title)} description={t(managerDefinitions.aiSkills.description)} onOpen={() => openManager("aiSkills")}/>}</div>;
   };
 
   const renderManager = () => {

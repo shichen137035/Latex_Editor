@@ -25,7 +25,8 @@ async function until(script, label) {
     if (await evaluate(script)) return;
     await delay(100);
   }
-  throw new Error(`Timed out: ${label}`);
+  const state = await evaluate(`(() => { const root=document.querySelector('.pdf-viewer'); return {selected:document.querySelector('.pdf-document-select')?.dataset.selectedId,label:document.querySelector('.pdf-origin-label')?.textContent,pages:document.querySelectorAll('.pdf-page').length,text:document.querySelector('.output-pane')?.textContent.slice(0,500),scrollTop:root?.scrollTop,viewport:[root?.clientWidth,root?.clientHeight],pageBounds:Array.from(document.querySelectorAll('.pdf-page')).map(el=>({page:el.dataset.page,top:el.getBoundingClientRect().top,height:el.clientHeight,spans:el.querySelectorAll('.textLayer span').length}))}; })()`);
+  throw new Error(`Timed out: ${label}\n${JSON.stringify(state)}`);
 }
 function source(marker, count) {
   return '\\documentclass{article}\n\\begin{document}\n' + Array.from({ length: count }, (_, i) => `${marker} page ${i + 1}.\\par ${'Readable prose. '.repeat(40)}${i < count - 1 ? '\\newpage' : ''}\n`).join('') + '\\end{document}\n';

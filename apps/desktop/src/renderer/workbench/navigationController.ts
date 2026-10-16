@@ -68,6 +68,23 @@ export function createNavigationController(options: NavigationControllerOptions)
   const readOpenTarget = (path: string) => options.tabsRef.current.find(tab => tab.path === path)?.content;
   const validNavigationLocation = (location: NavigationLocation): boolean => navigationLocationValid(location, readOpenTarget(location.path), readOpenTarget);
 
+  const requestPreviewAtSourcePosition = () => {
+    const path = options.activePathRef.current;
+    if (!path) return;
+    const editor = options.editorRef.current;
+    const model = editor?.getModel();
+    const position = editor?.getPosition();
+    // Capture at the switch itself: cursor events may precede the React content
+    // update, and the remembered Preview scroll position belongs to an older view.
+    const live = options.sourceModelPath.current === path && editor?.getDomNode()?.isConnected && model && position;
+    const offset = live ? model.getOffsetAt(position) : options.sourcePositions.current.get(path)?.offset;
+    if (offset === undefined) return;
+    const safeOffset = Math.max(0, Math.min(offset, readOpenTarget(path)?.length ?? offset));
+    if (live) options.sourcePositions.current.set(path, { offset: safeOffset, scrollTop: editor.getScrollTop() });
+    options.setNavigationRequest({ path, offset: safeOffset, nonce: ++options.navigationNonce.current });
+    options.onNavigationPosition?.(path, safeOffset);
+  };
+
   const openNavigationTarget = async (path: string, position: { offset?: number | undefined; line?: number | undefined; column?: number | undefined }, view: "preserve" | "source" | "preview", restoredLayout?: NavigationLocation["layout"]): Promise<NavigationLocation["layout"] | undefined> => {
     const nonce = ++options.navigationNonce.current;
     options.setNavigationRequest(position.offset !== undefined || position.line !== undefined ? { path, ...position, nonce } : undefined);
@@ -151,5 +168,5 @@ export function createNavigationController(options: NavigationControllerOptions)
     } catch (error) { reportError(error, nonce, sequence); }
   };
 
-  return { currentNavigationOrigin, navigateTo, navigateBack, navigateForward, forwardSyncToPdf, reverseSyncFromPdf };
+  return { currentNavigationOrigin, requestPreviewAtSourcePosition, navigateTo, navigateBack, navigateForward, forwardSyncToPdf, reverseSyncFromPdf };
 }

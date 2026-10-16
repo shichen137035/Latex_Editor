@@ -2,7 +2,7 @@ import { consolidateProjectMetadata } from "@latex-editor/filesystem-node";
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { createWriteStream, existsSync, readdirSync } from "node:fs";
-import { access, copyFile, mkdir, readFile, readdir, realpath, rm, stat, utimes } from "node:fs/promises";
+import { access, appendFile, copyFile, mkdir, readFile, readdir, realpath, rm, stat, utimes } from "node:fs/promises";
 import { basename, dirname, extname, isAbsolute, relative, resolve, sep } from "node:path";
 import {
   AppError, type CompileInput, type CompileResult, type CompilerProfile, type Project, type ToolchainStatus, type LatexToolchain, type ToolStatus
@@ -35,7 +35,7 @@ export function windowsLatexPathCandidates(environment: NodeJS.ProcessEnv = proc
     `${programFiles}\\MiKTeX\\miktex\\bin\\x64`, `${programFiles}\\MiKTeX\\miktex\\bin`,
     `${programFilesX86}\\MiKTeX\\miktex\\bin\\x64`, `${programFilesX86}\\MiKTeX\\miktex\\bin`,
     ...(roaming ? [`${roaming}\\TinyTeX\\bin\\windows`] : []),
-    ...(roaming ? [`${roaming}\\TeXWeave\\tools\\TinyTeX\\bin\\windows`, `${roaming}\\TeXWeave\\tools\\TinyTeX\\tlpkg\\tlperl\\bin`] : []),
+    ...(roaming ? [`${roaming}\\TeXWeave\\tools\\TinyTeX\\bin\\windows`, `${roaming}\\TeXWeave\\tools\\TinyTeX\\tlpkg\\tlperl\\bin`, `${roaming}\\TeXWeave\\tools\\MiKTeX\\texmfs\\install\\miktex\\bin\\x64`] : []),
     "C:\\Strawberry\\perl\\bin", "C:\\Strawberry\\c\\bin"
   ];
   const texLiveRoot = "C:\\texlive";
@@ -109,10 +109,16 @@ export async function discoverToolchain(preferred?: string): Promise<LatexToolch
   const extension = process.platform === "win32" ? ".exe" : "";
   const names: DetectedTool[] = ["latexmk", "pdflatex", "xelatex", "lualatex", "bibtex", "biber", "makeindex"];
   const directories = toolDirectories(preferred, env);
-  const paths = Object.fromEntries(names.map((name) => {
-    const directory = directories.find((candidate) => existsSync(resolve(candidate, `${name}${extension}`)));
-    return [name, directory ? resolve(directory, `${name}${extension}`) : undefined];
-  })) as Partial<Record<DetectedTool, string>>;
+  // Select one installation before resolving tools. Filling a missing Biber or
+  // engine from another distribution silently creates an incompatible mixture.
+  const preferredDirectory = preferred && isAbsolute(preferred)
+    ? (extname(preferred).toLowerCase() === ".exe" ? dirname(preferred) : preferred)
+    : undefined;
+  const directory = preferredDirectory ?? directories.find(candidate =>
+    (["pdflatex", "xelatex", "lualatex", "latexmk"] as const).some(name => existsSync(resolve(candidate, `${name}${extension}`))));
+  const paths = Object.fromEntries(names.map(name => [name,
+    directory && existsSync(resolve(directory, `${name}${extension}`)) ? resolve(directory, `${name}${extension}`) : undefined
+  ])) as Partial<Record<DetectedTool, string>>;
   const checks = await Promise.all(names.map(async (name) => [name, paths[name] ? await inspectExecutable(paths[name]!, { ...env, PATH: [dirname(paths[name]!), pathValue].join(delimiter) }) : { ok: false }] as const));
   const results = new Map(checks);
   const versions = new Map(checks.map(([name, result]) => [name, result.version]));
@@ -120,7 +126,10 @@ export async function discoverToolchain(preferred?: string): Promise<LatexToolch
   const compilerUsable = (["pdflatex", "xelatex", "lualatex"] as const).some((name) => results.get(name)?.ok);
   const overallStatus = !compilerUsable ? "unavailable" : !results.get("latexmk")?.ok ? "limited" : "ready";
   const sourceDirectory = paths.latexmk ?? compiler ?? paths.bibtex ?? paths.biber ?? paths.makeindex;
-  const distribution = sourceDirectory && /miktex/i.test(sourceDirectory) ? "miktex" : sourceDirectory && /texlive|tinytex/i.test(sourceDirectory) ? "texlive" : "unknown";
+  const sourceBin = sourceDirectory ? dirname(sourceDirectory) : undefined;
+  const distribution = sourceBin && existsSync(resolve(sourceBin, "miktex.exe")) ? "miktex"
+    : sourceBin && existsSync(resolve(sourceBin, process.platform === "win32" ? "tlmgr.bat" : "tlmgr")) ? "texlive"
+    : sourceDirectory && /miktex/i.test(sourceDirectory) ? "miktex" : sourceDirectory && /texlive|tinytex/i.test(sourceDirectory) ? "texlive" : "unknown";
   const version = versions.get("latexmk") ?? (compiler === paths.pdflatex ? versions.get("pdflatex") : compiler === paths.xelatex ? versions.get("xelatex") : versions.get("lualatex"));
   const toolStatus = (name: DetectedTool): ToolStatus => {
     const executablePath = paths[name];
@@ -150,12 +159,19 @@ export async function discoverToolchain(preferred?: string): Promise<LatexToolch
 export function environmentWithToolRuntime(executable: string, env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
   if (!isAbsolute(executable)) return env;
   const bin = dirname(executable);
-  const perl = resolve(bin, "../../tlpkg/tlperl/bin");
+  const perl = [resolve(bin, "../../tlpkg/tlperl/bin"), resolve(bin, "../../../../../tlpkg/tlperl/bin")].find(candidate => existsSync(resolve(candidate, "perl.exe")));
   const result = { ...env };
   const inherited = Object.entries(env).find(([key]) => key.toLowerCase() === "path")?.[1] ?? "";
+  // latexmk starts engines and bibliography tools by name. Remove competing
+  // Windows TeX bin folders so a missing helper fails instead of crossing into
+  // another distribution; retain system utilities and standalone Perl.
+  const searchPath = process.platform === "win32" ? inherited.split(delimiter).filter(entry =>
+    resolve(entry).toLowerCase() === resolve(bin).toLowerCase()
+    || !["pdflatex", "xelatex", "lualatex", "latexmk", "biber", "bibtex", "makeindex"].some(tool => existsSync(resolve(entry, `${tool}.exe`))))
+    .join(delimiter) : inherited;
   for (const key of Object.keys(result)) if (key.toLowerCase() === "path") delete result[key];
-  result.PATH = [bin, ...(process.platform === "win32" && existsSync(perl) ? [perl] : []), inherited].join(delimiter);
-  if (process.platform === "win32" && existsSync(perl)) {
+  result.PATH = [...new Set([bin, ...(process.platform === "win32" && perl !== undefined ? [perl] : []), ...searchPath.split(delimiter)].filter(Boolean))].join(delimiter);
+  if (process.platform === "win32" && perl !== undefined) {
     for (const key of Object.keys(result)) if (key === "LANG" || key.startsWith("LC_")) delete result[key];
   }
   return result;
@@ -171,6 +187,16 @@ export interface CompilerFilePort {
 
 export interface CompilerProfilePort {
   getCompilerProfile(profileId?: string): CompilerProfile;
+}
+
+export interface MissingPackageRepairRequest { executable: string; files: string[]; signal: AbortSignal; output: (text: string) => void }
+export type MissingPackageRepair = (request: MissingPackageRepairRequest) => Promise<boolean>;
+const installableFile = /^[a-zA-Z0-9][a-zA-Z0-9_.+-]{0,150}\.(?:sty|cls|bst|def|clo|fd|bbx|cbx|lbx|tfm|ofm|vf|enc)$/i;
+export function missingPackageFiles(result: CompileResult): string[] {
+  return [...new Set(result.diagnostics.filter(item => item.code === "MISSING_FILE").flatMap(item => {
+    const file = /Required file or package not found:\s*(.+)$/.exec(item.message)?.[1]?.trim();
+    return file && installableFile.test(file) ? [file] : [];
+  }))];
 }
 
 interface ActiveCompilation {
@@ -206,10 +232,19 @@ export class LatexmkCompilerService {
   readonly #profiles: CompilerProfilePort;
   readonly #clock: Clock;
   readonly #ids: IdGenerator;
+  readonly #repairMissingPackages: MissingPackageRepair | undefined;
+  readonly #repairControllers = new Map<string, AbortController>();
   readonly #active = new Map<string, ActiveCompilation>();
   readonly #rootQueues = new Map<string, Promise<unknown>>();
   readonly #latestArtifacts = new Map<string, { root: string; logId: string; pdfId?: string }>();
   readonly #inFlightArtifacts = new Map<string, string>();
+
+  get busy(): boolean { return this.#rootQueues.size > 0 || this.#active.size > 0 || this.#inFlightArtifacts.size > 0; }
+
+  clearArtifactCache(): void {
+    if (this.busy) throw new Error("Compilation is still running.");
+    this.#latestArtifacts.clear();
+  }
 
   constructor(dependencies: {
     projects: CompilerProjectPort;
@@ -217,11 +252,13 @@ export class LatexmkCompilerService {
     profiles: CompilerProfilePort;
     clock: Clock;
     ids?: IdGenerator;
+    repairMissingPackages?: MissingPackageRepair;
   }) {
     this.#projects = dependencies.projects;
     this.#files = dependencies.files;
     this.#profiles = dependencies.profiles;
     this.#clock = dependencies.clock;
+    this.#repairMissingPackages = dependencies.repairMissingPackages;
     this.#ids = dependencies.ids ?? { next: randomUUID };
   }
 
@@ -397,11 +434,38 @@ export class LatexmkCompilerService {
   async #runAtRoot(root: string, mainFile: string, input: { engine?: CompileInput["engine"]; timeoutMs?: number; outputDirectory?: string }): Promise<CompileResult> {
     const compilationId = this.#ids.next();
     this.#inFlightArtifacts.set(compilationId, resolve(root));
-    try { return await this.#executeCompilation(root, mainFile, input, compilationId); }
-    finally { this.#inFlightArtifacts.delete(compilationId); }
+    const controller = new AbortController(); this.#repairControllers.set(compilationId, controller);
+    let repairLog = "";
+    try {
+      let result = await this.#executeCompilation(root, mainFile, input, compilationId);
+      const attempted = new Set<string>();
+      for (let attempt = 0; attempt < 20 && result.status === "failed" && this.#repairMissingPackages; attempt++) {
+        const files = missingPackageFiles(result).filter(file => !attempted.has(file));
+        if (!files.length || controller.signal.aborted) break;
+        files.forEach(file => attempted.add(file));
+        try {
+          const repaired = await this.#repairMissingPackages({ executable: this.#profiles.getCompilerProfile().executable, files, signal: controller.signal,
+            output: text => { repairLog = (repairLog + text).slice(-16000); } });
+          if (!repaired) break;
+          controller.signal.throwIfAborted();
+          result = await this.#executeCompilation(root, mainFile, { ...input, forceRebuild: true }, compilationId);
+        } catch (error) {
+          const cancelled = controller.signal.aborted || /^(?:LaTeX package )?Installation cancelled\.?$/i.test(error instanceof Error ? error.message : String(error));
+          if (cancelled) result = { ...result, status: "cancelled", exitCode: null };
+          else result.diagnostics.push({ severity: "error", source: "system", category: "package", code: "PACKAGE_INSTALL_FAILED", message: `Automatic TeX Live package installation failed: ${error instanceof Error ? error.message : String(error)}` });
+          break;
+        }
+      }
+      if (controller.signal.aborted) result = { ...result, status: "cancelled", exitCode: null };
+      if (repairLog) {
+        result.stdoutTail = (result.stdoutTail + "\n" + repairLog).slice(-maximumTailLength);
+        if (result.logPath) await appendFile(result.logPath, "\n" + repairLog);
+      }
+      return result;
+    } finally { this.#repairControllers.delete(compilationId); this.#inFlightArtifacts.delete(compilationId); }
   }
 
-  async #executeCompilation(root: string, mainFile: string, input: { engine?: CompileInput["engine"]; timeoutMs?: number; outputDirectory?: string }, compilationId: string): Promise<CompileResult> {
+  async #executeCompilation(root: string, mainFile: string, input: { engine?: CompileInput["engine"]; timeoutMs?: number; outputDirectory?: string; forceRebuild?: boolean }, compilationId: string): Promise<CompileResult> {
     // Reject shell escape even if a profile was edited outside the resource manager.
 
     const profile = this.#profiles.getCompilerProfile();
@@ -427,6 +491,7 @@ export class LatexmkCompilerService {
     if (!args.some((arg) => arg.toLowerCase() === "-file-line-error")) args.push("-file-line-error");
     if (!args.some((arg) => arg.toLowerCase().startsWith("-interaction="))) args.push("-interaction=nonstopmode");
     args.push("-synctex=1");
+    if (input.forceRebuild && !args.includes("-g")) args.push("-g");
     const expectedPdf = resolve(outputDirectory, `${basename(mainFile, extname(mainFile))}.pdf`);
     // latexmk does not track missing SyncTeX output as a reason to rerun TeX.
     // -g preserves bibliography/aux files while regenerating this build result.
@@ -564,8 +629,9 @@ export class LatexmkCompilerService {
   }
 
   async cancel(compilationId: string): Promise<{ cancelled: boolean }> {
+    const repair = this.#repairControllers.get(compilationId); repair?.abort();
     const active = this.#active.get(compilationId);
-    if (active === undefined) return { cancelled: false };
+    if (active === undefined) return { cancelled: repair !== undefined };
     active.requestedState = "cancelled";
     await terminateProcessTree(active.child);
     return { cancelled: true };

@@ -1,6 +1,6 @@
 // Navigation regressions run against a disposable project/profile.
 const { app, BrowserWindow } = require("electron");
-const { mkdtempSync, mkdirSync } = require("node:fs");
+const { mkdtempSync, mkdirSync, writeFileSync } = require("node:fs");
 const { tmpdir } = require("node:os");
 const { resolve } = require("node:path");
 const assert = require("node:assert/strict");
@@ -23,6 +23,8 @@ async function until(script, label) {
     if (await evaluate(script)) return;
     await delay(50);
   }
+  console.error(await evaluate(`({active:document.querySelector('.editor-tabs button.active')?.textContent, text:document.body.innerText.slice(-1800), focused:document.activeElement?.outerHTML.slice(0,300)})`));
+  writeFileSync(resolve(root, 'navigation-timeout.png'), (await page.webContents.capturePage()).toPNG());
   throw new Error(`Timed out: ${label}`);
 }
 async function press(keyCode, modifiers = []) {
@@ -60,6 +62,33 @@ async function run() {
   await evaluate('document.querySelector(".directory-project-row").click()');
   await until('!!document.querySelector(".structured-preview .preview-content-region")', "Visual preview");
   page.focus();
+
+  // Source edits and a view switch may happen before cursor listeners have
+  // persisted their state. An old Visual scroll position must not win.
+  await evaluate('Array.from(document.querySelectorAll(".view-switch button")).find(button => button.textContent === "Code").click()');
+  await until('!!document.querySelector(".editor-surface .monaco-editor textarea")', "Code for immediate edited-source switch");
+  await delay(150);
+  await evaluate('document.querySelector(".editor-surface .monaco-editor textarea").focus()');
+  await press("END", ["control"]);
+  await press("HOME");
+  await page.webContents.insertText("\\section{Edited view switch}\nLIVE_SOURCE_SWITCH_TARGET. " + "New prose. ".repeat(25) + "\n");
+  await press("UP");
+  await press("END");
+  await evaluate('Array.from(document.querySelectorAll(".view-switch button")).find(button => button.textContent === "Visual").click()');
+  await until(`(() => { const root = document.querySelector('.structured-preview'); const target = Array.from(root?.querySelectorAll('.preview-content-region') ?? []).find(el => el.textContent.includes('LIVE_SOURCE_SWITCH_TARGET')); if (!target) return false; const a = root.getBoundingClientRect(), b = target.getBoundingClientRect(); return b.bottom > a.top && b.top < a.bottom && root.scrollTop > 2000; })()`, "edited source caret revealed in Visual");
+  await evaluate('Array.from(document.querySelectorAll(".view-switch button")).find(button => button.textContent === "Code").click()');
+  await until('!!document.querySelector(".editor-surface .monaco-editor textarea")', "Code for second edited-source switch");
+  await delay(150);
+  await evaluate('document.querySelector(".editor-surface .monaco-editor textarea").focus()');
+  await press("HOME", ["control"]);
+  await page.webContents.insertText("% Updated preamble before switching again\n");
+  await evaluate('Array.from(document.querySelectorAll(".app-menus > .menu-anchor > button")).find(button => button.textContent === "View").click()');
+  await until('!!document.querySelector(".app-menus .menu-popover")', "View menu");
+  await evaluate('Array.from(document.querySelectorAll(".app-menus .menu-popover button")).find(button => button.textContent === "Preview").click()');
+  await until('document.querySelector(".structured-preview")?.scrollTop < 500', "source beginning overrides remembered Visual end position");
+  console.log("PASS immediate Code edits -> Visual switches follow the current cursor through toolbar and View menu in a long file");
+  await press("S", ["control"]);
+  await until('!document.querySelector(".editor-tabs button.active i")', "save edited source before project-reopen checks");
 
   // A previous search match is a highlight, not a perpetual scroll instruction.
   await press("F", ["control"]);
@@ -141,6 +170,9 @@ async function run() {
   await evaluate('Array.from(document.querySelectorAll(".view-switch button")).find(button => button.textContent === "Code").click()');
   await until('document.querySelector(".editor-surface .view-lines")?.textContent.includes("S-thm:external")', "external key visible in Code");
   await until('!!document.querySelector(".editor-surface .monaco-editor.focused")', "Code navigation position restored");
+  // Monaco keeps overscan lines in the DOM; textContent alone does not mean
+  // the reference is visible or clickable below the sticky heading overlay.
+  await press("HOME", ["control"]);
   await delay(100);
   const point = await evaluate(`(() => {
     const line = document.querySelector('.editor-surface .view-lines');

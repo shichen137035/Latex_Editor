@@ -9,7 +9,8 @@ const { runtimeWorkspaces } = require("./distribution-config.cjs");
 const root = path.resolve(__dirname, "../../..");
 const manifest = JSON.parse(fs.readFileSync(path.join(root, "package.json"), "utf8"));
 const releaseRoot = path.join(root, "release");
-const latestFile = path.join(releaseRoot, "latest.json");
+const nsis = process.argv.includes("--nsis");
+const latestFile = path.join(releaseRoot, nsis ? "latest-nsis.json" : "latest.json");
 const defaultOutput = fs.existsSync(latestFile) ? path.join(releaseRoot, JSON.parse(fs.readFileSync(latestFile, "utf8")).directory) : path.join(releaseRoot, manifest.version);
 const outputDirectory = path.resolve(process.argv.slice(2).find(arg => !arg.startsWith("--")) ?? defaultOutput);
 const appDirectory = path.join(outputDirectory, "win-unpacked");
@@ -44,6 +45,17 @@ async function checkStartup(archiveHash, portable = false) {
     else fs.cpSync(appDirectory, isolatedApp, { recursive: true });
     const environment = { ...process.env, TEXWEAVE_PACKAGE_SMOKE_DIR: reportDirectory };
     for (const key of ["ELECTRON_RUN_AS_NODE", "NODE_PATH", "NODE_OPTIONS", "TEXWEAVE_RENDERER_URL"]) delete environment[key];
+    if (!portable) {
+      const roaming = path.join(temporaryRoot, "Roaming"), local = path.join(temporaryRoot, "Local");
+      const profile = path.join(roaming, "TeXWeave");
+      fs.mkdirSync(profile, { recursive: true }); fs.mkdirSync(local);
+      fs.writeFileSync(path.join(profile, "settings.json"), "{}");
+      const preview = spawnSync(executable, [path.join(isolatedApp, "resources/uninstall-cleanup.cjs"), "--mode=purge", "--profile", profile, "--dry-run"], {
+        cwd: temporaryRoot, windowsHide: true, encoding: "utf8", timeout: 15000,
+        env: { ...environment, ELECTRON_RUN_AS_NODE: "1", APPDATA: roaming, LOCALAPPDATA: local }
+      });
+      if (preview.status !== 0 || !JSON.parse(preview.stdout || "null")?.dryRun || !fs.existsSync(path.join(profile, "settings.json"))) throw new Error(`Uninstall cleanup runtime failed: ${preview.stderr || preview.error || preview.stdout}`);
+    }
     let logs = "";
     await new Promise((resolve, reject) => {
       const child = spawn(executable, [], { cwd: temporaryRoot, env: environment, windowsHide: true, stdio: ["ignore", "pipe", "pipe"] });
@@ -97,6 +109,14 @@ async function verify() {
   }
   if ([...entries].some(entry => entry.includes("test-support/"))) throw new Error("Development test support was included in the package.");
   for (const relativePath of ["resources/resources/commands/latex-commands.json", "resources/resources/environments/preview-environments.json", "resources/resources/ai/skills/latex-project/SKILL.md"]) requireFile(path.join(appDirectory, relativePath), "runtime resource");
+  for (const id of ["default", "light", "empty"]) {
+    const directory = path.join(appDirectory, "resources/resources/style-resources/built-in", id);
+    requireFile(path.join(directory, "resource.json"), "built-in style manifest");
+    const resource = JSON.parse(fs.readFileSync(path.join(directory, "resource.json"), "utf8"));
+    if (resource.id !== id || resource.source !== "built-in" || !Array.isArray(resource.files)) throw new Error(`Invalid built-in style: ${id}`);
+    for (const file of resource.files) requireFile(path.join(directory, file.sourcePath), "built-in style file");
+  }
+  requireFile(path.join(appDirectory, "resources/uninstall-cleanup.cjs"), "uninstall cleanup runtime");
   const themeDirectory = path.join(appDirectory, "resources/themes");
   if (!fs.existsSync(themeDirectory) || !fs.readdirSync(themeDirectory).some(entry => entry.endsWith(".css"))) throw new Error("Built-in themes are missing.");
   const hash = createHash("sha256").update(fs.readFileSync(archivePath)).digest("hex");
@@ -105,8 +125,13 @@ async function verify() {
     if (!report.ok || !report.packaged || report.archiveHash !== hash) throw new Error("Startup check is absent or does not match this archive.");
   } else await checkStartup(hash);
   if (!process.argv.includes("--unpacked")) {
-    requireFile(path.join(outputDirectory, `TeXWeave-${manifest.version}-x64-portable.exe`), "portable executable");
-    await checkStartup(hash, true);
+    const artifact = path.join(outputDirectory, `TeXWeave-${manifest.version}-x64-${nsis ? "setup" : "portable"}.exe`);
+    requireFile(artifact, nsis ? "NSIS installer" : "portable executable");
+    const header = Buffer.alloc(2);
+    const descriptor = fs.openSync(artifact, "r");
+    try { fs.readSync(descriptor, header, 0, 2, 0); } finally { fs.closeSync(descriptor); }
+    if (header.toString("ascii") !== "MZ") throw new Error("Distribution is not a Windows executable.");
+    if (!nsis) await checkStartup(hash, true);
   }
   process.stdout.write(`Package verified: TeXWeave ${manifest.version}; workspace exports, backend, preload, IPC and home page startup passed.\n`);
 }
