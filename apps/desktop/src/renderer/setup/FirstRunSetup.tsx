@@ -5,6 +5,7 @@ import { languageName } from "../i18n/displayNames.js";
 import { useSettings } from "../settings/service.js";
 import { LatexToolchainSettingsPanel } from "../settings/LatexToolchainSettingsPanel.js";
 import { pendingSetupLanguages, suggestedSetupLanguages } from "./languages.js";
+import { toolchainReadiness } from "../settings/toolchainReadiness.js";
 import "./first-run-setup.css";
 
 export function FirstRunSetup({ onActiveChange }: { onActiveChange: (active: boolean) => void }) {
@@ -94,6 +95,6 @@ function SetupDialog({ saved, onClose }: { saved: string[]; onClose: () => void 
       </section> : <section><h2>{t("setup.tools")}</h2><LatexToolchainSettingsPanel store={store} onBusyChange={setToolBusy}/><p className="setup-hint">{t("setup.incomplete")}</p></section>}
       {error && <p role="alert" className="inline-error">{error}</p>}
     </div>
-    <footer><button data-setup-later disabled={locked} onClick={onClose}>{t("setup.later")}</button><div>{step === "tools" && <button disabled={locked} onClick={() => { setStep("languages"); setError(""); }}>{t("setup.back")}</button>}{step === "languages" ? <button className="primary" data-setup-next disabled={locked || loading} onClick={() => void next()}>{pending.length ? t("setup.installLanguages") : t("setup.next")}</button> : <button className="primary" data-setup-finish disabled={locked} onClick={() => void finish()}>{t("setup.finish")}</button>}</div></footer>
+    <footer><button data-setup-later disabled={locked} onClick={onClose}>{t("setup.later")}</button><div>{step === "languages" && <button data-setup-tools disabled={locked} onClick={() => { setStep("tools"); setError(""); }}>{t("toolchainGuide.skipLanguages")}</button>}{step === "tools" && <button disabled={locked} onClick={() => { setStep("languages"); setError(""); }}>{t("setup.back")}</button>}{step === "languages" ? <button className="primary" data-setup-next disabled={locked || loading} onClick={() => void next()}>{pending.length ? t("setup.installLanguages") : t("setup.next")}</button> : <button className="primary" data-setup-finish disabled={locked} onClick={() => void finish()}>{t(toolchainReadiness(store.snapshot().toolchain, store.get("engine")).ready ? "setup.finish" : "toolchainGuide.finishWithout")}</button>}</div></footer>
   </div></div>;
 }

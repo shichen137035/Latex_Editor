@@ -15,6 +15,7 @@
 .setup-language strong, .setup-language small { display: block; }
 .setup-language small, .setup-language em { color: var(--color-text-secondary); font-size: 12px; font-style: normal; }
 .first-run-setup footer, .first-run-setup footer > div { display: flex; gap: 10px; align-items: center; }
+.first-run-setup footer, .first-run-setup footer > div { flex-wrap: wrap; }
 .first-run-setup footer { justify-content: space-between; padding: 16px 28px; border-top: 1px solid var(--color-border); }
 .first-run-setup button { padding: 9px 14px; border: 1px solid var(--color-border); border-radius: 8px; background: var(--color-bg-subtle); color: inherit; cursor: pointer; }
 .first-run-setup button.primary { background: var(--color-primary, #1689c8); color: white; border-color: transparent; }

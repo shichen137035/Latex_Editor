@@ -1,5 +1,21 @@
 # LaTeX 环境装配 / LaTeX environment assembly
 
+## 新设备配置与恢复 / Setup and recovery on another computer
+
+首次启动可先选择“先配置 LaTeX”，不必等待拼写词典下载。缺少编译环境时，主页及项目编辑页会提示当前所选引擎和 latexmk 的缺失情况，并提供“自动安装／修复 LaTeX”入口。编辑和可视化预览可以继续使用；未配置环境时，向导的完成按钮会明确标注暂不编译 PDF。设置入口为“环境与构建 → 本地 LaTeX 工具链”。
+
+The initial wizard offers **Configure LaTeX first**, so dictionary downloads do not block toolchain setup. When compilation dependencies are missing, the home page and editor name the tools required by the selected engine and expose **Install / repair LaTeX**. Editing and visual preview remain available; finishing without a toolchain is explicitly labelled as continuing without PDF compilation. The settings entry is **Environment & Build → Local LaTeX toolchain**.
+
+“重新检测”会校验保存的本机路径；若原环境已不可运行，则重新寻找当前设备上的可用发行版。手动定位支持安装根目录、bin 目录或可执行文件，包括带空格或点号的路径。手动选中的不完整环境不会被其他发行版的工具混合填补。自动检测会避开无法运行的候选环境，工具检查和编译前版本检查均设有超时。
+
+**Recheck** validates the saved machine path and searches the current computer again if that installation cannot run. Manual location accepts an installation root, bin directory or executable, including paths with spaces or dots. An explicitly selected incomplete environment is never filled with tools from another distribution. Automatic discovery skips unusable candidates, and both discovery and the compiler's version probe have time limits.
+
+自动安装需联网，默认采用当前用户目录；用户需点击安装按钮后才会下载。安装失败时，界面分别提供网络／代理、权限或文件占用、目录选择、校验失败和运行时缺失的处理建议，并保留原始诊断。托管 MiKTeX 包含供 latexmk 使用的 Perl；已有 latexmk 无法运行时，可选新建托管环境。安装完成后重新检测并立即生效，不必重启应用。
+
+Automatic installation requires internet access and defaults to a user-owned folder; downloading begins only after the user clicks Install. Failures include recovery guidance for network/proxy issues, permissions or file locks, folder selection, verification failures and missing runtimes, with the original diagnostic retained. Managed MiKTeX includes Perl for latexmk; a new managed installation is an option when an existing latexmk cannot run. Verified tools take effect immediately without restarting the app.
+
+专项回归 / Focused coverage: `settings-toolchain-discovery.test.ts`, `settings-toolchain-guidance.test.ts`, `settings-toolchain-install.test.ts`, `first-run-setup` 桌面检查 / desktop check. 这些检查模拟其他设备的缺失环境，不会在测试人员电脑上下载或安装真实发行版 / These checks simulate missing tools on another computer without downloading or installing a distribution on the tester's machine.
+
 设置中的环境管理器和首次启动向导使用相同安装界面。默认推荐 **MiKTeX 轻量方案**；也可以选择 **TeX Live（TinyTeX 便携方案）**。
 
 用户可以独立勾选数学、表格与标题、中文、参考文献、绘图组件，或输入额外宏包标识。默认勾选数学和表格组件；完整宏包集默认关闭。基础编译工具始终包含 pdfLaTeX、XeLaTeX、LuaLaTeX、latexmk、BibTeX、Biber、MakeIndex。

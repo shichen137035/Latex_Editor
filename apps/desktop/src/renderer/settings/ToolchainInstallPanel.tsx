@@ -2,13 +2,14 @@ import { useEffect, useState } from "react";
 import { latexComponentIds, type ToolchainInstallSelection, type ToolchainInstallStatus } from "@latex-editor/contracts";
 import { t } from "../i18n/index.js";
 import type { settings } from "./service.js";
+import { toolchainRecoveryHint, toolReady } from "./toolchainReadiness.js";
 
-export function ToolchainInstallPanel({ store, onRunningChange }: { store: typeof settings; onRunningChange: (running: boolean) => void }) {
+export function ToolchainInstallPanel({ store, onRunningChange, detecting = false }: { store: typeof settings; onRunningChange: (running: boolean) => void; detecting?: boolean }) {
   const [status, setStatus] = useState<ToolchainInstallStatus>();
   const [directory, setDirectory] = useState("");
   const current = store.snapshot().toolchain;
   const initialDistribution = current?.distribution === "texlive" ? "tinytex" : "miktex";
-  const [selection, setSelection] = useState<ToolchainInstallSelection>({ distribution: initialDistribution, components: ["math", "tables"], customPackages: [], full: false, autoInstall: true, existing: Boolean(current?.binDirectory && ["miktex", "texlive"].includes(current.distribution)) });
+  const [selection, setSelection] = useState<ToolchainInstallSelection>({ distribution: initialDistribution, components: ["math", "tables"], customPackages: [], full: false, autoInstall: true, existing: Boolean(current?.binDirectory && toolReady(current, "latexmk") && ["miktex", "texlive"].includes(current.distribution)) });
   const [customPackages, setCustomPackages] = useState("");
   const compatible = current?.binDirectory && current.distribution === (selection.distribution === "miktex" ? "miktex" : "texlive");
   const [error, setError] = useState("");
@@ -46,12 +47,13 @@ export function ToolchainInstallPanel({ store, onRunningChange }: { store: typeo
     return () => { mounted = false; clearTimeout(timer); };
   }, [running, store]);
   const install = async () => {
+    if (busy) return;
     setSubmitting(true); setError("");
-    try { setStatus(await window.latexEditor!.settings.installToolchain(directory, { ...selection, customPackages: customPackages.split(/[\s,;]+/).filter(Boolean) })); }
+    try { setStatus(await window.latexEditor!.settings.installToolchain(directory, { ...selection, existing: Boolean(selection.existing && compatible), customPackages: customPackages.split(/[\s,;]+/).filter(Boolean) })); }
     catch (reason) { setError(reason instanceof Error ? reason.message : String(reason)); }
     finally { setSubmitting(false); }
   };
-  const busy = running || submitting;
+  const busy = running || submitting || detecting;
   const changeDistribution = (distribution: ToolchainInstallSelection["distribution"]) => {
     setSelection(previous => ({ ...previous, distribution, existing: Boolean(current?.binDirectory && current.distribution === (distribution === "miktex" ? "miktex" : "texlive")) }));
     setDirectory(status?.defaultDirectories?.[distribution] ?? status?.defaultDirectory ?? "");
@@ -59,6 +61,7 @@ export function ToolchainInstallPanel({ store, onRunningChange }: { store: typeo
   return <section className="toolchain-install-panel">
     <h3>{t("toolchainInstall.title")}</h3>
     <p>{t("toolchainInstall.hint")}</p>
+    <p className="toolchain-install-requirements">{t("toolchainGuide.downloadHint")}</p>
     {status && !status.supported ? <p>{t("toolchainInstall.windows")}</p> : <>
       <label htmlFor="latex-install-distribution">{t("toolchainInstall.distribution")}</label>
       <select id="latex-install-distribution" disabled={busy} value={selection.distribution} onChange={event => changeDistribution(event.target.value as ToolchainInstallSelection["distribution"])}>
@@ -77,13 +80,13 @@ export function ToolchainInstallPanel({ store, onRunningChange }: { store: typeo
       <label htmlFor="latex-install-directory">{t("toolchainInstall.directory")}</label>
       <div className="toolchain-install-directory"><input id="latex-install-directory" value={directory} disabled={busy} onChange={event => setDirectory(event.target.value)}/><button disabled={busy} onClick={() => { void window.latexEditor!.dialogs.pickFolder().then(folder => { if (folder) setDirectory(folder); }).catch(reason => setError(String(reason))); }}>{t("project.browse")}</button></div>
       <small>{t("toolchainInstall.folderHint")}</small></>}
-      <div className="toolchain-install-actions"><button className="primary" disabled={busy || !status || !directory.trim()} onClick={() => void install()}>{t(selection.existing ? "toolchainInstall.addComponents" : "toolchainInstall.install")}</button>{running && <button onClick={() => { void window.latexEditor!.settings.cancelToolchainInstall().then(setStatus).catch(reason => setError(String(reason))); }}>{t("project.cancel")}</button>}</div>
+      <div className="toolchain-install-actions"><button className="primary" disabled={busy || !status || (!(selection.existing && compatible) && !directory.trim())} onClick={() => void install()}>{t(selection.existing && compatible ? "toolchainInstall.addComponents" : "toolchainInstall.install")}</button>{running && <button onClick={() => { void window.latexEditor!.settings.cancelToolchainInstall().then(setStatus).catch(reason => setError(String(reason))); }}>{t("project.cancel")}</button>}</div>
     </>}
     {status && status.phase !== "idle" && <div className="toolchain-install-progress" role="status" aria-live="polite">
       <strong>{t(`toolchainInstall.phase.${status.phase}`)}</strong>
       {status.phase === "downloading" && <><progress max={status.totalBytes || undefined} value={status.totalBytes ? status.downloadedBytes : undefined}/><span>{t("toolchainInstall.downloaded", { current: (status.downloadedBytes / 1048576).toFixed(1), total: (status.totalBytes / 1048576).toFixed(1) })}</span></>}
     </div>}
-    {(error || status?.error) && <p className="toolchain-install-error" role="alert">{error || status?.error}</p>}
+    {(error || status?.error) && <div className="toolchain-install-error" role="alert"><p>{t(`toolchainGuide.recovery.${toolchainRecoveryHint(error || status?.error || "")}`)}</p><details><summary>{t("toolchainGuide.details")}</summary><pre>{error || status?.error}</pre></details></div>}
     {status?.log && <details className="toolchain-install-log"><summary>{t("toolchainInstall.log")}</summary><pre>{status.log}</pre></details>}
   </section>;
 }

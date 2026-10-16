@@ -65,6 +65,16 @@
 .toolchain-install-options { margin-top: 16px; border: 1px solid var(--color-border); border-radius: 12px; overflow: hidden; }
 .toolchain-install-options > summary { padding: 14px 18px; color: var(--color-accent); background: var(--color-bg-subtle); cursor: pointer; font-weight: 600; }
 .toolchain-install-panel { padding: 18px; }
+.toolchain-guidance { margin: 16px 0; padding: 16px; border: 1px solid var(--color-border); border-radius: 12px; background: var(--color-bg-subtle); overflow-wrap: anywhere; }
+.toolchain-guidance h3 { margin: 0 0 8px; }
+.toolchain-guidance p { line-height: 1.6; color: var(--color-text-secondary); }
+.toolchain-guidance label { display: flex; align-items: center; flex-wrap: wrap; gap: 12px; margin: 12px 0; }
+.toolchain-guidance select { min-width: 120px; }
+.toolchain-guidance > button.primary, .toolchain-warning button.primary { padding: 9px 14px; border-radius: 8px; background: var(--color-primary); color: var(--color-text-on-primary, #fff); }
+.toolchain-install-error pre { white-space: pre-wrap; overflow-wrap: anywhere; max-height: 160px; overflow: auto; }
+.environment-tool-row code small { display: block; white-space: pre-wrap; color: var(--color-danger); }
+.toolchain-workbench-guidance { position: fixed; z-index: 105; bottom: 38px; left: 50%; transform: translateX(-50%); display: flex; flex-wrap: wrap; align-items: center; gap: 12px; max-width: min(760px, calc(100vw - 40px)); padding: 10px 16px; border: 1px solid var(--color-border); border-radius: 10px; background: var(--color-bg-panel); color: var(--color-text-primary); box-shadow: var(--shadow-panel); }
+.toolchain-workbench-guidance button { flex: 0 0 auto; border: 1px solid var(--color-border); border-radius: 6px; padding: 6px 10px; background: var(--color-bg-subtle); color: var(--color-primary); cursor: pointer; }
 .toolchain-install-panel h3 { margin-top: 0; }
 .toolchain-install-panel p { color: var(--color-text-secondary); line-height: 1.5; }
 .toolchain-install-panel label { display: block; margin-bottom: 8px; font-weight: 600; }

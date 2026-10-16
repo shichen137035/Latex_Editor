@@ -1,7 +1,7 @@
 import { consolidateProjectMetadata } from "@latex-editor/filesystem-node";
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import { createWriteStream, existsSync, readdirSync } from "node:fs";
+import { createWriteStream, existsSync, readdirSync, statSync } from "node:fs";
 import { access, appendFile, copyFile, mkdir, readFile, readdir, realpath, rm, stat, utimes } from "node:fs/promises";
 import { basename, dirname, extname, isAbsolute, relative, resolve, sep } from "node:path";
 import {
@@ -72,7 +72,7 @@ export interface CompilerProjectPort {
 /** Resolve related tools together; returned machine paths never enter a project file. */
 type DetectedTool = "latexmk" | "pdflatex" | "xelatex" | "lualatex" | "bibtex" | "biber" | "makeindex";
 
-async function inspectExecutable(executable: string, env: NodeJS.ProcessEnv): Promise<{ ok: boolean; version?: string }> {
+async function inspectExecutable(executable: string, env: NodeJS.ProcessEnv): Promise<{ ok: boolean; version?: string; error?: string }> {
   env = environmentWithToolRuntime(executable, env);
   const output = await new Promise<{ code: number | null; text: string }>((done) => {
     const child = spawn(executable, ["--version"], { shell: false, windowsHide: true, env });
@@ -80,30 +80,40 @@ async function inspectExecutable(executable: string, env: NodeJS.ProcessEnv): Pr
     child.stdout.on("data", (chunk: Buffer) => { text = appendTail(text, chunk); });
     child.stderr.on("data", (chunk: Buffer) => { text = appendTail(text, chunk); });
     const timer = setTimeout(() => { child.kill(); done({ code: null, text }); }, 5000);
-    child.once("error", () => { clearTimeout(timer); done({ code: null, text }); });
+    child.once("error", error => { clearTimeout(timer); done({ code: null, text: text || error.message }); });
     child.once("close", (code) => { clearTimeout(timer); done({ code, text }); });
   });
   const version = output.text.match(/\bVersion[ :]+(\d+(?:\.\d+)+)/i)?.[1] ?? output.text.match(/\b\d{4}(?:\.\d+)*\b|\b\d+\.\d+(?:\.\d+)*\b/)?.[0];
   // TeX Live MakeIndex has no --version option; its usage response confirms
   // that the executable runs. MiKTeX supports --version and returns zero.
   const makeindexUsage = /^(?:makeindex)(?:\.exe)?$/i.test(basename(executable)) && output.code === 1 && /Usage: makeindex\s/.test(output.text);
-  return { ok: output.code === 0 || makeindexUsage, ...(version ? { version } : {}) };
+  return { ok: output.code === 0 || makeindexUsage, ...(version ? { version } : {}), error: output.text.trim().slice(-1200) || `Executable check failed (${output.code ?? "timeout"}).` };
+}
+
+/** Accept the distribution root as well as its bin folder or an executable. */
+function installationDirectories(preferred: string): string[] {
+  const path = preferred.trim().replace(/^"(.*)"$/, "$1");
+  let root = path;
+  try { if (statSync(path).isFile()) root = dirname(path); }
+  catch { if (/\.exe$/i.test(path)) root = dirname(path); }
+  const bins = (base: string) => [base, resolve(base, "bin/windows"), resolve(base, "bin/win32"), resolve(base, "miktex/bin/x64"), resolve(base, "miktex/bin"), resolve(base, "texmfs/install/miktex/bin/x64")];
+  let versions: string[] = [];
+  try { versions = readdirSync(root, { withFileTypes: true }).filter(entry => entry.isDirectory() && /^\d{4}$/.test(entry.name)).map(entry => entry.name).sort().reverse(); } catch { /* Missing or unreadable optional roots are reported by tool checks. */ }
+  return [...bins(root), ...versions.flatMap(version => bins(resolve(root, version)))];
 }
 
 function toolDirectories(preferred: string | undefined, env: NodeJS.ProcessEnv): string[] {
   const pathValue = env.PATH ?? env.Path ?? "";
-  const preferredDirectory = preferred && isAbsolute(preferred)
-    ? (existsSync(preferred) && extname(preferred).toLowerCase() !== "" ? dirname(preferred) : preferred)
-    : undefined;
   return [...new Set([
-    ...(preferredDirectory ? [preferredDirectory] : []),
+    ...(preferred && isAbsolute(preferred) ? installationDirectories(preferred) : []),
     ...pathValue.split(delimiter),
     ...(process.platform === "win32" ? windowsLatexPathCandidates(env) : [])
-  ].filter((value) => value && isAbsolute(value)).map((value) => value.replace(/[\\/]+$/, "")))];
+  ].map(value => value.trim().replace(/^"(.*)"$/, "$1")).filter((value) => value && isAbsolute(value)).map((value) => value.replace(/[\\/]+$/, "")))];
 }
 
 /** Detect every useful LaTeX capability independently; latexmk is no longer the only success condition. */
-export async function discoverToolchain(preferred?: string): Promise<LatexToolchain> {
+async function inspectToolchain(preferred?: string): Promise<LatexToolchain> {
+  preferred = preferred?.trim().replace(/^"(.*)"$/, "$1");
   const env = compilerEnvironment();
   const pathValue = env.PATH ?? env.Path ?? "";
   const extension = process.platform === "win32" ? ".exe" : "";
@@ -111,11 +121,9 @@ export async function discoverToolchain(preferred?: string): Promise<LatexToolch
   const directories = toolDirectories(preferred, env);
   // Select one installation before resolving tools. Filling a missing Biber or
   // engine from another distribution silently creates an incompatible mixture.
-  const preferredDirectory = preferred && isAbsolute(preferred)
-    ? (extname(preferred).toLowerCase() === ".exe" ? dirname(preferred) : preferred)
-    : undefined;
-  const directory = preferredDirectory ?? directories.find(candidate =>
-    (["pdflatex", "xelatex", "lualatex", "latexmk"] as const).some(name => existsSync(resolve(candidate, `${name}${extension}`))));
+  const preferredDirectories = preferred && isAbsolute(preferred) ? installationDirectories(preferred) : undefined;
+  const directory = (preferredDirectories ?? directories).find(candidate =>
+    (["pdflatex", "xelatex", "lualatex", "latexmk"] as const).some(name => existsSync(resolve(candidate, `${name}${extension}`)))) ?? preferredDirectories?.[0];
   const paths = Object.fromEntries(names.map(name => [name,
     directory && existsSync(resolve(directory, `${name}${extension}`)) ? resolve(directory, `${name}${extension}`) : undefined
   ])) as Partial<Record<DetectedTool, string>>;
@@ -135,7 +143,7 @@ export async function discoverToolchain(preferred?: string): Promise<LatexToolch
     const executablePath = paths[name];
     if (executablePath === undefined) return { status: "missing", source: "unknown" };
     const result = results.get(name);
-    if (!result?.ok) return { status: "broken", executablePath, source: "detected" };
+    if (!result?.ok) return { status: "broken", executablePath, source: "detected", ...(result && "error" in result ? { error: String(result.error) } : {}) };
     return { status: "ready", executablePath, ...(result.version === undefined ? {} : { version: result.version }), source: "detected" };
   };
   return {
@@ -153,6 +161,26 @@ export async function discoverToolchain(preferred?: string): Promise<LatexToolch
     },
     detectedAt: new Date().toISOString()
   };
+}
+
+export async function discoverToolchain(preferred?: string): Promise<LatexToolchain> {
+  if (preferred) return inspectToolchain(preferred);
+  const extension = process.platform === "win32" ? ".exe" : "";
+  const candidates = toolDirectories(undefined, compilerEnvironment()).filter(directory =>
+    ["pdflatex", "xelatex", "lualatex", "latexmk"].some(name => existsSync(resolve(directory, name + extension))));
+  let fallback: LatexToolchain | undefined;
+  for (const directory of candidates) {
+    const detected = await inspectToolchain(directory);
+    if (detected.overallStatus === "ready") return detected;
+    if (!fallback || detected.overallStatus === "limited") fallback = detected;
+  }
+  return fallback ?? inspectToolchain();
+}
+
+/** Recheck saved machine paths, falling back only when that installation cannot run. */
+export async function rediscoverToolchain(preferred?: string): Promise<LatexToolchain> {
+  const detected = await discoverToolchain(preferred);
+  return preferred && detected.overallStatus === "unavailable" ? discoverToolchain() : detected;
 }
 
 /** Portable TeX Live carries the Perl runtime used by latexmk in its own tree. */
@@ -268,17 +296,19 @@ export class LatexmkCompilerService {
     const locator = process.platform === "win32" ? "where.exe" : "which";
     const located = isAbsolute(profile.executable) ? existsSync(profile.executable) : await new Promise<boolean>((done) => {
       const child = spawn(locator, [profile.executable], { shell: false, windowsHide: true, env: environment });
-      child.once("error", () => done(false));
-      child.once("exit", (code) => done(code === 0));
+      const timer = setTimeout(() => { child.kill(); done(false); }, 5000);
+      child.once("error", () => { clearTimeout(timer); done(false); });
+      child.once("exit", (code) => { clearTimeout(timer); done(code === 0); });
     });
     if (!located) return { available: false, executable: profile.executable, error: "Executable was not found on PATH" };
     const versionCheck = await new Promise<{ code: number | null; output: string }>((done) => {
       const child = spawn(profile.executable, ["-v"], { shell: false, windowsHide: true, env: environment });
       let output = "";
+      const timer = setTimeout(() => { child.kill(); done({ code: null, output: "latexmk version check timed out. Recheck the LaTeX installation and required runtimes." }); }, 5000);
       child.stdout.on("data", (chunk: Buffer) => { output = appendTail(output, chunk); });
       child.stderr.on("data", (chunk: Buffer) => { output = appendTail(output, chunk); });
-      child.once("error", (error) => done({ code: null, output: error.message }));
-      child.once("exit", (code) => done({ code, output }));
+      child.once("error", (error) => { clearTimeout(timer); done({ code: null, output: error.message }); });
+      child.once("exit", (code) => { clearTimeout(timer); done({ code, output }); });
     });
     const version = versionCheck.output.split(/\r?\n/).find((line) => /Latexmk|Version/i.test(line))?.trim();
     if (versionCheck.code !== 0) {

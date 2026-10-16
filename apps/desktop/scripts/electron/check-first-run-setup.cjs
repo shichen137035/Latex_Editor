@@ -21,7 +21,7 @@ global.fetch = async input => {
 };
 const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
 let page;
-const evaluate = code => page.webContents.executeJavaScript(code, true);
+const evaluate = async code => { try { return await page.webContents.executeJavaScript(code, true); } catch (error) { console.error('Renderer evaluation failed:', code); throw error; } };
 async function until(code, label) {
   for (let i = 0; i < 300; i++) { if (await evaluate(code)) return; await delay(50); }
   throw new Error("Timed out: " + label + "\n" + await evaluate("document.body.innerText.slice(0, 3000)"));
@@ -33,6 +33,10 @@ async function run() {
   assert.equal(await evaluate('!!document.querySelector(".directory-main").closest("[inert]")'), true);
   const styles = await evaluate("window.latexEditor.styleResources.list()");
   for (const id of ["default", "light", "empty"]) assert.ok(styles.some(item => item.id === id && item.source === "built-in"));
+  await evaluate('document.querySelector("[data-setup-tools]").click()');
+  await until('!!document.querySelector("[data-setup-finish]") && !document.querySelector("[data-setup-finish]").disabled', 'configure tools without downloading dictionaries');
+  await evaluate('Array.from(document.querySelectorAll(".first-run-setup footer button")).find(button => button.textContent === "Back").click()');
+  await until('!!document.querySelector("[data-setup-next]") && !document.querySelector("[data-setup-next]").disabled', 'return to languages');
   await evaluate('document.querySelector("[data-setup-later]").click()');
   await until('!document.querySelector(".first-run-setup")', "remind next time");
   assert.equal((await evaluate("window.latexEditor.installation.state()")).setupCompletedAt, undefined);
@@ -50,11 +54,18 @@ async function run() {
   for (const channel of ["toolchain:install-status", "toolchain:install", "toolchain:install-cancel"]) ipcMain.removeHandler(channel);
   ipcMain.handle("toolchain:install-status", () => job);
   let selectedPlan;
-  ipcMain.handle("toolchain:install", (_event, directory, selection) => { selectedPlan = selection; job = { ...job, selection, directory, phase: "downloading", running: true, totalBytes: 100, downloadedBytes: 30 }; return job; });
+  let installAttempts = 0;
+  ipcMain.handle("toolchain:install", (_event, directory, selection) => { selectedPlan = selection; job = { ...job, selection, directory, phase: ++installAttempts === 1 ? "downloading" : "error", running: installAttempts === 1, totalBytes: 100, downloadedBytes: 30, ...(installAttempts > 1 ? {error:"HTTP 503 download unavailable"} : {}) }; return job; });
   ipcMain.handle("toolchain:install-cancel", () => { job = { ...job, phase: "cancelled", running: false }; return job; });
+  ipcMain.removeHandler("toolchain:detect");
+  ipcMain.handle("toolchain:detect", () => ({ distribution:"unknown", available:false, overallStatus:"unavailable", detectedAt:new Date().toISOString() }));
   await evaluate('document.querySelector("[data-setup-next]").click()');
   await until('!!document.querySelector("[data-setup-finish]") && !!document.querySelector(".toolchain-install-panel button.primary:not(:disabled)")', "tools step after successful retry");
   assert.equal(attempts, 2);
+  await until('document.querySelector(".toolchain-guidance").textContent.includes("latexmk, " + document.querySelector("[data-toolchain-engine]").value)', 'missing tools for the selected engine');
+  assert.equal(await evaluate('document.querySelector("[data-setup-finish]").textContent'), 'Continue without PDF compilation');
+  await evaluate('document.querySelector("[data-toolchain-configure]").click()');
+  await until('document.activeElement.matches(".toolchain-install-actions .primary")', 'automatic setup entry focuses the install button');
   assert.equal(await evaluate('document.querySelector("[data-texlive-auto-install]").checked'), true);
   await evaluate('document.querySelector("[data-texlive-auto-install]").click()');
   await until('window.latexEditor.settings.get().then(value => value.global.texLiveAutoInstall === false)', "TeX Live automatic package setting persistence");
@@ -78,6 +89,9 @@ async function run() {
   await evaluate('document.querySelector(".toolchain-install-actions button:not(.primary)").click()');
   await until('!document.querySelector("[data-setup-finish]").disabled', "cancelled installation");
   assert.equal(await evaluate('document.querySelector("[data-latex-component=chinese]").disabled'), false);
+  await evaluate('document.querySelector(".toolchain-install-actions button.primary").click()');
+  await until('document.querySelector(".toolchain-install-error[role=alert]")?.textContent.includes("network/proxy")', 'actionable network failure guidance');
+  await until('!document.querySelector("[data-setup-finish]").disabled', 'failed installation unlocks the setup controls');
   // Change the selected distribution through React's input event path.
   await evaluate(`(() => { const select = document.querySelector("#latex-install-distribution"); Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, "value").set.call(select, "tinytex"); select.dispatchEvent(new Event("change", { bubbles: true })); })()`);
   assert.equal(await evaluate('document.querySelector("#latex-install-distribution").value'), "tinytex");
@@ -98,6 +112,26 @@ async function run() {
   assert.equal(await evaluate('!!document.querySelector(".first-run-setup")'), false);
   assert.ok((await evaluate("window.latexEditor.spellcheck.status()")).availableLanguages.includes("fr"));
   console.log("PASS first setup, reminder, real dictionary failure/retry and persistence, toolchain progress/cancel, completion and default styles");
+  // Keep this scenario independent of tools installed on the developer's PC.
+  const localSettings = await evaluate('window.latexEditor.settings.get()');
+  const missingSettings = () => ({ ...localSettings, project: {}, toolchain: { distribution: 'unknown', available: false, overallStatus: 'unavailable', detectedAt: new Date().toISOString() } });
+  ipcMain.removeHandler('settings:get');
+  ipcMain.handle('settings:get', missingSettings);
+  ipcMain.removeHandler('settings:set');
+  ipcMain.handle('settings:set', (_event, key, value) => { localSettings.global[key] = value; return missingSettings(); });
+  await evaluate(`window.latexEditor.projects.create({name:'Missing environment',parentPath:${JSON.stringify(root)}})`);
+  page.reload();
+  await until('!!document.querySelector(".toolchain-warning [data-toolchain-open]")', 'missing environment recovery on home page');
+  assert.ok(await evaluate('document.querySelector(".toolchain-warning").textContent.includes("latexmk")'));
+  await until('!!document.querySelector(".directory-project-row")', 'test project listed on the new machine');
+  await evaluate('document.querySelector(".directory-project-row").click()');
+  await until('!!document.querySelector(".toolchain-workbench-guidance [data-toolchain-open]")', 'missing environment recovery in editor');
+  assert.equal(await evaluate('!!document.querySelector(".toolchain-warning")'), false);
+  await evaluate('document.querySelector(".toolchain-workbench-guidance [data-toolchain-open]").click()');
+  await until('!!document.querySelector(".environment-settings") && !document.querySelector("[data-toolchain-configure]").disabled', 'editor links directly to toolchain configuration');
+  await delay(200);
+  writeFileSync(join(root, 'missing-toolchain-recovery.png'), (await page.webContents.capturePage()).toPNG());
+  console.log('PASS a machine with no LaTeX gets actionable recovery controls on home and in the editor');
   console.log("Artifacts: " + root);
 }
 require("../../dist/main/index.js");

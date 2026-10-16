@@ -16,7 +16,7 @@ export const miktexSetupAsset = {
   sha256: "0571e90f6d94353089b4f189fd82a532f9fe559a388c7e7f1102b14b3c1ae27d"
 };
 const powershell = join(process.env.SystemRoot ?? "C:\\Windows", "System32", "WindowsPowerShell", "v1.0", "powershell.exe");
-const expandCommand = Buffer.from("$ErrorActionPreference='Stop'; Expand-Archive -LiteralPath $env:TEXWEAVE_ARCHIVE -DestinationPath $env:TEXWEAVE_EXTRACT", "utf16le").toString("base64");
+const expandCommand = Buffer.from("$ErrorActionPreference='Stop'; $ProgressPreference='SilentlyContinue'; Expand-Archive -LiteralPath $env:TEXWEAVE_ARCHIVE -DestinationPath $env:TEXWEAVE_EXTRACT", "utf16le").toString("base64");
 const markerName = ".texweave-toolchain.json";
 export const latexTools = ["pdflatex", "xelatex", "lualatex", "latexmk", "bibtex", "biber", "makeindex"] as const;
 const packages = ["latex-bin", "pdftex", "xetex", "luatex", "luahbtex", "latexmk", "bibtex", "biber", "makeindex"];
@@ -24,6 +24,16 @@ const tlmgrCommand = Buffer.from("$ErrorActionPreference = 'Stop'; $ProgressPref
 
 export function allLatexToolsReady(toolchain: LatexToolchain): boolean {
   return latexTools.every(tool => toolchain.environment ? toolchain.environment[tool].status === "ready" : Boolean(toolchain[tool]));
+}
+
+/** Setup launches initexmf/pdftex by name after extracting the new tree. */
+export function toolchainSetupEnvironment(bin: string, base: NodeJS.ProcessEnv = process.env): NodeJS.ProcessEnv {
+  const environment = { ...base };
+  const pathKeys = Object.keys(environment).filter(key => key.toLowerCase() === "path");
+  const inherited = pathKeys.map(key => environment[key]).find(Boolean) ?? "";
+  for (const key of pathKeys) delete environment[key];
+  environment.PATH = [bin, inherited].filter(Boolean).join(process.platform === "win32" ? ";" : ":");
+  return environment;
 }
 
 interface ReleaseAsset { name: string; browser_download_url: string; size: number; digest: string }
@@ -197,7 +207,7 @@ export class LatexToolchainInstaller {
         // A portable tree keeps registration, configuration and data inside the chosen folder.
         await mkdir(target, { recursive: true });
         await writeFile(join(target, markerName), JSON.stringify({ schemaVersion: 1, distribution: "miktex", selection }, null, 2));
-        await execute(setup, ["--verbose", `--local-package-repository=${repository}`, "--package-set=basic", `--portable=${target}`, "--use-registry=no", "--modify-path=no", "install"], staging, signal, this.#log);
+        await execute(setup, ["--verbose", `--local-package-repository=${repository}`, "--package-set=basic", `--portable=${target}`, "--use-registry=no", "--modify-path=no", "install"], staging, signal, this.#log, toolchainSetupEnvironment(bin));
       }
       // MiKTeX does not ship Perl; reuse TeX Live's self-contained runtime for latexmk.
       const perl = join(target, "tlpkg", "tlperl");

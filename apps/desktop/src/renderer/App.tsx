@@ -1,4 +1,5 @@
 import { FirstRunSetup } from "./setup/FirstRunSetup.js";
+import { toolchainReadiness } from "./settings/toolchainReadiness.js";
 import { ProjectStyleResourcePicker } from "./directory/ProjectStyleResourcePicker.js";
 import { clearProjectViewCaches } from "./workbench/workspacePosition.js";
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type Dispatch, type ReactNode, type SetStateAction } from "react";
@@ -349,6 +350,7 @@ export function App() {
   const [libraryOpen, setLibraryOpen] = useState(false);
   const [warningDismissed, setWarningDismissed] = useState(false);
   const [compilerSettings, setCompilerSettings] = useState(false);
+  const toolchainHealth = toolchainReadiness(store.snapshot().toolchain, store.get("engine"));
   const [styleResources, setStyleResources] = useState<StyleResource[]>([]);
   const configured = store.global("environments") as EnvironmentDefinition[];
   const environments = configured.length ? includeNewBuiltInEnvironments(configured) : DEFAULT_ENVIRONMENTS;
@@ -397,7 +399,7 @@ export function App() {
   return <><ThemeRuntime /><FirstRunSetup onActiveChange={setSetupOpen}/><div inert={setupOpen}>{activeProject && <div style={{ position: "fixed", inset: 0, overflow: "hidden", display: libraryOpen ? "none" : undefined }}><Workbench key={activeProject.id} project={activeProject} projects={projects} environments={environments} onHome={onHome} onSwitch={(project) => void openProject(project)} onOpenLibrary={() => setLibraryOpen(true)}/></div>}
     {!activeProject && !libraryOpen && <ProjectDirectory projects={projects} onProjectsChange={setProjects} onOpen={(project) => void openProject(project)} onOpenLibrary={() => setLibraryOpen(true)} styleResources={styleResources} onRefreshResources={refreshStyleResources}/>}
     {libraryOpen && <div className="app-shell library-app-shell" style={{ position: "fixed", inset: 0, zIndex: 40, overflow: "auto" }}><ReferenceLibraryPage projects={projects} returnToProject={Boolean(activeProject)} onBack={() => setLibraryOpen(false)}/></div>}
-    {!warningDismissed && store.snapshot().toolchain && store.snapshot().toolchain?.overallStatus !== "ready" && <aside className="toolchain-warning"><p>{store.snapshot().toolchain?.overallStatus === "limited" ? t("settings.limitedToolchain") : t("settings.missingToolchain")}</p><button onClick={() => void store.detect()}>{t("settings.detect")}</button><button onClick={() => void store.detect("directory")}>{t("settings.locate")}</button><button onClick={() => { setCompilerSettings(true); setWarningDismissed(true); }}>{t("settings.openCompiler")}</button><button onClick={() => setWarningDismissed(true)}>{t("common.close")}</button></aside>}
+    {!activeProject && !libraryOpen && !setupOpen && !compilerSettings && !warningDismissed && toolchainHealth.known && !toolchainHealth.ready && <aside className="toolchain-warning"><strong>{t("toolchainGuide.title")}</strong><p>{t("toolchainGuide.required", { tools: toolchainHealth.missing.join(", ") })}</p><button className="primary" data-toolchain-open onClick={() => setCompilerSettings(true)}>{t("toolchainGuide.configure")}</button><button onClick={() => void store.detect()}>{t("settings.detect")}</button><button onClick={() => void store.detect("directory")}>{t("settings.locate")}</button><button onClick={() => setWarningDismissed(true)}>{t("common.close")}</button></aside>}
     {compilerSettings && <SettingsDialog initial="compiler" onClose={() => setCompilerSettings(false)}/>}
   </div></>;
 }

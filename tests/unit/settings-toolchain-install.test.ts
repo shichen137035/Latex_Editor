@@ -6,7 +6,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { selectedPackages, validateSelection } from "../../apps/desktop/src/main/toolchain-components.js";
 import { environmentWithToolRuntime } from "../../packages/compiler-latexmk/src/index.js";
 import type { ToolchainInstallSelection } from "../../packages/contracts/src/toolchain-install.js";
-import { allLatexToolsReady, latexTools, LatexToolchainInstaller, windowsTinyTexAsset } from "../../apps/desktop/src/main/toolchain-installer.js";
+import { allLatexToolsReady, latexTools, LatexToolchainInstaller, toolchainSetupEnvironment, windowsTinyTexAsset } from "../../apps/desktop/src/main/toolchain-installer.js";
 import type { LatexToolchain } from "../../packages/contracts/src/settings.js";
 
 const roots: string[] = [];
@@ -41,6 +41,14 @@ async function finish(installer: LatexToolchainInstaller) {
 }
 
 describe("managed LaTeX installation", () => {
+  it("runs initial MiKTeX setup with its own tools before an older host installation", () => {
+    const inherited = { Path: "old-miktex;system", OTHER: "keep" };
+    const environment = toolchainSetupEnvironment("new-miktex-bin", inherited);
+    expect(environment.PATH).toBe("new-miktex-bin" + (process.platform === "win32" ? ";" : ":") + inherited.Path);
+    expect(environment.Path).toBeUndefined();
+    expect(environment.OTHER).toBe("keep");
+    expect(inherited.Path).toBe("old-miktex;system");
+  });
   it("validates the official asset, digest and download size before execution", () => {
     expect(windowsTinyTexAsset({ assets: [asset] })).toEqual(asset);
     for (const invalid of [{ ...asset, digest: null }, { ...asset, browser_download_url: "https://example.com/tool.exe" }, { ...asset, size: -1 }]) {

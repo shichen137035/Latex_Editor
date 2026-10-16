@@ -114,11 +114,11 @@ async function createContext(): Promise<DesktopContext> {
   const documents = new ProjectWorkingDocumentService(workingFiles, blockGraph, { next: randomUUID }, environmentDefinitions, directiveDefinitions, cacheReclamation);
   relations.onEvent((projectId, event) => BrowserWindow.getAllWindows().forEach(window => sendIpc(window.webContents, desktopEvents.toRenderer.relationUpdate, { projectId, event })));
   await themes.setDirectory(settings.global.themeDirectory ?? "");
-  const { discoverToolchain } = await import("@latex-editor/compiler-latexmk");
+  const { discoverToolchain, rediscoverToolchain } = await import("@latex-editor/compiler-latexmk");
   toolchainInstaller = new LatexToolchainInstaller({
     defaultDirectory: join(app.getPath("userData"), "tools", "TinyTeX"),
     currentToolchain: () => settings.toolchain,
-    refresh: toolchain => settings.saveToolchain(toolchain),
+    refresh: async toolchain => { await settings.saveToolchain(toolchain); await installation.recordEnvironment(toolchain); },
     fetch: (input, options) => net.fetch(input as string, options),
     detect: discoverToolchain,
     activate: async (toolchain, directory) => {
@@ -127,8 +127,7 @@ async function createContext(): Promise<DesktopContext> {
       await installation.recordComponent({ id: "latex-runtime", version: toolchain.version ?? "unknown", ownership: "installed-by-texweave", path: directory, source: toolchain.distribution === "miktex" ? "https://miktex.org/download" : "https://github.com/rstudio/tinytex-releases" });
     }
   });
-  let detected = await discoverToolchain(settings.toolchain?.latexmk ?? settings.toolchain?.binDirectory);
-  if (!detected.available) detected = await discoverToolchain();
+  const detected = await rediscoverToolchain(settings.toolchain?.binDirectory ?? settings.toolchain?.latexmk);
   await settings.saveToolchain(detected);
   await installation.recordEnvironment(detected);
   const profiles = { getCompilerProfile: () => ({ ...resources.getCompilerProfile(), ...(settings.toolchain?.latexmk ? { executable: settings.toolchain.latexmk } : {}) }) };
@@ -443,14 +442,14 @@ function registerIpcHandlers(): void {
     return context.themes.remove(id);
   });
   handleIpc(desktopInvoke.settings.detectToolchain, async (_event, manual) => {
-    let path = settings.toolchain?.latexmk ?? settings.toolchain?.binDirectory;
+    let path = settings.toolchain?.binDirectory ?? settings.toolchain?.latexmk;
     if (manual) {
       const selected = await dialog.showOpenDialog({ properties: [manual === "directory" ? "openDirectory" : "openFile"] });
       if (selected.canceled) return settings.toolchain;
       path = selected.filePaths[0];
     }
-    const { discoverToolchain } = await import("@latex-editor/compiler-latexmk");
-    const detected = await discoverToolchain(path);
+    const { discoverToolchain, rediscoverToolchain } = await import("@latex-editor/compiler-latexmk");
+    const detected = await (manual ? discoverToolchain(path) : rediscoverToolchain(path));
     await settings.saveToolchain(detected);
     if (context) await context.installation.recordEnvironment(detected);
     return detected;
