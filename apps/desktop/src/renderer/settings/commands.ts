@@ -1,6 +1,7 @@
 import { settings } from "./service.js";
 
 export const commandCatalog = {
+  "help.toggle": { label: "helpMode.title", group: "general", context: "global", contextLabel: "command.context.global", defaultBinding: "F1" },
   "directory.search": { label: "command.directorySearch", group: "search", context: "directory", contextLabel: "shortcut.context.directory", defaultBinding: "Mod+K" },
   "edit.undo": { label: "menu.undo", group: "editing", context: "workspace.editor", contextLabel: "command.context.source", defaultBinding: "Mod+Z" },
   "edit.redo": { label: "menu.redo", group: "editing", context: "workspace.editor", contextLabel: "command.context.source", defaultBinding: "Mod+Y", alternateDefaultBindings: ["Mod+Shift+Z"] },
@@ -255,19 +256,26 @@ export function installShortcuts() {
     if (event.isComposing || ["Control", "Meta", "Shift", "Alt"].includes(event.key) || (event.target as Element)?.closest("[data-shortcut-capture]")) return;
     const stroke = eventBinding(event);
     const activeContext = activeContextPath(event);
+    // Inspection must never run save/compile/edit commands. The old workspace
+    // Help shortcut also remains usable while focus is on the global help card.
+    const inspecting = document.body.classList.contains("help-mode-active");
+    if (inspecting && commandBindings("sidebar.help").includes(stroke)) {
+      clearPendingChord(); commands.execute("help.toggle"); event.preventDefault(); event.stopImmediatePropagation(); return;
+    }
+    const available = (id: CommandId) => (!inspecting || id === "help.toggle") && contextIsActive(commandCatalog[id].context, activeContext) && commands.canExecute(id);
     if (pendingChord) {
       const first = pendingChord.first;
       clearPendingChord();
       const found = (Object.keys(commandCatalog) as CommandId[])
         .filter((id) => {
-          return commandBindings(id).some((value) => { const sequence = parseBinding(value); return sequence.length === 2 && sequence[0] === first && sequence[1] === stroke; }) && contextIsActive(commandCatalog[id].context, activeContext) && commands.canExecute(id);
+          return commandBindings(id).some((value) => { const sequence = parseBinding(value); return sequence.length === 2 && sequence[0] === first && sequence[1] === stroke; }) && available(id);
         })
         .sort((a, b) => commandCatalog[b].context.length - commandCatalog[a].context.length)[0];
       if (found && commands.execute(found)) { event.preventDefault(); event.stopImmediatePropagation(); }
       return;
     }
     const ids = (Object.keys(commandCatalog) as CommandId[]).filter((id) => {
-      return commandBindings(id).some((value) => { const sequence = parseBinding(value); return sequence.length === 2 && sequence[0] === stroke; }) && contextIsActive(commandCatalog[id].context, activeContext) && commands.canExecute(id);
+      return commandBindings(id).some((value) => { const sequence = parseBinding(value); return sequence.length === 2 && sequence[0] === stroke; }) && available(id);
     });
     if (ids.length) {
       event.preventDefault(); event.stopImmediatePropagation();
@@ -277,7 +285,7 @@ export function installShortcuts() {
     }
     const found = (Object.keys(commandCatalog) as CommandId[])
       .filter((id) => {
-        return commandBindings(id).some((value) => normalizeBinding(value) === stroke) && contextIsActive(commandCatalog[id].context, activeContext) && commands.canExecute(id);
+        return commandBindings(id).some((value) => normalizeBinding(value) === stroke) && available(id);
       })
       .sort((a, b) => commandCatalog[b].context.length - commandCatalog[a].context.length)[0];
     if ((found === "block.selectPrevious" || found === "block.selectNext")

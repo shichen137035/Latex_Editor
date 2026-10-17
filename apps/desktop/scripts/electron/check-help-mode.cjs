@@ -1,0 +1,112 @@
+const { app, BrowserWindow } = require("electron");
+const { mkdtempSync, mkdirSync, writeFileSync } = require("node:fs");
+const { tmpdir } = require("node:os");
+const { join } = require("node:path");
+const assert = require("node:assert/strict");
+const root = mkdtempSync(join(tmpdir(), "texweave-help-"));
+app.setPath("userData", join(root, "profile"));
+const delay = ms => new Promise(done => setTimeout(done, ms));
+const errors = [];
+let page;
+app.on("web-contents-created", (_event, contents) => contents.on("console-message", ({ level, message }) => {
+  if ((level === "error" || level === 3) && !message.includes("Canceled: Canceled")) errors.push(message);
+}));
+const evaluate = script => page.webContents.executeJavaScript(script, true);
+async function until(script, name) {
+  for (let i = 0; i < 200; i++) { assert.deepEqual(errors, []); if (await evaluate(script)) return; await delay(50); }
+  throw new Error(`Timed out: ${name}`);
+}
+async function key(keyCode, modifiers = []) {
+  page.focus();
+  page.webContents.sendInputEvent({ type: "keyDown", keyCode, modifiers });
+  page.webContents.sendInputEvent({ type: "keyUp", keyCode, modifiers });
+  await delay(100);
+}
+async function run() {
+  while (!BrowserWindow.getAllWindows().length) await delay(50);
+  page = BrowserWindow.getAllWindows()[0];
+  await until('!!document.querySelector(".directory-help")', 'home help');
+  await evaluate('document.querySelector(".directory-help").click()');
+  await until('!!document.querySelector(".help-mode-panel")', 'help opens');
+  await evaluate('document.querySelector(".directory-new-main").click()');
+  assert.equal(await evaluate('!!document.querySelector(".project-create-dialog, .modal-backdrop")'), false, 'inspection must not open a create dialog');
+  assert.equal(await evaluate('document.querySelector(".help-mode-description h2").textContent'), 'New project');
+  const first = await evaluate('document.querySelector(".help-mode-description p").textContent');
+  await evaluate('document.querySelectorAll(".help-mode-panel footer button")[1].click()');
+  assert.notEqual(await evaluate('document.querySelector(".help-mode-description p").textContent'), first, 'tour advances');
+  await key('ESCAPE');
+  await until('!document.querySelector(".help-mode-panel")', 'escape closes');
+  assert.equal(await evaluate('document.body.classList.contains("help-mode-active")'), false);
+  await key('F1'); await until('!!document.querySelector(".help-mode-panel")', 'F1 opens');
+  await key('F1'); await until('!document.querySelector(".help-mode-panel")', 'F1 closes');
+  const projects = join(root, 'projects'); mkdirSync(projects);
+  await evaluate(`window.latexEditor.projects.create({name:"help-example",parentPath:${JSON.stringify(projects)}})`);
+  page.reload(); await until('!!document.querySelector(".directory-project-row")', 'project listed');
+  await evaluate('document.querySelector(".directory-project-row").click()');
+  await until('!!document.querySelector(".activity-bar")', 'workspace');
+  await evaluate('document.querySelector(".activity-bar [data-help-ui]").click()');
+  await until('!!document.querySelector(".help-mode-panel")', 'workspace button opens help');
+  await evaluate('document.querySelector(".outline-section").dispatchEvent(new PointerEvent("pointerover", {bubbles:true}))');
+  await until('document.querySelector(".help-mode-description p").textContent.includes("headings")', 'outline explanation');
+  await delay(250);
+  writeFileSync(join(root, 'workspace-help.png'), (await page.webContents.capturePage()).toPNG());
+  await evaluate(`document.querySelector('.latex-toolbar').dispatchEvent(new PointerEvent('pointerover', {bubbles:true}))`);
+  await until('document.querySelector(".help-mode-description h2").textContent === "Insert LaTeX content"', 'toolbar region');
+  await key('Q');
+  await until('document.querySelector(".help-mode-breadcrumb").textContent.includes("Insert LaTeX content")', 'Q enters toolbar details');
+  const firstControl = await evaluate('document.querySelector(".help-mode-description h2").textContent');
+  await key('RIGHT');
+  await until('document.querySelector(".help-mode-description p").textContent.includes("section heading")', 'right arrow visits sibling control');
+  await key('LEFT');
+  assert.equal(await evaluate('document.querySelector(".help-mode-description h2").textContent'), firstControl, 'left arrow returns to previous control');
+  await key('BACKSPACE');
+  await until('document.querySelector(".help-mode-description h2").textContent === "Insert LaTeX content"', 'Backspace returns to region');
+  await evaluate(`document.querySelector('.editor-view-controls').dispatchEvent(new PointerEvent('pointerover', {bubbles:true}))`);
+  await key('Q');
+  await until('document.querySelector(".help-mode-description p").textContent.includes("outside the active filter")', 'Q enters nested view controls');
+  await key('RIGHT'); await key('RIGHT');
+  await until('document.querySelector(".help-mode-description p").textContent.includes("editable block preview")', 'keyboard inspects Visual button');
+  assert.equal(await evaluate('!!document.querySelector(".structured-preview")'), false, 'browsing must not activate Visual mode');
+  await key('Q');
+  assert.equal(await evaluate('!!document.querySelector(".structured-preview")'), false, 'Q on a leaf never activates it');
+  await key('BACKSPACE');
+  await until('document.querySelector(".help-mode-description h2").textContent === "Code and Visual views"', 'nested return');
+  await evaluate(`Array.from(document.querySelectorAll('.latex-toolbar button')).find(button => button.title === 'Table').dispatchEvent(new PointerEvent('pointerover', {bubbles:true}))`);
+  await until('document.querySelector(".help-mode-description p").textContent.includes("rows, columns")', 'specific insertion explanation');
+  await evaluate('if (!document.querySelector(".help-mode-contents").open) document.querySelector(".help-mode-contents summary").click()');
+  assert.ok(await evaluate('document.querySelectorAll(".help-mode-contents button").length >= 8'), 'toolbar contents are listed');
+  await evaluate(`Array.from(document.querySelectorAll('.help-mode-contents button')).find(button => button.textContent.toLowerCase().includes('citation')).click()`);
+  await until('document.querySelector(".help-mode-description p").textContent.includes("cite command")', 'contents select an individual control');
+  const citation = await evaluate('document.querySelector(".help-mode-description h2").textContent');
+  await evaluate('document.querySelectorAll(".help-mode-panel footer button")[1].click()');
+  assert.notEqual(await evaluate('document.querySelector(".help-mode-description h2").textContent'), citation);
+  await evaluate('document.querySelectorAll(".help-mode-panel footer button")[0].click()');
+  assert.equal(await evaluate('document.querySelector(".help-mode-description h2").textContent'), citation, 'control tour retains its position');
+  await evaluate('document.querySelector(".custom-block-button").dispatchEvent(new PointerEvent("pointerover", {bubbles:true}))');
+  await until('!!document.querySelector(".help-mode-unavailable")', 'disabled control explanation');
+  await key('ESCAPE');
+  await key('F', ['control']);
+  await until('!!document.querySelector(".advanced-search-input")', 'search opens after help exit');
+  await key('F1');
+  await evaluate(`document.querySelector('.search-option-row button').dispatchEvent(new PointerEvent('pointerover', {bubbles:true}))`);
+  await until('document.querySelector(".help-mode-description p").textContent.includes("upper- and lower-case")', 'case option explanation');
+  await evaluate(`document.querySelector('.filter-master-mode').dispatchEvent(new PointerEvent('pointerover', {bubbles:true}))`);
+  await until('document.querySelector(".help-mode-description p").textContent.includes("all filter groups")', 'filter master explanation');
+  const filterEnabled = await evaluate('document.querySelector(".filter-switch input").checked');
+  await evaluate('document.querySelector(".filter-switch input").click()');
+  assert.equal(await evaluate('document.querySelector(".filter-switch input").checked'), filterEnabled, 'help must not toggle filters');
+  await key('7', ['control', 'shift']);
+  await until('!document.querySelector(".help-mode-panel")', 'existing help shortcut closes');
+  await key('F1'); await until('!!document.querySelector(".help-mode-panel")', 'workspace F1');
+  await evaluate('document.querySelector(".help-mode-panel header button").click()');
+  await until('!document.querySelector(".help-mode-panel")', 'close button');
+  await evaluate('document.querySelector(".logo-button").click()');
+  await until('!!document.querySelector(".directory-help")', 'ordinary clicks work after exit');
+  assert.deepEqual(errors, []);
+  console.log(`PASS help inspection, tour, shortcuts, workspace and cleanup. Artifacts: ${root}`);
+}
+app.whenReady().then(() => {
+  require('../../dist/main/index.js');
+  run().then(() => app.exit(0)).catch(error => { console.error(error); console.error(errors); app.exit(1); });
+});
+

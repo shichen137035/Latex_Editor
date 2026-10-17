@@ -6,6 +6,14 @@ function withBindings(overrides: Partial<Record<CommandId, string>> = {}): Recor
 }
 
 describe("v0.6.2.3 shortcut conflict model", () => {
+  it("offers configurable F1 interface help on home, editors and dialogs", () => {
+    expect(commandCatalog["help.toggle"]).toMatchObject({ context: "global", defaultBinding: "F1" });
+    expect(analyzeBindingConflicts("help.toggle", "F1", withBindings())).toEqual([]);
+    for (const context of ["directory", "workspace.editor.source.text", "workspace.editor.preview", "dialog"]) {
+      expect(resolveBindingSequence("F1", "global", context).commandId).toBe("help.toggle");
+    }
+  });
+
   it("allows reuse between sibling contexts", () => {
     const conflicts = analyzeBindingConflicts("edit.replace", "Mod+K", withBindings({ "block.insertBefore": "Mod+K" }));
     expect(conflicts).toEqual([]);

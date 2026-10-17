@@ -1,5 +1,6 @@
 /** One maintained index for desktop regression coverage and the release suite. */
 export const desktopChecks = [
+  { id: "help-mode", area: "settings", script: "electron/check-help-mode.cjs", summary: "Home and workspace help, safe inspection, region tour, F1/Escape and cleanup" },
   { id: "codex-environment", area: "settings", script: "electron/check-codex-environment.cjs", summary: "Codex environment settings, install retry and missing-CLI action" },
   { id: "ai-connection", area: "ai", script: "electron/check-ai-connection.cjs", summary: "Provider discovery, fresh-profile initialization and signed-out UI", cleanCodexPath: true },
   { id: "ai-attachments", area: "ai", script: "electron/check-ai-attachments.cjs", summary: "Long-history composer, queued sending/priority controls and attachment cleanup" },
