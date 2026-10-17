@@ -2,6 +2,8 @@ import { useEffect, useRef, useState } from "react";
 import type { DictionaryPackage } from "@latex-editor/contracts";
 import { getLocale, t } from "../i18n/index.js";
 import { languageName } from "../i18n/displayNames.js";
+import { LanguageSelect } from "../i18n/LanguageSelect.js";
+import type { Locale } from "../i18n/index.js";
 import { useSettings } from "../settings/service.js";
 import { LatexToolchainSettingsPanel } from "../settings/LatexToolchainSettingsPanel.js";
 import { pendingSetupLanguages, suggestedSetupLanguages } from "./languages.js";
@@ -86,7 +88,7 @@ function SetupDialog({ saved, onClose }: { saved: string[]; onClose: () => void 
     const target = event.shiftKey ? elements.at(-1) : elements[0];
     if (!elements.length || (event.shiftKey ? document.activeElement === elements[0] || document.activeElement === panel.current : document.activeElement === elements.at(-1) || document.activeElement === panel.current)) { event.preventDefault(); target?.focus(); }
   }}>
-    <header><h1 id="setup-title">{t("setup.title")}</h1><p>{t("setup.subtitle")}</p><ol className="setup-steps"><li aria-current={step === "languages" ? "step" : undefined}>{t("setup.languages")}</li><li aria-current={step === "tools" ? "step" : undefined}>{t("setup.tools")}</li></ol></header>
+    <header><div className="setup-heading"><div><h1 id="setup-title">{t("setup.title")}</h1><p>{t("setup.subtitle")}</p></div><label className="setup-display-language"><span>{t("setup.displayLanguage")}</span><LanguageSelect aria-label={t("setup.displayLanguage")} value={String(store.global("locale"))} onValueChange={value => void store.set("locale", value as Locale)}/></label></div><ol className="setup-steps"><li aria-current={step === "languages" ? "step" : undefined}>{t("setup.languages")}</li><li aria-current={step === "tools" ? "step" : undefined}>{t("setup.tools")}</li></ol></header>
     <div className="setup-content">
       {step === "languages" ? <section><h2>{t("setup.languages")}</h2><p>{t("setup.languagesHint")}</p>
         <input type="search" aria-label={t("settings.spellcheckSearch")} placeholder={t("settings.spellcheckSearch")} value={query} disabled={locked} onChange={event => setQuery(event.target.value)}/>

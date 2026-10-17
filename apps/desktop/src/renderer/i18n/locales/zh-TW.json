@@ -2205,5 +2205,6 @@
   "helpKeyboard.overview": "介面概覽",
   "helpKeyboard.enter": "進入詳情",
   "helpKeyboard.back": "返回上層",
-  "helpKeyboard.hint": "← / → 瀏覽同層 · Q 進入 · Backspace 返回上層 · Esc 結束"
+  "helpKeyboard.hint": "← / → 瀏覽同層 · Q 進入 · Backspace 返回上層 · Esc 結束",
+  "setup.displayLanguage": "介面語言"
 }

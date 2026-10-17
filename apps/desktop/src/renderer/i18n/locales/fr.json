@@ -2205,5 +2205,6 @@
   "helpKeyboard.overview": "Vue générale",
   "helpKeyboard.enter": "Voir les détails",
   "helpKeyboard.back": "Zone parente",
-  "helpKeyboard.hint": "← / → : parcourir ce niveau · Q : entrer · Retour arrière : remonter · Esc : quitter"
+  "helpKeyboard.hint": "← / → : parcourir ce niveau · Q : entrer · Retour arrière : remonter · Esc : quitter",
+  "setup.displayLanguage": "Langue de l’interface"
 }

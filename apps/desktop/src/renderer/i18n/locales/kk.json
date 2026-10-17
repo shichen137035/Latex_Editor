@@ -2205,5 +2205,6 @@
   "helpKeyboard.overview": "Жалпы көрініс",
   "helpKeyboard.enter": "Толығырақ",
   "helpKeyboard.back": "Жоғарғы аймақ",
-  "helpKeyboard.hint": "← / →: осы деңгейді шолу · Q: кіру · Backspace: жоғары · Esc: шығу"
+  "helpKeyboard.hint": "← / →: осы деңгейді шолу · Q: кіру · Backspace: жоғары · Esc: шығу",
+  "setup.displayLanguage": "Интерфейс тілі"
 }

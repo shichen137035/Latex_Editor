@@ -2205,5 +2205,6 @@
   "helpKeyboard.overview": "전체 화면",
   "helpKeyboard.enter": "자세히 보기",
   "helpKeyboard.back": "상위 영역",
-  "helpKeyboard.hint": "← / →: 같은 단계 이동 · Q: 들어가기 · Backspace: 상위로 · Esc: 종료"
+  "helpKeyboard.hint": "← / →: 같은 단계 이동 · Q: 들어가기 · Backspace: 상위로 · Esc: 종료",
+  "setup.displayLanguage": "표시 언어"
 }

@@ -2205,5 +2205,6 @@
   "helpKeyboard.overview": "Overview",
   "helpKeyboard.enter": "Enter details",
   "helpKeyboard.back": "Parent region",
-  "helpKeyboard.hint": "← / →: browse this level · Q: enter · Backspace: parent · Esc: exit"
+  "helpKeyboard.hint": "← / →: browse this level · Q: enter · Backspace: parent · Esc: exit",
+  "setup.displayLanguage": "Display language"
 }

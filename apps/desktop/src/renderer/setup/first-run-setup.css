@@ -1,6 +1,10 @@
 .first-run-backdrop { position: fixed; inset: 0; z-index: 1500; display: grid; place-items: center; padding: 24px; background: color-mix(in srgb, var(--color-bg-app, #182432) 60%, transparent); backdrop-filter: blur(8px); }
 .first-run-setup { width: min(820px, 100%); max-height: calc(100dvh - 48px); display: flex; flex-direction: column; overflow: hidden; border: 1px solid var(--color-border); border-radius: 18px; color: var(--color-text-primary); background: var(--color-bg-panel); box-shadow: 0 24px 80px #0004; outline: none; }
 .first-run-setup header { padding: 24px 28px 0; }
+.setup-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 18px; }
+.setup-heading > div { min-width: 0; }
+.setup-display-language { display: grid; gap: 5px; flex: 0 0 190px; color: var(--color-text-secondary); font-size: 12px; font-weight: 650; }
+.setup-display-language select { min-width: 0; padding: 8px 10px; border: 1px solid var(--color-border); border-radius: 8px; background: var(--color-bg-subtle); color: var(--color-text-primary); font: inherit; font-size: 14px; }
 .first-run-setup h1 { margin: 0 0 8px; font-size: 25px; }
 .first-run-setup h2 { margin: 0 0 8px; font-size: 19px; }
 .first-run-setup p { color: var(--color-text-secondary); line-height: 1.6; }
@@ -22,4 +26,4 @@
 .first-run-setup button:disabled { opacity: .5; cursor: default; }
 .first-run-setup :focus-visible { outline: 2px solid var(--color-primary, #1689c8); outline-offset: 2px; }
 .setup-status-error { position: fixed; bottom: 24px; left: 24px; z-index: 1501; max-width: min(600px, 90vw); padding: 16px; color: var(--color-text-primary); background: var(--color-bg-panel); border: 1px solid var(--color-border); border-radius: 10px; }
-@media (max-width: 600px) { .first-run-backdrop { padding: 8px; } .first-run-setup { max-height: calc(100dvh - 16px); } .first-run-setup header, .setup-content, .first-run-setup footer { padding-left: 16px; padding-right: 16px; } .first-run-setup footer { align-items: stretch; flex-direction: column-reverse; } .first-run-setup footer > div { justify-content: flex-end; } }
+@media (max-width: 600px) { .first-run-backdrop { padding: 8px; } .first-run-setup { max-height: calc(100dvh - 16px); } .first-run-setup header, .setup-content, .first-run-setup footer { padding-left: 16px; padding-right: 16px; } .setup-heading { flex-direction: column; } .setup-display-language { flex-basis: auto; width: 100%; } .first-run-setup footer { align-items: stretch; flex-direction: column-reverse; } .first-run-setup footer > div { justify-content: flex-end; } }

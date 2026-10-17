@@ -2205,5 +2205,6 @@
   "helpKeyboard.overview": "全体表示",
   "helpKeyboard.enter": "詳細へ",
   "helpKeyboard.back": "上の領域へ",
-  "helpKeyboard.hint": "← / →：同じ階層を移動 · Q：詳細へ · Backspace：上へ · Esc：終了"
+  "helpKeyboard.hint": "← / →：同じ階層を移動 · Q：詳細へ · Backspace：上へ · Esc：終了",
+  "setup.displayLanguage": "表示言語"
 }

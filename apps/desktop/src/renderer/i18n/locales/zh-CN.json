@@ -2205,5 +2205,6 @@
   "helpKeyboard.overview": "界面概览",
   "helpKeyboard.enter": "进入详情",
   "helpKeyboard.back": "返回上级",
-  "helpKeyboard.hint": "← / → 浏览同级 · Q 进入 · Backspace 返回上级 · Esc 退出"
+  "helpKeyboard.hint": "← / → 浏览同级 · Q 进入 · Backspace 返回上级 · Esc 退出",
+  "setup.displayLanguage": "界面语言"
 }
