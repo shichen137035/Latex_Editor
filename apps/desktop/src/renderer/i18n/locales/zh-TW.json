@@ -2206,5 +2206,9 @@
   "helpKeyboard.enter": "進入詳情",
   "helpKeyboard.back": "返回上層",
   "helpKeyboard.hint": "← / → 瀏覽同層 · Q 進入 · Backspace 返回上層 · Esc 結束",
-  "setup.displayLanguage": "介面語言"
+  "setup.displayLanguage": "介面語言",
+  "settings.aiSkillName.academicWriting": "學術寫作",
+  "settings.aiShowTokenUsage": "顯示每則回覆的 token 用量",
+  "ai.tokenUsage": "Token：{{count}}",
+  "ai.tokenUsageDetails": "輸入 {{input}} · 輸出 {{output}}。由提供者回報，包含本次回覆的模型呼叫及上下文用量。"
 }

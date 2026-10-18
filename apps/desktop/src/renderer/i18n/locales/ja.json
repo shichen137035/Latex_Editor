@@ -2206,5 +2206,9 @@
   "helpKeyboard.enter": "詳細へ",
   "helpKeyboard.back": "上の領域へ",
   "helpKeyboard.hint": "← / →：同じ階層を移動 · Q：詳細へ · Backspace：上へ · Esc：終了",
-  "setup.displayLanguage": "表示言語"
+  "setup.displayLanguage": "表示言語",
+  "settings.aiSkillName.academicWriting": "学術執筆",
+  "settings.aiShowTokenUsage": "返信ごとのトークン使用量を表示",
+  "ai.tokenUsage": "トークン：{{count}}",
+  "ai.tokenUsageDetails": "入力 {{input}} · 出力 {{output}}。この返信のモデル呼び出しとコンテキストを含む、プロバイダーが報告した使用量です。"
 }

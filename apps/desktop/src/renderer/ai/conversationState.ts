@@ -34,6 +34,7 @@ export function mergeConversation(current: AIConversation | undefined, incoming:
 function sameMessage(a: AIMessage, b: AIMessage): boolean {
   return a === b || (a.id === b.id && a.role === b.role && a.content === b.content && a.createdAt === b.createdAt
     && a.status === b.status && a.activity === b.activity && a.completedAt === b.completedAt
+    && a.tokenUsage?.inputTokens === b.tokenUsage?.inputTokens && a.tokenUsage?.outputTokens === b.tokenUsage?.outputTokens && a.tokenUsage?.totalTokens === b.tokenUsage?.totalTokens
     && sameParts(a.reasoning, b.reasoning) && sameParts(a.responseParts, b.responseParts) && sameParts(a.attachments, b.attachments));
 }
 

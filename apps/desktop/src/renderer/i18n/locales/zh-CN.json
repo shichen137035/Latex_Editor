@@ -2206,5 +2206,9 @@
   "helpKeyboard.enter": "进入详情",
   "helpKeyboard.back": "返回上级",
   "helpKeyboard.hint": "← / → 浏览同级 · Q 进入 · Backspace 返回上级 · Esc 退出",
-  "setup.displayLanguage": "界面语言"
+  "setup.displayLanguage": "界面语言",
+  "settings.aiSkillName.academicWriting": "学术写作",
+  "settings.aiShowTokenUsage": "显示每条回复的 token 用量",
+  "ai.tokenUsage": "Token：{{count}}",
+  "ai.tokenUsageDetails": "输入 {{input}} · 输出 {{output}}。由提供方返回，包含本次回复的模型调用及上下文用量。"
 }

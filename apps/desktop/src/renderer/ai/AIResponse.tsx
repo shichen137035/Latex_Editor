@@ -21,8 +21,17 @@ export const AIResponse = memo(function AIResponse({ message, projectRoot, mathC
       <AIReasoning {...common} message={{ ...message, reasoning: [] }}/>
     </> : <><AIReasoning {...common} message={message}/>{message.content && <div className="ai-message-content"><AIMessageContent {...common} content={message.content}/></div>}</>}
     <AIWorkTime message={message}/>
+    <AITokenCount message={message}/>
   </>;
 });
+
+function AITokenCount({ message }: { message: AIMessage }) {
+  const visible = useSyncExternalStore(settings.subscribe, () => settings.global("aiShowTokenUsage"));
+  if (!visible || !message.tokenUsage) return null;
+  const format = (value: number) => `${new Intl.NumberFormat(getLocale(), { minimumFractionDigits: 1, maximumFractionDigits: 2 }).format(value / 1000)}k`;
+  const usage = message.tokenUsage;
+  return <small className="ai-token-usage" title={t("ai.tokenUsageDetails", { input: format(usage.inputTokens), output: format(usage.outputTokens) })}>{t("ai.tokenUsage", { count: format(usage.totalTokens) })}</small>;
+}
 
 function AIWorkTime({ message }: { message: AIMessage }) {
   const [now, setNow] = useState(Date.now);

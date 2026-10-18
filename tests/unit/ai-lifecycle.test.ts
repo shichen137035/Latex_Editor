@@ -11,6 +11,45 @@ import { createWorkspaceBlockApi } from "../../apps/desktop/src/main/ai/workspac
 import { mergeConversation, newestConversation } from "../../apps/desktop/src/renderer/ai/conversationState.js";
 
 const roots: string[] = [];
+for (const mode of ["chat", "codex"] as const) {
+  it(`${mode} accumulates reply token usage without duplicate counts or previous-turn totals`, async () => {
+    const f = await fixture(mode);
+    let disposed = false;
+    try {
+      await f.send();
+      expect(f.message().tokenUsage).toBeUndefined();
+      const emitUsage = (input: number, output: number, id: string, previous = 90000) => {
+        if (mode === "chat") f.emit("assistant.usage", { apiCallId: id, inputTokens: input, outputTokens: output, reasoningTokens: 50, cacheReadTokens: 100 });
+        else f.emit("thread/tokenUsage/updated", { turnId: "turn", tokenUsage: { total: { inputTokens: previous + input, outputTokens: output, totalTokens: previous + input + output }, last: { inputTokens: input, outputTokens: output, totalTokens: input + output } } });
+      };
+      emitUsage(1200, 300, "call-1");
+      emitUsage(1200, 300, "call-1");
+      if (mode === "codex") {
+        f.emit("thread/tokenUsage/updated", { turnId: "old-turn", tokenUsage: { total: { inputTokens: 999999, outputTokens: 999999 }, last: { inputTokens: 999999, outputTokens: 999999 } } });
+        f.emit("thread/tokenUsage/updated", { turnId: "turn", tokenUsage: { total: { inputTokens: 90000, outputTokens: 0 }, last: { inputTokens: 100, outputTokens: 100 } } });
+      }
+      expect(f.message().tokenUsage).toEqual({ inputTokens: 1200, outputTokens: 300, totalTokens: 1500 });
+      if (mode === "chat") emitUsage(800, 200, "call-2");
+      else f.emit("thread/tokenUsage/updated", { turnId: "turn", tokenUsage: { total: { inputTokens: 92000, outputTokens: 500, totalTokens: 92500 }, last: { inputTokens: 800, outputTokens: 200, totalTokens: 1000 } } });
+      expect(f.message().tokenUsage).toEqual({ inputTokens: 2000, outputTokens: 500, totalTokens: 2500 });
+      f.finish();
+      await vi.waitFor(() => expect(f.message().status).toBe("complete"));
+      await f.service.dispose();
+      disposed = true;
+      const reopened = await fixture(mode, undefined, f.root);
+      try {
+        const saved = reopened.service.snapshot("project").conversations.find(item => item.id === f.conversation.id)!;
+        expect(saved.messages.at(-1)?.tokenUsage?.totalTokens).toBe(2500);
+      } finally { await reopened.service.dispose(); }
+    } finally { if (!disposed) await f.service.dispose(); }
+  });
+}
+
+it("refreshes a memoized reply when usage arrives without text changes", () => {
+  const current: AIConversation = { id: "chat", title: "Test", mode: "chat", createdAt: 1, updatedAt: 1, revision: 1, messages: [{ id: "reply", role: "assistant", content: "Answer", createdAt: 1 }] };
+  const incoming = { ...current, revision: 2, messages: [{ ...current.messages[0]!, tokenUsage: { inputTokens: 1000, outputTokens: 200, totalTokens: 1200 } }] };
+  expect(mergeConversation(current, incoming).messages[0]?.tokenUsage?.totalTokens).toBe(1200);
+});
 afterEach(async () => { vi.useRealTimers(); await Promise.all(roots.splice(0).map(root => rm(root, { recursive: true, force: true }))); });
 async function fixture(mode: "chat" | "codex", prepareContext?: ConstructorParameters<typeof AIWorkspaceService>[0]["prepareContext"], existingRoot?: string) {
   const root = existingRoot ?? await mkdtemp(join(tmpdir(), "texweave-lifecycle-")); if (!existingRoot) roots.push(root);

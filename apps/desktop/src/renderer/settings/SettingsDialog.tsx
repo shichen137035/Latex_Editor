@@ -50,7 +50,7 @@ const categoryPreferences: Record<SettingsCategory, PreferenceKey[]> = {
   tools: ["images", "tables"],
   projectBuild: ["history", "environments", "previewDirectives", "pdfFollowActiveTex"],
   applicationBuild: ["engine", "defaultProjectDirectory"],
-  ai: ["aiDefaultMode", "aiPermissionMode", "aiReasoningEffort", "aiCopilotReasoningEffort"]
+  ai: ["aiShowTokenUsage", "aiDefaultMode", "aiPermissionMode", "aiReasoningEffort", "aiCopilotReasoningEffort"]
 };
 
 const searchEntries: Array<{ id: string; category: SettingsCategory; level: SettingsLevel | "manager"; titleKey?: string; title?: string; keywords?: string[]; manager?: ManagerId }> = [
@@ -83,6 +83,7 @@ const searchEntries: Array<{ id: string; category: SettingsCategory; level: Sett
   { id: "pdfFollowActiveTex", category: "projectBuild", level: "basic", titleKey: "settings.pdfFollowActiveTex", keywords: ["pdf", "preview", "switch", "document"] },
   { id: "toolchain", category: "applicationBuild", level: "manager", manager: "toolchain", titleKey: managerDefinitions.toolchain.title, keywords: managerDefinitions.toolchain.keywords },
   { id: "projectCache", category: "applicationBuild", level: "advanced", titleKey: "settings.projectCacheClear", keywords: ["cache", "clear", "registry", "cleanup", "build"] },
+  { id: "aiShowTokenUsage", category: "ai", level: "basic", titleKey: "settings.aiShowTokenUsage", keywords: ["tokens", "usage", "display"] },
   { id: "aiDefaultMode", category: "ai", level: "basic", titleKey: "settings.aiDefaultMode", keywords: ["copilot", "codex"] },
   { id: "aiPermissionMode", category: "ai", level: "basic", titleKey: "settings.aiPermissionMode", keywords: ["permission", "access"] },
   { id: "aiSkills", category: "ai", level: "manager", manager: "aiSkills", titleKey: managerDefinitions.aiSkills.title, keywords: managerDefinitions.aiSkills.keywords }
@@ -357,6 +358,7 @@ function AISkillsSettingsPanel({ onEditingChange, toolbarTarget }: { onEditingCh
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const selected = skills.find((skill) => skill.name === selectedName);
+  const displayName = (skill: AIProjectSkill) => skill.name === "academic-writing" ? t("settings.aiSkillName.academicWriting") : skill.name;
   useEffect(() => { onEditingChange(editing); }, [editing, onEditingChange]);
   const reload = async () => {
     const next = await window.latexEditor!.ai.skills() ?? [];
@@ -396,8 +398,8 @@ function AISkillsSettingsPanel({ onEditingChange, toolbarTarget }: { onEditingCh
     <div className="ai-skills-layout">
       <nav className="ai-skills-list" aria-label={t("settings.aiSkillsTitle")}>
         {skills.map((skill) => <div className={`ai-skill-row${selectedName === skill.name ? " active" : ""}`} key={skill.name}>
-          <button type="button" className="ai-skill-select" aria-current={selectedName === skill.name ? "true" : undefined} onClick={() => { setSelectedName(skill.name); setEditing(false); setError(""); }}><strong>{skill.name}</strong><small>{t(`settings.aiSkillSource.${skill.source}`)} · <span className={skill.enabled ? "enabled" : "disabled"}>{t(skill.enabled ? "settings.aiSkillsEnabled" : "settings.aiSkillsDisabled")}</span></small></button>
-          <label className="ai-skill-toggle" title={`${skill.name}: ${t(skill.enabled ? "settings.aiSkillsEnabled" : "settings.aiSkillsDisabled")}`}><input type="checkbox" aria-label={skill.name} checked={skill.enabled} disabled={busy} onChange={(event) => void setSkillEnabled(skill, event.target.checked)}/><span aria-hidden="true"/></label>
+          <button type="button" className="ai-skill-select" aria-current={selectedName === skill.name ? "true" : undefined} onClick={() => { setSelectedName(skill.name); setEditing(false); setError(""); }}><strong>{displayName(skill)}</strong><small>{t(`settings.aiSkillSource.${skill.source}`)} · <span className={skill.enabled ? "enabled" : "disabled"}>{t(skill.enabled ? "settings.aiSkillsEnabled" : "settings.aiSkillsDisabled")}</span></small></button>
+          <label className="ai-skill-toggle" title={`${displayName(skill)}: ${t(skill.enabled ? "settings.aiSkillsEnabled" : "settings.aiSkillsDisabled")}`}><input type="checkbox" aria-label={displayName(skill)} checked={skill.enabled} disabled={busy} onChange={(event) => void setSkillEnabled(skill, event.target.checked)}/><span aria-hidden="true"/></label>
         </div>)}
         {!skills.length && <p>{t("settings.aiSkillsEmpty")}</p>}
       </nav>
@@ -408,7 +410,7 @@ function AISkillsSettingsPanel({ onEditingChange, toolbarTarget }: { onEditingCh
           <textarea aria-label={t("settings.aiSkillsContent")} value={draft} onChange={(event) => setDraft(event.target.value)} spellCheck={false}/>
           <div className="ai-skills-actions"><button type="button" disabled={busy} onClick={() => { setEditing(false); setError(""); }}>{t("settings.aiSkillsCancel")}</button><button type="button" className="primary" disabled={busy} onClick={() => void save()}>{busy ? t("settings.aiSkillsSaving") : t("settings.aiSkillsSave")}</button></div>
         </> : selected ? <>
-          <div className="ai-skills-detail-head"><div><span>{t(`settings.aiSkillSource.${selected.source}`)}</span><h3>{selected.name}</h3></div><button type="button" onClick={startEdit}>{t("settings.aiSkillsEdit")}</button></div>
+          <div className="ai-skills-detail-head"><div><span>{t(`settings.aiSkillSource.${selected.source}`)}</span><h3>{displayName(selected)}</h3></div><button type="button" onClick={startEdit}>{t("settings.aiSkillsEdit")}</button></div>
           <pre>{selected.content}</pre>
         </> : <p>{t("settings.aiSkillsSelect")}</p>}
       </section>
@@ -548,7 +550,7 @@ export function SettingsDialog({ onClose, initial = "general" }: { onClose(): vo
     if (category === "filter") return <div className="settings-page"><h2>{t("settings.category.filter")}</h2>{level === "basic" && <SettingGroup title={t("settings.group.filterBasics")}><p>{t("settings.filterGroupsHint")}</p>{scope === "project" && <p>{t("settings.globalOnly")}</p>}{(["blockType", "location", "file", "properties"] as const).map((group) => { const visible = store.global("visibleFilterGroups"); return <label className="preference-row" key={group}><span><strong>{t(`filter.${group}`)}</strong></span><input type="checkbox" disabled={scope === "project"} checked={visible.includes(group)} onChange={(event) => void store.set("visibleFilterGroups", event.target.checked ? [...visible, group] : visible.filter((item) => item !== group))}/></label>; })}</SettingGroup>}</div>;
     if (category === "projectBuild") return <div className="settings-page"><h2>{t("settings.category.projectBuild")}</h2><HistorySettingsPanel store={store} scope={scope} level={level}/>{level === "basic" ? <SettingGroup title={t("settings.group.projectBuild")}>{row("pdfFollowActiveTex", "settings.pdfFollowActiveTex")}<p>{t("settings.mainFileHint")}</p></SettingGroup> : <>{(["blockEnvironments", "previewCommands", "styleResources"] as const).map(id => <ManagerEntry key={id} manager={id} title={t(managerDefinitions[id].title)} description={t(managerDefinitions[id].description)} onOpen={() => openManager(id)}/>)}</>}</div>;
     if (category === "applicationBuild") return <div className="settings-page"><h2>{t("settings.category.applicationBuild")}</h2>{level === "basic" ? <><SettingGroup title={t("settings.group.buildBasics")}><div className="preference-row"><span><strong>{t("settings.defaultProjectDirectory")}</strong><small>{t(scope === "project" ? "settings.globalOnly" : "settings.defaultProjectDirectoryHint")}</small></span><div className="default-project-directory-control"><input aria-label={t("settings.defaultProjectDirectory")} disabled={scope !== "global"} value={store.global("defaultProjectDirectory")} onChange={(event) => void store.set("defaultProjectDirectory", event.target.value)}/><button type="button" disabled={scope !== "global"} onClick={() => { void window.latexEditor?.dialogs.pickFolder().then(folder => { if (folder) void store.set("defaultProjectDirectory", folder); }); }}>{t("project.browse")}</button>{resetButton("defaultProjectDirectory", scope === "global")}</div></div>{row("engine", "settings.engine", [["pdflatex", "pdfLaTeX"], ["xelatex", "XeLaTeX"], ["lualatex", "LuaLaTeX"]])}</SettingGroup><ManagerEntry manager="toolchain" title={t(managerDefinitions.toolchain.title)} description={t(managerDefinitions.toolchain.description)} onOpen={() => openManager("toolchain")}/></> : <ProjectCacheSettingsPanel/>}</div>;
-    return <div className="settings-page"><h2>{t("settings.category.ai")}</h2>{level === "basic" ? <SettingGroup title={t("settings.group.aiBasics")}><CodexEnvironmentSettings/><p>{t("settings.aiPrivacyHint")}</p>{row("aiDefaultMode", "settings.aiDefaultMode", [["chat", "ai.copilot"], ["codex", "ai.codex"]])}{row("aiPermissionMode", "settings.aiPermissionMode", [["ask", "ai.permission.ask"], ["auto", "ai.permission.auto"], ["full", "ai.permission.full"]])}<div className="ai-phase-card"><strong>{t("settings.aiChangeReview")}</strong><p>{t("settings.aiChangeReviewDetails")}</p></div></SettingGroup> : <ManagerEntry manager="aiSkills" title={t(managerDefinitions.aiSkills.title)} description={t(managerDefinitions.aiSkills.description)} onOpen={() => openManager("aiSkills")}/>}</div>;
+    return <div className="settings-page"><h2>{t("settings.category.ai")}</h2>{level === "basic" ? <SettingGroup title={t("settings.group.aiBasics")}><CodexEnvironmentSettings/><p>{t("settings.aiPrivacyHint")}</p>{row("aiDefaultMode", "settings.aiDefaultMode", [["chat", "ai.copilot"], ["codex", "ai.codex"]])}{row("aiShowTokenUsage", "settings.aiShowTokenUsage")}{row("aiPermissionMode", "settings.aiPermissionMode", [["ask", "ai.permission.ask"], ["auto", "ai.permission.auto"], ["full", "ai.permission.full"]])}<div className="ai-phase-card"><strong>{t("settings.aiChangeReview")}</strong><p>{t("settings.aiChangeReviewDetails")}</p></div></SettingGroup> : <ManagerEntry manager="aiSkills" title={t(managerDefinitions.aiSkills.title)} description={t(managerDefinitions.aiSkills.description)} onOpen={() => openManager("aiSkills")}/>}</div>;
   };
 
   const renderManager = () => {

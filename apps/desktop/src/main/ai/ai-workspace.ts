@@ -1,7 +1,8 @@
+import { addTokenUsage, codexUsageDelta, readTokenUsage } from "./tokenUsage.js";
 import { randomUUID } from "node:crypto";
 import { copyFile, lstat, mkdir, readFile, realpath, rename, rm, writeFile } from "node:fs/promises";
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
-import type { AIAttachment, AIApprovalRequest, AIPermissionMode, AIChangeSet, AIConversation, AIContextSnapshotFile, AIFileChange, AIMessage, AIModelOption, AIProjectSkill, AIQueuedMessage, CompileResult, ProjectTreeNode } from "@latex-editor/contracts" with { "resolution-mode": "import" };
+import type { AIAttachment, AIApprovalRequest, AIPermissionMode, AIChangeSet, AIConversation, AIContextSnapshotFile, AIFileChange, AIMessage, AITokenUsage, AIModelOption, AIProjectSkill, AIQueuedMessage, CompileResult, ProjectTreeNode } from "@latex-editor/contracts" with { "resolution-mode": "import" };
 import type { CopilotSession } from "@github/copilot-sdk" with { "resolution-mode": "import" };
 import type { CodexAppServer } from "./codex-app-server.js";
 import type { CopilotChatService } from "./copilot-chat.js";
@@ -31,7 +32,7 @@ type AICompileWorkspace = (input: { projectId: string; workspaceRoot: string; ma
 type Persisted = { version: 1; conversations: AIConversation[]; changeSets: AIChangeSet[] };
 type StructureTracker = { managed: string | undefined; direct: boolean; semantic: boolean };
 type IncrementalSync = { timer: ReturnType<typeof setInterval> | undefined; syncing: Promise<void> | undefined; waitingForApply: boolean; failed: boolean; checkpoints: Map<string, Map<string, string | undefined>>; stableSnapshots: Map<string, string>; applyAcknowledgement: Promise<void> | undefined; resolveAcknowledgement: (() => void) | undefined };
-type ActiveTurn = { conversationId: string; messageId: string; scratchRoot: string; base: Map<string, string>; structure: StructureTracker; turnId: string; canceled: boolean; completed: boolean; permissionMode: AIPermissionMode; incremental: IncrementalSync };
+type ActiveTurn = { usageCumulative?: AITokenUsage; conversationId: string; messageId: string; scratchRoot: string; base: Map<string, string>; structure: StructureTracker; turnId: string; canceled: boolean; completed: boolean; permissionMode: AIPermissionMode; incremental: IncrementalSync };
 type ActiveCopilotTurn = { conversationId: string; messageId: string; session: CopilotSession; scratchRoot: string; base: Map<string, string>; structure: StructureTracker; canceled: boolean; complete: boolean; finish?: () => Promise<void>; unsubscribe: Array<() => void>; permissionMode: AIPermissionMode; incremental: IncrementalSync };
 const MAX_ATTACHMENT_BYTES = attachmentLimits.fileBytes;
 
@@ -691,7 +692,7 @@ export class AIWorkspaceService {
       const modeNote = conversation.mode === "codex"
         ? "Work as an editing agent in the project working copy. Locate targets with list_blocks/find_blocks, inspect with get_block, and read only necessary blocks with get_block_source. Use block editing tools where applicable; shell edits remain available for other project files. Use texweave_set_main_file if the user asks to change the configured main TeX file; the user must approve that setting change."
         : "Work as a writing and research assistant for this project. Inspect relevant project files with your shell tool when the supplied excerpts are insufficient; when the user requests changes, implement them in the working copy and summarize the edits.";
-      const structureNote = "Treat .texweave/structure.json as a derived index, not a routine edit target. Prefer replace_block_range for small source edits, using offsets and expectedText from get_block_source. Use block tools for source changes and set_block_semantic for summaries or tags. Edit structure.json directly only when the user explicitly asks to repair that metadata file. Use relation_get_scope/relation_get_display_scope to select logical context, and relation_propose_create/delete/reverse for dependency changes. Relations refer to persistent project block IDs; accept new source blocks before linking them. Each proposal requires explicit user approval even in full access mode; file diffs cannot modify relations.";
+      const structureNote = "Treat .texweave/structure.json as a derived index, not a routine edit target. Prefer replace_block_range for small source edits, using offsets and expectedText from get_block_source. Use block tools for source changes and set_block_semantic for summaries or tags. Edit structure.json directly only when the user explicitly asks to repair that metadata file. Before any relation lookup, inspect the current project's structure snapshot: use relation tools only when its relations array or legacy dependencies array is non-empty. If both are absent or empty, skip relation lookup entirely; textual citations and references are not a relation graph. An explicit request to create relations is an exception. Relations refer to persistent project block IDs; accept new source blocks before linking them. Each proposal requires explicit user approval even in full access mode; file diffs cannot modify relations.";
       const projectContext = describeProjectSnapshot(input.snapshot ?? [], scratchRoot, (input.assets ?? []).map((asset) => asset.path), input.omittedAssets ?? 0, input.unresolvedGraphics ?? [], input.projectPaths);
       const activeSkills = this.#skills.filter((skill) => skill.enabled);
       const skillContext = activeSkills.map((skill) => `## Skill: ${skill.name}\n${skill.content}`).join("\n\n");
@@ -915,6 +916,18 @@ export class AIWorkspaceService {
       };
       turn.unsubscribe.push(session.on(() => resetIdleTimer()));
       resetIdleTimer();
+      const usageCalls = new Set<string>();
+      turn.unsubscribe.push(session.on("assistant.usage", event => {
+        if (turn.complete) return;
+        const usage = readTokenUsage(event.data);
+        if (!usage) return;
+        const key = event.data.apiCallId ?? event.id;
+        if (key && usageCalls.has(key)) return;
+        if (key) usageCalls.add(key);
+        assistantMessage.tokenUsage = addTokenUsage(assistantMessage.tokenUsage, usage);
+        this.#publishConversation(conversation, true);
+        this.#schedulePersist();
+      }));
       turn.unsubscribe.push(session.on("assistant.message_delta", (event) => {
         if (event.agentId || turn.complete) return;
         assistantMessage.activity = "responding";
@@ -958,7 +971,7 @@ export class AIWorkspaceService {
       const skillContext = this.#skills.filter((skill) => skill.enabled).map((skill) => `## Skill: ${skill.name}\n${skill.content}`).join("\n\n");
       const prompt = [
         "You are GitHub Copilot Chat inside TeXWeave, a local-first LaTeX editor. Locate with list_blocks/find_blocks, inspect with get_block, then read only necessary blocks with get_block_source. Prefer replace_block_range for precise partial edits after get_block_source; send only replacement text, relative start/end offsets and expectedText. Use the block editing tools or normal file edits in this working copy. TeXWeave will show a diff for the user to review, accept, or reject. Use texweave_set_main_file when the user asks to change the project's configured main TeX file; this action requires their approval. Summarize changes and mention any unimplemented requests.",
-        "Use relation_get_scope/relation_get_display_scope for logical context and relation_propose_create/delete/reverse for dependency changes. Relations use persistent project block IDs. Each proposal needs explicit user approval, including full access mode; file diffs cannot modify relations.",
+        "Before any relation lookup, inspect the current project's structure snapshot: use relation tools only when its relations array or legacy dependencies array is non-empty. If both are absent or empty, skip relation lookup entirely; textual citations and references are not a relation graph. An explicit request to create relations is an exception. For an existing graph, use relation_get_scope/relation_get_display_scope for logical context and relation_propose_create/delete/reverse for dependency changes. Relations use persistent project block IDs. Each proposal needs explicit user approval, including full access mode; file diffs cannot modify relations.",
         skillContext,
         previousMessages ? `Earlier local conversation (included because this Copilot session is new):\n${previousMessages}` : "",
         projectContext,
@@ -1132,7 +1145,13 @@ export class AIWorkspaceService {
     const conversation = this.#data.conversations.find((item) => item.id === active.conversationId);
     const message = conversation?.messages.find((item) => item.id === active.messageId);
     if (!conversation || !message) return;
-    if (method === "item/agentMessage/delta" && typeof params.delta === "string") { message.activity = "responding"; updateResponseText(message, String(params.itemId ?? "answer"), params.delta, false); }
+    if (method === "thread/tokenUsage/updated") {
+      const update = codexUsageDelta(active.usageCumulative, params.tokenUsage);
+      if (!update) return;
+      active.usageCumulative = update.cumulative;
+      message.tokenUsage = addTokenUsage(message.tokenUsage, update.delta);
+    }
+    else if (method === "item/agentMessage/delta" && typeof params.delta === "string") { message.activity = "responding"; updateResponseText(message, String(params.itemId ?? "answer"), params.delta, false); }
     else if (method === "item/reasoning/summaryTextDelta" && typeof params.delta === "string") {
       updateReasoning(message, `${String(params.itemId)}:${String(params.summaryIndex ?? 0)}`, params.delta, false);
     } else if (method === "item/started") {

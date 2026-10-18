@@ -17,6 +17,10 @@ describe("v0.2.3 foundations", () => {
     expect(t("environment.theorem")).toBe("Theorem");
   });
   it("rejects invalid preferences and global-only project overrides", () => {
+    expect(preferenceDefaults.aiShowTokenUsage).toBe(true);
+    expect(sanitizePreferences({ aiShowTokenUsage: false })).toEqual({ aiShowTokenUsage: false });
+    expect(sanitizePreferences({ aiShowTokenUsage: false }, true)).toEqual({});
+    expect(validPreference("aiShowTokenUsage", "false")).toBe(false);
     expect(preferenceDefaults.documentWordCompletion).toBe(true);
     expect(preferenceDefaults.autoPairSymbols).toBe(true);
     expect(preferenceDefaults.mathPreviewOnHover).toBe(false);

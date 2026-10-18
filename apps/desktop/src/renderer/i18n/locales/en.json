@@ -2206,5 +2206,9 @@
   "helpKeyboard.enter": "Enter details",
   "helpKeyboard.back": "Parent region",
   "helpKeyboard.hint": "← / →: browse this level · Q: enter · Backspace: parent · Esc: exit",
-  "setup.displayLanguage": "Display language"
+  "setup.displayLanguage": "Display language",
+  "settings.aiSkillName.academicWriting": "Academic writing",
+  "settings.aiShowTokenUsage": "Show token usage per reply",
+  "ai.tokenUsage": "Tokens: {{count}}",
+  "ai.tokenUsageDetails": "Input {{input}} · Output {{output}}. Provider-reported usage for this reply, including model calls and context."
 }

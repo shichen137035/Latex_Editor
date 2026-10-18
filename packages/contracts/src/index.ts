@@ -45,6 +45,8 @@ export interface AIAttachment { id: string; name: string; size: number }
 export interface AIReasoningPart { id: string; text: string; complete: boolean }
 /** Public provider output in arrival order; reasoning contains only supplied summaries. */
 export interface AIResponsePart { id: string; kind: "text" | "reasoning"; text: string }
+/** Provider-reported usage for the model calls made during one reply. */
+export interface AITokenUsage { inputTokens: number; outputTokens: number; totalTokens: number }
 export interface AIMessage {
   id: string;
   role: AIMessageRole;
@@ -55,6 +57,7 @@ export interface AIMessage {
   reasoning?: AIReasoningPart[];
   responseParts?: AIResponsePart[];
   completedAt?: number;
+  tokenUsage?: AITokenUsage;
   attachments?: AIAttachment[];
 }
 export interface AIQueuedMessage {

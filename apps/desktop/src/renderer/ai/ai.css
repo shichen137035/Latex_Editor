@@ -316,3 +316,5 @@
 .ai-message-queue li button { display: grid; place-items: center; flex: none; width: 27px; height: 27px; padding: 5px; border: 0; border-radius: 6px; color: var(--color-accent); background: transparent; }
 .ai-message-queue li button:hover { background: var(--color-bg-hover); }
 .ai-message-queue li button svg { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; }
+
+.ai-token-usage { display: block; margin-top: 4px; color: var(--color-text-muted); font-size: 10px; font-variant-numeric: tabular-nums; }

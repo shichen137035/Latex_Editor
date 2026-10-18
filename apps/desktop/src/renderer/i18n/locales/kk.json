@@ -2206,5 +2206,9 @@
   "helpKeyboard.enter": "Толығырақ",
   "helpKeyboard.back": "Жоғарғы аймақ",
   "helpKeyboard.hint": "← / →: осы деңгейді шолу · Q: кіру · Backspace: жоғары · Esc: шығу",
-  "setup.displayLanguage": "Интерфейс тілі"
+  "setup.displayLanguage": "Интерфейс тілі",
+  "settings.aiSkillName.academicWriting": "Академиялық жазу",
+  "settings.aiShowTokenUsage": "Әр жауаптың токен шығынын көрсету",
+  "ai.tokenUsage": "Токендер: {{count}}",
+  "ai.tokenUsageDetails": "Кіріс {{input}} · Шығыс {{output}}. Осы жауаптың модель шақырулары мен контекстін қоса, провайдер хабарлаған шығын."
 }

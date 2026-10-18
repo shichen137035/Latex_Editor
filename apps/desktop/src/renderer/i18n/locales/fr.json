@@ -2206,5 +2206,9 @@
   "helpKeyboard.enter": "Voir les détails",
   "helpKeyboard.back": "Zone parente",
   "helpKeyboard.hint": "← / → : parcourir ce niveau · Q : entrer · Retour arrière : remonter · Esc : quitter",
-  "setup.displayLanguage": "Langue de l’interface"
+  "setup.displayLanguage": "Langue de l’interface",
+  "settings.aiSkillName.academicWriting": "Rédaction universitaire",
+  "settings.aiShowTokenUsage": "Afficher les jetons utilisés par réponse",
+  "ai.tokenUsage": "Jetons : {{count}}",
+  "ai.tokenUsageDetails": "Entrée {{input}} · Sortie {{output}}. Usage indiqué par le fournisseur pour cette réponse, appels au modèle et contexte inclus."
 }
