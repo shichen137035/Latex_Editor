@@ -49,7 +49,7 @@ describe("desktop IPC contract and adapters", () => {
   });
   it("registers every declared invoke exactly once in the main adapters", () => {
     const registered: string[] = [];
-    for (const path of ["index.ts", "ai/ipc.ts", "structure-ipc.ts", "working-document-ipc.ts", "block-graph-ipc.ts", "history-ipc.ts", "relation-ipc.ts"]) {
+    for (const path of ["index.ts", "ai/ipc.ts", "ai/providers-ipc.ts", "ai/companion-ipc.ts", "structure-ipc.ts", "working-document-ipc.ts", "block-graph-ipc.ts", "history-ipc.ts", "relation-ipc.ts"]) {
       const source = readFileSync(`apps/desktop/src/main/${path}`, "utf8");
       const file = ts.createSourceFile(path, source, ts.ScriptTarget.Latest, true);
       const aliases = new Map<string, string>();
@@ -117,6 +117,21 @@ describe("desktop IPC contract and adapters", () => {
     expect(invoke).toHaveBeenLastCalledWith(contract.desktopInvoke.ai.status.channel);
     stopStatus(); stopUpdate();
     expect(listeners.size).toBe(0);
+  });
+
+  it("shares provider login while keeping pet and project chat events independent", async () => {
+    const { api, invoke, listeners } = loadPreload();
+    await api.aiProviders.login();
+    expect(invoke).toHaveBeenLastCalledWith(contract.desktopInvoke.ai.login.channel);
+    expect("send" in api.aiProviders).toBe(false);
+    expect("login" in api.companionChat).toBe(false);
+    const project = vi.fn(), pet = vi.fn();
+    const stopProject = api.ai.onUpdate(project), stopPet = api.companionChat.onUpdate(pet);
+    const update = { kind: "conversation", payload: { id: "pet" } };
+    listeners.get(contract.desktopEvents.toRenderer.companionChatUpdate.channel)!({}, update);
+    expect(pet).toHaveBeenCalledExactlyOnceWith(update);
+    expect(project).not.toHaveBeenCalled();
+    stopProject(); stopPet();
   });
 
   it("registers source operations against the shared service and returns its envelope", async () => {

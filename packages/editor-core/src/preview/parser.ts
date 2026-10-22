@@ -1,4 +1,4 @@
-import type { EnvironmentDefinition, PreviewDocument, PreviewNode, SourceSpan, StructuralBlock } from "./types.js";
+import type { EnvironmentDefinition, PreviewDiagnostic, PreviewDocument, PreviewNode, SourceSpan, StructuralBlock } from "./types.js";
 
 import { includeNewBuiltInDirectives, inferBlockKind, type BlockKind, type PreviewDirectiveDefinition } from "@latex-editor/contracts";
 import { automaticLabelOccurrences, findBlockLabel, isAutomaticLabel } from "./labels.js";
@@ -230,6 +230,11 @@ export function parsePreview(source: string, filePath: string, definitions: Envi
   const directiveByName = new Map(directives.filter((item) => item.enabled && item.match.kind === "command").map((item) => [item.match.kind === "command" ? item.match.name : "", item]));
   const commandDefinitions = new Map(definitions.filter((definition) => definition.match.kind === "command").map((definition) => [definition.match.kind === "command" ? definition.match.command : "", definition]));
   const positionAt = positionResolver(source);
+  const diagnosticDetails: PreviewDiagnostic[] = [];
+  const report = (message: string, start?: number, end = start) => {
+    diagnostics.push(message);
+    diagnosticDetails.push({ message, ...(start !== undefined ? { source: span(source, filePath, start, end ?? start, positionAt) } : {}) });
+  };
   const labelOccurrences = automaticLabelOccurrences(source);
   let documentStart = 0;
   let documentEnd = source.length;
@@ -247,7 +252,7 @@ export function parsePreview(source: string, filePath: string, definitions: Envi
     if (match[6] === "/texweave:disable") {
       const index = lastOpenIndex(open, (entry) => entry.marker === "disabled");
       const entry = index >= 0 ? open[index] : undefined;
-      if (!entry) { diagnostics.push(`Unmatched disabled block end at offset ${offset}.`); continue; }
+      if (!entry) { report(`Unmatched disabled block end at offset ${offset}.`, offset, offset + match[0].length); continue; }
       open.splice(index, 1);
       rawBlocks.push({ start: entry.start, end: offset + match[0].length, bodyStart: entry.bodyStart, bodyEnd: offset, environmentId: "texweave-disabled", origin: "virtual" });
       continue;
@@ -258,7 +263,7 @@ export function parsePreview(source: string, filePath: string, definitions: Envi
     }
     if (match[3] !== undefined) {
       const index = lastOpenIndex(open, (entry) => entry.marker === "environment" && entry.name === match[3]);
-      if (index < 0) { diagnostics.push(`Unmatched \\end{${match[3]}} at offset ${offset}.`); continue; }
+      if (index < 0) { report(`Unmatched \\end{${match[3]}} at offset ${offset}.`, offset, offset + match[0].length); continue; }
       const entry = open[index];
       if (!entry) continue;
       open.splice(index, 1);
@@ -275,7 +280,7 @@ export function parsePreview(source: string, filePath: string, definitions: Envi
     if (match[0] === "\\]") {
       const index = lastOpenIndex(open, (entry) => entry.name === "__display_math__");
       const entry = index >= 0 ? open[index] : undefined;
-      if (!entry) { diagnostics.push(`Unmatched \\] at offset ${offset}.`); continue; }
+      if (!entry) { report(`Unmatched \\] at offset ${offset}.`, offset, offset + match[0].length); continue; }
       open.splice(index, 1);
       const definition = definitions.find((item) => item.match.kind === "display-math");
       if (definition?.enabled !== false) rawBlocks.push({ start: entry.start, end: offset + 2, bodyStart: entry.bodyStart, bodyEnd: offset, environmentId: definition?.id ?? "display-math", origin: "latex" });
@@ -290,13 +295,13 @@ export function parsePreview(source: string, filePath: string, definitions: Envi
     if (match[4] === "end") {
       const index = lastOpenIndex(open, (entry) => entry.marker === "virtual");
       const entry = index >= 0 ? open[index] : undefined;
-      if (!entry) { diagnostics.push(`Unmatched virtual block end at offset ${offset}.`); continue; }
+      if (!entry) { report(`Unmatched virtual block end at offset ${offset}.`, offset, offset + match[0].length); continue; }
       open.splice(index, 1);
       const definition = definitions.find((item) => item.match.kind === "virtual-block" && item.match.type === entry.name);
       if (definition?.enabled !== false) rawBlocks.push({ start: entry.start, end: offset + match[0].length, bodyStart: entry.bodyStart, bodyEnd: offset, environmentId: definition?.id ?? `virtual:${entry.name}`, origin: "virtual", ...(entry.title ? { title: entry.title } : {}) });
     }
   }
-  for (const entry of open) diagnostics.push(`Unclosed ${entry.marker} ${entry.name} at offset ${entry.start}.`);
+  for (const entry of open) report(`Unclosed ${entry.marker} ${entry.name} at offset ${entry.start}.`, entry.start, entry.bodyStart);
 
   const titleRegion = documentTitleRegion(source, documentStart, documentEnd);
   const title = titleRegion ? {
@@ -383,7 +388,7 @@ export function parsePreview(source: string, filePath: string, definitions: Envi
         rawBlocks.push({ start, end: start + match[0].length, bodyStart: start, bodyEnd: start + match[0].length, environmentId: definition.id, origin: "virtual" });
       }
     } catch (reason) {
-      diagnostics.push(`Custom pattern ${definition.id} is invalid: ${reason instanceof Error ? reason.message : String(reason)}`);
+      report(`Custom pattern ${definition.id} is invalid: ${reason instanceof Error ? reason.message : String(reason)}`);
     }
   }
 
@@ -396,7 +401,7 @@ export function parsePreview(source: string, filePath: string, definitions: Envi
   for (const block of candidates) {
     while (stack.length && block.start >= (stack.at(-1)?.end ?? 0)) stack.pop();
     const parent = stack.at(-1);
-    if (parent && block.end > parent.end) { diagnostics.push(`Crossing block ${block.environmentId} was rendered as fallback content.`); continue; }
+    if (parent && block.end > parent.end) { report(`Crossing block ${block.environmentId} was rendered as fallback content.`, block.start, block.end); continue; }
     if (parent) block.parent = parent;
     valid.push(block);
     stack.push(block);
@@ -492,5 +497,5 @@ export function parsePreview(source: string, filePath: string, definitions: Envi
     return nodes;
   };
 
-  return { filePath, nodes: buildChildren(undefined, documentStart, documentEnd), diagnostics, ...(title ? { title } : {}) };
+  return { filePath, nodes: buildChildren(undefined, documentStart, documentEnd), diagnostics, diagnosticDetails, ...(title ? { title } : {}) };
 }

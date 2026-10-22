@@ -5,6 +5,10 @@ import type { ThemeDefinition } from "@latex-editor/contracts" with { "resolutio
 
 const themeExtension = ".css";
 
+export function validateGeneratedTheme(input: { name: string; css: string }): void {
+  if (!input || typeof input.name !== "string" || !input.name.trim() || input.name.length > 120 || typeof input.css !== "string" || !input.css.trim() || Buffer.byteLength(input.css, "utf8") > 256 * 1024 || /@import\b|url\s*\(|expression\s*\(|javascript\s*:|<\/?(?:script|style)\b/i.test(input.css)) throw new Error("Invalid generated theme. Use local CSS tokens without external resources.");
+}
+
 function safeId(value: string): string {
   const normalized = value.trim().replace(/[^A-Za-z0-9._-]+/g, "-").replace(/^-+|-+$/g, "").toLocaleLowerCase();
   return normalized || "theme";
@@ -69,6 +73,17 @@ export class ThemeRepository {
       imported.push({ id, name: displayName(original, await readFile(original, "utf8")), source: "user", css: await readFile(target, "utf8"), filePath: target });
     }
     return imported;
+  }
+  /** Generated themes are new local files; creating one never activates or overwrites a theme. */
+  async create(input: { name: string; css: string }): Promise<ThemeDefinition> {
+    validateGeneratedTheme(input);
+    const id = `custom-${safeId(input.name).slice(0, 40)}-${randomUUID().slice(0, 8)}`;
+    const name = input.name.trim().replace(/[\r\n*]/g, " ");
+    const css = `/* @theme-name: ${name} */\n${input.css}`;
+    await mkdir(this.#userRoot, { recursive: true });
+    const filePath = join(this.#userRoot, `${id}.css`);
+    await writeFile(filePath, css, { encoding: "utf8", flag: "wx" });
+    return { id, name, source: "user", css, filePath };
   }
   async importPresetTheme(theme: { id: string; css: string; name?: string }): Promise<string> {
     const css = theme.name ? `/* @theme-name: ${theme.name.replace(/[\r\n*]/g, " ")} */\n${theme.css}` : theme.css;

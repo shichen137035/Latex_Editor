@@ -1,3 +1,6 @@
+import { CompanionSkillRepository } from "./companion-skills.js";
+import { CapabilityRegistry } from "./capabilities/registry.js";
+import { CapabilityService } from "./capabilities/gateway.js";
 import { packageSmokeEnabled, finishPackageSmoke, checkPackageWindow } from "./package-smoke.js";
 import { LatexToolchainInstaller } from "./toolchain-installer.js";
 import { registerBlockGraphIpc } from "./block-graph-ipc.js";
@@ -30,6 +33,9 @@ import { CopilotChatService } from "./ai/copilot-chat.js";
 import { AIWorkspaceService } from "./ai/ai-workspace.js";
 import { createWorkspaceBlockApi } from "./ai/workspace-block-api.js";
 import { registerAiIpcHandlers } from "./ai/ipc.js";
+import { registerAIProviderIpcHandlers } from "./ai/providers-ipc.js";
+import { registerCompanionChatIpcHandlers } from "./ai/companion-ipc.js";
+import { CompanionChatService } from "./ai/companion-chat.js";
 import { prepareAISendContext } from "./ai/send-context.js";
 import { failedCompilation, publishWorkspaceCompilation } from "./compile-preview.js";
 import { createProjectSourceArchive, ExportDependencyError } from "./project-export.js";
@@ -90,6 +96,7 @@ async function createContext(): Promise<DesktopContext> {
   // Resource loading is completed before the first project action is accepted.
   await resources.reload();
   const files = new NodeProjectFileService(projects);
+  const companionSkills = new CompanionSkillRepository(resolve(resourceRoot, "ai", "companion"), join(app.getPath("userData"), "ai", "companion"));
   settings = new SettingsRepository(app.getPath("userData"), async (id) => files.resolveFilePath(id, ".texweave/settings.json", false));
   await settings.initialize();
   const { defaultHistoryPreferences, includeNewBuiltInDirectives } = await import("@latex-editor/contracts");
@@ -148,7 +155,18 @@ async function createContext(): Promise<DesktopContext> {
     onStatus: (status: AIStatus) => BrowserWindow.getAllWindows().forEach((window) => sendIpc(window.webContents, desktopEvents.toRenderer.aiStatus, status))
   });
   const copilot = new CopilotChatService(app.getPath("userData"));
+  const capabilityRegistry = new CapabilityRegistry();
+  await capabilityRegistry.initialize(join(resourceRoot, "capabilities", "registry-v1.sqlite"));
+  const capabilities = new CapabilityService(capabilityRegistry, { settings, themes, blockDefinitions: environmentsFromCatalog(environmentCatalog), journalPath: join(app.getPath("userData"), "ai", "operation-journal.sqlite"), projectState: id => registry.get(id),
+    onSettingsChanged: (snapshot, projectId) => BrowserWindow.getAllWindows().forEach(window => sendIpc(window.webContents, desktopEvents.toRenderer.settingsChanged, { snapshot, ...(projectId ? { projectId } : {}) }))
+  });
+  capabilities.initialize();
+  const companionChats = new CompanionChatService({ userDataPath: app.getPath("userData"), codex: ai, copilot, capabilities, skills: companionSkills, capabilityMode: () => settings.global.aiPermissionMode ?? "auto",
+    onUpdate: update => BrowserWindow.getAllWindows().forEach(window => sendIpc(window.webContents, desktopEvents.toRenderer.companionChatUpdate, update))
+  });
+  await companionChats.initialize();
   const aiWorkspaces = new AIWorkspaceService({
+    capabilities, capabilityMode: () => settings.global.aiPermissionMode ?? "auto",
     userDataPath: app.getPath("userData"),
     codex: ai,
     copilot,
@@ -185,7 +203,7 @@ async function createContext(): Promise<DesktopContext> {
     onUpdate: (kind, payload) => BrowserWindow.getAllWindows().forEach((window) => sendIpc(window.webContents, desktopEvents.toRenderer.aiUpdate, { kind, payload }))
   });
   await aiWorkspaces.initialize();
-  return { registry, projects, environment, files, compiler, resources, blockGraph, structure, relations, documents, styleResources, themes, spellcheck, installation, images, references, ai, copilot, aiWorkspaces, history };
+  return { capabilities, companionChats, companionSkills, registry, projects, environment, files, compiler, resources, blockGraph, structure, relations, documents, styleResources, themes, spellcheck, installation, images, references, ai, copilot, aiWorkspaces, history };
 }
 
 function requireContext(): DesktopContext {
@@ -201,6 +219,9 @@ async function showUnsavedDialog(event: IpcMainInvokeEvent, labels: UnsavedDialo
 }
 
 function registerIpcHandlers(): void {
+  handleIpc(desktopInvoke.capabilities.status, async () => requireContext().capabilities.registry.status());
+  handleIpc(desktopInvoke.capabilities.operations, async (_event, ids) => requireContext().capabilities.operationReports(ids));
+  handleIpc(desktopInvoke.capabilities.undo, (_event, id, projectId) => requireContext().capabilities.undo(id, projectId));
   handleIpc(desktopInvoke.app.info, () => readAppInfo());
   onIpc(desktopEvents.toMain.closeReady, (event) => {
     const window = BrowserWindow.fromWebContents(event.sender);
@@ -427,6 +448,17 @@ function registerIpcHandlers(): void {
     if (context === undefined) throw new Error(nativeText("native.contextNotReady"));
     return context.styleResources.remove(id);
   });
+  handleIpc(desktopInvoke.companionSkills.list, () => requireContext().companionSkills.list());
+  handleIpc(desktopInvoke.companionSkills.read, (_event, name) => requireContext().companionSkills.read(name));
+  handleIpc(desktopInvoke.companionSkills.save, (_event, input) => requireContext().companionSkills.save(input));
+  handleIpc(desktopInvoke.companionSkills.setEnabled, (_event, input) => requireContext().companionSkills.setEnabled(input));
+  handleIpc(desktopInvoke.companionSkills.prepare, (_event, names) => requireContext().companionSkills.prepare(names));
+  handleIpc(desktopInvoke.themes.create, (_event, input) => requireContext().themes.create(input));
+  handleIpc(desktopInvoke.settings.createPreset, async (_event, document) => {
+    const { validPresetDocument } = await import("@latex-editor/contracts");
+    if (!validPresetDocument(document) || !["settings", "themes", "blockEnvironments", "previewCommands", "shortcuts", "dictionaries"].includes(document.kind) || document.skills || document.resources || document.toolchain || "layout" in document.preferences || "lastProject" in document.preferences) throw new Error("settingsPresets.invalidFile");
+    return settings.importPreset(document);
+  });
   handleIpc(desktopInvoke.themes.list, () => context?.themes.list() ?? []);
   handleIpc(desktopInvoke.themes.directory, () => context?.themes.directory() ?? "");
   handleIpc(desktopInvoke.themes.importFiles, (_event, paths) => {
@@ -614,6 +646,11 @@ function registerIpcHandlers(): void {
     if (context === undefined) throw new Error(nativeText("native.contextNotReady"));
     return context.files.listTree(projectId);
   });
+  handleIpc(desktopInvoke.files.versions, async (_event, projectId, paths) => {
+    if (context === undefined) throw new Error(nativeText("native.contextNotReady"));
+    const { readFileVersions } = await import("./file-versions.js");
+    return readFileVersions(context.files, projectId, paths);
+  });
   handleIpc(desktopInvoke.files.read, async (_event, projectId, relativePath) => {
     if (context === undefined) throw new Error(nativeText("native.contextNotReady"));
     return context.files.readText(projectId, relativePath);
@@ -780,6 +817,8 @@ function registerIpcHandlers(): void {
     return { status: "exported", path: targetPath, compilation, pdfDataUrl };
   });
   registerAiIpcHandlers(context, settings);
+  registerAIProviderIpcHandlers(context, settings);
+  registerCompanionChatIpcHandlers(context, settings);
   handleIpc(desktopInvoke.synctex.forward, async (_event, projectId, sourceFile, pdfFile, line, column) => {
     if (context === undefined) throw new Error(nativeText("native.contextNotReady"));
     const project = await context.projects.openProject(projectId);
@@ -897,11 +936,16 @@ app.on("window-all-closed", () => {
     let shutdownTimer: ReturnType<typeof setTimeout> | undefined;
     const deadline = new Promise<void>(resolve => { shutdownTimer = setTimeout(resolve, 5000); });
     // An unresponsive provider must not prevent exit; orphan staging files are cleaned on next startup.
-    await Promise.race([Promise.allSettled([current?.ai.stop(), current?.aiWorkspaces.dispose(), toolchainInstaller?.dispose()]), deadline]);
+    await Promise.race([(async () => {
+      await Promise.allSettled([current?.companionChats.dispose(), current?.aiWorkspaces.dispose(), toolchainInstaller?.dispose()]);
+      await Promise.allSettled([current?.ai.stop(), current?.copilot.dispose()]);
+    })(), deadline]);
     clearTimeout(shutdownTimer);
     try { await current?.blockGraph.reclaimAllProjectCaches({ kind: "shutdown" }); }
     catch (error) { console.warn("Unable to release every project cache during shutdown", error); }
     current?.registry.close();
+    current?.capabilities.close();
+    current?.capabilities.registry.close();
     current?.references.close();
     if (process.platform !== "darwin") app.quit();
   })();

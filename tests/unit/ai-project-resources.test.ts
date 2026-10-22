@@ -35,7 +35,9 @@ it("lists and searches unreferenced resources without implying that they are alr
   expect((await f.resources.materialize(["plots/unreferenced.png"])).existing).toEqual(["plots/unreferenced.png"]);
   expect(await readFile(join(f.workspace, "plots/unreferenced.png"), "utf8")).toBe("AI's edited copy");
   const context = describeProjectSnapshot([], f.workspace, [], 0, [], ["plots/unreferenced.png"]);
-  expect(context).toContain("plots/unreferenced.png"); expect(context).toContain("texweave_list_project_files");
+  expect(context).not.toContain("plots/unreferenced.png");
+  expect(context).toContain("known project paths: 1");
+  expect(context).toContain("Discover the project-file inventory capability");
 });
 
 it("reports size and traversal failures and refuses workspace directory junctions", async () => {

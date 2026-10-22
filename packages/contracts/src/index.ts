@@ -1,5 +1,6 @@
 /** 稳定的机器可读错误码；CLI/未来 IPC 不应依赖本地化 message。 */
 export * from "./settings.js";
+export * from "./companion.js";
 export * from "./theme-colors.js";
 export * from "./settings-presets.js";
 export * from "./spellcheck.js";
@@ -46,7 +47,8 @@ export interface AIReasoningPart { id: string; text: string; complete: boolean }
 /** Public provider output in arrival order; reasoning contains only supplied summaries. */
 export interface AIResponsePart { id: string; kind: "text" | "reasoning"; text: string }
 /** Provider-reported usage for the model calls made during one reply. */
-export interface AITokenUsage { inputTokens: number; outputTokens: number; totalTokens: number }
+export interface AITokenUsage { inputTokens: number; outputTokens: number; totalTokens: number; /** Included in inputTokens, never added a second time. */ cachedInputTokens?: number }
+export interface AIOperationReport { operationId: string; capabilityId: string; title: string; status: "proposed" | "approved" | "applied" | "verified" | "failed" | "reverted"; scope: string; before: unknown; after: unknown; projectId?: string }
 export interface AIMessage {
   id: string;
   role: AIMessageRole;
@@ -58,6 +60,7 @@ export interface AIMessage {
   responseParts?: AIResponsePart[];
   completedAt?: number;
   tokenUsage?: AITokenUsage;
+  operations?: AIOperationReport[];
   attachments?: AIAttachment[];
 }
 export interface AIQueuedMessage {

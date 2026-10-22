@@ -217,3 +217,7 @@
 .sidebar-heading > div::-webkit-scrollbar { display: none; }
 :is(.sidebar-heading, .outline-heading) button, .sidebar-heading .filter-switch { flex-shrink: 0; }
 .sidebar-heading :is(.library-toolbar-target, .history-toolbar-target) { flex: 0 0 auto; display: flex; align-items: center; }
+
+.external-file-notice { position:fixed; z-index:185; top:110px; right:18px; max-width:min(480px,calc(100vw - 36px)); max-height:35vh; overflow:auto; padding:12px; border:1px solid var(--color-warning); border-radius:10px; color:var(--color-text-primary); background:var(--color-bg-panel); box-shadow:var(--shadow-panel); font-size:12px; }
+.external-file-notice p { overflow-wrap:anywhere; margin:8px 0; }
+.external-file-notice button { margin:0 6px 4px 0; padding:6px 9px; border:1px solid var(--color-border); border-radius:6px; background:var(--color-bg-subtle); color:var(--color-primary-strong); }

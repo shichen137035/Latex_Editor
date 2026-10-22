@@ -1,3 +1,6 @@
+import type { CompanionSkillRepository } from "./companion-skills.js";
+import type { CompanionChatService } from "./ai/companion-chat.js";
+import type { CapabilityService } from "./capabilities/gateway.js";
 import type { NodeProjectEnvironment, NodeProjectFileService } from "@latex-editor/filesystem-node" with { "resolution-mode": "import" };
 import type { SQLiteProjectRegistry } from "@latex-editor/registry-sqlite" with { "resolution-mode": "import" };
 import type { LatexmkCompilerService } from "@latex-editor/compiler-latexmk" with { "resolution-mode": "import" };
@@ -16,6 +19,7 @@ import type { ProjectHistoryService } from "./project-history.js";
 
 /** Services composed once during Electron startup and shared by IPC modules. */
 export interface DesktopContext {
+  capabilities: CapabilityService;
   registry: SQLiteProjectRegistry;
   projects: ProjectService;
   environment: NodeProjectEnvironment;
@@ -28,6 +32,8 @@ export interface DesktopContext {
   documents: ProjectWorkingDocumentService;
   styleResources: StyleResourceRepository;
   themes: ThemeRepository;
+  companionSkills: CompanionSkillRepository;
+  companionChats: CompanionChatService;
   spellcheck: OfflineSpellCheckService;
   installation: InstallationStateService;
   images: ProjectImageService;

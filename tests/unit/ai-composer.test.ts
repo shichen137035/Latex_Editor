@@ -1,3 +1,4 @@
+import { closeTestCapabilities, testCapabilities, throughCapabilityGateway } from "../capability-fixture.js";
 import { mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { randomUUID } from "node:crypto";
 import { tmpdir } from "node:os";
@@ -10,7 +11,7 @@ import { createWorkspaceBlockApi } from "../../apps/desktop/src/main/ai/workspac
 
 describe("AI composer attachments and reasoning", () => {
   const roots: string[] = [];
-  afterEach(async () => { await Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true }))); });
+  afterEach(async () => { closeTestCapabilities(); await Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true }))); });
   async function fixture() {
     const root = await mkdtemp(join(tmpdir(), "texweave-composer-"));
     roots.push(root);
@@ -20,14 +21,15 @@ describe("AI composer attachments and reasoning", () => {
     const codex = {
       onEvent: (callback: typeof listener) => { listener = callback; return () => undefined; },
       startTurn: async (turn: NonNullable<typeof input>) => {
-        input = turn;
+        input = { ...turn, toolHandlers: throughCapabilityGateway(turn) };
         turn.onThreadReady?.("thread");
         listener({ method: "item/reasoning/summaryTextDelta", params: { threadId: "thread", itemId: "reason", summaryIndex: 0, delta: "Inspect " } });
         return { threadId: "thread", turnId: "turn" };
       },
       interruptTurn: async (threadId: string) => listener({ method: "turn/completed", params: { threadId, turn: { status: "interrupted" } } })
     } as unknown as CodexAppServer;
-    const service = new AIWorkspaceService({
+    const { service: capabilities } = await testCapabilities(root);
+    const service = new AIWorkspaceService({ capabilities,
       userDataPath: root, codex,
       copilot: { dispose: async () => undefined } as unknown as CopilotChatService,
       projectFiles: { resolveFilePath: async (_id, path) => join(root, "project", path) },

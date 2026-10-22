@@ -1,3 +1,6 @@
+import type { CompanionChatUpdate, CompanionSkillSummary, CompanionSkillDocument, CompanionSkillContext } from "./companion.js" with { "resolution-mode": "import" };
+import type { AIOperationReport } from "./index.js" with { "resolution-mode": "import" };
+import type { SettingsPresetDocument } from "./settings-presets.js" with { "resolution-mode": "import" };
 import type { AIStatus, AIModelOption, AIConversation, AIChangeSet, AIContextSnapshotFile, AIProjectSkill, AIMode, AIAttachment, AddSemanticBlockInput, BlockCreationValidation, BlockGraphSnapshot, BlockId, CommandMetadata, CompileResult, PdfExportResult, CreateSemanticBlockInput, CreateUserBlockInput, DependencyCycle, DictionaryPackage, FileWriteResult, GraphDiagnostic, GraphTraversalOptions, GraphTraversalResult, ImportedImage, LogicalRelation, Project, ProjectHistoryDetails, ProjectHistoryEntry, ProjectHistoryStorage, ProjectTreeNode, RelationDirection, RelationMutationResult, RelationNeighborhood, RelationValidation, ResolvedGraphic, SemanticBlock, SettingsSnapshot, SettingsPreset, SettingsPresetKind, PreferenceKey, LatexToolchain, StyleResource, StyleResourceFile, ThemeDefinition, SnapshotReason, SpellCheckMode, SpellCheckStatus, StructuralDependencyOverlap, StructuralHistoryState, StructureWarning, SyncTexPdfPosition, SyncTexSourcePosition, TextFileContent, UpdateSemanticBlockInput, ProjectReferenceLink, ReferenceLibraryEntry, ReferenceLibrarySnapshot, ReferenceImportResult, ReferenceTag } from "./index.js" with { "resolution-mode": "import" };
 
 import type { BlockApiResult, DocumentBlockApi, DocumentStructure, AIApprovalRequest, WorkingDocumentInput, WorkingDocumentResult } from "./index.js" with { "resolution-mode": "import" };
@@ -22,6 +25,11 @@ export interface ProjectDirectorySize { bytes: number; fileCount: number; partia
 
 /** Desktop transport contract. Existing public method and wire names remain stable. */
 export const desktopInvoke = {
+  capabilities: {
+    operations: invoke<(ids: string[]) => Promise<AIOperationReport[]>>("capabilities:operations"),
+    undo: invoke<(operationId: string, projectId?: string) => Promise<unknown>>("capabilities:undo"),
+    status: invoke<() => Promise<{ available: boolean; count: number; error?: string }>>("capabilities:status")
+  },
   app: {
     info: invoke<() => Promise<DesktopAppInfo>>("app:info"),
   },
@@ -75,7 +83,15 @@ export const desktopInvoke = {
     confirmNavigation: invoke<(labels: UnsavedDialogLabels) => Promise<UnsavedDialogChoice>>("window:confirm-navigation"),
     showSaveError: invoke<(title: string, message: string) => Promise<void>>("window:save-error"),
   },
+  companionSkills: {
+    list: invoke<() => Promise<CompanionSkillSummary[]>>("companion:skills:list"),
+    read: invoke<(name: string) => Promise<CompanionSkillDocument>>("companion:skills:read"),
+    save: invoke<(input: { name: string; content: string; create?: boolean }) => Promise<CompanionSkillSummary[]>>("companion:skills:save"),
+    setEnabled: invoke<(input: { name: string; enabled: boolean }) => Promise<CompanionSkillSummary[]>>("companion:skills:enabled"),
+    prepare: invoke<(names: string[]) => Promise<CompanionSkillContext>>("companion:skills:prepare"),
+  },
   settings: {
+    createPreset: invoke<(document: SettingsPresetDocument) => Promise<SettingsPreset>>("settings:presets:create-document"),
     clearProjectCaches: invoke<() => Promise<{ cleared: boolean; projectCount: number }>>("settings:clear-project-caches"),
     listPresets: invoke<(kind?: SettingsPresetKind) => Promise<SettingsPreset[]>>("settings:presets:list"),
     savePreset: invoke<(name: string, id?: string, kind?: SettingsPresetKind, projectId?: string) => Promise<SettingsPreset>>("settings:presets:save"),
@@ -180,6 +196,7 @@ export const desktopInvoke = {
     remove: invoke<(id: string) => Promise<void>>("style-resources:remove"),
   },
   themes: {
+    create: invoke<(input: { name: string; css: string }) => Promise<ThemeDefinition>>("themes:create"),
     list: invoke<() => Promise<ThemeDefinition[]>>("themes:list"),
     directory: invoke<() => Promise<string>>("themes:directory"),
     importFiles: invoke<(paths: string[]) => Promise<ThemeDefinition[]>>("themes:import-files"),
@@ -201,6 +218,7 @@ export const desktopInvoke = {
     copyProjectPath: invoke<(projectId: string) => Promise<void>>("projects:directory-copy-path"),
   },
   files: {
+    versions: invoke<(projectId: string, paths: string[]) => Promise<Record<string, string | null>>>("files:versions"),
     tree: invoke<(projectId: string) => Promise<ProjectTreeNode[]>>("files:tree"),
     read: invoke<(projectId: string, relativePath: string) => Promise<TextFileContent>>("files:read"),
     readPdf: invoke<(projectId: string, relativePath: string) => Promise<string | undefined>>("files:read-pdf"),
@@ -242,6 +260,14 @@ export const desktopInvoke = {
     sourceArchive: invoke<(projectId: string) => Promise<string | undefined>>("exports:source-archive"),
     mainSourceArchive: invoke<(projectId: string) => Promise<string | undefined>>("exports:main-source-archive"),
     pdf: invoke<(projectId: string) => Promise<PdfExportResult>>("exports:pdf"),
+  },
+  companionChat: {
+    conversations: invoke<() => Promise<AIConversation[]>>("companion:chat:list"),
+    createConversation: invoke<(mode: AIMode) => Promise<AIConversation>>("companion:chat:create"),
+    send: invoke<(input: { conversationId: string; content: string }) => Promise<{ conversation: AIConversation; taskId: string }>>("companion:chat:send"),
+    cancel: invoke<(taskId: string) => Promise<void>>("companion:chat:cancel"),
+    approvals: invoke<() => Promise<AIApprovalRequest[]>>("companion:chat:approvals"),
+    resolveApproval: invoke<(id: string, allow: boolean) => Promise<void>>("companion:chat:approval:resolve"),
   },
   ai: {
     detect: invoke<() => Promise<AIStatus | undefined>>("ai:detect"),
@@ -307,6 +333,8 @@ export const desktopEvents = {
     closeRequested: event<[requestId: string]>("window:close-requested"),
     aiUpdate: event<[update: { kind: "conversation" | "changes" | "approval"; payload: AIConversation | AIChangeSet | AIApprovalRequest }]>("ai:update"),
     aiStatus: event<[status: AIStatus]>("ai:status"),
+    companionChatUpdate: event<[update: CompanionChatUpdate]>("companion:chat:update"),
+    settingsChanged: event<[update: { snapshot: SettingsSnapshot; projectId?: string }]>("settings:changed"),
     relationUpdate: event<[update: { projectId: string; event: RelationEvent }]>("relations:update")
   },
   toMain: {
@@ -321,7 +349,19 @@ export type DesktopInvokeApi = {
   }
 };
 /** Renderer surface includes explicit subscriptions and Electron's local File helper. */
-export type DesktopApi = Omit<DesktopInvokeApi, "lifecycle" | "ai" | "files" | "relations" | "compile" | "projects"> & {
+export const aiProviderMethods = ["status", "detect", "install", "login", "logout", "setExecutable", "models", "copilotStatus", "installCopilot", "loginCopilot", "logoutCopilot", "copilotModels"] as const;
+export type AIProviderApi = Pick<DesktopInvokeApi["ai"], typeof aiProviderMethods[number]> & {
+  onStatus(listener: NonNullable<typeof desktopEvents.toRenderer.aiStatus.signature>): () => void;
+};
+/** Account/environment API shared by all chat surfaces; legacy ai methods remain compatible. */
+export function createAIProviderBridge(ai: DesktopInvokeApi["ai"]): Omit<AIProviderApi, "onStatus"> {
+  return Object.fromEntries(aiProviderMethods.map(method => [method, ai[method]])) as Omit<AIProviderApi, "onStatus">;
+}
+
+export type DesktopApi = Omit<DesktopInvokeApi, "lifecycle" | "ai" | "files" | "relations" | "compile" | "projects" | "companionChat" | "settings"> & {
+  settings: DesktopInvokeApi["settings"] & { onUpdate(listener: NonNullable<typeof desktopEvents.toRenderer.settingsChanged.signature>): () => void };
+  aiProviders: AIProviderApi;
+  companionChat: DesktopInvokeApi["companionChat"] & { onUpdate(listener: NonNullable<typeof desktopEvents.toRenderer.companionChatUpdate.signature>): () => void };
   projects: DesktopInvokeApi["projects"] & { onUpdate(listener: NonNullable<typeof desktopEvents.toRenderer.projectUpdate.signature>): () => void; onCleared(listener: NonNullable<typeof desktopEvents.toRenderer.projectsCleared.signature>): () => void };
   compile: DesktopInvokeApi["compile"] & { onUpdate(listener: NonNullable<typeof desktopEvents.toRenderer.compileUpdate.signature>): () => void };
   relations: DesktopInvokeApi["relations"] & { onUpdate(listener: NonNullable<typeof desktopEvents.toRenderer.relationUpdate.signature>): () => void };

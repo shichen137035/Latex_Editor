@@ -20,9 +20,11 @@ const descriptions: Record<keyof RelationAIAPI, { description: string; inputSche
   propose_reverse: { description: "Propose reversing a relation atomically, preserving its stable ID. The reversed graph must pass validation and explicit user approval.", inputSchema: object({ relationId: string, reason: string }, ["relationId"]) }
 };
 
+export const relationToolDefinitions = (Object.keys(descriptions) as Array<keyof RelationAIAPI>).map(method => ({ name: `relation_${method}`, ...descriptions[method] }));
+
 /** Providers share schemas and dispatch; approval/commit is a separate user adapter. */
 export function createRelationTools(api: RelationAIAPI, review?: (proposal: RelationProposal) => Promise<unknown>) {
-  const dynamicTools = (Object.keys(descriptions) as Array<keyof RelationAIAPI>).map(method => ({ name: `relation_${method}`, ...descriptions[method] }));
+  const dynamicTools = relationToolDefinitions;
   const toolHandlers = Object.fromEntries(dynamicTools.map(({ name }) => [name, async (input: Record<string, unknown>) => {
     try {
       const method = name.slice("relation_".length) as keyof RelationAIAPI;

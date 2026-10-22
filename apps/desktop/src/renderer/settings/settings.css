@@ -728,3 +728,11 @@
 .environment-settings > .toolchain-install-check small { display: block; font-weight: normal; color: var(--color-text-secondary); line-height: 1.5; }
 
 .codex-environment-settings code { display:block; overflow-wrap:anywhere; margin:8px 0; }
+
+.companion-skill-tabs { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 16px; }
+.companion-skill-tabs button { padding: 9px 14px; border: 1px solid var(--color-border); border-radius: 9px; background: var(--color-bg-subtle); color: var(--color-text-primary); cursor: pointer; }
+.companion-skill-tabs button.active { background: var(--color-primary); border-color: var(--color-primary); color: white; }
+.companion-skills-settings .ai-skills-layout { grid-template-columns: minmax(220px, 30%) minmax(0, 1fr); height: min(65vh, 680px); min-height: 360px; }
+.companion-skills-settings .ai-skills-list,.companion-skills-settings .ai-skills-editor { min-height: 0; overflow: auto; }
+.companion-skills-settings .ai-skill-select strong { width: 100%; white-space: normal; overflow-wrap: anywhere; }
+.companion-skills-settings .ai-skill-select small { overflow-wrap: anywhere; }

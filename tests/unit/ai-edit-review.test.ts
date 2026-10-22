@@ -192,13 +192,15 @@ describe("AI permission modes and interactive approvals", () => {
     await expect(second).resolves.toBe(false);
     expect(approvals.list()).toHaveLength(0);
   });
-  it("expires unanswered requests rather than leaving the provider stuck", async () => {
+  it("keeps unanswered approvals available until a person answers or stops the turn", async () => {
     vi.useFakeTimers();
     try {
       const approvals = new AIApprovalRequests(() => undefined);
       const pending = approvals.request({ conversationId: "chat", description: "Edit", paths: [] });
-      await vi.advanceTimersByTimeAsync(5 * 60_000);
-      await expect(pending).resolves.toBe(false);
+      await vi.advanceTimersByTimeAsync(30 * 60_000);
+      expect(approvals.list()).toHaveLength(1);
+      approvals.resolve(approvals.list()[0]!.id, true);
+      await expect(pending).resolves.toBe(true);
     } finally { vi.useRealTimers(); }
   });
 });

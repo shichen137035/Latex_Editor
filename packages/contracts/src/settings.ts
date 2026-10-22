@@ -194,6 +194,8 @@ export interface PreferenceValues {
   spellCheckMode: "auto" | "manual" | "disabled";
   spellCheckLanguage: string;
   spellCheckActiveLanguages: string[];
+  companionEnabled: boolean;
+  companionProvider: "chat" | "codex";
   maximize: boolean;
   restoreProject: boolean;
   sidePanelDisplay: "overlay" | "push";
@@ -213,7 +215,7 @@ export interface PreferenceValues {
 export type PreferenceKey = keyof PreferenceValues;
 export const preferenceDefaults: PreferenceValues = {
   fixedBlockNameLanguage: true, blockNameLanguage: "en", pdfFollowActiveTex: true,
-  locale: "en", theme: "light", themeDirectory: "", themeColorProfiles: {}, aiCodexExecutable: "", aiModel: "", aiCopilotModel: "", aiReasoningEffort: "", aiCopilotReasoningEffort: "", aiDefaultMode: "chat", aiPermissionMode: "auto", aiIncludeCurrentFile: false, aiShowTokenUsage: true, fontSize: 15, tabSize: 2, wordWrap: true, sourceMinimap: true,
+  companionEnabled: true, companionProvider: "chat", locale: "en", theme: "light", themeDirectory: "", themeColorProfiles: {}, aiCodexExecutable: "", aiModel: "", aiCopilotModel: "", aiReasoningEffort: "", aiCopilotReasoningEffort: "", aiDefaultMode: "chat", aiPermissionMode: "auto", aiIncludeCurrentFile: false, aiShowTokenUsage: true, fontSize: 15, tabSize: 2, wordWrap: true, sourceMinimap: true,
   autoSave: "off", autoSaveDelaySeconds: 3, hideBuildArtifacts: true, documentWordCompletion: true, autoPairSymbols: true, mathPreviewOnHover: false, showPreviewMetrics: false, autoEnvironmentLabels: true, confirmPreviewEdits: true, warnIncompatibleEnvironmentConversion: true, visibleFilterGroups: ["blockType", "location", "file", "properties"], referenceLinkModifier: "ctrl", spellCheckMode: "auto", spellCheckLanguage: "en-US", spellCheckActiveLanguages: ["en-US"], maximize: true, restoreProject: false,
   texLiveAutoInstall: true, lastProject: "", defaultProjectDirectory: "", engine: "pdflatex", keybindings: {}, environments: [], previewDirectives: defaultPreviewDirectives, layout: {}, sidePanelDisplay: "overlay", wheelAcceleration: defaultWheelAccelerationPreferences, images: defaultImagePreferences, tables: defaultTablePreferences, history: defaultHistoryPreferences
 };
@@ -340,13 +342,30 @@ export function validEnvironmentDefinitions(value: unknown): boolean {
   return new Set(ids).size === ids.length;
 }
 
+/** Shared GUI/automation schema for primitive settings; complex resources retain their validators. */
+export function primitivePreferenceSchema(key: string): Record<string, unknown> | undefined {
+  if (!Object.hasOwn(preferenceDefaults, key)) return undefined;
+  if (typeof preferenceDefaults[key as PreferenceKey] === "boolean") return { type: "boolean" };
+  switch (key) {
+    case "engine": return { type: "string", enum: ["pdflatex", "xelatex", "lualatex"] };
+    case "fontSize": return { type: "integer", minimum: 10, maximum: 32 };
+    case "tabSize": return { type: "integer", enum: [2, 4, 8] };
+    case "autoSave": return { type: "string", enum: ["off", "afterDelay"] };
+    case "autoSaveDelaySeconds": return { type: "integer", minimum: 1, maximum: 3600 };
+    default: return undefined;
+  }
+}
 export function validPreference(key: string, value: unknown): boolean {
+  const primitive = primitivePreferenceSchema(key);
+  if (primitive) return (primitive.type === "boolean" ? typeof value === "boolean" : primitive.type === "string" ? typeof value === "string" : typeof value === "number" && Number.isInteger(value))
+    && (!Array.isArray(primitive.enum) || primitive.enum.includes(value))
+    && (typeof primitive.minimum !== "number" || typeof value === "number" && value >= primitive.minimum)
+    && (typeof primitive.maximum !== "number" || typeof value === "number" && value <= primitive.maximum);
   switch (key) {
     case "locale": case "blockNameLanguage": return ["en", "ja", "zh-CN", "zh-TW", "ko", "fr", "kk"].includes(String(value));
     case "fixedBlockNameLanguage": return typeof value === "boolean";
     case "themeColorProfiles": return validThemeColorProfiles(value);
     case "theme": return typeof value === "string" && /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/.test(value);
-    case "engine": return ["pdflatex", "xelatex", "lualatex"].includes(String(value));
     case "spellCheckMode": return value === "auto" || value === "manual" || value === "disabled";
     case "sidePanelDisplay": return value === "overlay" || value === "push";
     case "wheelAcceleration": {
@@ -358,12 +377,8 @@ export function validPreference(key: string, value: unknown): boolean {
         && Number.isInteger(wheel.decayMs) && Number(wheel.decayMs) >= 150 && Number(wheel.decayMs) <= 1500;
     }
     case "spellCheckLanguage": return typeof value === "string" && /^[A-Za-z]{2,3}(?:[-_][A-Za-z0-9]{2,8})?$/.test(value);
-    case "fontSize": return typeof value === "number" && Number.isInteger(value) && value >= 10 && value <= 32;
-    case "tabSize": return typeof value === "number" && [2, 4, 8].includes(value);
-    case "autoSave": return value === "off" || value === "afterDelay";
-    case "autoSaveDelaySeconds": return typeof value === "number" && Number.isInteger(value) && value >= 1 && value <= 3600;
-    case "texLiveAutoInstall": case "pdfFollowActiveTex": case "wordWrap": case "sourceMinimap": case "hideBuildArtifacts": case "documentWordCompletion": case "autoPairSymbols": case "mathPreviewOnHover": case "showPreviewMetrics": case "autoEnvironmentLabels": case "confirmPreviewEdits": case "warnIncompatibleEnvironmentConversion": case "maximize": case "restoreProject": case "aiIncludeCurrentFile": case "aiShowTokenUsage": return typeof value === "boolean";
-    case "aiDefaultMode": return value === "chat" || value === "codex";
+    case "companionEnabled": case "texLiveAutoInstall": case "pdfFollowActiveTex": case "wordWrap": case "sourceMinimap": case "hideBuildArtifacts": case "documentWordCompletion": case "autoPairSymbols": case "mathPreviewOnHover": case "showPreviewMetrics": case "autoEnvironmentLabels": case "confirmPreviewEdits": case "warnIncompatibleEnvironmentConversion": case "maximize": case "restoreProject": case "aiIncludeCurrentFile": case "aiShowTokenUsage": return typeof value === "boolean";
+    case "aiDefaultMode": case "companionProvider": return value === "chat" || value === "codex";
     case "aiPermissionMode": return value === "ask" || value === "auto" || value === "full";
     case "referenceLinkModifier": return value === "ctrl" || value === "alt" || value === "shift" || value === "meta";
     case "spellCheckActiveLanguages": return Array.isArray(value) && value.every((item) => typeof item === "string" && /^[A-Za-z]{2,3}(?:[-_][A-Za-z0-9]{2,8})?$/.test(item));

@@ -1,3 +1,4 @@
+import { CompanionSkillsPanel } from "../companion/CompanionSkillsPanel.js";
 import type { SettingsPresetKind } from "@latex-editor/contracts";
 import { SettingsPresetDialog } from "./SettingsPresets.js";
 import { CodexEnvironmentSettings } from "./CodexEnvironmentSettings.js";
@@ -43,7 +44,7 @@ const managerDefinitions: Record<ManagerId, { category: SettingsCategory; title:
 };
 
 const categoryPreferences: Record<SettingsCategory, PreferenceKey[]> = {
-  general: ["autoSave", "autoSaveDelaySeconds", "hideBuildArtifacts", "restoreProject", "maximize", "sidePanelDisplay", "locale", "fixedBlockNameLanguage", "blockNameLanguage", "wheelAcceleration"],
+  general: ["companionEnabled", "autoSave", "autoSaveDelaySeconds", "hideBuildArtifacts", "restoreProject", "maximize", "sidePanelDisplay", "locale", "fixedBlockNameLanguage", "blockNameLanguage", "wheelAcceleration"],
   appearance: ["theme", "themeDirectory", "themeColorProfiles", "fontSize", "tabSize"],
   editor: ["wordWrap", "sourceMinimap", "autoPairSymbols", "mathPreviewOnHover", "showPreviewMetrics", "documentWordCompletion", "autoEnvironmentLabels", "confirmPreviewEdits", "warnIncompatibleEnvironmentConversion", "spellCheckMode", "spellCheckLanguage", "spellCheckActiveLanguages", "keybindings", "referenceLinkModifier"],
   filter: ["visibleFilterGroups"],
@@ -83,6 +84,7 @@ const searchEntries: Array<{ id: string; category: SettingsCategory; level: Sett
   { id: "pdfFollowActiveTex", category: "projectBuild", level: "basic", titleKey: "settings.pdfFollowActiveTex", keywords: ["pdf", "preview", "switch", "document"] },
   { id: "toolchain", category: "applicationBuild", level: "manager", manager: "toolchain", titleKey: managerDefinitions.toolchain.title, keywords: managerDefinitions.toolchain.keywords },
   { id: "projectCache", category: "applicationBuild", level: "advanced", titleKey: "settings.projectCacheClear", keywords: ["cache", "clear", "registry", "cleanup", "build"] },
+  { id: "companionEnabled", category: "general", level: "basic", titleKey: "settings.companionEnabled", keywords: ["pet", "companion", "assistant"] },
   { id: "aiShowTokenUsage", category: "ai", level: "basic", titleKey: "settings.aiShowTokenUsage", keywords: ["tokens", "usage", "display"] },
   { id: "aiDefaultMode", category: "ai", level: "basic", titleKey: "settings.aiDefaultMode", keywords: ["copilot", "codex"] },
   { id: "aiPermissionMode", category: "ai", level: "basic", titleKey: "settings.aiPermissionMode", keywords: ["permission", "access"] },
@@ -227,7 +229,7 @@ function SpellCheckPreferencesPanel({ store, scope }: { store: ReturnType<typeof
   </SettingGroup>;
 }
 
-function SpellCheckSettingsPanel({ store, toolbarTarget }: { store: ReturnType<typeof useSettings>; toolbarTarget?: HTMLElement | null }) {
+function SpellCheckSettingsPanel({ store, toolbarTarget }: { store: ReturnType<typeof useSettings>; toolbarTarget?: HTMLElement | null | undefined }) {
   const [status, setStatus] = useState<SpellCheckStatus>();
   const [catalog, setCatalog] = useState<DictionaryPackage[]>([]);
   const [query, setQuery] = useState("");
@@ -289,7 +291,7 @@ function ThemeBasicSettingsPanel({ store, scope, children }: { store: ReturnType
   </SettingGroup>;
 }
 
-function ThemeSettingsPanel({ store, showActiveTheme = true, toolbarTarget }: { store: ReturnType<typeof useSettings>; showActiveTheme?: boolean; toolbarTarget?: HTMLElement | null }) {
+function ThemeSettingsPanel({ store, showActiveTheme = true, toolbarTarget }: { store: ReturnType<typeof useSettings>; showActiveTheme?: boolean; toolbarTarget?: HTMLElement | null | undefined }) {
   const [themes, setThemes] = useState<ThemeDefinition[]>([]);
   const [directory, setDirectory] = useState("");
   const [busy, setBusy] = useState(false);
@@ -348,7 +350,20 @@ function ThemeSettingsPanel({ store, showActiveTheme = true, toolbarTarget }: { 
   </div>;
 }
 
-function AISkillsSettingsPanel({ onEditingChange, toolbarTarget }: { onEditingChange(editing: boolean): void; toolbarTarget?: HTMLElement | null }) {
+function AISkillsSettingsPanel({ onEditingChange, onCompanionChange, toolbarTarget }: { onEditingChange(editing: boolean): void; onCompanionChange(active: boolean): void; toolbarTarget?: HTMLElement | null | undefined }) {
+  const [mode, setMode] = useState<"project" | "companion">("project");
+  const [dirty, setDirty] = useState(false);
+  useEffect(() => { onEditingChange(dirty); }, [dirty, onEditingChange]);
+  useEffect(() => { onCompanionChange(mode === "companion"); return () => onCompanionChange(false); }, [mode, onCompanionChange]);
+  return <><div className="companion-skill-tabs" role="tablist" aria-label={t("settings.aiSkills")}>
+    {(["project", "companion"] as const).map(value => <button type="button" role="tab" key={value} aria-selected={mode === value} aria-controls="skill-scope-panel" className={mode === value ? "active" : ""} onClick={() => {
+      if (value === mode || dirty && !window.confirm(t("settings.managerUnsavedConfirm"))) return;
+      setDirty(false); setMode(value);
+    }}>{t(value === "project" ? "settings.aiSkillsTitle" : "companionSkills.title")}</button>)}
+  </div><div id="skill-scope-panel" role="tabpanel">{mode === "project" ? <ProjectSkillsSettingsPanel onEditingChange={setDirty} toolbarTarget={toolbarTarget}/> : <CompanionSkillsPanel onEditingChange={setDirty} toolbarTarget={toolbarTarget}/>}</div></>;
+}
+
+function ProjectSkillsSettingsPanel({ onEditingChange, toolbarTarget }: { onEditingChange(editing: boolean): void; toolbarTarget?: HTMLElement | null | undefined }) {
   const [skills, setSkills] = useState<AIProjectSkill[]>([]);
   const [selectedName, setSelectedName] = useState("");
   const [name, setName] = useState("");
@@ -462,6 +477,7 @@ export function SettingsDialog({ onClose, initial = "general" }: { onClose(): vo
   const [presetKind, setPresetKind] = useState<SettingsPresetKind>();
   const [managerRevision, setManagerRevision] = useState(0);
   const [managerDirty, setManagerDirty] = useState(false);
+  const [companionSkillsActive, setCompanionSkillsActive] = useState(false);
   const [environmentToolbarTarget, setEnvironmentToolbarTarget] = useState<HTMLDivElement | null>(null);
   const [directiveToolbarTarget, setDirectiveToolbarTarget] = useState<HTMLDivElement | null>(null);
   const [toolchainToolbarTarget, setToolchainToolbarTarget] = useState<HTMLDivElement | null>(null);
@@ -538,7 +554,7 @@ export function SettingsDialog({ onClose, initial = "general" }: { onClose(): vo
     if (category === "general") return <div className="settings-page"><h2>{t("settings.category.general")}</h2>
             {level === "basic" && <SettingGroup title={t("settings.group.generalBasics")}>
         {row("autoSave", "settings.autoSave", [["off", "settings.off"], ["afterDelay", "settings.afterDelay"]])}{row("autoSaveDelaySeconds", "settings.autoSaveDelaySeconds", undefined, true, { min: 1, max: 3600 })}{row("hideBuildArtifacts", "settings.hideBuildArtifacts")}{row("restoreProject", "settings.restore")}{row("maximize", "settings.maximize")}
-        {row("sidePanelDisplay", "settings.sidePanelDisplay", [["overlay", "settings.sidePanelOverlay"], ["push", "settings.sidePanelPush"]])}{row("locale", "settings.language")}
+        {row("companionEnabled", "settings.companionEnabled")}{row("sidePanelDisplay", "settings.sidePanelDisplay", [["overlay", "settings.sidePanelOverlay"], ["push", "settings.sidePanelPush"]])}{row("locale", "settings.language")}
       </SettingGroup>}
       {level === "basic" && <SettingGroup title={t("settings.blockNames")}><p>{t("settings.blockNamesHint")}</p>{row("fixedBlockNameLanguage", "settings.fixedBlockNameLanguage")}{row("blockNameLanguage", "settings.blockNameLanguage")}</SettingGroup>}
       <WheelAccelerationSettingsPanel store={store} scope={scope} level={level}/>
@@ -562,7 +578,7 @@ export function SettingsDialog({ onClose, initial = "general" }: { onClose(): vo
     if (manager === "previewCommands") return <DirectiveManager definitions={includeNewBuiltInDirectives(configuredDirectives)} onChange={(next) => void store.set("previewDirectives", next, scope)} toolbarTarget={directiveToolbarTarget}/>;
     if (manager === "styleResources") return <StyleResourcesManager toolbarTarget={null}/>;
     if (manager === "toolchain") return <LatexToolchainSettingsPanel store={store} toolbarTarget={toolchainToolbarTarget}/>;
-    return <AISkillsSettingsPanel onEditingChange={setManagerDirty} toolbarTarget={aiSkillsToolbarTarget}/>;
+    return <AISkillsSettingsPanel onEditingChange={setManagerDirty} onCompanionChange={setCompanionSkillsActive} toolbarTarget={aiSkillsToolbarTarget}/>;
   };
 
   useEffect(() => {
@@ -586,7 +602,7 @@ export function SettingsDialog({ onClose, initial = "general" }: { onClose(): vo
         {manager === "themes" && <h1 className="settings-manager-dialog-title">{t("settings.theme")}</h1>}
         {manager === "dictionaries" && <h1 className="settings-manager-dialog-title">{t("settings.spellcheck")}</h1>}
         {manager === "shortcuts" && <h1 className="settings-manager-dialog-title">{t("settings.manager.shortcuts")}</h1>}
-        {manager === "aiSkills" && <h1 className="settings-manager-dialog-title">{t("settings.aiSkillsTitle")}</h1>}
+        {manager === "aiSkills" && <h1 className="settings-manager-dialog-title">{t("settings.aiSkills")}</h1>}
         {manager === "blockEnvironments" && <h1 className="settings-manager-dialog-title">{t("environment.manager")}</h1>}
         {manager === "previewCommands" && <h1 className="settings-manager-dialog-title">{t("settings.manager.previewCommands")}</h1>}
         {manager === "toolchain" && <h1 className="settings-manager-dialog-title">{t("settings.localToolchain")}</h1>}
@@ -597,7 +613,7 @@ export function SettingsDialog({ onClose, initial = "general" }: { onClose(): vo
         {manager === "dictionaries" && <div className="settings-manager-header-tools"><div className="manager-toolbar-portal" ref={setDictionaryToolbarTarget}/></div>}
         {manager === "shortcuts" && <div className="settings-manager-header-tools">{projectScopeAvailable && <select aria-label={t("settings.scope")} value={scope} onChange={(event) => setScope(event.target.value as "global" | "project")}><option value="global">{t("settings.global")}</option><option value="project">{t("settings.project")}</option></select>}</div>}
         {manager === "aiSkills" && <div className="settings-manager-header-tools"><div className="manager-toolbar-portal" ref={setAiSkillsToolbarTarget}/></div>}
-        {manager !== "styleResources" && manager !== "toolchain" && <button type="button" className="manager-presets-button" title={t("settingsPresets.title")} onClick={() => { if (!managerDirty || window.confirm(t("settings.managerUnsavedConfirm"))) setPresetKind(manager); }}>{t("settingsPresets.title")}</button>}
+        {manager !== "styleResources" && manager !== "toolchain" && !(manager === "aiSkills" && companionSkillsActive) && <button type="button" className="manager-presets-button" title={t("settingsPresets.title")} onClick={() => { if (!managerDirty || window.confirm(t("settings.managerUnsavedConfirm"))) setPresetKind(manager); }}>{t("settingsPresets.title")}</button>}
       </header>
       <main className={`settings-manager-dialog-main${manager === "blockEnvironments" ? " settings-manager-environments" : manager === "previewCommands" ? " settings-manager-directives" : manager === "styleResources" ? " settings-manager-style-resources" : manager === "shortcuts" ? " settings-manager-shortcuts" : ""}`} ref={mainRef}>
         <div className="settings-manager-page" key={managerRevision}>

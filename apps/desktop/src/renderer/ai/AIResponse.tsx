@@ -6,6 +6,7 @@ import { settings } from "../settings/service.js";
 import { AIMessageContent } from "./AIMessageContent.js";
 import { AIReasoning } from "./AIReasoning.js";
 import { groupAdjacentReasoningParts } from "./responseParts.js";
+import { AIOperations } from "./AIOperations.js";
 
 export const AIResponse = memo(function AIResponse({ message, projectRoot, mathContext, onOpenFile }: { message: AIMessage; projectRoot: string; mathContext?: MathContext; onOpenFile?: ((path: string, line?: number) => void) | undefined }) {
   useSyncExternalStore(settings.subscribe, getLocale, getLocale);
@@ -20,17 +21,18 @@ export const AIResponse = memo(function AIResponse({ message, projectRoot, mathC
       {tail && <div className="ai-message-content"><AIMessageContent {...common} content={tail}/></div>}
       <AIReasoning {...common} message={{ ...message, reasoning: [] }}/>
     </> : <><AIReasoning {...common} message={message}/>{message.content && <div className="ai-message-content"><AIMessageContent {...common} content={message.content}/></div>}</>}
+    {!!message.operations?.length && <AIOperations reports={message.operations}/>}
     <AIWorkTime message={message}/>
     <AITokenCount message={message}/>
   </>;
 });
 
 function AITokenCount({ message }: { message: AIMessage }) {
-  const visible = useSyncExternalStore(settings.subscribe, () => settings.global("aiShowTokenUsage"));
+  const visible = useSyncExternalStore(settings.subscribe, () => settings.global("aiShowTokenUsage"), () => settings.global("aiShowTokenUsage"));
   if (!visible || !message.tokenUsage) return null;
   const format = (value: number) => `${new Intl.NumberFormat(getLocale(), { minimumFractionDigits: 1, maximumFractionDigits: 2 }).format(value / 1000)}k`;
   const usage = message.tokenUsage;
-  return <small className="ai-token-usage" title={t("ai.tokenUsageDetails", { input: format(usage.inputTokens), output: format(usage.outputTokens) })}>{t("ai.tokenUsage", { count: format(usage.totalTokens) })}</small>;
+  return <small className="ai-token-usage" title={t("ai.tokenUsageDetails", { input: format(usage.inputTokens), output: format(usage.outputTokens) })}>{t("ai.tokenUsage", { count: format(usage.totalTokens) })}{usage.cachedInputTokens !== undefined && <><br/>{t("ai.tokenUsageBreakdown", { input: format(usage.inputTokens), cached: format(usage.cachedInputTokens), output: format(usage.outputTokens) })}</>}</small>;
 }
 
 function AIWorkTime({ message }: { message: AIMessage }) {

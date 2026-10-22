@@ -6,6 +6,11 @@ function withBindings(overrides: Partial<Record<CommandId, string>> = {}): Recor
 }
 
 describe("v0.6.2.3 shortcut conflict model", () => {
+  it("offers configurable application-wide T for companion chat", () => {
+    expect(commandCatalog["companion.chat"]).toMatchObject({ context: "global", defaultBinding: "T" });
+    expect(analyzeBindingConflicts("companion.chat", "T", withBindings())).toEqual([]);
+    for (const context of ["directory", "workspace", "dialog"]) expect(resolveBindingSequence("T", "global", context).commandId).toBe("companion.chat");
+  });
   it("offers configurable F1 interface help on home, editors and dialogs", () => {
     expect(commandCatalog["help.toggle"]).toMatchObject({ context: "global", defaultBinding: "F1" });
     expect(analyzeBindingConflicts("help.toggle", "F1", withBindings())).toEqual([]);

@@ -108,7 +108,7 @@ async function verify() {
     }
   }
   if ([...entries].some(entry => entry.includes("test-support/"))) throw new Error("Development test support was included in the package.");
-  for (const relativePath of ["resources/resources/commands/latex-commands.json", "resources/resources/environments/preview-environments.json", "resources/resources/ai/skills/latex-project/SKILL.md"]) requireFile(path.join(appDirectory, relativePath), "runtime resource");
+  for (const relativePath of ["resources/resources/capabilities/registry-v1.sqlite", "resources/resources/commands/latex-commands.json", "resources/resources/environments/preview-environments.json", "resources/resources/ai/skills/latex-project/SKILL.md"]) requireFile(path.join(appDirectory, relativePath), "runtime resource");
   for (const id of ["default", "light", "empty"]) {
     const directory = path.join(appDirectory, "resources/resources/style-resources/built-in", id);
     requireFile(path.join(directory, "resource.json"), "built-in style manifest");

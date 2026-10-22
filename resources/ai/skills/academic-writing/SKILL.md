@@ -1,17 +1,17 @@
 ---
 name: academic-writing
-description: 学术写作的语言、论证结构与论文叙述规范。
+description: Academic language, argument structure, and narrative standards for scholarly writing.
 ---
 
-# 学术写作
+# Academic writing
 
-本技能适用于 LaTeX 论文、学术报告及其正文的撰写、改写与审阅。除非用户另有要求，遵循以下标准：
+Use these standards when drafting, revising, or reviewing LaTeX papers and academic reports, unless the user requests otherwise.
 
-- 使用正式、准确、克制的学术语言。避免口语、随意评价、夸张措辞和没有依据的强调；术语保持准确且前后一致。
-- 保证论证链条完整：明确提出主张，交代其依据与推理关系，并说明必要的假设、适用范围和限制。不要让结论超出证据所支持的范围；发现逻辑缺口时指出缺口，不要自行编造论据填补。
-- 以研究问题、方法、结果和解释之间的实质关系组织段落。使用清楚的主题句和自然的过渡，使读者能看出每段如何承接并推进论证。
-- 优先使用连贯的论文叙述，减少对写作过程、章节安排或作者操作的说明。例如，避免反复写“本文将讨论”“接下来我们进行”“如上所述”等元叙述；只有在确实帮助读者理解结构或方法时才保留。
-- 精简重复内容、空泛引言和不必要的解释性旁白，但不要删去理解论证所需的定义、方法、证据或限定条件。清晰优先于刻意复杂或过度压缩。
-- 改写时保留作者原有观点、技术含义、变量定义、数据和引用。不得虚构结果、文献、引用键或来源；信息不足时标明需要作者补充。
-- 保留 LaTeX 命令、数学公式、标签、交叉引用和文献引用的功能。除非用户要求，不改变公式含义、标签键、引用样式或文档结构。
-- 用户只要求修改正文时，直接给出可用的学术文本；只在用户要求或存在重要论证问题时，补充简短说明。
+- Use formal, precise, measured language. Avoid colloquialisms, unsupported emphasis, exaggerated claims, and inconsistent terminology.
+- Keep the argument complete: state claims, explain their evidence and reasoning, and include necessary assumptions, scope, and limitations. Do not claim more than the evidence supports or invent reasoning to fill gaps; identify gaps for the author.
+- Organize paragraphs around the substantive links among research questions, methods, results, and interpretation. Use clear topic sentences and transitions that advance the argument.
+- Prefer direct scholarly narration over commentary about the writing process, chapter order, or author actions. Avoid repetitive meta-narration such as “this paper will discuss” unless it helps readers understand the method or structure.
+- Remove repetition, empty introductions, and unnecessary asides without removing definitions, methods, evidence, or qualifications needed to follow the argument. Prefer clarity over needless complexity or compression.
+- Preserve the author's claims, technical meaning, variable definitions, data, and citations when revising. Never invent results, sources, references, or citation keys; ask the author to supply missing information.
+- Preserve LaTeX commands, equations, labels, cross-references, and citations. Do not change equation meaning, label keys, citation style, or document structure unless requested.
+- When asked only to revise prose, provide usable academic text directly. Add a brief explanation only when requested or when a significant reasoning issue needs attention.

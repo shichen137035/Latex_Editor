@@ -19,3 +19,7 @@ esbuild.buildSync({
   sourcemap: false,
   legalComments: "none"
 });
+
+// The same build step serves normal starts, hot reload, packaging and desktop checks.
+const result = require("node:child_process").spawnSync(process.execPath, [path.join(__dirname, "build-capabilities.cjs")], { cwd: root, stdio: "inherit", env: { ...process.env, ELECTRON_RUN_AS_NODE: "1" } });
+if (result.error || result.status !== 0) throw result.error ?? new Error("Capability registry generation failed");

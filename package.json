@@ -1,6 +1,6 @@
 {
   "name": "latex-editor",
-  "version": "0.6.7",
+  "version": "0.7.0",
   "main": "apps/desktop/dist/main/index.js",
   "private": true,
   "author": "Shi Chen",
@@ -32,6 +32,7 @@
     "test:cli": "node tests/validate-catalog.mjs && vitest run --project cli-e2e",
     "test:debug": "node tests/validate-catalog.mjs && vitest run --reporter=verbose --no-file-parallelism",
     "resources:validate": "tsx apps/cli/src/index.ts resources validate",
+    "capabilities:build": "tsc -b apps/desktop/tsconfig.main.json --pretty false && node apps/desktop/scripts/build-capabilities.cjs",
     "doctor": "tsx apps/cli/src/index.ts doctor",
     "cli": "tsx apps/cli/src/index.ts",
     "clean:build": "node apps/desktop/scripts/clean-build.cjs",

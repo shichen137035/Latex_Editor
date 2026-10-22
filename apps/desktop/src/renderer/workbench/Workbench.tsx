@@ -1,4 +1,5 @@
 import { buildOutline } from "./outline.js";
+import { useExternalFiles } from "./useExternalFiles.js";
 import { readWorkspacePosition, writeWorkspacePosition } from "./workspacePosition.js";
 import { toolchainReadiness } from "../settings/toolchainReadiness.js";
 import { startSnapshotTimer } from "./snapshotTimer.js";
@@ -23,7 +24,7 @@ import { NavigationHistory } from "./NavigationHistory.js";
 import { ProjectReferenceIndex } from "../editor/ProjectReferenceIndex.js";
 import { automaticHunkIds } from "../ai/changeOperations.js";
 import { groupChangeReports } from "../ai/changeReports.js";
-import type { EnvironmentDefinition } from "../preview/types.js";
+import type { EnvironmentDefinition, SourceSpan } from "../preview/types.js";
 import type { CompletionController } from "../completion/CompletionController.js";
 import type { SpellCheckController, SpellContextRequest } from "../spellcheck/SpellCheckController.js";
 import { toolbarInsertion } from "./toolbarInsertion.js";
@@ -415,13 +416,29 @@ export function Workbench({ project, projects, environments, onHome, onSwitch, o
     window.addEventListener("texweave:file-context", handleFileContext);
     return () => window.removeEventListener("texweave:file-context", handleFileContext);
   }, []);
+  const externalFiles = useExternalFiles({ api, projectId: project.id, tabs, tabsRef, savedContents, setTabs,
+    onBaselineChange: path => workingDocuments.resetFile(path),
+    hasDraft: () => unsavedChanges.hasDraftChanges(), onError: setBlockNotice,
+    onReload: (path, content) => {
+      editHistory.current.forgetFile(path); completionController.current?.invalidate();
+      updateSavedSearchDocument(path, content);
+      setSaveState(tabsRef.current.some(tab => tab.dirty) ? "unsaved" : "saved");
+    }
+  });
+  const resolveExternalFile = async (path: string, keepLocal: boolean) => {
+    if (unsavedChanges.hasDraftChanges()) { setBlockNotice(t("externalFiles.finishDraft")); return; }
+    if (tabsRef.current.find(tab => tab.path === path)?.dirty && !window.confirm(t(keepLocal ? "externalFiles.confirmKeep" : "externalFiles.confirmReload", { path }))) return;
+    try { await externalFiles.resolve(path, keepLocal); setSaveState(tabsRef.current.some(tab => tab.dirty) ? "unsaved" : "saved"); }
+    catch (error) { setBlockNotice(error instanceof Error ? error.message : String(error)); }
+  };
   const refreshTree = useCallback(async () => {
     if (!api) return undefined;
     const request = ++treeRefreshSequence.current;
+    await externalFiles.sync(true);
     const nextTree = await api.files.tree(project.id);
     if (request === treeRefreshSequence.current) setTree(nextTree);
     return nextTree;
-  }, [api, project.id]);
+  }, [api, project.id, externalFiles.sync]);
   useEffect(() => {
     const handleFileDrop = (event: Event) => {
       const detail = (event as CustomEvent<FileDropDetail>).detail;
@@ -549,11 +566,19 @@ export function Workbench({ project, projects, environments, onHome, onSwitch, o
 
   const workingDocuments = useWorkingDocuments({ api, projectId: project.id, tabs, tabsRef, savedContents, activePath,
     configuration: previewEnvironments, directives: store.get("previewDirectives"), onSnapshot: setBlockSnapshot,
-    onSemanticIds: setPreviewSemanticIds, onError: setBlockNotice });
+    onSemanticIds: setPreviewSemanticIds, onError: message => {
+      if (message.includes("saved file changed outside this editor")) {
+        void externalFiles.sync(true).catch(error => setBlockNotice(error instanceof Error ? error.message : String(error)));
+      } else setBlockNotice(message);
+    } });
   const { saveTabs, saveActive, saveAll, leaveProject, switchProject } = createProjectSessionController({
     api, project, tabs, activePath, tabsRef, savedContents, editHistory, completionController,
     setTabs, setSaveState, onHome, onSwitch, flushDocuments: workingDocuments.sync, releaseDocuments: workingDocuments.close, onSaveError: setBlockNotice,
-    onSaved: (path, content) => updateSavedSearchDocument(path, content)
+    onSaved: (path, content) => updateSavedSearchDocument(path, content),
+    beforeSave: async paths => {
+      await externalFiles.sync();
+      if (externalFiles.conflicts().some(conflict => paths.includes(conflict.path))) throw new Error(t("externalFiles.saveBlocked"));
+    }
   });
   const { compile, exportSourceArchive, exportMainSourceArchive, exportPdf } = createDocumentActions({
     api, project, activePath: pdfDocuments.sourceTarget ?? activePath, tree, compileState, saveActive,
@@ -1096,7 +1121,7 @@ export function Workbench({ project, projects, environments, onHome, onSwitch, o
     const edits = changes?.map((change) => ({ start: change.from, end: change.to, newLength: change.insertedText.length }));
     changeDocument(activePath, next, false, edits, true, true, changes);
   };
-  const previewProps = { getOpenDocuments: () => tabsRef.current.map(tab => ({ path: tab.path, content: tab.content })), filePath: activeTab?.path, source: activeTab?.content, sourceTransaction: previewSourceTransaction.current, definitions: previewEnvironments, mathContext, filterQuery, searchQuery, searchResults: searchResponse.results, activeSearchResult, highlightRange: createdBlockHighlight, locateRequest: previewRequest, restoreOffset: activeTab ? previewPositions.current.get(activeTab.path)?.offset ?? sourcePositions.current.get(activeTab.path)?.offset : undefined, restoreScrollTop: activeTab ? previewPositions.current.get(activeTab.path)?.scrollTop : undefined, onLocated: (nonce: number) => setNavigationRequest((current) => current?.nonce === nonce ? undefined : current), onHighlightLocated: (nonce: number) => setCreatedBlockHighlight((current) => current?.nonce === nonce ? undefined : current), relation: blockSnapshot ? { active: relationModeActive && relationDocumentFiltered, snapshot: blockSnapshot, transientToBlockId: previewSemanticIds, focusId: relationFocusId, direction: relationDirection, matchIds: relationProjection.matchIds, contextIds: relationProjection.contextIds, locateRequest: relationLocateRequest, onLocated: (nonce: number) => setRelationLocateRequest((current) => current?.nonce === nonce ? undefined : current), onFocus: focusRelationBlock, onToggle: toggleRelation } : undefined, onSourceChange: applyPreviewSourceChange, onSelectionChange: setPreviewSelection, onSelectionContextMenu: (selection: DocumentSelection, x: number, y: number) => { setPreviewSelection(selection); setBlockContext({ selection, x, y }); }, onViewportAnchorChange: trackPreviewViewport, onClickSourcePosition: trackPreviewClick, resolveReference, onJumpFromPosition: (anchor: { fileId: string; offset: number; targetOffset: number; linkText: string; targetLabel: string }) => jumpToReference(anchor, "preview"), onPasteImage: project.writable ? (offset: number) => pasteImage(undefined, true, offset) : undefined, onFigureChange: project.writable ? changePreviewFigure : undefined, onFigureSelect: (selection?: FigureSelection) => { if (selection) { setInspectorBlock(undefined); setTableSelection(undefined); } setFigureSelection(selection); }, onFigureSlotSelect: (selection: FigureSelection) => { if (!project.writable) return; setInspectorBlock(undefined); setTableSelection(undefined); setFigureSelection(selection); setImageDialog({ kind: "replace", selection, imageIndex: selection.imageIndex ?? 0 }); }, onTableSelect: (selection?: TableSelection) => { if (selection) { setInspectorBlock(undefined); setFigureSelection(undefined); } setTableSelection(selection); }, onTableChange: applyPreviewTableChange, api, projectId: project.id, tree, onSpellContextMenu: setSpellContextMenu, onDetectedLanguage: setDetectedSpellLanguage, onForwardSync: forwardSyncToPdf };
+  const previewProps = { getOpenDocuments: () => tabsRef.current.map(tab => ({ path: tab.path, content: tab.content })), filePath: activeTab?.path, source: activeTab?.content, sourceTransaction: previewSourceTransaction.current, definitions: previewEnvironments, mathContext, filterQuery, searchQuery, searchResults: searchResponse.results, activeSearchResult, highlightRange: createdBlockHighlight, locateRequest: previewRequest, restoreOffset: activeTab ? previewPositions.current.get(activeTab.path)?.offset ?? sourcePositions.current.get(activeTab.path)?.offset : undefined, restoreScrollTop: activeTab ? previewPositions.current.get(activeTab.path)?.scrollTop : undefined, onLocated: (nonce: number) => setNavigationRequest((current) => current?.nonce === nonce ? undefined : current), onHighlightLocated: (nonce: number) => setCreatedBlockHighlight((current) => current?.nonce === nonce ? undefined : current), relation: blockSnapshot ? { active: relationModeActive && relationDocumentFiltered, snapshot: blockSnapshot, transientToBlockId: previewSemanticIds, focusId: relationFocusId, direction: relationDirection, matchIds: relationProjection.matchIds, contextIds: relationProjection.contextIds, locateRequest: relationLocateRequest, onLocated: (nonce: number) => setRelationLocateRequest((current) => current?.nonce === nonce ? undefined : current), onFocus: focusRelationBlock, onToggle: toggleRelation } : undefined, onSourceChange: applyPreviewSourceChange, onSelectionChange: setPreviewSelection, onSelectionContextMenu: (selection: DocumentSelection, x: number, y: number) => { setPreviewSelection(selection); setBlockContext({ selection, x, y }); }, onViewportAnchorChange: trackPreviewViewport, onClickSourcePosition: trackPreviewClick, onLocateDiagnostic: (source: SourceSpan) => { void navigateTo(source.filePath, { offset: source.startOffset }, "source"); }, resolveReference, onJumpFromPosition: (anchor: { fileId: string; offset: number; targetOffset: number; linkText: string; targetLabel: string }) => jumpToReference(anchor, "preview"), onPasteImage: project.writable ? (offset: number) => pasteImage(undefined, true, offset) : undefined, onFigureChange: project.writable ? changePreviewFigure : undefined, onFigureSelect: (selection?: FigureSelection) => { if (selection) { setInspectorBlock(undefined); setTableSelection(undefined); } setFigureSelection(selection); }, onFigureSlotSelect: (selection: FigureSelection) => { if (!project.writable) return; setInspectorBlock(undefined); setTableSelection(undefined); setFigureSelection(selection); setImageDialog({ kind: "replace", selection, imageIndex: selection.imageIndex ?? 0 }); }, onTableSelect: (selection?: TableSelection) => { if (selection) { setInspectorBlock(undefined); setFigureSelection(undefined); } setTableSelection(selection); }, onTableChange: applyPreviewTableChange, api, projectId: project.id, tree, onSpellContextMenu: setSpellContextMenu, onDetectedLanguage: setDetectedSpellLanguage, onForwardSync: forwardSyncToPdf };
   const anchoredPreviewProps = { ...previewProps, onInsertionAnchorChange: trackPreviewInsertion, showWhitespace: showSourceWhitespace };
   const bibPreview = activeTab?.path.toLocaleLowerCase().endsWith(".bib") ? <BibtexPreviewPane source={activeTab.content} filePath={activeTab.path} projectId={project.id} documents={searchDocuments} restoreScrollTop={previewPositions.current.get(activeTab.path)?.scrollTop} onScrollPositionChange={(scrollTop) => { if (activePathRef.current === activeTab.path) previewPositions.current.set(activeTab.path, { offset: 0, scrollTop }); }} onSourceChange={setEditorContent} onLocate={({ filePath, offset }) => {
     void navigateTo(filePath, { offset }, filePath === activePath ? "source" : "preserve");
@@ -1117,6 +1142,7 @@ export function Workbench({ project, projects, environments, onHome, onSwitch, o
     {nameRequest && createPortal(<EntryNameInput message={nameRequest.message} fallback={nameRequest.fallback} finish={(value) => { nameRequest.resolve(value); setNameRequest(undefined); }}/>, document.querySelector(".file-tree") ?? document.body)}
     {boundaryRepair && <div className="block-repair-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget) setBoundaryRepair(undefined); }}><section className="block-repair-popover" role="dialog" aria-modal="true" aria-label={t("block.repairTitle")}><strong>{t("block.partialOverlap", { block: boundaryRepair.conflictName })}</strong><p>{t("block.repairHint")}</p><div>{boundaryRepair.candidates.map((candidate) => <button key={`${candidate.kind}:${candidate.range.start}:${candidate.range.end}`} onClick={() => void createUserBlockAtRange(candidate.range).catch((error: unknown) => setBlockNotice(error instanceof Error ? error.message : String(error)))}>{t(`block.${candidate.kind}`)}</button>)}<button onClick={() => setBoundaryRepair(undefined)}>{t("project.cancel")}</button></div></section></div>}
     {blockNotice && <div className="block-notice" role="status">{blockNotice}</div>}
+    {externalFiles.pending.length > 0 && <section className="external-file-notice" role="alert"><strong>{t("externalFiles.title")}</strong>{externalFiles.pending.map(conflict => <div key={conflict.path}><p>{t(conflict.missing ? "externalFiles.missing" : "externalFiles.conflict", { path: conflict.path })}</p>{!conflict.missing && <><button onClick={() => void resolveExternalFile(conflict.path, false)}>{t("externalFiles.reload")}</button><button onClick={() => void resolveExternalFile(conflict.path, true)}>{t("externalFiles.keep")}</button></>}</div>)}</section>}
     {store.snapshot().toolchain && !toolchainReadiness(store.snapshot().toolchain, store.get("engine")).ready && <aside className="toolchain-workbench-guidance" role="status"><span>{t("toolchainGuide.required", { tools: toolchainReadiness(store.snapshot().toolchain, store.get("engine")).missing.join(", ") })}</span><button data-toolchain-open onClick={() => { setSettingsInitial("compiler"); setSettingsOpen(true); }}>{t("toolchainGuide.configure")}</button></aside>}
     {relationChooser && createPortal(<><div className="relation-chooser-dismiss" onMouseDown={() => setRelationChooser(undefined)}/><div className="relation-direction-chooser" role="dialog" style={{ left: Math.min(relationChooser.x, window.innerWidth - 230), top: Math.min(relationChooser.y, window.innerHeight - 110) }}><button disabled={!!chooserPrerequisiteState?.disabledReason} title={chooserPrerequisiteState?.disabledReason ? t(`relation.invalid.${chooserPrerequisiteState.disabledReason}`) : undefined} onClick={() => void mutateRelation(relationChooser.candidateId, "prerequisite").catch((error: unknown) => setBlockNotice(error instanceof Error ? error.message : String(error)))}>+{t("relation.addPrerequisite")}</button><button onClick={() => void mutateRelation(relationChooser.candidateId, "consequence").catch((error: unknown) => setBlockNotice(error instanceof Error ? error.message : String(error)))}>+{t("relation.addConsequence")}</button></div></>, document.body)}
     {relationGraphOpen && relationNeighborhood && createPortal(<RelationGraphView snapshot={blockSnapshot ?? emptyBlockSnapshot} definitions={previewEnvironments} neighborhood={relationNeighborhood} direction={relationDirection} depth={relationDepth} onDirection={setRelationDirection} onDepth={setRelationDepth} onFocus={(id) => { if (focusRelationBlock(id)) setRelationGraphFocusId(id); }} onLocate={(id) => { setRelationGraphOpen(false); void locateRelationBlock(id); }} onClose={() => setRelationGraphOpen(false)}/>, document.body)}
@@ -1133,7 +1159,7 @@ export function Workbench({ project, projects, environments, onHome, onSwitch, o
             {sidebarMode === "search" && <span ref={setSearchToolbarTarget} className="library-toolbar-target"/>}
             {sidebarMode === "library" && <span ref={setLibraryToolbarTarget} className="library-toolbar-target"/>}
             {sidebarMode === "history" && <span ref={setHistoryToolbarTarget} className="history-toolbar-target"/>}
-            {sidebarMode === "files" && <><button className="sidebar-section-toggle" aria-expanded={!layout.filesCollapsed} title={`${t(layout.filesCollapsed ? "blockOperation.expand" : "blockOperation.collapse")}: ${t("sidebar.files")}`} aria-label={`${t(layout.filesCollapsed ? "blockOperation.expand" : "blockOperation.collapse")}: ${t("sidebar.files")}`} onClick={() => setLayout(value => ({ ...value, filesCollapsed: !value.filesCollapsed }))}><Icon name="chevron"/></button><button onClick={() => void createEntry(false, "")} title={t("files.newFile")}><Icon name="plus"/></button><button onClick={() => { void refreshTree().catch((error: unknown) => setBlockNotice(error instanceof Error ? error.message : String(error))); }} title={t("sidebar.refresh")}><Icon name="refresh"/></button></>}
+            {sidebarMode === "files" && <><button className="sidebar-section-toggle" aria-expanded={!layout.filesCollapsed} title={`${t(layout.filesCollapsed ? "blockOperation.expand" : "blockOperation.collapse")}: ${t("sidebar.files")}`} aria-label={`${t(layout.filesCollapsed ? "blockOperation.expand" : "blockOperation.collapse")}: ${t("sidebar.files")}`} onClick={() => setLayout(value => ({ ...value, filesCollapsed: !value.filesCollapsed }))}><Icon name="chevron"/></button><button onClick={() => void createEntry(false, "")} title={t("files.newFile")}><Icon name="plus"/></button><button onClick={() => { void refreshTree().catch((error: unknown) => setBlockNotice(error instanceof Error ? error.message : String(error))); }} data-action="refresh-files" title={t("sidebar.refresh")}><Icon name="refresh"/></button></>}
             {sidebarMode === "relations" && <button className="relation-back" disabled={!relationFocusHistory.length} onClick={relationBack} title={t("relation.back")} aria-label={t("relation.back")}><Icon name="back"/></button>}
             <button className="sidebar-collapse-button" onClick={() => setLayout((value) => ({ ...value, sidebarVisible: false }))} title={t("sidebar.collapse")} aria-label={t("sidebar.collapse")}>‹</button>
           </div>

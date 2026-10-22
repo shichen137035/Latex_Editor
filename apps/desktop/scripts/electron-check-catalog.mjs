@@ -1,5 +1,6 @@
 /** One maintained index for desktop regression coverage and the release suite. */
 export const desktopChecks = [
+  { id: "companion", area: "settings", script: "electron/check-companion.cjs", summary: "Pet chat/drafts, shared accounts, SQLite capability catalog, verified setting report/Undo, themes and protected skills" },
   { id: "help-mode", area: "settings", script: "electron/check-help-mode.cjs", summary: "Home and workspace help, safe inspection, region tour, F1/Escape and cleanup" },
   { id: "codex-environment", area: "settings", script: "electron/check-codex-environment.cjs", summary: "Codex environment settings, install retry and missing-CLI action" },
   { id: "ai-connection", area: "ai", script: "electron/check-ai-connection.cjs", summary: "Provider discovery, fresh-profile initialization and signed-out UI", cleanCodexPath: true },
@@ -26,7 +27,7 @@ export const desktopChecks = [
   { id: "preview-caret", area: "preview", script: "electron/check-preview-caret.cjs", summary: "Visual text-to-source caret mapping and pending edit boundaries" },
   { id: "preview-navigation", area: "preview", script: "electron/check-preview-navigation.cjs", summary: "Search, reference navigation and position restoration" },
   { id: "preview-scroll", area: "preview", script: "electron/check-preview-scroll.cjs", summary: "Stable scroll anchoring around delayed figures and tables" },
-  { id: "preview-startup", area: "preview", script: "electron/check-preview-startup.cjs", summary: "Asynchronous project startup and TeX/non-TeX switching" },
+  { id: "preview-startup", area: "preview", script: "electron/check-preview-startup.cjs", summary: "Asynchronous project startup, external source auto/manual refresh and TeX/non-TeX switching" },
   { id: "preview-large", area: "preview", script: "check-preview-large.cjs", summary: "Virtualized long documents, distant jumps and nested lists" },
   { id: "preview-labels", area: "preview", script: "check-preview-labels.cjs", summary: "Label editing, commit/cancel/save behavior and descendant label preservation" },
   { id: "environment-typography", area: "preview", script: "electron/check-environment-typography.cjs", summary: "Environment labels, title typography and configuration round trips" },

@@ -113,10 +113,18 @@ export interface EnvironmentDefinition {
   behavior: EnvironmentBehavior;
 }
 
+export interface PreviewDiagnostic {
+  message: string;
+  /** Absent for configuration errors that do not belong to a source location. */
+  source?: SourceSpan;
+}
+
 export interface PreviewDocument {
   filePath: string;
   nodes: PreviewNode[];
   diagnostics: string[];
+  /** Structured counterparts in the same order as diagnostics; strings remain for existing consumers. */
+  diagnosticDetails?: PreviewDiagnostic[];
   title?: { title?: string; author?: string; date?: string; source: SourceSpan; bodySource: SourceSpan };
 }
 

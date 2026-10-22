@@ -2,6 +2,8 @@
 
 本文是面向后续开发者的仓库导航，按 **TeXWeave 0.6.7** 当前代码整理。它说明代码放在哪里、运行时如何连接，以及修改功能时通常从哪里开始。根目录 [`package.json`](../../package.json) 是版本、工作区、命令和打包配置的权威来源；本文描述模块职责，不取代具体功能的接口文档。
 
+**0.7 AI 架构补充 / AI architecture update:** 宠物与项目 AI 的可检索能力目录、五入口执行网关、skill 按需读取、构建资源和安全边界，参见 [Capability Registry](CAPABILITY_REGISTRY.md) 及[自动生成的能力清单](CAPABILITY_CATALOG.md)。See those documents for the shared discovery/gateway architecture, lazy workflow loading and deployment limits.
+
 ## 仓库总览
 
 ```text
@@ -218,3 +220,16 @@ tests/
 - [文档版本模型](../WORKING_DOCUMENT_MODEL.md)
 - [块结构 API](../block-structure-api.md)
 - [历史存储](../HISTORY_STORAGE.md)
+
+
+### External source synchronization / 外部源码同步
+
+`main/file-versions.ts` exposes the typed `files.versions` IPC endpoint through the existing safe project-path resolver. `workbench/useExternalFiles.ts` checks open files every two seconds while visible, on focus, and when tabs open; manual file refresh forces a reread. Idle checks inspect only timestamp/size metadata, not full documents. `workbench/externalFileSync.ts` owns serialization, stable-read checks, saved baselines and conflicts. Updates flow through the same tab content into Code, Visual preview, search and working-document synchronization.
+
+`main/file-versions.ts` 通过现有安全路径解析提供类型化的文件版本接口。前端在可见时每两秒、恢复焦点及打开标签页时检查已打开文件，手动刷新强制重读；空闲检查只读取时间和大小等元信息。`externalFileSync.ts` 管理串行同步、稳定读取、保存基线和冲突，更新沿用相同标签页数据进入源码、可视预览、搜索及工作文档同步。
+
+Unsaved text and Preview drafts are preserved. A persistent conflict card offers explicit disk/local choices; saving checks for unresolved conflicts, including non-TeX files. External reload resets stale range mappings and that file's edit history, while recognition of the application's own save preserves Undo. Missing files retain their open contents. Leaving a project disposes pending synchronization and removes all timers/listeners. The implementation polls only open files; it does not recursively watch the project or rebuild the tree every two seconds.
+
+未保存文本和预览草稿不会被覆盖；持续显示的冲突提示提供磁盘/本地选择，保存前检查未处理冲突（包含非 TeX 文件）。外部重载会清理失效的范围映射与该文件编辑历史；识别到程序自己的保存时保留撤销历史。外部删除文件仍保留打开的内容。离开项目会释放同步、定时器和监听。这里只检查已打开文件，不递归扫描项目，也不每两秒重建目录树。
+
+Tests / 测试：`editor-external-files.test.ts`, `project-session-navigation.test.ts`, `working-documents.test.ts`, `desktop-ipc.test.ts`; the `preview-startup` Electron check writes temporary sources outside the app and validates auto/manual refresh in both Visual layouts. / 桌面检查直接从程序外部写入临时源码，验证两种预览布局的自动与手动同步。

@@ -5,7 +5,7 @@ import type { WebContents } from "electron";
 import type { DesktopContext } from "../desktopContext.js";
 import type { SettingsRepository } from "../settings.js";
 
-/** Register AI and Copilot renderer requests separately from core project IPC. */
+/** Project-writing conversations, skills, attachments, and edit review. Accounts live in providers-ipc. */
 export function registerAiIpcHandlers(context: DesktopContext | undefined, settings: SettingsRepository): void {
   const draftOwners = new Map<string, { projectId: string; sender: WebContents; dispose(): void }>();
   const assertDraftOwner = (sender: WebContents, projectId: string, draftId: string) => {
@@ -36,20 +36,6 @@ export function registerAiIpcHandlers(context: DesktopContext | undefined, setti
     assertDraftOwner(event.sender, projectId, draftId);
     await context?.aiWorkspaces.attachments.remove({ projectId, draftId }, ids);
   });
-  handleIpc(desktopInvoke.ai.detect, () => context?.ai.detect());
-  handleIpc(desktopInvoke.ai.install, async (_event, force) => {
-    if (force !== undefined && typeof force !== "boolean") throw new Error("Invalid installation option");
-    if (context === undefined) throw new Error("Application context is not ready");
-    if (force) {
-      if (context.aiWorkspaces.busy) throw new Error("Wait for active AI tasks to finish before repairing the Codex environment.");
-      await context.ai.stop();
-    }
-    const status = await context.ai.install(force);
-    if (status.executablePath) await settings.set("aiCodexExecutable", status.executablePath);
-    return status;
-  });
-  handleIpc(desktopInvoke.ai.status, () => context?.ai.refresh());
-  handleIpc(desktopInvoke.ai.models, () => context?.aiWorkspaces.listModels());
   handleIpc(desktopInvoke.ai.skills, () => context?.aiWorkspaces.listSkills());
   handleIpc(desktopInvoke.ai.saveSkill, (_event, input) => {
     if (!context) throw new Error("Application context is not ready");
@@ -59,13 +45,6 @@ export function registerAiIpcHandlers(context: DesktopContext | undefined, setti
     if (!context) throw new Error("Application context is not ready");
     return context.aiWorkspaces.setSkillEnabled(input);
   });
-  handleIpc(desktopInvoke.ai.login, () => context?.ai.login());
-  handleIpc(desktopInvoke.ai.logout, () => context?.ai.logout());
-  handleIpc(desktopInvoke.ai.copilotStatus, () => context?.copilot.status());
-  handleIpc(desktopInvoke.ai.installCopilot, () => context?.copilot.installCli());
-  handleIpc(desktopInvoke.ai.loginCopilot, () => context?.copilot.login());
-  handleIpc(desktopInvoke.ai.logoutCopilot, () => context?.copilot.logout());
-  handleIpc(desktopInvoke.ai.copilotModels, () => context?.aiWorkspaces.listCopilotModels());
   handleIpc(desktopInvoke.ai.conversations, (_event, projectId) => context?.aiWorkspaces.snapshot(projectId));
   handleIpc(desktopInvoke.ai.createConversation, (_event, mode, projectId) => {
     if (!context) throw new Error("Application context is not ready");
@@ -113,9 +92,4 @@ export function registerAiIpcHandlers(context: DesktopContext | undefined, setti
   handleIpc(desktopInvoke.ai.sendQueued, (_event, conversationId, messageId) => context?.aiWorkspaces.sendQueued(conversationId, messageId));
   handleIpc(desktopInvoke.ai.removeQueued, (_event, conversationId, messageId) => context?.aiWorkspaces.removeQueued(conversationId, messageId));
   handleIpc(desktopInvoke.ai.cancel, (_event, taskId) => context?.aiWorkspaces.cancel(taskId));
-  handleIpc(desktopInvoke.ai.setExecutable, async (_event, path) => {
-    await settings.set("aiCodexExecutable", path);
-    await context?.ai.stop();
-    return context?.ai.detect();
-  });
 }

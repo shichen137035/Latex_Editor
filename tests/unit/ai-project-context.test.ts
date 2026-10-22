@@ -1,3 +1,4 @@
+import { closeTestCapabilities, testCapabilities, throughCapabilityGateway } from "../capability-fixture.js";
 import { execFileSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { createRequire } from "node:module";
@@ -17,7 +18,7 @@ import { isAIEditableProjectPath, isAIReviewableProjectPath } from "@latex-edito
 
 describe("AI project context and workspace reads", () => {
   let root: string | undefined;
-  afterEach(() => { if (root) rmSync(root, { recursive: true, force: true }); root = undefined; });
+  afterEach(() => { closeTestCapabilities(); if (root) rmSync(root, { recursive: true, force: true }); root = undefined; });
 
   it("exports browser-compatible ESM and synchronous main-process CommonJS entry points", () => {
     const requireFromTest = createRequire(import.meta.url);
@@ -58,11 +59,12 @@ describe("AI project context and workspace reads", () => {
     const codex = {
       onEvent: () => () => undefined,
       startTurn: async (input: NonNullable<typeof turn>) => {
-        turn = input;
+        turn = { ...input, toolHandlers: throughCapabilityGateway(input) };
         return { threadId: "test-thread", turnId: "test-turn" };
       }
     } as unknown as CodexAppServer;
-    const createService = () => new AIWorkspaceService({
+    const { service: capabilities } = await testCapabilities(root!);
+    const createService = () => new AIWorkspaceService({ capabilities,
       userDataPath: root,
       codex,
       copilot: { dispose: async () => undefined } as unknown as CopilotChatService,
@@ -77,13 +79,20 @@ describe("AI project context and workspace reads", () => {
     expect(service.listSkills()).toEqual([expect.objectContaining({ name: "context-check", enabled: true })]);
     await service.setSkillEnabled({ name: "context-check", enabled: false });
     expect(service.listSkills()).toEqual([expect.objectContaining({ name: "context-check", enabled: false })]);
+    await service.setSkillEnabled({ name: "context-check", enabled: true });
     const conversation = await service.create({ projectId: "test-project", mode: "codex" });
     await service.send({ conversationId: conversation.id, content: "What is in this project?", snapshot: [{ path: "main.tex", content: "\\documentclass{article}\n\\begin{document}\nContext marker\n\\end{document}\n" }], assets: [{ path: "figures/result.png", content: new Uint8Array([137, 80, 78, 71]) }] });
-    expect(turn?.prompt).toContain("Available text files (1):\nmain.tex");
-    expect(turn?.prompt).toContain("Referenced graphics materialized into this working copy (1):\nfigures/result.png");
+    expect(turn?.prompt).toContain("Text files copied: 1. First paths (partial inventory):\nmain.tex");
+    expect(turn?.prompt).toContain("Referenced assets copied: 1");
     expect(turn?.prompt).not.toContain("Context marker");
     expect(turn?.prompt).not.toContain("Skill-only guidance marker");
-    expect(turn?.skills).toEqual([]);
+    expect(turn?.skills).toBeUndefined();
+    expect(turn?.dynamicTools).toHaveLength(5);
+    expect(turn?.prompt).toContain("context-check: Test skill.");
+    const workflow = JSON.parse(await turn!.toolHandlers!.tw_get_state!({ id: "skills.read", arguments: { name: "context-check" } }));
+    expect(workflow.data.content).toContain("Skill-only guidance marker");
+    await service.setSkillEnabled({ name: "context-check", enabled: false });
+    expect(JSON.parse(await turn!.toolHandlers!.tw_get_state!({ id: "skills.read", arguments: { name: "context-check" } })).ok).toBe(false);
     const found = JSON.parse(await turn!.toolHandlers!.find_blocks!({ type: "paragraph" }));
     const source = JSON.parse(await turn!.toolHandlers!.get_block_source!({ blockId: found.data[0].id }));
     expect(source.data.content).toContain("Context marker");
@@ -105,8 +114,9 @@ describe("AI project context and workspace reads", () => {
     mkdirSync(join(projectRoot, "plots"), { recursive: true });
     writeFileSync(plotPath, Buffer.from([137, 80, 78, 71]));
     let turn: Parameters<CodexAppServer["startTurn"]>[0] | undefined;
-    const codex = { onEvent: () => () => undefined, startTurn: async (input: NonNullable<typeof turn>) => { turn = input; return { threadId: "compile-assets-thread", turnId: "compile-assets-turn" }; } } as unknown as CodexAppServer;
-    const service = new AIWorkspaceService({
+    const codex = { onEvent: () => () => undefined, startTurn: async (input: NonNullable<typeof turn>) => { turn = { ...input, toolHandlers: throughCapabilityGateway(input) }; return { threadId: "compile-assets-thread", turnId: "compile-assets-turn" }; } } as unknown as CodexAppServer;
+    const { service: capabilities } = await testCapabilities(root!);
+    const service = new AIWorkspaceService({ capabilities,
       userDataPath: userData,
       codex,
       copilot: { dispose: async () => undefined } as unknown as CopilotChatService,
@@ -154,13 +164,14 @@ describe("AI project context and workspace reads", () => {
   it("requires explicit relation approval even in full access mode and commits through the shared service", async () => {
     root = mkdtempSync(join(tmpdir(), "texweave-ai-relations-"));
     let turn: Parameters<CodexAppServer["startTurn"]>[0] | undefined;
-    const codex = { onEvent: () => () => undefined, startTurn: async (input: NonNullable<typeof turn>) => { turn = input; return { threadId: "relation-thread", turnId: "relation-turn" }; } } as unknown as CodexAppServer;
+    const codex = { onEvent: () => () => undefined, startTurn: async (input: NonNullable<typeof turn>) => { turn = { ...input, toolHandlers: throughCapabilityGateway(input) }; return { threadId: "relation-thread", turnId: "relation-turn" }; } } as unknown as CodexAppServer;
     const metadata = new Map<string, string>();
     const graph = new ProjectBlockGraphService({ readText: async (_id, path) => { const content = metadata.get(path); if (content === undefined) throw new AppError("FILE_NOT_FOUND", path); return { content }; }, writeText: async (_id, path, content) => { metadata.set(path, content); } }, { next: () => "unused" });
     await graph.addBlock("p", { id: "A", type: "theorem" }); await graph.addBlock("p", { id: "B", type: "lemma" });
     let id = 0;
     const relations = new ProjectRelationService(graph, { next: () => `r${++id}` });
-    const service = new AIWorkspaceService({
+    const { service: capabilities } = await testCapabilities(root!);
+    const service = new AIWorkspaceService({ capabilities,
       userDataPath: root, codex, copilot: { dispose: async () => undefined } as unknown as CopilotChatService,
       projectFiles: { resolveFilePath: async (_id, path) => join(root!, "project", path) }, projectExists: () => true, builtInSkillsRoot: join(root, "skills"),
       compileWorkspace: async () => { throw new Error("Unexpected compile"); },

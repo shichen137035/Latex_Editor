@@ -25,6 +25,7 @@ export function useWorkingDocuments(options: Options) {
     let revision = 0, closed = false;
     const mappings = new Map<string, NonNullable<WorkingDocumentInput["files"][number]["rangeChanges"]>>();
     return {
+      resetFile(path: string) { mappings.delete(path); },
       recordChange(path: string, before: string, after: string, edits: BlockTextEdit[]) {
         if (!/\.tex$/i.test(path)) return;
         let delta = 0;

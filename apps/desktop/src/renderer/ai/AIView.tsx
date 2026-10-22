@@ -1,3 +1,4 @@
+import { AIApprovalCard } from "./AIApprovalCard.js";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ClipboardEvent } from "react";
 import { createPortal } from "react-dom";
 import type { AIChangeSet, AIConversation, AIMessage, AIContextSnapshotFile, AIStatus, AIModelOption, AIMode } from "@latex-editor/contracts";
@@ -37,6 +38,7 @@ type Props = {
 
 export function AIView(props: Props) {
   const api = window.latexEditor?.ai;
+  const providers = window.latexEditor?.aiProviders ?? api;
   const preferences = useSettings();
   const [status, setStatus] = useState<AIStatus>();
   const [copilotStatus, setCopilotStatus] = useState<AIStatus>();
@@ -92,7 +94,7 @@ export function AIView(props: Props) {
   if (!sameMathDefinitions(transcriptMathContext.current, props.mathContext)) transcriptMathContext.current = props.mathContext;
 
   useEffect(() => {
-    if (!api) return;
+    if (!api || !providers) return;
     let active = true;
     const pending = new Map<string, AIConversation>();
     let updateTimer: number | undefined;
@@ -120,7 +122,7 @@ export function AIView(props: Props) {
       if (conversation?.activeTaskId) { activeTaskIdRef.current = conversation.activeTaskId; setTaskId(conversation.activeTaskId); }
       else if (conversation && !conversation.messages.some(message => message.status === "streaming")) { activeTaskIdRef.current = undefined; setTaskId(undefined); setCanceling(false); }
     };
-    const unsubscribeStatus = api.onStatus((next) => { if (active) setStatus(next); });
+    const unsubscribeStatus = providers.onStatus((next) => { if (active) setStatus(next); });
     const unsubscribeUpdate = api.onUpdate((update) => {
       if (!active) return;
       if (update.kind === "conversation") {
@@ -141,14 +143,14 @@ export function AIView(props: Props) {
         setApprovals(current => [...current.filter(item => item.id !== approval.id), ...(approval.status === "pending" ? [approval] : [])]);
       }
     });
-    void api.detect().then(async (detected) => {
+    void providers.detect().then(async (detected) => {
       if (!active || !detected) return;
       setStatus(detected); setExecutable(detected.executablePath ?? "");
-      if (detected.executablePath) void api.status().then((connected) => { if (active && connected) setStatus(connected); }).catch((reason: unknown) => { if (active) setError(messageOf(reason)); });
+      if (detected.executablePath) void providers.status().then((connected) => { if (active && connected) setStatus(connected); }).catch((reason: unknown) => { if (active) setError(messageOf(reason)); });
     }).catch((reason: unknown) => { if (active) setError(messageOf(reason)); });
-    void api.copilotStatus().then((detected) => { if (active && detected) setCopilotStatus(detected); }).catch((reason: unknown) => { if (active) setError(messageOf(reason)); });
+    void providers.copilotStatus().then((detected) => { if (active && detected) setCopilotStatus(detected); }).catch((reason: unknown) => { if (active) setError(messageOf(reason)); });
     return () => { active = false; if (updateTimer !== undefined) window.clearTimeout(updateTimer); pending.clear(); unsubscribeStatus(); unsubscribeUpdate(); };
-  }, [api, props.projectId]);
+  }, [api, providers, props.projectId]);
 
   useEffect(() => {
     if (!api) return;
@@ -172,12 +174,12 @@ export function AIView(props: Props) {
   }, [api, props.projectId]);
 
   useEffect(() => {
-    if (!api || activeStatus?.auth !== "signed_in") return;
+    if (!providers || activeStatus?.auth !== "signed_in") return;
     let active = true;
     setModelsLoading(true);
     setModels([]);
     const copilot = activeMode === "chat";
-    void (copilot ? api.copilotModels() : api.models()).then((available) => {
+    void (copilot ? providers.copilotModels() : providers.models()).then((available) => {
       if (!active) return;
       const next = available ?? [];
       setModels(next);
@@ -186,20 +188,20 @@ export function AIView(props: Props) {
       if (next.length && selected && !next.some((model) => model.id === selected)) void preferences.set(preferenceKey, "");
     }).catch((reason: unknown) => { if (active) setError(messageOf(reason)); }).finally(() => { if (active) setModelsLoading(false); });
     return () => { active = false; };
-  }, [api, preferences, activeMode, activeStatus?.auth]);
+  }, [providers, preferences, activeMode, activeStatus?.auth]);
 
   useEffect(() => {
-    if (!api || activeMode !== "chat" || copilotStatus?.auth !== "authenticating") return;
+    if (!providers || activeMode !== "chat" || copilotStatus?.auth !== "authenticating") return;
     let active = true;
     const timer = window.setInterval(() => {
-      void api.copilotStatus().then((next) => {
+      void providers.copilotStatus().then((next) => {
         if (active && next) setCopilotStatus(next);
       }).catch((reason: unknown) => {
         if (active) setError(messageOf(reason));
       });
     }, 2500);
     return () => { active = false; window.clearInterval(timer); };
-  }, [api, activeMode, copilotStatus?.auth]);
+  }, [providers, activeMode, copilotStatus?.auth]);
 
   useEffect(() => { setIncludeSelection(Boolean(props.selectedText)); }, [props.selectedText]);
   useEffect(() => { setEditingMessageId(undefined); setEditedContent(""); }, [activeId, props.projectId]);
@@ -269,7 +271,7 @@ export function AIView(props: Props) {
       if (next) {
         if (provider === "chat") setCopilotStatus(next);
         else { setStatus(next); setExecutable(next.executablePath ?? ""); }
-        if (connectAfter && next.executablePath) { const connected = await api?.status(); if (connected) setStatus(connected); }
+        if (connectAfter && next.executablePath) { const connected = await providers?.status(); if (connected) setStatus(connected); }
       }
     } catch (reason) { setError(messageOf(reason)); }
     finally { setBusy(false); }
@@ -522,7 +524,7 @@ export function AIView(props: Props) {
     error: reason => setError(messageOf(reason))
   }), []);
 
-  if (!api) return null;
+  if (!api || !providers) return null;
 
   const composer = <div className={`ai-composer${composerExpanded ? " expanded" : ""}`}>
           <button type="button" className="ai-composer-expand" aria-expanded={composerExpanded} title={t(composerExpanded ? "ai.composerCollapse" : "ai.composerExpand")} aria-label={t(composerExpanded ? "ai.composerCollapse" : "ai.composerExpand")} onMouseDown={event => event.preventDefault()} onClick={() => toggleComposer(!composerExpanded)}><svg viewBox="0 0 24 24" aria-hidden="true"><path d={composerExpanded ? "M9 3v6H3m18 6h-6v6M3 9l6-6m6 18 6-6" : "M15 3h6v6M3 15v6h6M21 3l-7 7M3 21l7-7"}/></svg></button>
@@ -541,7 +543,7 @@ export function AIView(props: Props) {
   return <section className="ai-sidebar" aria-label={t("ai.title")}>
     <div className="ai-workspace-controls ai-conversation-heading">
       <ConversationPicker key={`${props.projectId}:${activeMode}`} conversations={modeConversations} activeId={activeId} disabled={busy || historyDeleting || Boolean(taskId)} protectedId={busy || taskId ? activeId : undefined} onSelect={(id) => { setActiveId(id); setMode(activeMode); }} onNew={() => void newConversation(activeMode)} onRename={renameConversation} onDelete={removeConversations}/>
-      <div className="ai-provider-account-row"><div className="ai-mode-switch" role="tablist"><button role="tab" aria-selected={activeMode === "chat"} className={activeMode === "chat" ? "active" : ""} disabled={busy || historyDeleting || Boolean(taskId)} onClick={() => void switchMode("chat")}>{t("ai.copilot")}</button><button role="tab" aria-selected={activeMode === "codex"} className={activeMode === "codex" ? "active" : ""} disabled={busy || historyDeleting || Boolean(taskId)} onClick={() => void switchMode("codex")}>{t("ai.codex")}</button></div>{activeStatus?.auth === "signed_in" && <div className="ai-account-line"><span className="ai-status-dot ready" title={t("ai.signedIn")}/><span className="ai-account-name" title={activeStatus.accountLabel ?? t("ai.signedIn")}>{activeStatus.accountLabel ?? t(activeMode === "chat" ? "ai.copilotAccount" : "ai.chatgptAccount")}</span><button className="ai-quiet-action ai-settings-icon" title={t("ai.settings")} aria-label={t("ai.settings")} onClick={props.onOpenSettings}><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="m9 3-1 3-3 1-2 3 2 2-1 3 3 2 3-1 2 2 3-1 1-3 3-1 1-3-2-2 1-3-3-2-3 1Z"/></svg></button><button className="ai-quiet-action ai-sign-out" title={t("ai.signOut")} aria-label={t("ai.signOut")} disabled={busy || responseRunning} onClick={() => void runStatus(() => activeMode === "chat" ? api.logoutCopilot() : api.logout(), false, activeMode)}><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M9 4H4v16h5m5-13 5 5-5 5m-5-5h10"/></svg></button></div>}</div>
+      <div className="ai-provider-account-row"><div className="ai-mode-switch" role="tablist"><button role="tab" aria-selected={activeMode === "chat"} className={activeMode === "chat" ? "active" : ""} disabled={busy || historyDeleting || Boolean(taskId)} onClick={() => void switchMode("chat")}>{t("ai.copilot")}</button><button role="tab" aria-selected={activeMode === "codex"} className={activeMode === "codex" ? "active" : ""} disabled={busy || historyDeleting || Boolean(taskId)} onClick={() => void switchMode("codex")}>{t("ai.codex")}</button></div>{activeStatus?.auth === "signed_in" && <div className="ai-account-line"><span className="ai-status-dot ready" title={t("ai.signedIn")}/><span className="ai-account-name" title={activeStatus.accountLabel ?? t("ai.signedIn")}>{activeStatus.accountLabel ?? t(activeMode === "chat" ? "ai.copilotAccount" : "ai.chatgptAccount")}</span><button className="ai-quiet-action ai-settings-icon" title={t("ai.settings")} aria-label={t("ai.settings")} onClick={props.onOpenSettings}><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="m9 3-1 3-3 1-2 3 2 2-1 3 3 2 3-1 2 2 3-1 1-3 3-1 1-3-2-2 1-3-3-2-3 1Z"/></svg></button><button className="ai-quiet-action ai-sign-out" title={t("ai.signOut")} aria-label={t("ai.signOut")} disabled={busy || responseRunning} onClick={() => void runStatus(() => activeMode === "chat" ? providers.logoutCopilot() : providers.logout(), false, activeMode)}><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M9 4H4v16h5m5-13 5 5-5 5m-5-5h10"/></svg></button></div>}</div>
     </div>
 
     {!activeStatus && <div className="ai-connect-scroll"><p>{t("ai.checking")}</p></div>}
@@ -549,13 +551,13 @@ export function AIView(props: Props) {
       <strong>{activeMode === "chat" ? t(activeStatus.process === "not_detected" ? "ai.copilotRequired" : "ai.copilotConnectTitle") : t(activeStatus.process === "not_detected" ? "ai.codexRequired" : activeStatus.process === "crashed" ? "ai.connectionFailed" : "ai.connectTitle")}</strong>
       <p>{activeMode === "chat" ? t(activeStatus.process === "not_detected" ? "ai.copilotRequiredHint" : "ai.copilotConnectHint") : t(activeStatus.process === "not_detected" ? "ai.codexRequiredHint" : activeStatus.process === "crashed" ? "ai.connectionFailedHint" : "ai.connectHint")}</p>
       {activeMode === "codex" && activeStatus.executablePath && <small className="ai-cli-path" title={activeStatus.executablePath}>{t("ai.cliDetected")}<br/>{activeStatus.executablePath}</small>}
-      {activeMode === "codex" && (activeStatus.process === "not_detected" || activeStatus.process === "crashed") && <label className="ai-executable-field">{t("ai.executablePath")}<input value={executable} onChange={(event) => setExecutable(event.target.value)} placeholder="codex.exe" spellCheck={false}/><button disabled={busy || !executable.trim()} onClick={() => void runStatus(() => api.setExecutable(executable.trim()), true, "codex")}>{t("ai.savePath")}</button></label>}
-      {activeMode === "chat" && activeStatus.process === "not_detected" && <button className="primary-button" disabled={busy} onClick={() => void runStatus(() => api.installCopilot(), false, "chat")}>{t(busy ? "ai.installingCopilot" : "ai.installCopilot")}</button>}
-      {activeMode === "chat" && activeStatus.executablePath && <button className="primary-button" disabled={busy || activeStatus.auth === "authenticating"} onClick={() => void runStatus(() => api.loginCopilot(), false, "chat")}>{t(activeStatus.auth === "authenticating" ? "ai.signingIn" : "ai.signInGitHub")}</button>}
-      {activeMode === "codex" && (activeStatus.process === "not_detected" || activeStatus.process === "crashed") && <button className="primary-button" disabled={busy} onClick={() => void runStatus(() => api.install(activeStatus.process === "crashed"), true, "codex")}>{t(busy ? "ai.installing" : "ai.installCodex")}</button>}
-      {activeMode === "codex" && activeStatus.process !== "not_detected" && activeStatus.process !== "crashed" && <button className="primary-button" disabled={busy || activeStatus.process === "starting" || activeStatus.auth === "authenticating"} onClick={() => void runStatus(() => api.login(), false, "codex")}>{t(activeStatus.auth === "authenticating" ? "ai.signingIn" : "ai.signIn")}</button>}
+      {activeMode === "codex" && (activeStatus.process === "not_detected" || activeStatus.process === "crashed") && <label className="ai-executable-field">{t("ai.executablePath")}<input value={executable} onChange={(event) => setExecutable(event.target.value)} placeholder="codex.exe" spellCheck={false}/><button disabled={busy || !executable.trim()} onClick={() => void runStatus(() => providers.setExecutable(executable.trim()), true, "codex")}>{t("ai.savePath")}</button></label>}
+      {activeMode === "chat" && activeStatus.process === "not_detected" && <button className="primary-button" disabled={busy} onClick={() => void runStatus(() => providers.installCopilot(), false, "chat")}>{t(busy ? "ai.installingCopilot" : "ai.installCopilot")}</button>}
+      {activeMode === "chat" && activeStatus.executablePath && <button className="primary-button" disabled={busy || activeStatus.auth === "authenticating"} onClick={() => void runStatus(() => providers.loginCopilot(), false, "chat")}>{t(activeStatus.auth === "authenticating" ? "ai.signingIn" : "ai.signInGitHub")}</button>}
+      {activeMode === "codex" && (activeStatus.process === "not_detected" || activeStatus.process === "crashed") && <button className="primary-button" disabled={busy} onClick={() => void runStatus(() => providers.install(activeStatus.process === "crashed"), true, "codex")}>{t(busy ? "ai.installing" : "ai.installCodex")}</button>}
+      {activeMode === "codex" && activeStatus.process !== "not_detected" && activeStatus.process !== "crashed" && <button className="primary-button" disabled={busy || activeStatus.process === "starting" || activeStatus.auth === "authenticating"} onClick={() => void runStatus(() => providers.login(), false, "codex")}>{t(activeStatus.auth === "authenticating" ? "ai.signingIn" : "ai.signIn")}</button>}
       {activeMode === "codex" && <button className="secondary-button" onClick={props.onOpenSettings}>{t("ai.environmentTitle")}</button>}
-      <button className="secondary-button ai-recheck" disabled={busy || (activeMode === "codex" && activeStatus.auth === "authenticating")} onClick={() => void runStatus(() => activeMode === "chat" ? api.copilotStatus() : api.detect(), false, activeMode)}>{t("ai.detectAgain")}</button>
+      <button className="secondary-button ai-recheck" disabled={busy || (activeMode === "codex" && activeStatus.auth === "authenticating")} onClick={() => void runStatus(() => activeMode === "chat" ? providers.copilotStatus() : providers.detect(), false, activeMode)}>{t("ai.detectAgain")}</button>
     </div>{(error || activeStatus.error) && <div className="inline-error ai-error" role="alert">{error || activeStatus.error}</div>}</div>}
     {activeStatus?.auth === "signed_in" && <>
       <AITranscript conversationId={activeId} messages={activeConversation?.messages ?? EMPTY_MESSAGES} changes={activeChanges}
@@ -571,7 +573,7 @@ export function AIView(props: Props) {
             <button type="button" disabled={!!queueBusyId || canceling || busy} title={t("ai.queueRemove")} aria-label={t("ai.queueRemove")} onClick={() => void operateQueue(queued.id, false)}><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m6 6 12 12M6 18 18 6"/></svg></button>
           </li>)}</ol>
         </section>}
-        {approvals.filter(request => request.conversationId === activeId).map(request => <section className="ai-approval-card" key={request.id} role="alert"><strong>{t("ai.approvalRequired")}</strong><p>{request.description}</p>{request.command && <pre>{request.command}</pre>}{request.paths.length > 0 && <small>{request.paths.join("\n")}</small>}<div><button onClick={() => void resolveApproval(request.id, false)}>{t("ai.denyAction")}</button><button onClick={() => void resolveApproval(request.id, true)}>{t("ai.allowAction")}</button></div></section>)}
+        {approvals.filter(request => request.conversationId === activeId).map(request => <AIApprovalCard key={request.id} request={request} onResolve={resolveApproval}/>)}
         {props.selectedText && <div className="ai-context-options"><label><input type="checkbox" checked={includeSelection} onChange={(event) => setIncludeSelection(event.target.checked)}/>{t("ai.includeSelection")}</label></div>}
           {(error || activeStatus.error) && <div className="inline-error ai-error" role="alert">{error || activeStatus.error}</div>}
           {notice && <div className="ai-resolution-notice" role="status">{notice}</div>}

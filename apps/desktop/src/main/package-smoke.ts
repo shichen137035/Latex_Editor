@@ -42,6 +42,8 @@ export function checkPackageWindow(window: BrowserWindow): void {
         await new Promise(resolve => setTimeout(resolve, 100));
       }
       await window.latexEditor.projects.list();
+      const capabilities = await window.latexEditor.capabilities.status();
+      if (!capabilities.available || capabilities.count < 50) throw new Error('Packaged capability registry is unavailable or incomplete');
       const styles = await window.latexEditor.styleResources.list();
       for (const id of ['default', 'light', 'empty']) {
         const resource = styles.find(item => item.id === id && item.source === 'built-in');

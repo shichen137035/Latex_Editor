@@ -268,3 +268,7 @@ preview-block.relation-focus { border-color: var(--color-primary) !important; bo
   outline: 1px solid var(--env-border-selected, #3979bf);
 }
 .preview-caption-field .preview-local-editor { text-align: left; }
+.preview-diagnostic-link { display: block; width: 100%; padding: 3px 0; border: 0; background: transparent; color: inherit; text-align: start; font: inherit; cursor: pointer; overflow-wrap: anywhere; }
+.preview-diagnostic-link:hover, .preview-diagnostic-link:focus-visible { text-decoration: underline; }
+.preview-diagnostic-link:focus-visible { outline: 2px solid currentColor; outline-offset: 2px; border-radius: 3px; }
+.preview-diagnostic-location { display: block; font-family: var(--font-mono, monospace); overflow-wrap: anywhere; }

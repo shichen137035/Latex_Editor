@@ -22,7 +22,7 @@ export function ThemeRuntime() {
     reload();
     window.addEventListener("texweave-themes-changed", reload);
     return () => window.removeEventListener("texweave-themes-changed", reload);
-  }, []);
+  }, [activeTheme]);
 
   useEffect(() => {
     document.documentElement.dataset.theme = activeTheme;

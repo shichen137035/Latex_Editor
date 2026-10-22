@@ -33,16 +33,22 @@ export class SettingsRepository {
     const project = projectId ? sanitizePreferences((await this.read(await this.projectPath(projectId))).preferences, true) : {};
     return { global: this.global, project, ...(this.toolchain ? { toolchain: this.toolchain } : {}) };
   }
-  async set(key: PreferenceKey, value: unknown, projectId?: string): Promise<SettingsSnapshot> {
+  async compareAndSet(key: PreferenceKey, expected: unknown, value: unknown, projectId?: string, effective?: unknown): Promise<SettingsSnapshot> {
+    return this.set(key, value, projectId, { expected, ...(effective === undefined ? {} : { effective }) });
+  }
+  async set(key: PreferenceKey, value: unknown, projectId?: string, compare?: { expected: unknown; effective?: unknown }): Promise<SettingsSnapshot> {
     const operation = this.queue.then(async () => {
-      const { validPreference, projectPreferenceKeys, sanitizePreferences } = await import("@latex-editor/contracts");
-      if ((value !== undefined && !validPreference(key, value)) || (projectId && !projectPreferenceKeys.includes(key))) throw new Error("Invalid setting or scope");
+      const { preferenceDefaults, validPreference, projectPreferenceKeys, sanitizePreferences } = await import("@latex-editor/contracts");
+      if (!Object.hasOwn(preferenceDefaults, key) || (value !== undefined && !validPreference(key, value)) || (projectId && !projectPreferenceKeys.includes(key))) throw new Error("Invalid setting or scope");
+      const assertExpected = (current: unknown) => { if (compare && (JSON.stringify(current) !== JSON.stringify(compare.expected) || Object.hasOwn(compare, "effective") && JSON.stringify(current ?? this.global[key] ?? preferenceDefaults[key]) !== JSON.stringify(compare.effective))) { const error = new Error("Setting changed after the operation was planned."); Object.assign(error, { code: "SETTINGS_CONFLICT" }); throw error; } };
       if (projectId) {
         const path = await this.projectPath(projectId);
         const preferences = sanitizePreferences((await this.read(path)).preferences, true);
+        assertExpected(preferences[key]);
         if (value === undefined) delete preferences[key]; else Object.assign(preferences, { [key]: value });
         await this.write(path, { version: 1, preferences });
       } else {
+        assertExpected(this.global[key]);
         const next = { ...this.global };
         if (value === undefined) delete next[key]; else Object.assign(next, { [key]: value });
         await this.write(join(this.root, "settings.json"), { version: 1, preferences: next, toolchain: this.toolchain });

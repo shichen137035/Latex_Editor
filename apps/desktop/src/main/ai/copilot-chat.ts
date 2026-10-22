@@ -205,7 +205,7 @@ export class CopilotChatService {
       streaming: true,
       onPermissionRequest: async (request: PermissionRequest) => {
         const command = request.kind === "shell" ? request.fullCommandText : undefined;
-        if (command && isLatexCompilerCommand(command)) return { kind: "reject" as const, feedback: "Use TeXWeave's texweave_compile tool." };
+        if (command && isLatexCompilerCommand(command)) return { kind: "reject" as const, feedback: "Search the TeXWeave registry for texweave_compile, then plan and execute that capability." };
         const paths = request.kind === "shell" ? request.possiblePaths : request.kind === "write" ? [request.fileName] : request.kind === "read" ? [request.path] : [];
         const action: AIToolApproval = {
           description: "intention" in request ? request.intention : request.kind,
@@ -224,7 +224,7 @@ export class CopilotChatService {
           if (!["bash", "powershell", "shell", "run_command", "run_in_terminal"].includes(input.toolName)) return {};
           const command = typeof input.toolArgs === "string" ? input.toolArgs : JSON.stringify(input.toolArgs ?? {}) ?? "";
           return isLatexCompilerCommand(command)
-            ? { permissionDecision: "deny" as const, permissionDecisionReason: "Use TeXWeave's texweave_compile tool; independent LaTeX compiler commands are disabled." }
+            ? { permissionDecision: "deny" as const, permissionDecisionReason: "Discover texweave_compile through tw_search_capabilities and use the operation gateway; independent LaTeX compiler commands are disabled." }
             : {};
         }
       },

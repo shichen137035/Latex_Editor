@@ -1,6 +1,6 @@
 // @ts-check
 const { contextBridge, ipcRenderer, webUtils } = require("electron");
-const { createDesktopInvokeBridge, desktopEvents } = require("@latex-editor/contracts/desktop-ipc");
+const { createAIProviderBridge, createDesktopInvokeBridge, desktopEvents } = require("@latex-editor/contracts/desktop-ipc");
 
 const requests = createDesktopInvokeBridge((channel, ...args) => ipcRenderer.invoke(channel, ...args));
 /**
@@ -18,6 +18,9 @@ const subscribe = (endpoint, listener) => {
 /** @type {import("@latex-editor/contracts/desktop-ipc").DesktopApi} */
 const api = {
   ...requests,
+  settings: { ...requests.settings, onUpdate: listener => subscribe(desktopEvents.toRenderer.settingsChanged, listener) },
+  aiProviders: { ...createAIProviderBridge(requests.ai), onStatus: listener => subscribe(desktopEvents.toRenderer.aiStatus, listener) },
+  companionChat: { ...requests.companionChat, onUpdate: listener => subscribe(desktopEvents.toRenderer.companionChatUpdate, listener) },
   relations: { ...requests.relations, onUpdate: (listener) => subscribe(desktopEvents.toRenderer.relationUpdate, listener) },
   compile: { ...requests.compile, onUpdate: (listener) => subscribe(desktopEvents.toRenderer.compileUpdate, listener) },
   projects: { ...requests.projects, onUpdate: (listener) => subscribe(desktopEvents.toRenderer.projectUpdate, listener), onCleared: (listener) => subscribe(desktopEvents.toRenderer.projectsCleared, listener) },

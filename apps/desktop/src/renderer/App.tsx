@@ -1,3 +1,4 @@
+import { CompanionPet } from "./companion/CompanionPet.js";
 import { HelpMode } from "./help/HelpMode.js";
 import { FirstRunSetup } from "./setup/FirstRunSetup.js";
 import { toolchainReadiness } from "./settings/toolchainReadiness.js";
@@ -347,6 +348,7 @@ function ProjectDirectory({ projects, onProjectsChange, onOpen, onOpenLibrary, s
 export function App() {
   const store = useSettings();
   const [setupOpen, setSetupOpen] = useState(false);
+  const [petSettingsOpen, setPetSettingsOpen] = useState(false);
   const [projects, setProjects] = useState<Project[]>([]);
   const [activeProject, setActiveProject] = useState<Project>();
   const [libraryOpen, setLibraryOpen] = useState(false);
@@ -403,5 +405,5 @@ export function App() {
     {libraryOpen && <div className="app-shell library-app-shell" style={{ position: "fixed", inset: 0, zIndex: 40, overflow: "auto" }}><ReferenceLibraryPage projects={projects} returnToProject={Boolean(activeProject)} onBack={() => setLibraryOpen(false)}/></div>}
     {!activeProject && !libraryOpen && !setupOpen && !compilerSettings && !warningDismissed && toolchainHealth.known && !toolchainHealth.ready && <aside className="toolchain-warning"><strong>{t("toolchainGuide.title")}</strong><p>{t("toolchainGuide.required", { tools: toolchainHealth.missing.join(", ") })}</p><button className="primary" data-toolchain-open onClick={() => setCompilerSettings(true)}>{t("toolchainGuide.configure")}</button><button onClick={() => void store.detect()}>{t("settings.detect")}</button><button onClick={() => void store.detect("directory")}>{t("settings.locate")}</button><button onClick={() => setWarningDismissed(true)}>{t("common.close")}</button></aside>}
     {compilerSettings && <SettingsDialog initial="compiler" onClose={() => setCompilerSettings(false)}/>}
-  </div></>;
+  </div><CompanionPet disabled={setupOpen} onOpenSettings={() => setPetSettingsOpen(true)}/>{petSettingsOpen && <SettingsDialog initial="ai" onClose={() => setPetSettingsOpen(false)}/>}</>;
 }

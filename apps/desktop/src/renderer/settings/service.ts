@@ -8,6 +8,10 @@ let projectId: string | undefined;
 let revision = 0;
 let error = "";
 const listeners = new Set<() => void>();
+if (typeof window !== "undefined") window.latexEditor?.settings.onUpdate?.(update => {
+  snapshot = { ...snapshot, global: update.snapshot.global, ...(update.snapshot.toolchain ? { toolchain: update.snapshot.toolchain } : {}), ...(update.projectId === projectId && update.projectId ? { project: update.snapshot.project } : {}) };
+  publish();
+});
 function publish() {
   setLocale(snapshot.global.locale ?? "en");
   document.documentElement.dataset.theme = snapshot.global.theme ?? "light";
@@ -26,13 +30,18 @@ export const settings = {
     projectId = id; snapshot = next; publish();
   },
   async set<K extends PreferenceKey>(key: K, value: PreferenceValues[K] | undefined, scope: "global" | "project" = "global") {
+    await settings.setStrict(key, value, scope).catch(() => undefined);
+  },
+  /** Automation callers need a rejected promise when a setting could not be saved. */
+  async setStrict<K extends PreferenceKey>(key: K, value: PreferenceValues[K] | undefined, scope: "global" | "project" = "global") {
     try {
       const id = scope === "project" ? projectId : undefined;
       if (scope === "project" && !id) throw new Error(t("ui.service.no_active_project"));
       const next = await window.latexEditor!.settings.set(key, value, id);
-      snapshot = id ? next : { ...snapshot, global: next.global, ...(next.toolchain ? { toolchain: next.toolchain } : {}) };
+      if (!id) snapshot = { ...snapshot, global: next.global, ...(next.toolchain ? { toolchain: next.toolchain } : {}) };
+      else if (projectId === id) snapshot = next;
       error = ""; publish();
-    } catch (reason) { error = reason instanceof Error ? reason.message : String(reason); publish(); }
+    } catch (reason) { error = reason instanceof Error ? reason.message : String(reason); publish(); throw reason; }
   },
   reset(key: PreferenceKey, scope: "global" | "project" = "global") { return settings.set(key, undefined, scope); },
   async applyPreset(id: string, scope: "global" | "project" = "global") {

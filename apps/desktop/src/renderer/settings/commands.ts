@@ -2,6 +2,7 @@ import { settings } from "./service.js";
 
 export const commandCatalog = {
   "help.toggle": { label: "helpMode.title", group: "general", context: "global", contextLabel: "command.context.global", defaultBinding: "F1" },
+  "companion.chat": { label: "companion.title", group: "ai", context: "global", contextLabel: "command.context.global", defaultBinding: "T" },
   "directory.search": { label: "command.directorySearch", group: "search", context: "directory", contextLabel: "shortcut.context.directory", defaultBinding: "Mod+K" },
   "edit.undo": { label: "menu.undo", group: "editing", context: "workspace.editor", contextLabel: "command.context.source", defaultBinding: "Mod+Z" },
   "edit.redo": { label: "menu.redo", group: "editing", context: "workspace.editor", contextLabel: "command.context.source", defaultBinding: "Mod+Y", alternateDefaultBindings: ["Mod+Shift+Z"] },
@@ -86,6 +87,7 @@ export const commands = {
     };
   },
   canExecute(id: CommandId) { return !!activeCommand(id); },
+  async run(id: CommandId): Promise<boolean> { const command = activeCommand(id); if (!command) return false; await command.execute(); return true; },
   isRegistered(id: CommandId) { return registry.has(id); },
   execute(id: CommandId) { const command = activeCommand(id); if (command) { void command.execute(); return true; } return false; }
 };
@@ -290,6 +292,8 @@ export function installShortcuts() {
       .sort((a, b) => commandCatalog[b].context.length - commandCatalog[a].context.length)[0];
     if ((found === "block.selectPrevious" || found === "block.selectNext")
       && event.target instanceof Element && event.target.closest("input, textarea, select, [contenteditable='true'], [role='textbox'], [role='combobox']")) return;
+    if (found === "companion.chat" && !event.ctrlKey && !event.metaKey && !event.altKey
+      && event.target instanceof Element && event.target.closest("input, textarea, select, [contenteditable]:not([contenteditable='false']), [role='textbox'], [role='combobox'], .monaco-editor, [data-shortcut-capture]")) return;
     if (event.repeat && found !== "edit.undo" && found !== "edit.redo" && found !== "block.selectPrevious" && found !== "block.selectNext") return;
     if (found && commands.execute(found)) { event.preventDefault(); event.stopImmediatePropagation(); }
   };

@@ -28,6 +28,10 @@ const limitOf = (limit = 50) => {
   if (!Number.isInteger(limit) || limit < 1 || limit > 500) throw new ApiError("INVALID_GRAPH_QUERY", "limit must be an integer between 1 and 500.");
   return limit;
 };
+const offsetOf = (offset = 0) => {
+  if (!Number.isSafeInteger(offset) || offset < 0) throw new ApiError("INVALID_GRAPH_QUERY", "offset must be a nonnegative safe integer.");
+  return offset;
+};
 
 /**
  * Source-aware block API. Reuses the Preview parser and stable graph identities.
@@ -353,13 +357,15 @@ export class ProjectDocumentStructureService {
   }
   #list(context: Context, input: ListBlocksInput): BlockCard[] {
     const limit = limitOf(input.limit);
+    const offset = offsetOf(input.offset);
     const matches = new Set(context.queryIndex.select({ ...(input.types ? { type: input.types } : {}), ...(input.kind ? { kind: input.kind } : {}), ...(input.origin ? { origin: input.origin } : {}), ...(input.fileId ? { file: input.fileId } : {}) }).map((block) => block.id));
     return this.#candidates(context, input.parentId, input.recursive ?? true).filter((block) => matches.has(block.id) &&
       (!input.fileId || block.source.fileId === input.fileId) && (!input.kind || block.kind === input.kind)
-      && (!input.origin || block.origin === input.origin) && (!input.types || input.types.includes(block.type))).slice(0, limit).map((block) => this.#card(block));
+      && (!input.origin || block.origin === input.origin) && (!input.types || input.types.includes(block.type))).slice(offset, offset + limit).map((block) => this.#card(block));
   }
   #find(context: Context, input: FindBlocksInput): BlockCard[] {
     const limit = limitOf(input.limit), types = input.type ? (Array.isArray(input.type) ? input.type : [input.type]) : undefined;
+    const offset = offsetOf(input.offset);
     const query = input.query?.trim().toLocaleLowerCase();
     const indexed = context.queryIndex.select({ ...(types ? { type: types } : {}), ...(input.kind ? { kind: input.kind } : {}), ...(input.fileId ? { file: input.fileId } : {}), ...(input.label ? { label: input.label } : {}), ...(input.number ? { number: input.number } : {}), ...(input.ordinal !== undefined ? { ordinal: input.ordinal } : {}), ...(input.tags ? { tags: input.tags } : {}) });
     const allowed = input.parentId === undefined ? undefined : new Set(this.#candidates(context, input.parentId, true).map((block) => block.id));
@@ -368,7 +374,7 @@ export class ProjectDocumentStructureService {
       && (!input.fileId || input.fileId === block.source.fileId) && (!input.label || input.label === block.label)
       && (!input.number || input.number === block.numbering?.display) && (input.ordinal === undefined || input.ordinal === block.numbering?.ordinal)
       && (!input.tags || input.tags.every((tag) => [...(block.semantic?.tags?.user ?? []), ...(block.semantic?.tags?.ai ?? [])].includes(tag))));
-    if (!query) return candidates.slice(0, limit).map((block) => this.#card(block));
+    if (!query) return candidates.slice(offset, offset + limit).map((block) => this.#card(block));
     const hits: Array<{ block: DocumentBlock; score: number }> = [], unresolved: DocumentBlock[] = [];
     for (const block of candidates) {
       const metadata = [block.label, block.numbering?.display, block.title].filter((value): value is string => Boolean(value)).map((value) => value.toLocaleLowerCase());
@@ -381,7 +387,7 @@ export class ProjectDocumentStructureService {
       if (block.kind === "content" && !block.placeholder && this.#source(context, block).toLocaleLowerCase().includes(query)) hits.push({ block, score: 1 });
       if (hits.length >= limit) break;
     }
-    return hits.sort((a, b) => b.score - a.score).slice(0, limit).map(({ block }) => this.#card(block));
+    return hits.sort((a, b) => b.score - a.score).slice(offset, offset + limit).map(({ block }) => this.#card(block));
   }
 
   async #edit(projectId: string, context: Context, path: string, start: number, end: number, replacement: string): Promise<void> {

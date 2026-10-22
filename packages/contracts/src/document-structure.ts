@@ -67,12 +67,12 @@ export interface BlockDetail extends BlockCard {
 }
 export interface ListBlocksInput {
   parentId?: string | null; fileId?: string; kind?: BlockKind; types?: string[];
-  origin?: BlockOrigin; recursive?: boolean; limit?: number;
+  origin?: BlockOrigin; recursive?: boolean; limit?: number; offset?: number;
 }
 export interface FindBlocksInput {
   query?: string; type?: string | string[]; kind?: BlockKind; label?: string;
   number?: string; ordinal?: number; tags?: string[]; parentId?: string | null;
-  fileId?: string; limit?: number;
+  fileId?: string; limit?: number; offset?: number;
 }
 export interface ReplaceBlockContentInput { blockId: string; expectedRevision: number; content: string }
 /** Offsets relative to get_block_source.content, UTF-16 and half-open. */

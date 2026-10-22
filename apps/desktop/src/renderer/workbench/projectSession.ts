@@ -25,6 +25,7 @@ interface ProjectSessionOptions {
   releaseDocuments?(): Promise<void>;
   onSaveError?(message: string): void;
   onSaved?(path: string, content: string): void;
+  beforeSave?(paths: string[]): Promise<void>;
 }
 
 export function createProjectSessionController(options: ProjectSessionOptions) {
@@ -36,6 +37,7 @@ export function createProjectSessionController(options: ProjectSessionOptions) {
     options.editHistory.current.breakGroup();
     options.setSaveState("saving");
     try {
+      await options.beforeSave?.(pending.map(tab => tab.path));
       await options.flushDocuments?.();
       for (const tab of pending) {
         await options.api.files.write(options.project.id, tab.path, tab.content);

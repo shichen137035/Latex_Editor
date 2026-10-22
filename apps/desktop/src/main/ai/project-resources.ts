@@ -15,6 +15,11 @@ export type ProjectResourceAccess = {
 };
 export const flattenProjectFiles = (nodes: ProjectTreeNode[]): string[] => nodes.flatMap(node => node.kind === "file" ? [node.relativePath] : flattenProjectFiles(node.children ?? []));
 
+export const resourceToolDefinitions = [
+    { name: "texweave_list_project_files", description: "Search all actual project files, including resources not yet referenced or copied to the working copy. Check this inventory before claiming a resource is missing. Results distinguish original project files from working-copy files; use nextOffset to page.", inputSchema: { type: "object", properties: { query: { type: "string", description: "Case-insensitive path substring, e.g. angle or .png; omit to list all files." }, offset: { type: "integer", minimum: 0 }, limit: { type: "integer", minimum: 1, maximum: 200 } }, additionalProperties: false } },
+    { name: "texweave_materialize_files", description: "Copy existing project resources (images, fonts, binary data, etc.) into the AI working copy for inspection or compilation, preserving relative paths and existing edits. Source text comes from the editable snapshot; compiler byproducts are excluded. Returns per-file successes and failures. Does not modify the original project.", inputSchema: { type: "object", properties: { paths: { type: "array", items: { type: "string" }, maxItems: 200 } }, required: ["paths"], additionalProperties: false } }
+  ];
+
 /** Inspect the real project separately from its deliberately partial AI working copy. */
 export function createProjectResources(files: ProjectResourceAccess, projectId: string, workspaceRoot: string) {
   let queue = Promise.resolve();
@@ -37,7 +42,7 @@ export function createProjectResources(files: ProjectResourceAccess, projectId: 
     const query = typeof input.query === "string" ? input.query.toLowerCase() : "";
     const paths = [...new Set([...project, ...workspace.keys()])].filter(path => path.toLowerCase().includes(query)).sort();
     const offset = typeof input.offset === "number" && Number.isInteger(input.offset) ? Math.max(0, input.offset) : 0;
-    const limit = typeof input.limit === "number" && Number.isInteger(input.limit) ? Math.max(1, Math.min(200, input.limit)) : 100;
+    const limit = typeof input.limit === "number" && Number.isInteger(input.limit) ? Math.max(1, Math.min(200, input.limit)) : 20;
     const original = new Set(project);
     return { total: paths.length, files: paths.slice(offset, offset + limit).map(path => ({ path, inProject: original.has(path), inWorkingCopy: workspace.has(path), canMaterialize: isResourcePath(path), ...(workspace.has(path) ? { size: workspace.get(path) } : {}) })), nextOffset: offset + limit < paths.length ? offset + limit : null };
   };
@@ -72,10 +77,7 @@ export function createProjectResources(files: ProjectResourceAccess, projectId: 
     queue = result.then(() => undefined, () => undefined);
     return result;
   };
-  const dynamicTools = [
-    { name: "texweave_list_project_files", description: "Search all actual project files, including resources not yet referenced or copied to the working copy. Check this inventory before claiming a resource is missing. Results distinguish original project files from working-copy files; use nextOffset to page.", inputSchema: { type: "object", properties: { query: { type: "string", description: "Case-insensitive path substring, e.g. angle or .png; omit to list all files." }, offset: { type: "integer", minimum: 0 }, limit: { type: "integer", minimum: 1, maximum: 200 } }, additionalProperties: false } },
-    { name: "texweave_materialize_files", description: "Copy existing project resources (images, fonts, binary data, etc.) into the AI working copy for inspection or compilation, preserving relative paths and existing edits. Source text comes from the editable snapshot; compiler byproducts are excluded. Returns per-file successes and failures. Does not modify the original project.", inputSchema: { type: "object", properties: { paths: { type: "array", items: { type: "string" }, maxItems: 200 } }, required: ["paths"], additionalProperties: false } }
-  ];
+  const dynamicTools = resourceToolDefinitions;
   const toolHandlers: Record<string, (input: Record<string, unknown>) => Promise<string>> = {
     texweave_list_project_files: async input => JSON.stringify(await list(input)),
     texweave_materialize_files: async input => JSON.stringify(await materialize(input.paths as string[]))

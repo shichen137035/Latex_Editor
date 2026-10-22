@@ -35,7 +35,8 @@ function sameMessage(a: AIMessage, b: AIMessage): boolean {
   return a === b || (a.id === b.id && a.role === b.role && a.content === b.content && a.createdAt === b.createdAt
     && a.status === b.status && a.activity === b.activity && a.completedAt === b.completedAt
     && a.tokenUsage?.inputTokens === b.tokenUsage?.inputTokens && a.tokenUsage?.outputTokens === b.tokenUsage?.outputTokens && a.tokenUsage?.totalTokens === b.tokenUsage?.totalTokens
-    && sameParts(a.reasoning, b.reasoning) && sameParts(a.responseParts, b.responseParts) && sameParts(a.attachments, b.attachments));
+    && a.tokenUsage?.cachedInputTokens === b.tokenUsage?.cachedInputTokens
+    && sameParts(a.reasoning, b.reasoning) && sameParts(a.responseParts, b.responseParts) && sameParts(a.attachments, b.attachments) && sameParts(a.operations, b.operations));
 }
 
 function sameParts<T extends object>(a: T[] | undefined, b: T[] | undefined): boolean {

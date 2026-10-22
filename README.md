@@ -6,7 +6,7 @@ TeXWeave is licensed under the [PolyForm Internal Use License 1.0.0](LICENSE). I
 
 The root [`package.json`](package.json) is the single source of truth for the application version. TeXWeave is local-first and does not require papers or projects to be uploaded to a cloud service.
 
-Developer documentation: [feature catalog and help gaps](docs/FEATURE_CATALOG_AND_HELP_GAPS.md), [project structure and module responsibilities](docs/architecture/PROJECT_STRUCTURE.md), [0.6.7 release readiness](docs/RELEASE_READINESS_0.6.7.md), and [backend architecture](docs/BACKEND_ARCHITECTURE.md).
+Developer documentation: [feature catalog and help gaps](docs/FEATURE_CATALOG_AND_HELP_GAPS.md), [project structure and module responsibilities](docs/architecture/PROJECT_STRUCTURE.md), [0.6.7 release readiness](docs/RELEASE_READINESS_0.6.7.md), [companion integration interfaces](docs/COMPANION_API.md), and [backend architecture](docs/BACKEND_ARCHITECTURE.md).
 
 ## Features
 
@@ -151,7 +151,7 @@ TeXWeave 采用 [PolyForm Internal Use License 1.0.0](LICENSE)，允许接收者
 
 应用版本以根目录 [`package.json`](package.json) 为唯一来源。TeXWeave 采用本地优先设计，不要求将论文或项目上传到云端。
 
-开发者文档：[功能总览与 Help 缺口](docs/FEATURE_CATALOG_AND_HELP_GAPS.md)、[完整工程结构与模块职责](docs/architecture/PROJECT_STRUCTURE.md)、[0.6.7 发布准备记录](docs/RELEASE_READINESS_0.6.7.md)和[后端架构](docs/BACKEND_ARCHITECTURE.md)。
+开发者文档：[功能总览与 Help 缺口](docs/FEATURE_CATALOG_AND_HELP_GAPS.md)、[完整工程结构与模块职责](docs/architecture/PROJECT_STRUCTURE.md)、[0.6.7 发布准备记录](docs/RELEASE_READINESS_0.6.7.md)、[宠物助手接入接口](docs/COMPANION_API.md)和[后端架构](docs/BACKEND_ARCHITECTURE.md)。
 
 ## 功能概览
 

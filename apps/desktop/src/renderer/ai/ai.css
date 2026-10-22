@@ -302,6 +302,9 @@
 .ai-approval-card small { display: block; white-space: pre-wrap; overflow-wrap: anywhere; }
 .ai-approval-card > div { display: flex; justify-content: flex-end; gap: 6px; margin-top: 7px; }
 .ai-approval-card button { padding: 5px 9px; border: 1px solid var(--color-border); border-radius: 6px; color: var(--color-primary-strong); background: var(--color-bg-panel); font-size: 11px; }
+.ai-approval-card > .ai-approval-actions { position: sticky; top: -10px; z-index: 1; flex-wrap: wrap; align-items: center; margin-top: -10px; padding-block: 10px 6px; background: var(--color-bg-panel); }
+.ai-approval-actions strong { flex: 1 1 90px; min-width: 0; }
+.ai-approval-actions button { flex: 0 0 auto; }
 .ai-inline-diff-heading .ai-diff-close { flex: 0 0 auto; margin-left: auto; padding: 4px 7px; border: 0; border-radius: 5px; color: var(--color-primary-strong); background: var(--color-bg-panel); font-size: 10px; }
 .ai-message-queue { flex: none; min-width: 0; padding: 8px 10px; border: 1px solid var(--color-border); border-radius: 10px; background: var(--color-bg-subtle); }
 .ai-message-queue header { display: flex; align-items: center; justify-content: space-between; gap: 8px; color: var(--color-text-secondary); font-size: 12px; }
@@ -318,3 +321,9 @@
 .ai-message-queue li button svg { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; }
 
 .ai-token-usage { display: block; margin-top: 4px; color: var(--color-text-muted); font-size: 10px; font-variant-numeric: tabular-nums; }
+.ai-setting-operations { display: grid; gap: 7px; margin: 8px 0; }
+.ai-setting-operation { padding: 9px; border: 1px solid var(--color-border); border-radius: 9px; background: var(--color-bg-panel); }
+.ai-setting-operation > div { display: flex; align-items: center; justify-content: space-between; gap: 6px; font-size: 11px; }
+.ai-setting-operation span { color: var(--color-text-secondary); white-space: nowrap; }
+.ai-setting-operation code { display: block; margin: 5px 0; overflow-wrap: anywhere; font-size: 11px; }
+.ai-setting-operation button { padding: 4px 8px; border: 1px solid var(--color-border); border-radius: 6px; color: var(--color-primary-strong); background: var(--color-bg-subtle); cursor: pointer; }
